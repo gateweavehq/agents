@@ -127,6 +127,9 @@ The same shape as Track: one Worker per product and one Durable Object per works
 
 ## Phases
 
+The registry comes first: it ships fast, is useful at once and needs little infrastructure. The
+runtime is designed alongside it, so the data model fits both.
+
 1. **Registry.** Connect GitHub, scan repositories for agent configuration, group them into
    projects, and show the Overview, Projects, Repositories and Agents pages. This answers "which
    repository uses which agents" on day one, with no setup.
@@ -141,9 +144,6 @@ The same shape as Track: one Worker per product and one Durable Object per works
 
 ## Open decisions
 
-- **Order.** Registry first (fast to ship, useful at once, little infrastructure) or runtime
-  first (the agentic framework and team graphs). Recommendation: registry first, with the runtime
-  designed alongside it so the data model fits both.
 - **Repository layout.** This repository holds the product. Shared packages extracted from Track
   (`@gateweave/sync`, `@gateweave/ui`) are published from a platform repository or kept in Track
   for now.
