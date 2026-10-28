@@ -118,6 +118,32 @@ describe("projects", () => {
 		expect(await stub.updateProject(project.id, { name: "Gone" })).toBeNull();
 	});
 
+	it("are described with their repositories and the agents in them", async () => {
+		const stub = registry();
+		const [web = "", api = "", other = ""] = await stub.syncRepositories([
+			github("1", "web"),
+			github("2", "api"),
+			github("3", "other"),
+		]);
+		await stub.applyScan(web, scan());
+		await stub.applyScan(other, scan());
+		const project = await stub.createProject({ name: "Checkout", description: null });
+		await stub.setProjectRepositories(project.id, [web, api]);
+
+		const detail = await stub.getProject(project.id);
+		expect(detail?.project.name).toBe("Checkout");
+		expect(detail?.repositories.map((r) => r.name)).toEqual(["api", "web"]);
+		// Only the agents of its own repositories, not those of `other`.
+		expect(detail?.agents.map((agent) => agent.repositoryId)).toEqual([web]);
+
+		// A repository GitHub no longer lists leaves the project with its agents.
+		await stub.reconcileInstallation("100", [github("2", "api"), github("3", "other")]);
+		const after = await stub.getProject(project.id);
+		expect(after?.repositories.map((r) => r.name)).toEqual(["api"]);
+		expect(after?.agents).toEqual([]);
+		expect(await stub.getProject("no-such-project")).toBeNull();
+	});
+
 	it("refuses a project without a name", async () => {
 		await inside(registry(), (instance) => {
 			expect(() => instance.createProject({ name: " ", description: null })).toThrow();

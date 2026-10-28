@@ -7,6 +7,7 @@ import type {
 	AssetVersion,
 	Overview,
 	Project,
+	ProjectDetail,
 	Repository,
 	RepositoryDetail,
 } from "@gateweave/agents-model";
@@ -81,6 +82,22 @@ function readProjects(db: Db, id?: string): Project[] {
 export const listProjects = (db: Db): Project[] => readProjects(db);
 
 export const findProject = (db: Db, id: string): Project | null => readProjects(db, id)[0] ?? null;
+
+/** A project with its live repositories and the agents in them. */
+export function getProject(db: Db, id: string): ProjectDetail | null {
+	const project = findProject(db, id);
+	if (!project) return null;
+	// Subqueries, not lists of ids: they bind one parameter however many repositories it has.
+	const inProject = db
+		.select({ id: projectRepositories.repositoryId })
+		.from(projectRepositories)
+		.where(eq(projectRepositories.projectId, id));
+	return {
+		project,
+		repositories: repositoriesWhere(db, inArray(repositories.id, inProject)),
+		agents: agentsWhere(db, and(liveIn(agents), inArray(agents.repositoryId, inProject))),
+	};
+}
 
 /** Live repositories, by owner and name, with their projects and the runtimes found in them. */
 function repositoriesWhere(db: Db, where?: SQL): Repository[] {

@@ -117,6 +117,9 @@ workspace.
 
 - **Overview** counts what the registry holds and shows a matrix of repositories by the coding
   agents each one configures.
+- **Projects** group repositories, and a project's page shows the same matrix for its
+  repositories and the agents in them. Owners and admins create, edit and delete projects and
+  choose their repositories; everyone else in the workspace sees them.
 - **Repositories** lists them with their scan status; a repository's page shows its agents, the
   assets they read grouped by kind, and the problems the last scan found.
 - **Agents** lists every agent and subagent by runtime.
@@ -127,7 +130,8 @@ Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
-- **Projects**, grouping repositories, with their own pages.
+- **The library and setups** (phase 2 in `docs/spec.md`): assets kept outside any repository, and
+  setups that apply them to repositories.
 
 ## Deploys
 

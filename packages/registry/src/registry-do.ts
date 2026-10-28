@@ -5,6 +5,7 @@ import {
 	type AssetVersion,
 	type Overview,
 	type Project,
+	type ProjectDetail,
 	type ProjectInput,
 	type ProjectPatch,
 	projectInput,
@@ -26,6 +27,7 @@ import { createProject, deleteProject, setProjectRepositories, updateProject } f
 import {
 	getAsset,
 	getAssetVersion,
+	getProject,
 	getRepository,
 	listAgents,
 	listProjects,
@@ -81,6 +83,10 @@ export class RegistryDO extends DurableObject {
 
 	listProjects(): Project[] {
 		return listProjects(this.#db);
+	}
+
+	getProject(projectId: string): ProjectDetail | null {
+		return getProject(this.#db, id.parse(projectId));
 	}
 
 	listRepositories(): Repository[] {

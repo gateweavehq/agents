@@ -19,6 +19,8 @@ import { Route as WorkspaceAgentsRouteImport } from './routes/$workspace/agents'
 import { Route as WorkspaceSettingsRouteImport } from './routes/$workspace/settings'
 import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitationId'
 import { Route as WorkspaceAssetsAssetIdRouteImport } from './routes/$workspace/assets.$assetId'
+import { Route as WorkspaceProjectsIndexRouteImport } from './routes/$workspace/projects.index'
+import { Route as WorkspaceProjectsProjectIdRouteImport } from './routes/$workspace/projects.$projectId'
 import { Route as WorkspaceRepositoriesIndexRouteImport } from './routes/$workspace/repositories.index'
 import { Route as WorkspaceRepositoriesRepositoryIdRouteImport } from './routes/$workspace/repositories.$repositoryId'
 import { Route as WorkspaceSettingsIndexRouteImport } from './routes/$workspace/settings.index'
@@ -80,6 +82,17 @@ const WorkspaceAssetsAssetIdRoute = WorkspaceAssetsAssetIdRouteImport.update({
   path: '/assets/$assetId',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const WorkspaceProjectsIndexRoute = WorkspaceProjectsIndexRouteImport.update({
+  id: '/projects/',
+  path: '/projects/',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceProjectsProjectIdRoute =
+  WorkspaceProjectsProjectIdRouteImport.update({
+    id: '/projects/$projectId',
+    path: '/projects/$projectId',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
 const WorkspaceRepositoriesIndexRoute =
   WorkspaceRepositoriesIndexRouteImport.update({
     id: '/repositories/',
@@ -145,6 +158,7 @@ export interface FileRoutesByFullPath {
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
+  '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
@@ -153,6 +167,7 @@ export interface FileRoutesByFullPath {
   '/api/github/install': typeof ApiGithubInstallRoute
   '/api/github/setup': typeof ApiGithubSetupRoute
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
+  '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
 }
@@ -165,6 +180,7 @@ export interface FileRoutesByTo {
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace': typeof WorkspaceIndexRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
+  '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
@@ -173,6 +189,7 @@ export interface FileRoutesByTo {
   '/api/github/install': typeof ApiGithubInstallRoute
   '/api/github/setup': typeof ApiGithubSetupRoute
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
+  '/$workspace/projects': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
 }
@@ -188,6 +205,7 @@ export interface FileRoutesById {
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
+  '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
@@ -196,6 +214,7 @@ export interface FileRoutesById {
   '/api/github/install': typeof ApiGithubInstallRoute
   '/api/github/setup': typeof ApiGithubSetupRoute
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
+  '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
 }
@@ -212,6 +231,7 @@ export interface FileRouteTypes {
     | '/invite/$invitationId'
     | '/$workspace/'
     | '/$workspace/assets/$assetId'
+    | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
@@ -220,6 +240,7 @@ export interface FileRouteTypes {
     | '/api/github/install'
     | '/api/github/setup'
     | '/api/github/webhooks'
+    | '/$workspace/projects/'
     | '/$workspace/repositories/'
     | '/$workspace/settings/'
   fileRoutesByTo: FileRoutesByTo
@@ -232,6 +253,7 @@ export interface FileRouteTypes {
     | '/invite/$invitationId'
     | '/$workspace'
     | '/$workspace/assets/$assetId'
+    | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
@@ -240,6 +262,7 @@ export interface FileRouteTypes {
     | '/api/github/install'
     | '/api/github/setup'
     | '/api/github/webhooks'
+    | '/$workspace/projects'
     | '/$workspace/repositories'
     | '/$workspace/settings'
   id:
@@ -254,6 +277,7 @@ export interface FileRouteTypes {
     | '/invite/$invitationId'
     | '/$workspace/'
     | '/$workspace/assets/$assetId'
+    | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
@@ -262,6 +286,7 @@ export interface FileRouteTypes {
     | '/api/github/install'
     | '/api/github/setup'
     | '/api/github/webhooks'
+    | '/$workspace/projects/'
     | '/$workspace/repositories/'
     | '/$workspace/settings/'
   fileRoutesById: FileRoutesById
@@ -350,6 +375,20 @@ declare module '@tanstack/react-router' {
       path: '/assets/$assetId'
       fullPath: '/$workspace/assets/$assetId'
       preLoaderRoute: typeof WorkspaceAssetsAssetIdRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/projects/': {
+      id: '/$workspace/projects/'
+      path: '/projects'
+      fullPath: '/$workspace/projects/'
+      preLoaderRoute: typeof WorkspaceProjectsIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/projects/$projectId': {
+      id: '/$workspace/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/$workspace/projects/$projectId'
+      preLoaderRoute: typeof WorkspaceProjectsProjectIdRouteImport
       parentRoute: typeof WorkspaceRoute
     }
     '/$workspace/repositories/': {
@@ -445,7 +484,9 @@ interface WorkspaceRouteChildren {
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRouteWithChildren
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
   WorkspaceAssetsAssetIdRoute: typeof WorkspaceAssetsAssetIdRoute
+  WorkspaceProjectsProjectIdRoute: typeof WorkspaceProjectsProjectIdRoute
   WorkspaceRepositoriesRepositoryIdRoute: typeof WorkspaceRepositoriesRepositoryIdRoute
+  WorkspaceProjectsIndexRoute: typeof WorkspaceProjectsIndexRoute
   WorkspaceRepositoriesIndexRoute: typeof WorkspaceRepositoriesIndexRoute
 }
 
@@ -454,8 +495,10 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceSettingsRoute: WorkspaceSettingsRouteWithChildren,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
   WorkspaceAssetsAssetIdRoute: WorkspaceAssetsAssetIdRoute,
+  WorkspaceProjectsProjectIdRoute: WorkspaceProjectsProjectIdRoute,
   WorkspaceRepositoriesRepositoryIdRoute:
     WorkspaceRepositoriesRepositoryIdRoute,
+  WorkspaceProjectsIndexRoute: WorkspaceProjectsIndexRoute,
   WorkspaceRepositoriesIndexRoute: WorkspaceRepositoriesIndexRoute,
 }
 

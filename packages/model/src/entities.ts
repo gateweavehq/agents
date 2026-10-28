@@ -98,6 +98,13 @@ export interface RepositoryDetail {
 	assets: Asset[];
 }
 
+/** A project with its repositories and the agents configured in them. */
+export interface ProjectDetail {
+	project: Project;
+	repositories: Repository[];
+	agents: Agent[];
+}
+
 /** A version of an asset, without its files. */
 export type AssetVersionSummary = Omit<AssetVersion, "assetId" | "files">;
 
