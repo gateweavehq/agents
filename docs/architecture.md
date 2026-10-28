@@ -525,14 +525,28 @@ workspace.
   and admins create teams, add and take out members, choose the lead and add and remove edges;
   members see them.
 - **Chat** lists the caller's own conversations, the latest first, and starts one with any
-  agent run by Gateweave. A conversation's page streams the reply, can stop it, and says when the
-  agent cannot answer and why. An agent's page has a Chat button too.
-- **Runs** lists runs, the latest first, fifty at a time (`apps/web/src/lib/runs.ts`): owners
-  and admins see everyone's, since they answer for what runs spend, and members see their own. A
-  run's page shows its summary and its trace as a timeline of connections, model requests,
-  tool calls and calls over a team's edges, each linking the run it started, and links the
-  conversation only for the member who started it. A nested run links the run that called it.
-  The Overview sums the last 30 days of runs.
+  agent run by Gateweave or any team. A conversation's page streams the reply, can stop it, and
+  says when the agent cannot answer and why. Agent and team pages have a Chat button too.
+  - **Tool calls** show under the reply that made them. The conversation stores every call as a
+    static part named after its tool, while the live stream calls MCP tools dynamic, so the chat
+    reads both (`apps/web/src/lib/tool-calls.ts`).
+  - **A conversation with a team** has the team drawn beside it, shrunk to fit, as on the team's
+    page. Its members light up while they work: the page asks the registry for the conversation's
+    runs still going (`activeRuns`) while a turn runs, and for as long as any is left, as after a
+    report. An agent working inside a member team lights that team. Narrower screens open the team
+    over the conversation with a button.
+  - **Each call over an edge** shows as its kind and the member it went to, read back from the
+    tool's name with the team's member names (`readEdgeToolName` in the model package, next to the
+    naming the runtime uses).
+- **Runs** lists the runs people's messages started, the latest first, fifty at a time
+  (`apps/web/src/lib/runs.ts`): owners and admins see everyone's, since they answer for what runs
+  spend, and members see their own. Each shows its total: the tokens and cost of the run and of
+  every run its team's edges led to, added up from the runs of the same message. A run's page
+  shows its summary, that total, and its trace as a timeline of connections, model requests, tool
+  calls and calls over a team's edges. Each call shows the run it started inside the timeline,
+  which opens to that run's own trace there, fetched when opened, or on its own page. The page
+  links the conversation only for the member who started it; a nested run links the run that
+  called it. The Overview sums the last 30 days of runs, nested ones included.
 - **Environment** lists the environment sets with their variables, their secrets as set or
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
@@ -567,8 +581,8 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): teams in Chat and Runs (AGT-35),
-  and cloud runners for servers that run as local commands (AGT-9).
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): cloud runners for servers that run
+  as local commands (AGT-9).
 
 ## Deploys
 

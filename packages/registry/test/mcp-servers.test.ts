@@ -326,7 +326,7 @@ describe("MCP servers", () => {
 	it("keep the last check of each, and list on the MCP page with it", async () => {
 		const stub = registry();
 		const acme = await stub.createMcpServer(ACME);
-		const local = await scannedServer(stub, "local", { command: "npx", args: ["-y", "@acme/mcp"] });
+		await scannedServer(stub, "local", { command: "npx", args: ["-y", "@acme/mcp"] });
 		const prod = await stub.createEnvSet({ name: "prod", variables: {}, secrets: [] });
 		const agent = await stub.createAgent({
 			...reviewer([{ assetId: acme, version: 1 }]),

@@ -1,31 +1,54 @@
 import { useAgentChat } from "@cloudflare/ai-chat/react";
+import type { TeamEdgeKind } from "@gateweave/agents-model";
 import { useAgent } from "agents/react";
-import type { DynamicToolUIPart, UIMessage } from "ai";
-import { ArrowUp, CircleAlert, LoaderCircle, Square, Wrench } from "lucide-react";
+import type { UIMessage } from "ai";
+import {
+	ArrowUp,
+	CircleAlert,
+	Forward,
+	LoaderCircle,
+	MessageCircleQuestionMark,
+	Send,
+	Square,
+	Wrench,
+} from "lucide-react";
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
-import { describeToolCall } from "#/lib/tool-calls";
+import {
+	type CallState,
+	describeEdgeCall,
+	describeToolCall,
+	type ToolCallPart,
+	toolCallsOf,
+} from "#/lib/tool-calls";
 import { cn } from "#/lib/utils";
 import { Markdown } from "./markdown";
 
 /**
  * A live conversation: its messages, the reply as it streams in, and the box to write the next
  * message. It connects through the app's chat gateway, which checks that the conversation is the
- * caller's, and reads the messages so far before it shows (so it suspends until then).
+ * caller's, and reads the messages so far before it shows (so it suspends until then). In a
+ * conversation with a team, `members` are the names of the team's members, to show each call over
+ * an edge by the member it went to.
  */
 export function ConversationView({
 	slug,
 	conversationId,
 	agentName,
+	members,
 	disabled,
 	onTurnEnd,
+	onBusyChange,
 }: {
 	slug: string;
 	conversationId: string;
 	agentName: string;
+	members: readonly string[] | null;
 	disabled: boolean;
 	onTurnEnd: () => void;
+	onBusyChange?: (busy: boolean) => void;
 }) {
 	const agent = useAgent({
 		agent: "ConversationAgent",
@@ -36,6 +59,8 @@ export function ConversationView({
 	const [draft, setDraft] = useState("");
 	const busy = status === "submitted" || isStreaming || isRecovering;
 	const end = useRef<HTMLDivElement>(null);
+
+	useEffect(() => onBusyChange?.(busy), [busy, onBusyChange]);
 
 	// Follow the reply as it grows.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scrolls whenever the messages change.
@@ -69,7 +94,7 @@ export function ConversationView({
 						</p>
 					)}
 					{messages.map((message) => (
-						<Message key={message.id} message={message} agentName={agentName} />
+						<Message key={message.id} message={message} agentName={agentName} members={members} />
 					))}
 					{status === "submitted" && (
 						<p className="text-sm text-muted-foreground" aria-live="polite">
@@ -125,14 +150,21 @@ export function ConversationView({
 	);
 }
 
-function Message({ message, agentName }: { message: UIMessage; agentName: string }) {
+function Message({
+	message,
+	agentName,
+	members,
+}: {
+	message: UIMessage;
+	agentName: string;
+	members: readonly string[] | null;
+}) {
 	const mine = message.role === "user";
 	const text = message.parts
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join("\n\n");
-	// The agent's MCP tools are known only when the turn runs, so the AI SDK calls them dynamic.
-	const tools = message.parts.filter((part) => part.type === "dynamic-tool");
-	if (!text && tools.length === 0) return null;
+	const calls = toolCallsOf(message);
+	if (!text && calls.length === 0) return null;
 	return (
 		<div className={cn("flex", mine && "justify-end")}>
 			<div
@@ -142,11 +174,16 @@ function Message({ message, agentName }: { message: UIMessage; agentName: string
 				)}
 			>
 				{!mine && <p className="mb-1 text-xs font-medium text-muted-foreground">{agentName}</p>}
-				{tools.length > 0 && (
+				{calls.length > 0 && (
 					<ul aria-label="Tools used" className="mb-2 flex flex-wrap gap-1.5">
-						{tools.map((part) => (
-							<ToolCall key={part.toolCallId} part={part} />
-						))}
+						{calls.map((part) => {
+							const edge = members && describeEdgeCall(part, members);
+							return edge ? (
+								<EdgeCall key={part.toolCallId} {...edge} />
+							) : (
+								<ToolCall key={part.toolCallId} part={part} />
+							);
+						})}
 					</ul>
 				)}
 				{mine ? text : text && <Markdown>{text}</Markdown>}
@@ -155,18 +192,16 @@ function Message({ message, agentName }: { message: UIMessage; agentName: string
 	);
 }
 
+const CHIP =
+	"inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs text-muted-foreground";
+
 /** A tool the agent called. What it took and gave back stays out of view. */
-function ToolCall({ part }: { part: DynamicToolUIPart }) {
+function ToolCall({ part }: { part: ToolCallPart }) {
 	const { server, tool, state } = describeToolCall(part);
 	const Icon = { running: LoaderCircle, done: Wrench, failed: CircleAlert }[state];
 
 	return (
-		<li
-			className={cn(
-				"inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs text-muted-foreground",
-				state === "failed" && "border-destructive/40 text-destructive",
-			)}
-		>
+		<li className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}>
 			<Icon
 				aria-hidden="true"
 				className={cn("size-3 shrink-0", state === "running" && "animate-spin")}
@@ -179,6 +214,53 @@ function ToolCall({ part }: { part: DynamicToolUIPart }) {
 			)}
 			<span className="truncate font-mono">{tool}</span>
 			{state === "failed" && <span className="sr-only">(failed)</span>}
+		</li>
+	);
+}
+
+/** What a call over a team's edge did, before the member it went to, as it went. */
+const EDGE_CALLS: Record<TeamEdgeKind, Record<CallState, string>> = {
+	delegate: { running: "Delegating to", done: "Delegated to", failed: "Could not delegate to" },
+	ask: { running: "Asking", done: "Asked", failed: "Could not ask" },
+	report: { running: "Reporting to", done: "Reported to", failed: "Could not report to" },
+};
+
+const EDGE_ICONS = { delegate: Forward, ask: MessageCircleQuestionMark, report: Send };
+
+/**
+ * A call over one of the team's edges: its kind and the member it went to. The words it carried
+ * stay out of view, as a tool's do; why it failed shows on hover, and the model says it too.
+ */
+function EdgeCall({
+	edge,
+	member,
+	state,
+	error,
+}: {
+	edge: TeamEdgeKind;
+	member: string;
+	state: CallState;
+	error: string | null;
+}) {
+	const Icon =
+		state === "running" ? LoaderCircle : state === "failed" ? CircleAlert : EDGE_ICONS[edge];
+	return (
+		<li
+			className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
+			title={error ?? undefined}
+		>
+			<Icon
+				aria-hidden="true"
+				className={cn(
+					"size-3 shrink-0",
+					state === "running" && "animate-spin",
+					state === "done" && EDGE_STYLES[edge].className,
+				)}
+			/>
+			<span className="truncate">
+				{EDGE_CALLS[edge][state]}{" "}
+				<span className={cn("font-medium", state !== "failed" && "text-foreground")}>{member}</span>
+			</span>
 		</li>
 	);
 }

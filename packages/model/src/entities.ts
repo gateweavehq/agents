@@ -546,6 +546,20 @@ export interface RunUsage {
 }
 
 /**
+ * What a run and the runs nested under it, over its team's edges, used together. Runs still going
+ * count with what they used so far, and not as unpriced.
+ */
+export interface RunTotal extends RunUsage {
+	/** Runs among them still going. */
+	running: number;
+}
+
+/** A run, with its total: for one outside a team, what it used by itself. */
+export interface TotaledRun extends Run {
+	total: RunTotal;
+}
+
+/**
  * A span of a run's trace: a model request, a call to a tool, connecting to an MCP server, or a
  * call over one of a team's edges.
  */

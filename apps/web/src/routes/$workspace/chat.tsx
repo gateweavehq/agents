@@ -38,7 +38,7 @@ function ChatLayout() {
 				<nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
 					{conversations.length === 0 ? (
 						<p className="p-3 text-sm text-muted-foreground">
-							Your conversations with agents appear here. Nobody else sees them.
+							Your conversations with agents and teams appear here. Nobody else sees them.
 						</p>
 					) : (
 						conversations.map((conversation) => (
@@ -53,9 +53,10 @@ function ChatLayout() {
 									{conversation.title ?? "New conversation"}
 								</span>
 								<span className="block truncate text-xs text-muted-foreground">
-									{conversation.agentName}
-									{conversation.agentRemoved ? " (removed)" : ""} ·{" "}
-									{formatRelative(conversation.updatedAt)}
+									{conversation.teamId === null
+										? `${conversation.agentName}${conversation.agentRemoved ? " (removed)" : ""}`
+										: `${conversation.teamName ?? "A deleted team"} (team)`}{" "}
+									· {formatRelative(conversation.updatedAt)}
 								</span>
 							</Link>
 						))

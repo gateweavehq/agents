@@ -6,7 +6,7 @@ import {
 	teamGraphInput,
 } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { Bot, Crown, Pencil, Plus, Trash2, Users, X } from "lucide-react";
+import { Bot, Crown, MessagesSquare, Pencil, Plus, Trash2, Users, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AddEdgeDialog, AddMemberDialog, TeamDialog } from "#/components/registry/team-dialogs";
@@ -15,6 +15,7 @@ import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
+import { startTeamChat } from "#/lib/chat";
 import { deleteTeam, getTeam, setTeamGraph, updateTeam } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 import { cn } from "#/lib/utils";
@@ -84,7 +85,10 @@ function TeamPage() {
 						</p>
 					)}
 				</div>
-				{admin && <TeamActions />}
+				<div className="flex shrink-0 flex-wrap gap-2">
+					{lead?.kind === "agent" && !lead.removed && <ChatButton />}
+					{admin && <TeamActions />}
+				</div>
 			</header>
 
 			{lead?.kind === "agent" && lead.removed && (
@@ -373,6 +377,37 @@ function AddEdgeButton() {
 				/>
 			)}
 		</>
+	);
+}
+
+/** Starts a conversation with the team, which its lead answers. */
+function ChatButton() {
+	const { slug } = useWorkspace();
+	const navigate = useNavigate();
+	const data = Route.useLoaderData();
+	const [pending, setPending] = useState(false);
+	if (!data) return null;
+	const teamId = data.detail.team.id;
+
+	async function start() {
+		setPending(true);
+		try {
+			const conversation = await startTeamChat({ data: { slug, teamId } });
+			await navigate({
+				to: "/$workspace/chat/$conversationId",
+				params: { workspace: slug, conversationId: conversation.id },
+			});
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : "Something went wrong");
+			setPending(false);
+		}
+	}
+
+	return (
+		<Button size="sm" onClick={start} disabled={pending}>
+			<MessagesSquare />
+			Chat
+		</Button>
 	);
 }
 

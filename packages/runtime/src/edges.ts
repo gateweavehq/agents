@@ -4,12 +4,9 @@
  * turn of the agent at the other end, in a conversation of its own (`ConversationAgent`), which
  * sees only what the tool sends it.
  */
-import type { TurnEdge } from "@gateweave/agents-model";
+import { EDGE_TOOL_NAME_LENGTH, edgeToolName, type TurnEdge } from "@gateweave/agents-model";
 import { type ToolSet, tool } from "ai";
 import { z } from "zod";
-
-/** Providers take tool names of up to 64 letters, digits, `_` and `-`. */
-const TOOL_NAME = { length: 64, unsafe: /[^A-Za-z0-9_-]/g };
 
 /** The longest text one edge carries, as the registry takes a message. */
 const MAX_TEXT = 100_000;
@@ -23,10 +20,7 @@ export type TakeEdge = (edge: TurnEdge, text: string, signal?: AbortSignal) => P
 export function edgeTools(edges: TurnEdge[], take: TakeEdge): ToolSet {
 	const tools: ToolSet = {};
 	for (const edge of edges) {
-		tools[nameOf(tools, `${edge.kind}__${edge.name.replace(TOOL_NAME.unsafe, "_")}`)] = edgeTool(
-			edge,
-			take,
-		);
+		tools[nameOf(tools, edgeToolName(edge.kind, edge.name))] = edgeTool(edge, take);
 	}
 	return tools;
 }
@@ -61,10 +55,10 @@ function edgeTool(edge: TurnEdge, take: TakeEdge): ToolSet[string] {
 
 /** `base`, cut to length, or with a number after it when an edge to a namesake took it. */
 function nameOf(tools: ToolSet, base: string): string {
-	let name = base.slice(0, TOOL_NAME.length);
+	let name = base.slice(0, EDGE_TOOL_NAME_LENGTH);
 	for (let n = 2; name in tools; n++) {
 		const suffix = `_${n}`;
-		name = `${base.slice(0, TOOL_NAME.length - suffix.length)}${suffix}`;
+		name = `${base.slice(0, EDGE_TOOL_NAME_LENGTH - suffix.length)}${suffix}`;
 	}
 	return name;
 }
