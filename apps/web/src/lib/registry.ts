@@ -1,14 +1,18 @@
 import {
 	type Agent,
+	type AgentDetail,
 	type ApplyOutcome,
 	type AssetDetail,
 	type AssetKind,
+	agentDefinitionInput,
 	type LibraryEntry,
 	libraryEditInput,
 	libraryTarget,
+	MODEL_PROVIDERS,
 	type Overview,
 	type Project,
 	type ProjectDetail,
+	type ProviderModel,
 	projectInput,
 	type Repository,
 	type RepositoryDetail,
@@ -88,6 +92,47 @@ export const getAgents = createServerFn({ method: "GET" })
 			return { agents, repositories };
 		},
 	);
+
+export const getAgent = createServerFn({ method: "GET" })
+	.validator(z.object({ slug: z.string().min(1), agentId: id }))
+	.handler(async ({ data }): Promise<AgentDetail | null> => {
+		const registry = await registryOf(data.slug);
+		return registry ? registry.getAgent(data.agentId) : null;
+	});
+
+/** Defines an agent run by Gateweave. */
+export const createAgent = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), agent: agentDefinitionInput }))
+	.handler(async ({ data }): Promise<Agent> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.createAgent(data.agent);
+	});
+
+export const updateAgent = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), agentId: id, agent: agentDefinitionInput }))
+	.handler(async ({ data }): Promise<Agent> => {
+		const registry = await managedRegistryOf(data.slug);
+		const agent = await registry.updateAgent(data.agentId, data.agent);
+		if (!agent) throw new Error("Agent not found");
+		return agent;
+	});
+
+export const removeAgent = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), agentId: id }))
+	.handler(async ({ data }): Promise<void> => {
+		const registry = await managedRegistryOf(data.slug);
+		await registry.removeAgent(data.agentId);
+	});
+
+/** The models the workspace's key for `provider` can use, to choose an agent's model from. */
+export const getModels = createServerFn({ method: "GET" })
+	.validator(z.object({ slug: z.string().min(1), provider: z.enum(MODEL_PROVIDERS) }))
+	.handler(async ({ data }): Promise<ProviderModel[]> => {
+		const registry = await managedRegistryOf(data.slug);
+		const models = await registry.listModels(data.provider);
+		if ("status" in models) throw new Error(models.message);
+		return models;
+	});
 
 export const getAsset = createServerFn({ method: "GET" })
 	.validator(

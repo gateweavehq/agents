@@ -176,12 +176,14 @@ export interface SetupEntry {
 }
 
 /** One pinned asset. `asset.version` is the latest, so a lower `version` has an update. */
-export interface SetupAsset {
+export interface PinnedAsset {
 	asset: Asset;
 	version: number;
-	/** True when it has left the library. The pinned version still exists and is still written. */
+	/** True when it has left the library. The pinned version still exists and is still used. */
 	removed: boolean;
 }
+
+export type SetupAsset = PinnedAsset;
 
 /** A setup with its assets and what it would write into a repository. */
 export interface SetupDetail {
@@ -309,4 +311,41 @@ export interface ProviderModel {
 export interface ProviderRefusal {
 	status: "refused";
 	message: string;
+}
+
+/** How an agent run by Gateweave works: the model it calls and what it always reads. */
+export interface AgentDefinition {
+	provider: ModelProvider;
+	/** The provider's id for the model. */
+	model: string;
+	/** Null when it has none. */
+	instructions: PinnedAsset | null;
+}
+
+/** An agent with where it is configured and what it reads. */
+export interface AgentDetail {
+	agent: Agent;
+	/** Null for an agent defined in the app. */
+	repository: { id: string; owner: string; name: string } | null;
+	/** The live assets it reads, for an agent found in a repository. */
+	assets: Asset[];
+	/** How it is set up, for an agent run by Gateweave. */
+	definition: AgentDefinition | null;
+	/** The files of its instructions at the pinned version. */
+	instructions: AssetFile[];
+}
+
+/**
+ * What the runtime reads at the start of a turn, in one read, so a turn never mixes two versions
+ * of an agent.
+ */
+export interface AgentSnapshot {
+	agentId: string;
+	name: string;
+	provider: ModelProvider;
+	model: string;
+	/** The text of its instructions, files in path order; null when it has none. */
+	instructions: string | null;
+	/** When the definition last changed. */
+	updatedAt: number;
 }

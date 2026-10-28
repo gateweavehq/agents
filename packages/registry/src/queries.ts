@@ -4,6 +4,8 @@
 import { type AssetToWrite, writeAssets } from "@gateweave/agents-adapters";
 import type {
 	Agent,
+	AgentDefinition,
+	AgentDetail,
 	Asset,
 	AssetDetail,
 	AssetFile,
@@ -34,6 +36,7 @@ import {
 import { alias } from "drizzle-orm/sqlite-core";
 import {
 	agentAssets,
+	agentDefinitions,
 	agents,
 	assets,
 	assetVersions,
@@ -230,6 +233,47 @@ export function getRepository(db: Db, id: string): RepositoryDetail | null {
 
 /** Every live agent, in any live repository or defined in the app. */
 export const listAgents = (db: Db): Agent[] => agentsWhere(db, liveIn(agents));
+
+/** A live agent with its repository, what it reads and, if Gateweave runs it, its definition. */
+export function getAgent(db: Db, id: string): AgentDetail | null {
+	const agent = agentsWhere(db, and(eq(agents.id, id), liveIn(agents)))[0];
+	if (!agent) return null;
+	const repository = agent.repositoryId
+		? (db
+				.select({ id: repositories.id, owner: repositories.owner, name: repositories.name })
+				.from(repositories)
+				.where(eq(repositories.id, agent.repositoryId))
+				.get() ?? null)
+		: null;
+	const read = db
+		.select({ asset: assets })
+		.from(agentAssets)
+		.innerJoin(assets, eq(agentAssets.assetId, assets.id))
+		.leftJoin(repositories, eq(assets.repositoryId, repositories.id))
+		.where(and(eq(agentAssets.agentId, id), liveIn(assets)))
+		.orderBy(asc(assets.key))
+		.all()
+		.map(({ asset }) => toAsset(asset));
+
+	const row = db.select().from(agentDefinitions).where(eq(agentDefinitions.agentId, id)).get();
+	if (!row) return { agent, repository, assets: read, definition: null, instructions: [] };
+	const { instructionsAssetId: assetId, instructionsVersion: version } = row;
+	const pinned =
+		assetId !== null && version !== null
+			? db.select().from(assets).where(eq(assets.id, assetId)).get()
+			: undefined;
+	const definition: AgentDefinition = {
+		provider: row.provider,
+		model: row.model,
+		instructions:
+			pinned && version !== null
+				? { asset: toAsset(pinned), version, removed: pinned.removedAt !== null }
+				: null,
+	};
+	const instructions =
+		pinned && version !== null ? (getAssetVersion(db, pinned.id, version)?.files ?? []) : [];
+	return { agent, repository, assets: read, definition, instructions };
+}
 
 /** Agents matching `where`, which may refer to their repository, with the assets they read. */
 function agentsWhere(db: Db, where: SQL | undefined): Agent[] {

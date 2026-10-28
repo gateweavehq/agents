@@ -14,8 +14,10 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > setups pin them for a set of coding agents, preview the files they write, apply them to a
 > repository by pull request and show where a repository has drifted from them since. Ready-made
 > setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click,
-> and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI. See
-> [docs/spec.md](docs/spec.md) for the plan.
+> and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI. Workspaces
+> keep their own model provider keys, and define agents that Gateweave will run with a model and
+> instructions from the library; running them comes next. See [docs/spec.md](docs/spec.md) for
+> the plan.
 
 ## Tech stack
 
