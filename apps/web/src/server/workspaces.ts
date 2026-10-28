@@ -70,6 +70,17 @@ export async function listWorkspaces(db: Database, userId: string): Promise<Work
 	return rows.map((row) => ({ ...row, role: toRole(row.role) }));
 }
 
+/** The names of the workspace's members, by user id. */
+export async function memberNames(db: Database, workspaceId: string): Promise<Map<string, string>> {
+	const rows = await db
+		.select({ userId: schema.member.userId, name: schema.user.name })
+		.from(schema.member)
+		.innerJoin(schema.user, eq(schema.member.userId, schema.user.id))
+		.where(eq(schema.member.organizationId, workspaceId))
+		.all();
+	return new Map(rows.map((row) => [row.userId, row.name]));
+}
+
 export interface InvitationPreview {
 	workspaceName: string;
 	workspaceSlug: string;

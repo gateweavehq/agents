@@ -1,9 +1,10 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { AgentSnapshot } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { generateText } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { conversationName } from "../src";
+import { type ConversationAgent, conversationName } from "../src";
 import { languageModel } from "../src/models";
 
 const KEY = "sk-ant-api03-secret-abcd";
@@ -96,7 +97,10 @@ function ask(socket: WebSocket, text: string, id = crypto.randomUUID()): Promise
 }
 
 /** Anthropic's streamed answer, as `POST /v1/messages` sends it. */
-function anthropicStream(text: string, { end = true } = {}): Response {
+function anthropicStream(
+	text: string,
+	{ end = true, headers = {} }: { end?: boolean; headers?: Record<string, string> } = {},
+): Response {
 	const events: [string, unknown][] = [
 		[
 			"message_start",
@@ -148,7 +152,7 @@ function anthropicStream(text: string, { end = true } = {}): Response {
 			if (end) controller.close();
 		},
 	});
-	return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+	return new Response(stream, { headers: { "content-type": "text/event-stream", ...headers } });
 }
 
 interface ModelRequest {
@@ -248,6 +252,97 @@ describe("a conversation", () => {
 		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
 		await vi.waitFor(() => expect(requests[0]?.signal?.aborted).toBe(true));
 		await turn;
+		socket.close();
+	});
+});
+
+describe("runs", () => {
+	it("record each turn with its tokens and cost, and keep the trace with the conversation", async () => {
+		const { registry, stub } = await conversation();
+		fakeModel(() => anthropicStream("Looks good.", { headers: { "cf-aig-log-id": "log-123" } }));
+		const socket = await connect(stub);
+		await ask(socket, "Review my change, please");
+		socket.close();
+
+		const [run] = await registry.listRuns();
+		// Sonnet 5.5 at $2 and $10 per million tokens: 10 tokens in, 5 out.
+		expect(run).toMatchObject({
+			status: "succeeded",
+			agentName: "Reviewer",
+			steps: 1,
+			inputTokens: 10,
+			outputTokens: 5,
+			cost: 10 * 2 + 5 * 10,
+		});
+		expect(run?.endedAt).toBeGreaterThanOrEqual(run?.startedAt ?? 0);
+
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace).toMatchObject([
+			{
+				kind: "model",
+				step: 0,
+				status: "ok",
+				model: "claude-sonnet-5-5",
+				inputTokens: 10,
+				outputTokens: 5,
+				cost: 70,
+				finishReason: "stop",
+				gatewayLogId: "log-123",
+				error: null,
+			},
+		]);
+		expect(await stub.runTrace("another-run")).toEqual([]);
+	});
+
+	it("record why a turn failed, in the app's words", async () => {
+		const { registry, stub } = await conversation();
+		fakeModel(() =>
+			Response.json(
+				{ type: "error", error: { type: "authentication_error", message: `bad key ${KEY}` } },
+				{ status: 401 },
+			),
+		);
+		const socket = await connect(stub);
+		await ask(socket, "Hello");
+		socket.close();
+
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({
+			status: "failed",
+			error: "Anthropic refused the workspace's key. An owner or admin can check it in Settings.",
+			inputTokens: 0,
+		});
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace).toMatchObject([{ status: "error" }]);
+		expect(JSON.stringify(trace)).not.toContain("abcd");
+	});
+
+	it("record a stopped turn as stopped", async () => {
+		const { registry, stub } = await conversation();
+		const requests = fakeModel(() => anthropicStream("Thinking", { end: false }));
+		const socket = await connect(stub);
+		const id = crypto.randomUUID();
+		const turn = ask(socket, "Take your time", id);
+		await vi.waitFor(() => expect(requests).toHaveLength(1));
+		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
+		await turn;
+		await vi.waitFor(async () => expect((await registry.listRuns())[0]?.status).toBe("stopped"));
+		socket.close();
+	});
+
+	it("close the runs a restart cut short as interrupted when the conversation wakes", async () => {
+		const { registry, stub } = await conversation();
+		fakeModel(() => anthropicStream("Thinking", { end: false }));
+		const socket = await connect(stub);
+		void ask(socket, "Take your time");
+		await vi.waitFor(async () => expect(await registry.listRuns()).toHaveLength(1));
+		const [run] = await registry.listRuns();
+		await vi.waitFor(async () => expect(await stub.runTrace(run?.id ?? "")).toHaveLength(1));
+
+		// What the next wake does after a restart, which the test cannot cause.
+		await runInDurableObject(stub, (instance: ConversationAgent) => instance.onStart());
+		expect((await registry.getRun(run?.id ?? ""))?.status).toBe("interrupted");
+		expect(await stub.runTrace(run?.id ?? "")).toMatchObject([{ status: "error" }]);
 		socket.close();
 	});
 });

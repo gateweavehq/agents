@@ -81,3 +81,10 @@ export const MODEL_PROVIDER_NAMES: Record<ModelProvider, string> = {
 
 /** The kinds of library asset an agent run by Gateweave can take its instructions from. */
 export const INSTRUCTION_KINDS = ["instructions", "prompt"] as const satisfies readonly AssetKind[];
+
+/**
+ * How a run ended, or that it is still going. A run is `interrupted` when its conversation's
+ * Durable Object restarted in the middle of it, so it never finished.
+ */
+export const RUN_STATUSES = ["running", "succeeded", "failed", "stopped", "interrupted"] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];

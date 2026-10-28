@@ -9,6 +9,7 @@ import {
 	MODEL_PROVIDERS,
 	REPOSITORY_PROVIDERS,
 	REPOSITORY_RUNTIMES,
+	RUN_STATUSES,
 } from "./vocabulary";
 
 /** A path inside a repository: relative, with forward slashes and no `.` or `..` segments. */
@@ -493,3 +494,32 @@ export const envSecretInput = z.object({
 		.pipe(z.string().min(1, "A value cannot be empty").max(MAX_ENV_VALUE_LENGTH)),
 });
 export type EnvSecretInput = z.input<typeof envSecretInput>;
+
+const tokenCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+/** How a run ended, as the runtime reports it to the registry. */
+export const runFinish = z.object({
+	status: z.enum(RUN_STATUSES).exclude(["running"]),
+	/** Why it failed, in the app's words; never a provider's message. */
+	error: z.string().max(500).nullable(),
+	/** Model requests it made. */
+	steps: z.number().int().min(0).max(10_000),
+	inputTokens: tokenCount,
+	outputTokens: tokenCount,
+	/** Input read from the provider's cache, counted in `inputTokens` too. */
+	cachedInputTokens: tokenCount,
+	/** Estimated cost in millionths of a dollar; null when a model it used has no prices. */
+	cost: tokenCount.nullable(),
+	endedAt: z.number().int().positive(),
+});
+export type RunFinish = z.input<typeof runFinish>;
+
+/** Most runs one page of the Runs list shows. */
+export const RUNS_PER_PAGE = 50;
+
+/** Where a page of runs starts: right after this run, in the list's order. */
+export const runCursor = z.object({
+	startedAt: z.number().int().positive(),
+	id: z.string().min(1).max(64),
+});
+export type RunCursor = z.infer<typeof runCursor>;

@@ -26,6 +26,10 @@ import type {
 	RepositoryDetail,
 	RepositoryInput,
 	ResolvedEnvironment,
+	Run,
+	RunCursor,
+	RunFinish,
+	RunUsage,
 	ScanResult,
 	Setup,
 	SetupDetail,
@@ -96,6 +100,12 @@ export interface RegistryStub {
 	resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null>;
 	startConversation(agentId: string, startedBy: string): Promise<Conversation | null>;
 	getConversation(conversationId: string, startedBy: string): Promise<Conversation | null>;
+	removeConversation(conversationId: string, startedBy: string): Promise<boolean>;
+	beginTurn(conversationId: string, text: string): Promise<{ runId: string } | ProviderRefusal>;
+	finishRun(runId: string, finish: RunFinish): Promise<boolean>;
+	listRuns(options?: { startedBy?: string; before?: RunCursor }): Promise<Run[]>;
+	getRun(runId: string): Promise<Run | null>;
+	runUsage(since: number): Promise<RunUsage>;
 }
 
 /** The address Agents sends from in tests. */

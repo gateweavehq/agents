@@ -1,5 +1,6 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
+	Activity,
 	ArrowLeftRight,
 	Bot,
 	Boxes,
@@ -133,6 +134,15 @@ function Sidebar() {
 				>
 					<MessagesSquare className="size-4" />
 					Chat
+				</Link>
+				<Link
+					to="/$workspace/runs"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<Activity className="size-4" />
+					Runs
 				</Link>
 				<Link
 					to="/$workspace/library"

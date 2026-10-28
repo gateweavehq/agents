@@ -29,6 +29,8 @@ import { Route as WorkspaceProjectsIndexRouteImport } from './routes/$workspace/
 import { Route as WorkspaceProjectsProjectIdRouteImport } from './routes/$workspace/projects.$projectId'
 import { Route as WorkspaceRepositoriesIndexRouteImport } from './routes/$workspace/repositories.index'
 import { Route as WorkspaceRepositoriesRepositoryIdRouteImport } from './routes/$workspace/repositories.$repositoryId'
+import { Route as WorkspaceRunsIndexRouteImport } from './routes/$workspace/runs.index'
+import { Route as WorkspaceRunsRunIdRouteImport } from './routes/$workspace/runs.$runId'
 import { Route as WorkspaceSettingsIndexRouteImport } from './routes/$workspace/settings.index'
 import { Route as WorkspaceSettingsGithubRouteImport } from './routes/$workspace/settings.github'
 import { Route as WorkspaceSettingsMembersRouteImport } from './routes/$workspace/settings.members'
@@ -145,6 +147,16 @@ const WorkspaceRepositoriesRepositoryIdRoute =
     path: '/repositories/$repositoryId',
     getParentRoute: () => WorkspaceRoute,
   } as any)
+const WorkspaceRunsIndexRoute = WorkspaceRunsIndexRouteImport.update({
+  id: '/runs/',
+  path: '/runs/',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceRunsRunIdRoute = WorkspaceRunsRunIdRouteImport.update({
+  id: '/runs/$runId',
+  path: '/runs/$runId',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
 const WorkspaceSettingsIndexRoute = WorkspaceSettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -219,6 +231,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/chat/$conversationId': typeof WorkspaceChatConversationIdRoute
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
+  '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
@@ -232,6 +245,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/chat/': typeof WorkspaceChatIndexRoute
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
+  '/$workspace/runs/': typeof WorkspaceRunsIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
 }
@@ -249,6 +263,7 @@ export interface FileRoutesByTo {
   '/$workspace/chat/$conversationId': typeof WorkspaceChatConversationIdRoute
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
+  '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
@@ -262,6 +277,7 @@ export interface FileRoutesByTo {
   '/$workspace/chat': typeof WorkspaceChatIndexRoute
   '/$workspace/projects': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories': typeof WorkspaceRepositoriesIndexRoute
+  '/$workspace/runs': typeof WorkspaceRunsIndexRoute
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups': typeof WorkspaceSetupsIndexRoute
 }
@@ -283,6 +299,7 @@ export interface FileRoutesById {
   '/$workspace/chat/$conversationId': typeof WorkspaceChatConversationIdRoute
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
+  '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
@@ -296,6 +313,7 @@ export interface FileRoutesById {
   '/$workspace/chat/': typeof WorkspaceChatIndexRoute
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
+  '/$workspace/runs/': typeof WorkspaceRunsIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
 }
@@ -318,6 +336,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat/$conversationId'
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
+    | '/$workspace/runs/$runId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
@@ -331,6 +350,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat/'
     | '/$workspace/projects/'
     | '/$workspace/repositories/'
+    | '/$workspace/runs/'
     | '/$workspace/settings/'
     | '/$workspace/setups/'
   fileRoutesByTo: FileRoutesByTo
@@ -348,6 +368,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat/$conversationId'
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
+    | '/$workspace/runs/$runId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
@@ -361,6 +382,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat'
     | '/$workspace/projects'
     | '/$workspace/repositories'
+    | '/$workspace/runs'
     | '/$workspace/settings'
     | '/$workspace/setups'
   id:
@@ -381,6 +403,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat/$conversationId'
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
+    | '/$workspace/runs/$runId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
@@ -394,6 +417,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat/'
     | '/$workspace/projects/'
     | '/$workspace/repositories/'
+    | '/$workspace/runs/'
     | '/$workspace/settings/'
     | '/$workspace/setups/'
   fileRoutesById: FileRoutesById
@@ -554,6 +578,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceRepositoriesRepositoryIdRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/$workspace/runs/': {
+      id: '/$workspace/runs/'
+      path: '/runs'
+      fullPath: '/$workspace/runs/'
+      preLoaderRoute: typeof WorkspaceRunsIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/runs/$runId': {
+      id: '/$workspace/runs/$runId'
+      path: '/runs/$runId'
+      fullPath: '/$workspace/runs/$runId'
+      preLoaderRoute: typeof WorkspaceRunsRunIdRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
     '/$workspace/settings/': {
       id: '/$workspace/settings/'
       path: '/'
@@ -675,10 +713,12 @@ interface WorkspaceRouteChildren {
   WorkspaceAssetsAssetIdRoute: typeof WorkspaceAssetsAssetIdRoute
   WorkspaceProjectsProjectIdRoute: typeof WorkspaceProjectsProjectIdRoute
   WorkspaceRepositoriesRepositoryIdRoute: typeof WorkspaceRepositoriesRepositoryIdRoute
+  WorkspaceRunsRunIdRoute: typeof WorkspaceRunsRunIdRoute
   WorkspaceSetupsSetupIdRoute: typeof WorkspaceSetupsSetupIdRoute
   WorkspaceAgentsIndexRoute: typeof WorkspaceAgentsIndexRoute
   WorkspaceProjectsIndexRoute: typeof WorkspaceProjectsIndexRoute
   WorkspaceRepositoriesIndexRoute: typeof WorkspaceRepositoriesIndexRoute
+  WorkspaceRunsIndexRoute: typeof WorkspaceRunsIndexRoute
   WorkspaceSetupsIndexRoute: typeof WorkspaceSetupsIndexRoute
 }
 
@@ -693,10 +733,12 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceProjectsProjectIdRoute: WorkspaceProjectsProjectIdRoute,
   WorkspaceRepositoriesRepositoryIdRoute:
     WorkspaceRepositoriesRepositoryIdRoute,
+  WorkspaceRunsRunIdRoute: WorkspaceRunsRunIdRoute,
   WorkspaceSetupsSetupIdRoute: WorkspaceSetupsSetupIdRoute,
   WorkspaceAgentsIndexRoute: WorkspaceAgentsIndexRoute,
   WorkspaceProjectsIndexRoute: WorkspaceProjectsIndexRoute,
   WorkspaceRepositoriesIndexRoute: WorkspaceRepositoriesIndexRoute,
+  WorkspaceRunsIndexRoute: WorkspaceRunsIndexRoute,
   WorkspaceSetupsIndexRoute: WorkspaceSetupsIndexRoute,
 }
 

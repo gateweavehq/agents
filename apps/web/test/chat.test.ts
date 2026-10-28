@@ -1,7 +1,7 @@
-import type { WebSocket } from "miniflare";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
+import { ask } from "./chat-socket";
 import { FakeModels } from "./fake-models";
 
 const origin = "https://agents.test";
@@ -48,43 +48,6 @@ async function page(path: string, cookie: string) {
 	expect(response.status).toBe(200);
 	// React separates adjacent text nodes with comments.
 	return (await response.text()).replaceAll("<!-- -->", "");
-}
-
-/** Sends a message the way the chat page does, and reads the reply until the turn ends. */
-function ask(socket: WebSocket, text: string): Promise<{ text: string; raw: string[] }> {
-	const id = crypto.randomUUID();
-	return new Promise((resolve, reject) => {
-		const turn = { text: "", raw: [] as string[] };
-		socket.addEventListener("message", (event) => {
-			const raw = String(event.data);
-			const frame = JSON.parse(raw) as { type: string; id?: string; body?: string; done?: boolean };
-			if (frame.type !== "cf_agent_use_chat_response" || frame.id !== id) return;
-			turn.raw.push(raw);
-			if (frame.body?.trim()) {
-				const chunk = JSON.parse(frame.body) as {
-					type: string;
-					delta?: string;
-					errorText?: string;
-				};
-				if (chunk.type === "text-delta") turn.text += chunk.delta ?? "";
-				if (chunk.type === "error") reject(new Error(chunk.errorText));
-			}
-			if (frame.done) resolve(turn);
-		});
-		socket.send(
-			JSON.stringify({
-				type: "cf_agent_use_chat_request",
-				id,
-				init: {
-					method: "POST",
-					body: JSON.stringify({
-						messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }] }],
-						trigger: "submit-message",
-					}),
-				},
-			}),
-		);
-	});
 }
 
 it("lets the member who started a conversation talk to the agent through the gateway", async () => {

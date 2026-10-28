@@ -22,7 +22,7 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 | `packages/adapters` | Turn a repository's files into a scan: one adapter per coding agent. Pure   |
 | `packages/registry` | `RegistryDO`: each workspace's projects, repositories, agents and assets    |
 | `packages/github`   | The GitHub App's client: JWT, installation tokens, OAuth, webhooks          |
-| `packages/runtime`  | `ConversationAgent`: each conversation with an agent run by Gateweave       |
+| `packages/runtime`  | `ConversationAgent`: each conversation with an agent, and its runs' traces  |
 | `packages/cli`      | `@gateweave/agents`: applies and checks a setup in a working tree           |
 | `docs/`             | The product spec, the architecture and setting up the GitHub App            |
 | `scripts/`          | Repository tooling (`doctor`)                                               |
@@ -66,7 +66,8 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    it (`registryFor`) only after that membership check. It still validates every input against
    the schemas in `packages/model`. Conversations (`ConversationAgent`) have no public route
    either: `apps/web/src/server/chat.ts` checks the session, the membership and that the
-   conversation is the caller's, then passes the request on without its cookies.
+   conversation is the caller's, then passes the request on without its cookies. The Runs
+   pages read a trace (`runTrace`) only for a run the caller may see.
 3. **Registry writes stay synchronous.** Each runs inside `ctx.storage.transactionSync` with
    Drizzle's sync API (`.get()`, `.all()`, `.run()`), so it applies whole or not at all. Never
    `await` in the middle of a write. A scan awaits GitHub first and writes after, in a
