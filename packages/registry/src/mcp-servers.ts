@@ -13,12 +13,15 @@ import {
 	type mcpServerEditInput,
 	type mcpServerInput,
 	mcpServerUrl,
+	type ResolvedEnvironment,
+	type TurnMcpServer,
 } from "@gateweave/agents-model";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
-import { assets, assetVersions, type FileEntry } from "./db/schema";
+import { agentMcpServers, assets, assetVersions, type FileEntry } from "./db/schema";
 import { assetHash } from "./hash";
 import { libraryKey } from "./library";
+import { getAssetVersion } from "./queries";
 import { MAX_KEPT_FILE_BYTES, storeFile } from "./scans";
 import type { Db } from "./state";
 
@@ -175,5 +178,52 @@ export function agentMcpServer(
 			name,
 			state: available.has(name) ? "set" : "missing",
 		})),
+	};
+}
+
+/** The servers an agent pins, by name, each as its pinned version says to reach it. */
+export function agentServers(
+	db: Db,
+	agentId: string,
+): { name: string; reading: { server: RemoteServer } | { problem: string } }[] {
+	return db
+		.select({ id: assets.id, name: assets.name, version: agentMcpServers.version })
+		.from(agentMcpServers)
+		.innerJoin(assets, eq(assets.id, agentMcpServers.assetId))
+		.where(eq(agentMcpServers.agentId, agentId))
+		.orderBy(asc(assets.name), asc(assets.id))
+		.all()
+		.map(({ id, name, version }) => ({
+			name,
+			reading: remoteServer(getAssetVersion(db, id, version)?.files ?? []),
+		}));
+}
+
+/**
+ * A server as one turn reaches it: each header's variable replaced with its value from the
+ * agent's environment set. A server whose variables are not all there is left out, with why.
+ */
+export function turnServer(
+	{ name, reading }: ReturnType<typeof agentServers>[number],
+	environment: ResolvedEnvironment | null,
+): TurnMcpServer {
+	if ("problem" in reading) return { name, problem: reading.problem };
+	const { transport, url } = reading.server;
+	const headers: Record<string, string> = {};
+	const missing: string[] = [];
+	for (const header of reading.server.headers) {
+		if (typeof header.value === "string") {
+			headers[header.name] = header.value;
+			continue;
+		}
+		const value = environment?.values[header.value.variable];
+		if (value === undefined) missing.push(header.value.variable);
+		else headers[header.name] = `${header.value.prefix}${value}`;
+	}
+	if (missing.length === 0) return { name, transport, url, headers };
+	const names = [...new Set(missing)].sort(compare);
+	return {
+		name,
+		problem: `${names.join(", ")} ${names.length === 1 ? "has" : "have"} no value in the agent's environment set`,
 	};
 }

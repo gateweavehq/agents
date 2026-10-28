@@ -101,6 +101,7 @@ describe("conversations", () => {
 				updatedAt: agent.updatedAt,
 			},
 			key: "sk-ant-api03-abcdefgh",
+			mcpServers: [],
 			runId: expect.any(String),
 		});
 

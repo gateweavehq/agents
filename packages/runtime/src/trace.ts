@@ -1,15 +1,19 @@
 /**
  * The trace of each run, kept in the conversation's own SQLite next to its messages: one span per
- * model request, with its timing, tokens, estimated cost and AI Gateway log id. The registry gets
- * the sum when the run ends (`RunFinish`); the trace stays here, private like the conversation,
- * and goes when the conversation is deleted.
+ * model request, with its timing, tokens, estimated cost and AI Gateway log id, one per call to a
+ * tool, and one per MCP server the turn connected to. The registry gets the sum when the run ends
+ * (`RunFinish`); the trace stays here, private like the conversation, and goes when the
+ * conversation is deleted.
  */
 import {
 	type AgentSnapshot,
+	type ConnectSpan,
+	type ModelSpan,
 	type RunFinish,
 	type RunSpan,
 	type RunStatus,
 	requestCost,
+	type ToolSpan,
 } from "@gateweave/agents-model";
 import type { StepResult, ToolSet } from "ai";
 
@@ -21,22 +25,16 @@ export type Sql = <T = Record<string, SqlValue>>(
 	...values: SqlValue[]
 ) => T[];
 
-/** What a model span records besides its timing, as JSON in `attributes`. */
-type ModelAttributes = Pick<
-	RunSpan,
-	| "model"
-	| "inputTokens"
-	| "outputTokens"
-	| "cachedInputTokens"
-	| "cost"
-	| "finishReason"
-	| "firstTokenMs"
-	| "gatewayLogId"
-	| "error"
->;
+type Base = "id" | "kind" | "step" | "status" | "startedAt" | "endedAt";
+
+/** What each kind of span records besides its timing, as JSON in `attributes`. */
+type ModelAttributes = Omit<ModelSpan, Base>;
+type ToolAttributes = Omit<ToolSpan, Base>;
+type ConnectAttributes = Omit<ConnectSpan, Base>;
 
 interface SpanRow {
 	id: string;
+	kind: RunSpan["kind"];
 	step: number;
 	status: RunSpan["status"];
 	started_at: number;
@@ -73,6 +71,8 @@ export class RunRecorder {
 	readonly #sql: Sql;
 	readonly #agent: AgentSnapshot;
 	readonly runId: string;
+	/** The model request under way, which the tools it calls belong to. */
+	#step = 0;
 	#finished = false;
 
 	constructor(sql: Sql, runId: string, agent: AgentSnapshot, now = Date.now()) {
@@ -83,6 +83,7 @@ export class RunRecorder {
 	}
 
 	stepStarted(step: number, now = Date.now()): void {
+		this.#step = step;
 		const attributes: ModelAttributes = {
 			model: this.#agent.model,
 			inputTokens: 0,
@@ -94,9 +95,7 @@ export class RunRecorder {
 			gatewayLogId: null,
 			error: null,
 		};
-		this.#sql`INSERT INTO trace_spans (id, run_id, kind, step, status, started_at, attributes)
-			VALUES (${crypto.randomUUID()}, ${this.runId}, 'model', ${step}, 'running', ${now},
-				${JSON.stringify(attributes)})`;
+		this.#insert("model", step, attributes, now);
 	}
 
 	stepEnded(result: StepResult<ToolSet>, now = Date.now()): void {
@@ -134,6 +133,39 @@ export class RunRecorder {
 		this.#endStep(step, "error", { error }, now);
 	}
 
+	/** Starts connecting to an MCP server. Returns the span's id. */
+	serverConnecting(server: string, now = Date.now()): string {
+		const attributes: ConnectAttributes = { server, tools: null, error: null };
+		return this.#insert("connect", 0, attributes, now);
+	}
+
+	serverConnected(span: string, tools: number, now = Date.now()): void {
+		this.#end(span, "ok", { tools }, now);
+	}
+
+	serverFailed(span: string, error: string, now = Date.now()): void {
+		this.#end(span, "error", { error }, now);
+	}
+
+	/** A server the turn goes on without, as `problem` says, before trying to connect. */
+	serverLeftOut(server: string, problem: string, now = Date.now()): void {
+		this.serverFailed(this.serverConnecting(server, now), problem, now);
+	}
+
+	/** Starts a call to a tool, in the model request under way. Returns the span's id. */
+	toolStarted(server: string, tool: string, inputBytes: number, now = Date.now()): string {
+		const attributes: ToolAttributes = { server, tool, inputBytes, outputBytes: null, error: null };
+		return this.#insert("tool", this.#step, attributes, now);
+	}
+
+	toolEnded(
+		span: string,
+		outcome: { outputBytes: number; error: string | null } | { error: string },
+		now = Date.now(),
+	): void {
+		this.#end(span, outcome.error === null ? "ok" : "error", outcome, now);
+	}
+
 	/**
 	 * Ends the run, once. Returns what the registry should record, or null when the run had ended
 	 * already, since a turn can report its end through more than one callback.
@@ -150,13 +182,28 @@ export class RunRecorder {
 		attributes: Partial<ModelAttributes>,
 		now: number,
 	): void {
-		const [span] = this.#sql<{ id: string; attributes: string }>`
-			SELECT id, attributes FROM trace_spans WHERE run_id = ${this.runId} AND step = ${step}`;
+		const [span] = this.#sql<{ id: string }>`
+			SELECT id FROM trace_spans WHERE run_id = ${this.runId} AND kind = 'model' AND step = ${step}`;
+		if (span) this.#end(span.id, status, attributes, now);
+	}
+
+	#insert(kind: RunSpan["kind"], step: number, attributes: object, now: number): string {
+		const id = crypto.randomUUID();
+		this.#sql`INSERT INTO trace_spans (id, run_id, kind, step, status, started_at, attributes)
+			VALUES (${id}, ${this.runId}, ${kind}, ${step}, 'running', ${now},
+				${JSON.stringify(attributes)})`;
+		return id;
+	}
+
+	/** Ends a span, merging `attributes` into what it recorded. */
+	#end(id: string, status: "ok" | "error", attributes: object, now: number): void {
+		const [span] = this.#sql<{ attributes: string }>`
+			SELECT attributes FROM trace_spans WHERE id = ${id}`;
 		if (!span) return;
-		const merged = { ...(JSON.parse(span.attributes) as ModelAttributes), ...attributes };
+		const merged = { ...(JSON.parse(span.attributes) as object), ...attributes };
 		this.#sql`UPDATE trace_spans
 			SET status = ${status}, ended_at = ${now}, attributes = ${JSON.stringify(merged)}
-			WHERE id = ${span.id}`;
+			WHERE id = ${id}`;
 	}
 }
 
@@ -171,8 +218,9 @@ function closeRun(
 	sql`UPDATE trace_spans SET status = 'error', ended_at = ${endedAt}
 		WHERE run_id = ${runId} AND status = 'running'`;
 	sql`UPDATE trace_runs SET status = ${status}, ended_at = ${endedAt} WHERE id = ${runId}`;
-	const spans = readTrace(sql, runId);
-	const sum = (pick: (span: RunSpan) => number) =>
+	// Only model requests use tokens and cost money.
+	const spans = readTrace(sql, runId).filter((span) => span.kind === "model");
+	const sum = (pick: (span: ModelSpan) => number) =>
 		spans.reduce((total, span) => total + pick(span), 0);
 	return {
 		status,
@@ -202,17 +250,25 @@ export function closeInterruptedRuns(sql: Sql): { runId: string; finish: Require
 	});
 }
 
-/** A run's spans in order, or none when this conversation has no such run. */
+/**
+ * A run's spans in order, or none when this conversation has no such run: by model request, and
+ * within one, connecting first, then the request, then the tools it called.
+ */
 export function readTrace(sql: Sql, runId: string): RunSpan[] {
 	return sql<SpanRow>`
-		SELECT id, step, status, started_at, ended_at, attributes FROM trace_spans
-		WHERE run_id = ${runId} ORDER BY step`.map((row) => ({
-		id: row.id,
-		kind: "model",
-		step: row.step,
-		status: row.status,
-		startedAt: row.started_at,
-		endedAt: row.ended_at,
-		...(JSON.parse(row.attributes) as ModelAttributes),
-	}));
+		SELECT id, kind, step, status, started_at, ended_at, attributes FROM trace_spans
+		WHERE run_id = ${runId}
+		ORDER BY step, CASE kind WHEN 'connect' THEN 0 WHEN 'model' THEN 1 ELSE 2 END, started_at`.map(
+		(row) =>
+			({
+				id: row.id,
+				kind: row.kind,
+				step: row.step,
+				status: row.status,
+				startedAt: row.started_at,
+				endedAt: row.ended_at,
+				// Written by this module only, in the shape of the span's kind.
+				...JSON.parse(row.attributes),
+			}) as RunSpan,
+	);
 }

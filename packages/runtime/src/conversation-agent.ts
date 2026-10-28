@@ -5,10 +5,12 @@ import {
 	convertToModelMessages,
 	createUIMessageStream,
 	createUIMessageStreamResponse,
+	stepCountIs,
 	streamText,
 	type UIMessage,
 } from "ai";
 import { describeFailure, failureForLogs, type GatewaySettings, languageModel } from "./models";
+import { connectTools } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
 interface RuntimeEnv extends GatewaySettings {
@@ -16,6 +18,9 @@ interface RuntimeEnv extends GatewaySettings {
 }
 
 const SEPARATOR = ":";
+
+/** The model requests one turn may make: the first, and one after each round of tool calls. */
+export const MAX_STEPS = 10;
 
 /** The name of a conversation's Durable Object: its workspace and its id. */
 export function conversationName(workspaceId: string, conversationId: string): string {
@@ -33,7 +38,8 @@ export function conversationName(workspaceId: string, conversationId: string): s
  * key lives only as long as the turn.
  *
  * Each turn that calls the model is a run. Its trace is kept here (`./trace.ts`) and its sum goes
- * to the registry when it ends.
+ * to the registry when it ends. The agent's MCP servers are connected for each turn and closed
+ * when it ends (`./tools.ts`).
  */
 export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	// The name holds the workspace's id, which the page has no use for.
@@ -65,11 +71,13 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		const { workspaceId, conversationId, registry } = this.#parties();
 		const turn = await registry.beginTurn(conversationId, lastUserText(this.messages));
 		if ("status" in turn) return failed(turn.message);
-		const { agent, key, runId } = turn;
+		const { agent, key, mcpServers, runId } = turn;
 		const run = new RunRecorder(this.#sql, runId, agent);
-		const end = (status: "succeeded" | "failed" | "stopped", error: string | null = null) => {
+		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
+		const end = async (status: "succeeded" | "failed" | "stopped", error: string | null = null) => {
+			await toolbox.close();
 			const finish = run.finish(status, error);
-			return finish ? this.#report(registry, runId, finish) : undefined;
+			if (finish) await this.#report(registry, runId, finish);
 		};
 
 		try {
@@ -80,7 +88,14 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 					conversation: conversationId,
 				}),
 				system: agent.instructions ?? undefined,
-				messages: await convertToModelMessages(this.messages),
+				// A turn stopped during a tool call leaves the call without a result, which providers
+				// refuse in a later turn.
+				messages: await convertToModelMessages(this.messages, {
+					tools: toolbox.tools,
+					ignoreIncompleteToolCalls: true,
+				}),
+				tools: toolbox.tools,
+				stopWhen: stepCountIs(MAX_STEPS),
 				abortSignal: options?.abortSignal,
 				onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
 				onStepEnd: (step) => run.stepEnded(step),

@@ -4,18 +4,20 @@
  * are, which agent they talk to, and when they last moved. Each belongs to the member who started
  * it, and nobody else can list or open it.
  */
-import type { AgentSnapshot, Conversation } from "@gateweave/agents-model";
+import type { AgentSnapshot, Conversation, TurnMcpServer } from "@gateweave/agents-model";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { agentDefinitions, agents, conversations } from "./db/schema";
 import type { Db } from "./state";
 
 /**
- * What a turn needs: the agent as it is now, the workspace's key for its provider, opened, and
- * the run the registry opened for it.
+ * What a turn needs: the agent as it is now, the workspace's key for its provider, opened, the
+ * agent's MCP servers with their headers' secrets, opened too, and the run the registry opened
+ * for it.
  */
 export interface ConversationTurn {
 	agent: AgentSnapshot;
 	key: string;
+	mcpServers: TurnMcpServer[];
 	runId: string;
 }
 

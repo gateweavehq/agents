@@ -474,18 +474,23 @@ export interface RunUsage {
 	unpriced: number;
 }
 
-/**
- * One model request of a run, as the trace shows it. Tool calls join the trace as spans of their
- * own when agents get tools.
- */
-export interface RunSpan {
+/** A span of a run's trace: a model request, a call to a tool, or connecting to an MCP server. */
+export type RunSpan = ModelSpan | ToolSpan | ConnectSpan;
+
+interface SpanBase {
 	id: string;
-	kind: "model";
-	/** The request's number in the run, from 0. */
+	/** The model request it belongs to, numbered from 0. Connecting comes before the first. */
 	step: number;
 	status: "running" | "ok" | "error";
 	startedAt: number;
 	endedAt: number | null;
+	/** Why it failed, in the app's words. */
+	error: string | null;
+}
+
+/** One model request of a run. */
+export interface ModelSpan extends SpanBase {
+	kind: "model";
 	/** The model that answered, as the provider named it. */
 	model: string;
 	inputTokens: number;
@@ -498,5 +503,32 @@ export interface RunSpan {
 	firstTokenMs: number | null;
 	/** AI Gateway's id for the request's log entry, when it went through one. */
 	gatewayLogId: string | null;
-	error: string | null;
 }
+
+/** A call to a tool of an MCP server. Its input and output are content: only their sizes stay. */
+export interface ToolSpan extends SpanBase {
+	kind: "tool";
+	/** The server's name in the library. */
+	server: string;
+	/** The tool's name on the server. */
+	tool: string;
+	inputBytes: number;
+	/** Null until it answers, and when it failed. */
+	outputBytes: number | null;
+}
+
+/** Connecting to one of the agent's MCP servers at the start of a turn. */
+export interface ConnectSpan extends SpanBase {
+	kind: "connect";
+	server: string;
+	/** How many tools it offers; null until it connects, and when it could not. */
+	tools: number | null;
+}
+
+/**
+ * One of an agent's MCP servers as a turn reaches it, with its headers' values filled in from the
+ * agent's environment set, or why the turn goes on without it. It lives as long as the turn.
+ */
+export type TurnMcpServer =
+	| { name: string; transport: "http" | "sse"; url: string; headers: Record<string, string> }
+	| { name: string; problem: string };

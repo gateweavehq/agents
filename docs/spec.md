@@ -208,10 +208,15 @@ runtime is designed alongside it, so the data model fits both.
   shape, so the same asset is a setup's MCP server for coding agents and an agent's tools in
   Gateweave, versioned and pinned like the rest. Its headers only name variables of the agent's
   environment set: the file holds no secret, so it can be shown, diffed and written into
-  repositories, and a token is stored once, sealed. The runtime will open a client per turn with
-  `@ai-sdk/mcp` rather than the Agents SDK's `addMcpServer`, which saves a connection's options,
-  headers included, in the Durable Object's SQLite; opened secrets stay in memory for the turn.
-  Only remote servers for now: a local command needs a sandbox to run in.
+  repositories, and a token is stored once, sealed. Only remote servers for now: a local command
+  needs a sandbox to run in.
+- **A client per turn** (AGT-31, 2026-10-28). The runtime connects to an agent's MCP servers with
+  `@ai-sdk/mcp` for each turn and closes them when it ends, rather than through the Agents SDK's
+  `addMcpServer`, which saves a connection's options, headers included, in the Durable Object's
+  SQLite and keeps it open: opened secrets stay in memory for the turn, and an edit to a server
+  or a secret applies from the next message. Connecting costs a round trip or two per turn. A
+  tool call's span keeps the sizes of its input and output, not the content, for the same reason
+  a trace keeps no message text.
 - **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
   asset when its hash equals one of the library asset's versions; no link is stored. There is
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the
