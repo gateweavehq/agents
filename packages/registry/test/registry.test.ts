@@ -637,6 +637,15 @@ describe("library, written in the app", () => {
 			text: "hello\n",
 		});
 		expect((await stub.getAsset(rules))?.version.files.map((f) => f.path)).toEqual(["AGENTS.md"]);
+		// Named after an agent's own file, it is that file, so the repository's CLAUDE.md is a use.
+		const claudeMd = await stub.createLibraryAsset({
+			kind: "instructions",
+			name: "CLAUDE.md",
+			text: "hello\n",
+		});
+		const claudeDetail = await stub.getAsset(claudeMd);
+		expect(claudeDetail?.version.files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
+		expect(claudeDetail?.uses).toHaveLength(1);
 		const prompt = await stub.createLibraryAsset({
 			kind: "prompt",
 			name: "Fix It",

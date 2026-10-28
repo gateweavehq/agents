@@ -15,6 +15,9 @@ import type { Db } from "./state";
 /** A change the library refuses, with a message fit to show the person who asked. */
 export class LibraryError extends Error {}
 
+/** The files each coding agent reads its instructions from, which the writers place by name. */
+const INSTRUCTION_FILES = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md"]);
+
 /** The key of a library asset: unique among live library assets of every kind. */
 const libraryKey = (kind: string, name: string) => `${kind}:${name}`;
 
@@ -132,11 +135,16 @@ export function removeFromLibrary(db: Db, id: string, now: number): boolean {
 /**
  * The file a written asset keeps its text in. It is the name a scan gives the same file, so a
  * repository carrying this text has the same asset hash and shows up under "Used in": scanned
- * instructions are `AGENTS.md` (or `CLAUDE.md`, ...) and a skill is `SKILL.md`. A prompt's file is
- * named after the prompt, as a command file is, in a form that is a safe single path segment.
+ * instructions keep their file's name, so instructions named after an agent's own file (as
+ * `CLAUDE.md` or `packages/api/GEMINI.md`) are that file and the rest are `AGENTS.md`, and a
+ * skill is `SKILL.md`. A prompt's file is named after the prompt, as a command file is, in a form
+ * that is a safe single path segment.
  */
 function writtenFileName(kind: "instructions" | "prompt" | "skill", name: string): string {
-	if (kind === "instructions") return "AGENTS.md";
+	if (kind === "instructions") {
+		const file = name.split("/").at(-1) ?? "";
+		return INSTRUCTION_FILES.has(file) ? file : "AGENTS.md";
+	}
 	if (kind === "skill") return "SKILL.md";
 	const slug = name
 		.toLowerCase()
