@@ -11,13 +11,19 @@ import {
 	type LibraryTarget,
 	libraryEditInput,
 	libraryTarget,
+	MODEL_PROVIDER_NAMES,
+	MODEL_PROVIDERS,
 	type Overview,
 	type Project,
 	type ProjectDetail,
 	type ProjectInput,
 	type ProjectPatch,
+	type ProviderKey,
+	type ProviderKeyInput,
+	type ProviderRefusal,
 	projectInput,
 	projectPatch,
+	providerKeyInput,
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
@@ -52,6 +58,15 @@ import * as schema from "./db/schema";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
+	keyPlace,
+	listProviderKeys,
+	listProviderModels,
+	recordProviderCheck,
+	removeProviderKey,
+	saveProviderKey,
+	sealedKeyOf,
+} from "./providers";
+import {
 	getAsset,
 	getAssetVersion,
 	getProject,
@@ -74,12 +89,14 @@ import {
 	type ScanOutcome,
 	syncRepositories,
 } from "./scans";
+import { type Sealer, type SecretsEnv, sealerFor } from "./secrets";
 import { createSetup, deleteSetup, importSetup, setSetupAssets, updateSetup } from "./setups";
 import { type SourceEnv, sourceFor, writerFor } from "./sources";
 import { type Db, toApplication } from "./state";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
+const modelProvider = z.enum(MODEL_PROVIDERS);
 
 /**
  * Scans per alarm. Each takes a few requests to GitHub; three stay well inside the 50
@@ -100,6 +117,8 @@ export class RegistryDO extends DurableObject {
 	readonly #db: Db;
 	/** Setups being applied, by repository and setup, so one is not applied twice at once. */
 	readonly #applying = new Set<string>();
+	/** Seals this workspace's secrets, made on first use. */
+	#sealer: Promise<Sealer | { unavailable: string }> | undefined;
 
 	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
 		super(ctx, env);
@@ -275,6 +294,56 @@ export class RegistryDO extends DurableObject {
 		}
 	}
 
+	// Model provider keys, which owners and admins manage. Keys go in and never come out: the
+	// pages see a hint, and only the runtime opens them.
+
+	listProviderKeys(): ProviderKey[] {
+		return listProviderKeys(this.#db);
+	}
+
+	/** Saves a key, sealed, in place of the provider's earlier one. */
+	async saveProviderKey(
+		input: ProviderKeyInput,
+		addedBy: string,
+	): Promise<ProviderKey | ProviderRefusal> {
+		const { provider, key } = providerKeyInput.parse(input);
+		const by = z.string().trim().min(1).max(200).parse(addedBy);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
+		const sealed = await sealer.seal(keyPlace(provider), key);
+		const saved = { provider, sealed, hint: key.slice(-4), addedBy: by };
+		return this.#write(() => saveProviderKey(this.#db, saved, Date.now()));
+	}
+
+	removeProviderKey(provider: string): boolean {
+		const which = modelProvider.parse(provider);
+		return this.#write(() => removeProviderKey(this.#db, which));
+	}
+
+	/** Tries the provider's key by listing its models, and records how that went. */
+	async checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal> {
+		const which = modelProvider.parse(provider);
+		const sealed = sealedKeyOf(this.#db, which);
+		const name = MODEL_PROVIDER_NAMES[which];
+		if (sealed === null) return { status: "refused", message: `There is no key for ${name}` };
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
+		let key: string;
+		try {
+			key = await sealer.open(keyPlace(which), sealed);
+		} catch {
+			return {
+				status: "refused",
+				message: `The key for ${name} cannot be opened on this server; add it again`,
+			};
+		}
+		const result = await listProviderModels(which, key);
+		const checked = this.#write(() =>
+			recordProviderCheck(this.#db, which, sealed, result, Date.now()),
+		);
+		return checked ?? { status: "refused", message: `There is no key for ${name}` };
+	}
+
 	// Repositories and scans, which the GitHub connection reports.
 
 	syncRepositories(inputs: RepositoryInput[]): string[] {
@@ -434,6 +503,11 @@ export class RegistryDO extends DurableObject {
 	async #scheduleScans(): Promise<void> {
 		const next = nextScanAt(this.#db);
 		if (next !== null) await this.ctx.storage.setAlarm(Math.max(next, Date.now()));
+	}
+
+	#sealerOf(): Promise<Sealer | { unavailable: string }> {
+		this.#sealer ??= sealerFor(this.env as SecretsEnv, this.ctx.id.toString());
+		return this.#sealer;
 	}
 
 	// Every write is one synchronous transaction: it applies whole or not at all, and nothing

@@ -19,6 +19,10 @@ BETTER_AUTH_SECRET=
 # GITHUB_APP_PRIVATE_KEY=
 # GITHUB_APP_WEBHOOK_SECRET=
 
+# Optional: lets workspaces save model provider keys, which it encrypts. `pnpm dev:setup` fills
+# in a random one. Never change it once keys are saved: they cannot be opened without it.
+# SECRETS_KEY=
+
 # Optional: pins the app's URL. Leave it out to accept any host, for example from your phone.
 # BETTER_AUTH_URL=
 

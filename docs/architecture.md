@@ -234,6 +234,27 @@ needs no GitHub request.
 - **Applying again** from either page opens a pull request, or updates the open one, through the
   same dialog as **Apply**.
 
+## Model providers
+
+A workspace brings its own keys for the model providers its agents use (Anthropic, OpenAI and
+Google), so usage is billed to the workspace's accounts. An owner or admin adds them on the
+Models settings page.
+
+- **Sealed in the registry.** A key is encrypted with AES-256-GCM before it is stored, under a
+  key derived with HKDF from the server's `SECRETS_KEY` secret and the workspace's Durable Object
+  id, with the key's place as additional data (`packages/registry/src/secrets.ts`). A key sealed
+  in one workspace does not open in another, and a sealed value copied to another row does not
+  open there either. Without `SECRETS_KEY` the page says so and keys cannot be added.
+- **Only the registry opens one**, when a request needs it. Server functions get the provider,
+  the last four characters, who added it and when, and the last check, never the key.
+- **Checking a key** lists the provider's models with it (`listProviderModels` in
+  `packages/registry/src/providers.ts`) and records whether that worked, how many models there
+  are, or the provider's refusal in a sentence. A check that finishes after the key was replaced
+  is dropped.
+- **Losing `SECRETS_KEY` loses the keys.** A check then says the key cannot be opened, and it
+  has to be added again.
+  Sealed values carry a version, so a rotation scheme can be added beside this one.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -282,12 +303,15 @@ workspace.
 
 Pages refresh themselves while a scan of what they show is waiting or running.
 
+**Settings** has the workspace's members and invitations, its GitHub connection and its model
+provider keys.
+
 ## What comes next
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The runtime** (phase 3 in `docs/spec.md`): agents and teams in the Gateweave runtime, AI
-  Gateway, the MCP and environment pages, Chat and Runs.
+- **The runtime** (phase 3 in `docs/spec.md`): agents defined in Gateweave, Chat and Runs
+  through AI Gateway with the workspace's keys, environment sets, MCP servers and teams.
 
 ## Deploys
 

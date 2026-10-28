@@ -6,6 +6,7 @@ import type {
 	AssetKind,
 	DriftFileState,
 	DriftState,
+	ModelProvider,
 	RepositoryProvider,
 	RepositoryRuntime,
 } from "./vocabulary";
@@ -266,4 +267,46 @@ export interface Overview {
 	repositories: number;
 	agents: number;
 	assets: number;
+}
+
+/**
+ * A model provider's key as the app shows it. The key itself never leaves the registry: `hint`
+ * is its last four characters, enough to tell two keys apart.
+ */
+export interface ProviderKey {
+	provider: ModelProvider;
+	hint: string;
+	/** Who added it, by name, as the app knew them then. Replacing a key adds a new one. */
+	addedBy: string;
+	addedAt: number;
+	/** The last time the key was tried against the provider, if it was. */
+	check: ProviderCheck | null;
+}
+
+/** Trying a key: listing the provider's models, which proves the key works and costs nothing. */
+export interface ProviderCheck {
+	ok: boolean;
+	/** Why it failed, in the app's words; never the provider's, which can echo part of the key. */
+	message: string | null;
+	/** How many models the key can use, when it worked. */
+	models: number | null;
+	checkedAt: number;
+}
+
+/** A model a provider offers to a key. */
+export interface ProviderModel {
+	/** What the provider's API calls it, such as `claude-opus-5-5`. */
+	id: string;
+	/** What people call it, such as "Claude Opus 5.5". */
+	name: string;
+}
+
+/**
+ * Why a key was not saved or tried, fit to show the person who asked: the server has no
+ * `SECRETS_KEY`, or the workspace has no key for that provider. Returned rather than thrown, as
+ * `ApplyRefusal` is.
+ */
+export interface ProviderRefusal {
+	status: "refused";
+	message: string;
 }

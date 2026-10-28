@@ -10,6 +10,7 @@ import {
 	APPLICATION_STATES,
 	ASSET_KINDS,
 	type Metadata,
+	MODEL_PROVIDERS,
 	REPOSITORY_PROVIDERS,
 	type RepositoryRuntime,
 	type ScanProblem,
@@ -279,6 +280,23 @@ export const scanRequests = sqliteTable(
 	(table) => [index("scan_requests_not_before_idx").on(table.notBefore)],
 );
 
+/**
+ * The workspace's key for each model provider, encrypted (see `secrets.ts`). Only the runtime and
+ * the key check ever decrypt it; the app sees `hint`.
+ */
+export const providerKeys = sqliteTable("provider_keys", {
+	provider: text("provider", { enum: MODEL_PROVIDERS }).primaryKey(),
+	sealed: text("sealed").notNull(),
+	hint: text("hint").notNull(),
+	addedBy: text("added_by").notNull(),
+	addedAt: integer("added_at").notNull(),
+	/** The last check: when, whether it worked, why not, and how many models it listed. */
+	checkedAt: integer("checked_at"),
+	checkOk: integer("check_ok", { mode: "boolean" }),
+	checkMessage: text("check_message"),
+	checkModels: integer("check_models"),
+});
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
@@ -287,3 +305,4 @@ export type AssetRow = typeof assets.$inferSelect;
 export type ScanRequestRow = typeof scanRequests.$inferSelect;
 export type SetupRow = typeof setups.$inferSelect;
 export type SetupApplicationRow = typeof setupApplications.$inferSelect;
+export type ProviderKeyRow = typeof providerKeys.$inferSelect;

@@ -79,8 +79,10 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    the setup URL with any id. Link an installation to a workspace only after a user token shows
    the person can reach it, as `apps/web/src/server/github/flow.ts` does, and act on webhooks
    only after their signature checks out.
-8. **Secrets stay local.** Never commit `.dev.vars` or print its contents. Secrets the app will
-   hold for users (model keys, MCP credentials) are stored by reference, never in prompts or logs.
+8. **Secrets stay local.** Never commit `.dev.vars` or print its contents. Secrets the app holds
+   for workspaces (model keys, later MCP credentials) are sealed with `packages/registry/src/secrets.ts`
+   before they are stored, opened only in the registry when a request needs them, and never sent
+   to the browser or written to prompts or logs. Members see a key's last four characters.
 
 ## Code shared with Track
 

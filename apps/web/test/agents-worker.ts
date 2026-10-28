@@ -10,6 +10,9 @@ import type {
 	Overview,
 	Project,
 	ProjectInput,
+	ProviderKey,
+	ProviderKeyInput,
+	ProviderRefusal,
 	Repository,
 	RepositoryDetail,
 	RepositoryInput,
@@ -22,6 +25,7 @@ import type {
 } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
 import type { FakeGitHub } from "./fake-github";
+import { type FakeModels, MODEL_HOSTS } from "./fake-models";
 
 const app = resolve(import.meta.dirname, "..");
 const serverDir = join(app, "dist/server");
@@ -72,6 +76,8 @@ export interface RegistryStub {
 		repositoryId: string,
 		setupUrl?: string,
 	): Promise<ApplyOutcome | ApplyRefusal>;
+	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
+	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
 }
 
 /** The address Agents sends from in tests. */
@@ -116,17 +122,24 @@ function builtModules(): V4ModuleDefinition[] {
  * nothing in memory, as isolates in production do. `fetchIn` reaches a given one.
  *
  * With `github`, the Worker is set up as that GitHub App, and its requests to github.com and
- * api.github.com reach the fake instead of failing.
+ * api.github.com reach the fake instead of failing. With `models`, its requests to the model
+ * providers' APIs reach that fake. It has a `SECRETS_KEY` unless `secrets` is false.
  */
 export async function startAgents(
 	origin: string,
-	{ isolates = 1, github }: { isolates?: number; github?: FakeGitHub } = {},
+	{
+		isolates = 1,
+		github,
+		models,
+		secrets = true,
+	}: { isolates?: number; github?: FakeGitHub; models?: FakeModels; secrets?: boolean } = {},
 ) {
 	const config = JSON.parse(readFileSync(join(serverDir, "wrangler.json"), "utf8")) as BuiltConfig;
 	const outbound: string[] = [];
 	const logs: WorkerLog[] = [];
 	const modules = builtModules();
 	const secret = randomBytes(32).toString("base64url");
+	const secretsKey = randomBytes(32).toString("base64");
 	const names = Array.from({ length: isolates }, (_, i) =>
 		i === 0 ? "agents" : `agents-${i + 1}`,
 	);
@@ -151,6 +164,7 @@ export async function startAgents(
 						BETTER_AUTH_SECRET: secret,
 						BETTER_AUTH_URL: origin,
 						EMAIL_FROM: `${EMAIL_FROM.name} <${EMAIL_FROM.email}>`,
+						...(secrets ? { SECRETS_KEY: secretsKey } : {}),
 						...github?.bindings(),
 					},
 					serviceBindings: { EMAIL: "outbox" },
@@ -166,6 +180,7 @@ export async function startAgents(
 						if (github && (host === "github.com" || host === "api.github.com")) {
 							return github.handle(request);
 						}
+						if (models && host in MODEL_HOSTS) return models.handle(request);
 						return new Response("Outbound requests are blocked in this test", { status: 502 });
 					},
 				})),
