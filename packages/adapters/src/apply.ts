@@ -155,17 +155,19 @@ function mergeJson(file: WrittenFile, text: string): Outcome {
 
 	const known = current ?? {};
 	if (
-		Object.entries(setup).every(([name, server]) => name in known && deepEqual(known[name], server))
+		Object.entries(setup).every(
+			([name, server]) => Object.hasOwn(known, name) && deepEqual(known[name], server),
+		)
 	) {
 		return UNCHANGED;
 	}
 
 	const servers: [string, unknown][] = Object.entries(known).map(([name, server]) => [
 		name,
-		name in setup && !deepEqual(server, setup[name]) ? setup[name] : server,
+		Object.hasOwn(setup, name) && !deepEqual(server, setup[name]) ? setup[name] : server,
 	]);
 	for (const [name, server] of Object.entries(setup))
-		if (!(name in known)) servers.push([name, server]);
+		if (!Object.hasOwn(known, name)) servers.push([name, server]);
 	const merged: [string, unknown][] = Object.entries(existing).map(([key, value]) =>
 		key === "mcpServers" ? [key, Object.fromEntries(servers)] : [key, value],
 	);
@@ -207,7 +209,9 @@ function mergeToml(file: WrittenFile, text: string): Outcome {
 
 	const known = current ?? {};
 	if (
-		Object.entries(setup).every(([name, server]) => name in known && deepEqual(known[name], server))
+		Object.entries(setup).every(
+			([name, server]) => Object.hasOwn(known, name) && deepEqual(known[name], server),
+		)
 	) {
 		return UNCHANGED;
 	}

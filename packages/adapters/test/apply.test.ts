@@ -139,6 +139,21 @@ describe("merged JSON", () => {
 		expect(merged.mcpServers.acme).toEqual({ command: "npx", args: ["a"] });
 	});
 
+	it("adds servers named like the properties every object has", () => {
+		const setup = `${JSON.stringify({ mcpServers: { constructor: { command: "c" }, toString: { command: "t" } } })}\n`;
+		const result = plan({ ".mcp.json": setup }, { ".mcp.json": '{"mcpServers":{}}' });
+		expect(JSON.parse(change(result, ".mcp.json")).mcpServers).toEqual({
+			constructor: { command: "c" },
+			toString: { command: "t" },
+		});
+		const toml = stringifyToml({ mcp_servers: { constructor: { command: "c" } } });
+		const merged = plan(
+			{ ".codex/config.toml": toml },
+			{ ".codex/config.toml": "[mcp_servers]\n" },
+		);
+		expect(change(merged, ".codex/config.toml")).toContain("[mcp_servers.constructor]");
+	});
+
 	it("appends mcpServers last when it is missing", () => {
 		const result = plan({ ".mcp.json": SETUP_JSON }, { ".mcp.json": '{"a":1,"b":2}' });
 		expect(Object.keys(JSON.parse(change(result, ".mcp.json")))).toEqual(["a", "b", "mcpServers"]);
