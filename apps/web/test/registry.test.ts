@@ -106,6 +106,7 @@ const CLAUDE_ONLY: ScanResult = {
 		},
 	],
 	problems: [],
+	files: [],
 };
 
 it("shows members each project with its repositories and their agents", async () => {

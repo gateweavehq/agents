@@ -53,3 +53,15 @@ export type RepositoryProvider = (typeof REPOSITORY_PROVIDERS)[number];
 /** Where the pull request that applies a setup stands. */
 export const APPLICATION_STATES = ["open", "merged", "closed"] as const;
 export type ApplicationState = (typeof APPLICATION_STATES)[number];
+
+/**
+ * How a repository compares with a setup applied to it, most urgent first: files the setup owns
+ * were deleted there, or edited there; the setup now writes something else; the pull request was
+ * merged after the last scan, so no scan has read it yet; or nothing differs.
+ */
+export const DRIFT_STATES = ["missing", "changed", "behind", "unscanned", "in_sync"] as const;
+export type DriftState = (typeof DRIFT_STATES)[number];
+
+/** Why one file differs from what its setup writes. */
+export const DRIFT_FILE_STATES = ["missing", "changed", "behind"] as const;
+export type DriftFileState = (typeof DRIFT_FILE_STATES)[number];

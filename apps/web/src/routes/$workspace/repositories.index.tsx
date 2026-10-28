@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Lock } from "lucide-react";
+import { DriftBadge } from "#/components/registry/drift";
 import { RuntimeBadge, ScanStatus } from "#/components/registry/labels";
 import { useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
@@ -56,6 +57,7 @@ function RepositoriesPage() {
 								{repository.runtimes.map((runtime) => (
 									<RuntimeBadge key={runtime} runtime={runtime} />
 								))}
+								{repository.drift && <DriftBadge state={repository.drift} />}
 							</span>
 							<span className="w-32 text-right">
 								<ScanStatus repository={repository} />

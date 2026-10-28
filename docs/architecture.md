@@ -131,6 +131,11 @@ Each workspace's `RegistryDO` scans its own repositories. Requests wait in its S
   push changed. A wanted symlink, such as `CLAUDE.md` pointing to `AGENTS.md`, is read as its
   target. A head the last successful scan already read is not scanned again, unless a member
   asks with "Scan now", which forces a read for after the adapters learn something new.
+- **What a scan records.** Besides agents and assets, every file it read: path, blob id, size and
+  whether it is a symlink (`repository_files`), with the text of each new one kept by blob id.
+  Every file a setup writes is one the adapters want (a test in `packages/adapters` holds the
+  writers to it), so drift needs nothing else. Only files that changed since the last scan are
+  written.
 - **Writes stay synchronous.** A scan awaits GitHub outside any transaction, then validates the
   result like any other scan and applies it in one. A failure is recorded on the repository and
   tried again after a minute, ten minutes and an hour; what earlier scans found stays.
@@ -193,6 +198,31 @@ and admins apply them, and [github-app.md](github-app.md#applying-a-setup) has t
 - **Refusals are answers.** `applySetup` returns `{ status: "refused", message }` instead of
   throwing: an error loses its class on its way out of the Durable Object, and the message is meant
   for the person who asked. One setup is applied to one repository at a time per instance.
+- **A merge queues a forced scan** of the repository, whether a webhook or applying again
+  reported it. It is forced because the push's own scan may have read the merge before the merge
+  was recorded, and an unforced scan skips a head it has read.
+
+## Drift
+
+Drift is how a repository compares with a setup merged into it (`packages/registry/src/drift.ts`).
+It is computed when a page asks, from what the registry already holds, so it cannot go stale and
+needs no GitHub request.
+
+- **The baseline** is the newest merged pull request that applied the setup there, with the files
+  it left the setup owning, by blob id. A later pull request that is still open is shown beside
+  it, and one closed without merging changes nothing.
+- **The comparison** plans the setup's current files against the files the last scan recorded,
+  with `planApply`, exactly as applying it again would. Each file that plan would change is
+  **behind** when the repository still holds what the merge left (or the setup did not own the
+  file then), **changed** when it holds something else, and **missing** when the file is gone. A
+  file the setup owned that applying would now leave alone, such as one replaced by a symlink,
+  is changed too. In a shared configuration file only the setup's own servers count, so a server
+  someone else added there is not drift.
+- **The state** of a setup in a repository is its most urgent file's: missing, changed, behind,
+  then in sync. Until a scan has read the merge it is **unscanned**, rather than every file
+  looking missing. A repository's state in the lists is the most urgent of its setups'.
+- **Applying again** from either page opens a pull request, or updates the open one, through the
+  same dialog as **Apply**. The CLI (AGT-17) will run the same comparison against a checkout.
 
 ## Pages
 
@@ -201,18 +231,19 @@ each of which checks membership first, so a non-member gets the same "not found"
 workspace.
 
 - **Overview** counts what the registry holds and shows a matrix of repositories by the coding
-  agents each one configures.
+  agents each one configures, with each repository's drift.
 - **Projects** group repositories, and a project's page shows the same matrix for its
   repositories and the agents in them. Owners and admins create, edit and delete projects and
   choose their repositories; everyone else in the workspace sees them.
-- **Repositories** lists them with their scan status; a repository's page shows its agents, the
-  assets they read grouped by kind, and the problems the last scan found.
+- **Repositories** lists them with their scan status and drift; a repository's page shows its
+  agents, the assets they read grouped by kind, the problems the last scan found, the setups
+  merged into it with their drift, and the pull requests that applied them.
 - **Agents** lists every agent and subagent by runtime.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind.
 - **Setups** lists them with how many assets each pins and how many have updates; a setup's page
   shows its pins, moves one to the latest version, previews the files it writes, applies it to a
-  repository, and lists its pull requests. A repository's page lists the setups applied to it.
+  repository, shows the drift of each repository it was merged into, and lists its pull requests.
 - **An asset's page** shows the text of each of its files and every earlier version. For a
   repository asset it also shows the agents that read it, the library assets it matches, and how
   many other assets have the same content; for a library asset, the repository assets that use it.
@@ -225,8 +256,9 @@ Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
-- **Drift** (phase 2 in `docs/spec.md`): after a setup is applied, compare the files it owns
-  with each scan and show where a repository is behind or changed, in the app and in the CLI.
+- **Ready-made setups and the CLI** (phase 2 in `docs/spec.md`): curated setups that ship as
+  plain files in this repository, and `@gateweave/agents` with `apply` and a `check` that fails CI
+  on drift, using the same writers and comparison as the app.
 
 ## Deploys
 

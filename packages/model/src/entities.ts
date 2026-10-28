@@ -4,6 +4,8 @@ import type {
 	AgentRuntime,
 	ApplicationState,
 	AssetKind,
+	DriftFileState,
+	DriftState,
 	RepositoryProvider,
 	RepositoryRuntime,
 } from "./vocabulary";
@@ -37,6 +39,8 @@ export interface Repository {
 	scanError: string | null;
 	/** True while a scan is waiting or running. */
 	scanPending: boolean;
+	/** The most urgent drift among the setups applied to it; null when none was merged there. */
+	drift: DriftState | null;
 	problems: ScanProblem[];
 	createdAt: number;
 	updatedAt: number;
@@ -104,6 +108,8 @@ export interface RepositoryDetail {
 	assets: Asset[];
 	/** The setups applied to it, newest first. */
 	applications: { application: SetupApplication; setup: { id: string; name: string } }[];
+	/** Each setup merged into it at least once, by name, and how the repository compares. */
+	applied: { setup: { id: string; name: string }; drift: SetupDrift }[];
 }
 
 /** A project with its repositories and the agents configured in them. */
@@ -189,6 +195,8 @@ export interface SetupDetail {
 		application: SetupApplication;
 		repository: { id: string; owner: string; name: string };
 	}[];
+	/** Each live repository it was merged into at least once, by name, and how it compares. */
+	applied: { repository: { id: string; owner: string; name: string }; drift: SetupDrift }[];
 }
 
 /** A setup applied to a repository: the pull request that writes its files there. */
@@ -208,6 +216,20 @@ export interface SetupApplication {
 	state: ApplicationState;
 	createdAt: number;
 	updatedAt: number;
+}
+
+/**
+ * How a repository compares with a setup applied to it: the files the last merged pull request
+ * left the setup owning, against the last scan and against what the setup writes now.
+ */
+export interface SetupDrift {
+	state: DriftState;
+	/** The merged pull request it is compared with. */
+	merged: { pullNumber: number; pullUrl: string; mergedAt: number };
+	/** A later pull request for the same setup that is still open. */
+	open: { pullNumber: number; pullUrl: string } | null;
+	/** The files that differ, by path. Empty when in sync, and until a scan reads the merge. */
+	files: { path: string; state: DriftFileState }[];
 }
 
 /** A file a setup writes that applying it left alone, and why. */

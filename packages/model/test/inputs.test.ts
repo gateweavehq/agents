@@ -31,7 +31,14 @@ function agent(overrides: Partial<DetectedAgent> = {}): DetectedAgent {
 }
 
 function scan(agents: DetectedAgent[], assets: DetectedAsset[]) {
-	return scanResult.safeParse({ commit: COMMIT, scannedAt: 1, agents, assets, problems: [] });
+	return scanResult.safeParse({
+		commit: COMMIT,
+		scannedAt: 1,
+		agents,
+		assets,
+		problems: [],
+		files: [],
+	});
 }
 
 describe("repositoryPath", () => {
@@ -79,5 +86,29 @@ describe("scanResult", () => {
 		const binary = { path: "logo.png", blob, size: 1200 };
 		expect(scan([], [asset({ files: [binary] })]).success).toBe(true);
 		expect(scan([], [asset({ files: [{ path: "logo.png", blob }] })]).success).toBe(false);
+	});
+
+	it("lists each file it read once, symlinks included", () => {
+		const read = (files: unknown[]) =>
+			scanResult.safeParse({
+				commit: COMMIT,
+				scannedAt: 1,
+				agents: [],
+				assets: [],
+				problems: [],
+				files,
+			});
+		const file = {
+			path: "AGENTS.md",
+			blob: "b".repeat(40),
+			size: 6,
+			symlink: false,
+			content: "hello\n",
+		};
+		const link = { path: "CLAUDE.md", blob: "c".repeat(40), size: 9, symlink: true };
+		expect(read([file, link]).success).toBe(true);
+		expect(read([file, { ...file, content: undefined }]).success).toBe(false);
+		expect(read([{ ...file, blob: undefined }]).success).toBe(false);
+		expect(read([{ ...file, path: "../AGENTS.md" }]).success).toBe(false);
 	});
 });

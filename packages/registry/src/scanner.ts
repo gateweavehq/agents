@@ -4,7 +4,14 @@
  * by blob id, are not downloaded again, so a scan after a push downloads what the push changed.
  */
 import { detect, type TreeFile, wantsFile } from "@gateweave/agents-adapters";
-import { MAX_FILE_LENGTH, type ScanProblem, type ScanResult } from "@gateweave/agents-model";
+import {
+	MAX_FILE_LENGTH,
+	MAX_SCANNED_FILES,
+	repositoryPath,
+	type ScannedTreeFile,
+	type ScanProblem,
+	type ScanResult,
+} from "@gateweave/agents-model";
 import { eq } from "drizzle-orm";
 import { blobs } from "./db/schema";
 import type { Db } from "./state";
@@ -92,6 +99,14 @@ export async function scanRepository(
 	for (const file of wanted) setText(tree, file.path, file, texts);
 	for (const [path, target] of targets) setText(tree, path, target, texts);
 
+	const read = scannedFiles([...wanted, ...links], texts);
+	if (read.length > MAX_SCANNED_FILES) {
+		problems.push({
+			path: null,
+			message: `Agents read more than ${MAX_SCANNED_FILES.toLocaleString("en")} files here; drift follows the first ones by path`,
+		});
+		read.length = MAX_SCANNED_FILES;
+	}
 	const detection = detect(tree);
 	return {
 		commit: head.commit,
@@ -99,7 +114,22 @@ export async function scanRepository(
 		agents: detection.agents,
 		assets: detection.assets,
 		problems: [...problems, ...detection.problems].slice(0, 100),
+		files: read,
 	};
+}
+
+/** The files the scan read, by path, with their text when it was read. */
+function scannedFiles(
+	files: readonly SourceFile[],
+	texts: ReadonlyMap<string, string | null>,
+): ScannedTreeFile[] {
+	return files
+		.filter((file) => repositoryPath.safeParse(file.path).success)
+		.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+		.map(({ path, blob, size, symlink }) => {
+			const content = symlink ? undefined : texts.get(blob);
+			return { path, blob, size, symlink, ...(typeof content === "string" ? { content } : {}) };
+		});
 }
 
 function setText(

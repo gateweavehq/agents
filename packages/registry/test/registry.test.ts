@@ -85,6 +85,7 @@ function scan(overrides: Partial<ScanResult> = {}): ScanResult {
 		agents: [claude(["CLAUDE.md"])],
 		assets: [instructions("CLAUDE.md", "hello\n")],
 		problems: [],
+		files: [],
 		...overrides,
 	};
 }

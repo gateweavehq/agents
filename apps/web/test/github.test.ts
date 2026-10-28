@@ -2,7 +2,7 @@ import type { Repository } from "@gateweave/agents-model";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
-import { FakeGitHub, type FakeRepository, gitBlobId, headOf } from "./fake-github";
+import { type FakeFile, FakeGitHub, type FakeRepository, gitBlobId, headOf } from "./fake-github";
 
 const origin = "https://agents.test";
 const github = new FakeGitHub();
@@ -549,6 +549,135 @@ describe("applying setups", () => {
 		// The pull requests stay on GitHub; the registry forgets them with the setup.
 		await registry.deleteSetup(setup.id);
 		expect((await registry.getRepository(repositoryId))?.applications).toEqual([]);
+	});
+
+	it("shows where a repository moved away from a setup merged into it", async () => {
+		const servers = (more: Record<string, unknown> = {}) =>
+			`${JSON.stringify({ mcpServers: { search: { command: "search-mcp", args: ["--fast"] }, ...more } }, null, 2)}\n`;
+		const repository: FakeRepository = {
+			id: 83,
+			owner: "noether",
+			name: "algebra",
+			files: { "AGENTS.md": "Old rules.\n", ".mcp.json": servers() },
+		};
+		const { workspaceId, cookie } = await connected("803", repository);
+		const { registry, setup, repositoryId, pin } = await reviewersSetup(workspaceId, repository);
+		const drift = async () =>
+			(await registry.getRepository(repositoryId))?.applied.map(({ drift }) => drift);
+		const listed = async () => (await registry.listRepositories())[0]?.drift;
+		const merge = async (number: number) => {
+			github.merge(repository, number);
+			const delivered = await deliver("pull_request", {
+				action: "closed",
+				pull_request: { number, state: "closed", merged: true },
+				repository: { id: repository.id },
+				installation: { id: 803 },
+			});
+			expect(delivered.status).toBe(204);
+		};
+		/** Pushes these files to the default branch, and waits for the scan that reads them. */
+		const pushed = async (files: Record<string, FakeFile>) => {
+			repository.files = files;
+			expect((await push("803", repository)).status).toBe(204);
+			await scannedAt(workspaceId, headOf(repository));
+		};
+
+		expect((await registry.applySetup(setup.id, repositoryId)).status).toBe("opened");
+		// Nothing to compare until a pull request is merged.
+		expect(await drift()).toEqual([]);
+		expect(await listed()).toBeNull();
+
+		// Until a scan reads the merge, drift waits for it instead of calling every file missing.
+		github.failing.set("noether/algebra", 502);
+		await merge(1);
+		await vi.waitFor(
+			async () => expect((await registry.listRepositories())[0]?.scanError).toContain("502"),
+			{ timeout: 10_000, interval: 50 },
+		);
+		expect(await drift()).toMatchObject([
+			{ state: "unscanned", merged: { pullNumber: 1 }, open: null, files: [] },
+		]);
+		github.failing.delete("noether/algebra");
+		const merged = { ...repository.files };
+		await pushed(merged);
+		expect(await drift()).toEqual([
+			{
+				state: "in_sync",
+				merged: {
+					pullNumber: 1,
+					pullUrl: "https://github.com/noether/algebra/pull/1",
+					mergedAt: expect.any(Number),
+				},
+				open: null,
+				files: [],
+			},
+		]);
+		expect(await listed()).toBe("in_sync");
+		expect((await registry.getSetup(setup.id))?.applied).toMatchObject([
+			{
+				repository: { id: repositoryId, owner: "noether", name: "algebra" },
+				drift: { state: "in_sync" },
+			},
+		]);
+
+		// Another server in the shared configuration is none of the setup's business.
+		const shared = servers({ docs: { command: "docs-mcp" } });
+		await pushed({ ...merged, ".mcp.json": shared });
+		expect((await drift())?.[0]?.state).toBe("in_sync");
+
+		// Files edited, then deleted, in the repository.
+		await pushed({ ...merged, ".mcp.json": shared, "AGENTS.md": "Our rules.\n" });
+		expect((await drift())?.[0]).toMatchObject({
+			state: "changed",
+			files: [{ path: "AGENTS.md", state: "changed" }],
+		});
+		const { ".codex/config.toml": _, ...withoutCodex } = merged;
+		await pushed({ ...withoutCodex, "AGENTS.md": "Our rules.\n" });
+		expect((await drift())?.[0]).toMatchObject({
+			state: "missing",
+			files: [
+				{ path: ".codex/config.toml", state: "missing" },
+				{ path: "AGENTS.md", state: "changed" },
+			],
+		});
+		expect(await listed()).toBe("missing");
+
+		// The repository is back as the merge left it, and the setup moves on.
+		await pushed(merged);
+		await pin("Be briefer.\n");
+		expect((await drift())?.[0]).toMatchObject({
+			state: "behind",
+			files: [{ path: "AGENTS.md", state: "behind" }],
+		});
+		const page = async (path: string) =>
+			(await agents.fetch(`${origin}/noether${path}`, { headers: { cookie } })).text();
+		for (const path of ["", `/repositories/${repositoryId}`, `/setups/${setup.id}`]) {
+			expect(await page(path), path).toContain("Behind");
+		}
+		expect(await page(`/repositories/${repositoryId}`)).toContain(
+			"The setup writes something else now",
+		);
+
+		// Applying again opens a pull request, and its merge queues the scan that settles drift.
+		expect(await registry.applySetup(setup.id, repositoryId)).toMatchObject({
+			status: "opened",
+			application: { pullNumber: 2 },
+		});
+		expect((await drift())?.[0]).toMatchObject({
+			state: "behind",
+			merged: { pullNumber: 1 },
+			open: { pullNumber: 2 },
+		});
+		await merge(2);
+		await vi.waitFor(
+			async () =>
+				expect((await drift())?.[0]).toMatchObject({
+					state: "in_sync",
+					merged: { pullNumber: 2 },
+					open: null,
+				}),
+			{ timeout: 10_000, interval: 50 },
+		);
 	});
 
 	it("says what to do when the GitHub App may not write", async () => {

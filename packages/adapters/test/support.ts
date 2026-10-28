@@ -25,7 +25,12 @@ function fakeBlob(path: string): string {
 
 /** The scan the registry would receive from this detection must be accepted as it is. */
 export function expectValid(detection: Detection): void {
-	const result = scanResult.safeParse({ commit: "a".repeat(40), scannedAt: 1, ...detection });
+	const result = scanResult.safeParse({
+		commit: "a".repeat(40),
+		scannedAt: 1,
+		...detection,
+		files: [],
+	});
 	expect(result.success, result.success ? "" : JSON.stringify(result.error.issues)).toBe(true);
 }
 

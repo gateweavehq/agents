@@ -264,7 +264,7 @@ export function ApplySetupDialog({
 	onApply,
 	onClose,
 }: {
-	setup: Setup;
+	setup: Pick<Setup, "name">;
 	/** Repositories the GitHub App reaches. */
 	repositories: Repository[];
 	/** Repositories with a pull request for this setup still open, by id. */
