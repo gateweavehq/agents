@@ -6,6 +6,7 @@ import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
 import { cn } from "#/lib/utils";
+import { Markdown } from "./markdown";
 
 /**
  * A live conversation: its messages, the reply as it streams in, and the box to write the next
@@ -133,12 +134,12 @@ function Message({ message, agentName }: { message: UIMessage; agentName: string
 		<div className={cn("flex", mine && "justify-end")}>
 			<div
 				className={cn(
-					"max-w-[85%] text-sm leading-relaxed whitespace-pre-wrap",
-					mine ? "rounded-2xl bg-muted px-4 py-2" : "w-full",
+					"max-w-[85%] text-sm leading-relaxed",
+					mine ? "rounded-2xl bg-muted px-4 py-2 whitespace-pre-wrap" : "w-full min-w-0",
 				)}
 			>
 				{!mine && <p className="mb-1 text-xs font-medium text-muted-foreground">{agentName}</p>}
-				{text}
+				{mine ? text : <Markdown>{text}</Markdown>}
 			</div>
 		</div>
 	);
