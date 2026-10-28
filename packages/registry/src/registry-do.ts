@@ -37,6 +37,8 @@ import {
 	mcpCheckResult,
 	mcpServerEditInput,
 	mcpServerInput,
+	type NewTeamInput,
+	newTeamInput,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -72,7 +74,14 @@ import {
 	setupImportInput,
 	setupInput,
 	setupPins,
+	type Team,
+	type TeamDetail,
+	type TeamEntry,
+	type TeamGraphInput,
+	type TeamInput,
 	type TurnMcpServer,
+	teamGraphInput,
+	teamInput,
 	type WrittenAssetInput,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
@@ -159,6 +168,7 @@ import { type Sealer, type SecretsEnv, sealerFor } from "./secrets";
 import { createSetup, deleteSetup, importSetup, setSetupAssets, updateSetup } from "./setups";
 import { type SourceEnv, sourceFor, writerFor } from "./sources";
 import { type Db, toApplication } from "./state";
+import { createTeam, deleteTeam, getTeam, listTeams, setTeamGraph, updateTeam } from "./teams";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
@@ -388,6 +398,37 @@ export class RegistryDO extends DurableObject {
 	/** What the runtime reads at the start of a turn: the whole definition, in one read. */
 	agentSnapshot(agentId: string): AgentSnapshot | null {
 		return agentSnapshot(this.#db, id.parse(agentId));
+	}
+
+	// Teams of agents run by Gateweave, which owners and admins arrange.
+
+	listTeams(): TeamEntry[] {
+		return listTeams(this.#db);
+	}
+
+	getTeam(teamId: string): TeamDetail | null {
+		return getTeam(this.#db, id.parse(teamId));
+	}
+
+	createTeam(input: NewTeamInput): Team {
+		const data = newTeamInput.parse(input);
+		return this.#write(() => createTeam(this.#db, data, Date.now()));
+	}
+
+	updateTeam(teamId: string, input: TeamInput): Team | null {
+		const data = teamInput.parse(input);
+		return this.#write(() => updateTeam(this.#db, id.parse(teamId), data, Date.now()));
+	}
+
+	deleteTeam(teamId: string): boolean {
+		return this.#write(() => deleteTeam(this.#db, id.parse(teamId)));
+	}
+
+	/** Gives a team these members, edges and lead, checked against the rules in `teams.ts`. */
+	setTeamGraph(teamId: string, graph: TeamGraphInput): Team | null {
+		const team = id.parse(teamId);
+		const data = teamGraphInput.parse(graph);
+		return this.#write(() => setTeamGraph(this.#db, team, data, Date.now()));
 	}
 
 	// Environment sets, which owners and admins manage. Secret values go in and never come out:

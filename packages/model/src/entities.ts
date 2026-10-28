@@ -10,6 +10,7 @@ import type {
 	RepositoryProvider,
 	RepositoryRuntime,
 	RunStatus,
+	TeamEdgeKind,
 } from "./vocabulary";
 
 /** A product or initiative. Groups repositories; a repository can be in several projects. */
@@ -370,6 +371,55 @@ export interface AgentSnapshot {
 	instructions: string | null;
 	/** When the definition last changed. */
 	updatedAt: number;
+}
+
+/** A graph of agents run by Gateweave and of other teams, with who may reach whom. */
+export interface Team {
+	id: string;
+	name: string;
+	description: string | null;
+	/** The agent a chat with the team talks to. It is one of the members. */
+	leadAgentId: string;
+	createdAt: number;
+	updatedAt: number;
+}
+
+/** A team as the Teams page lists it. */
+export interface TeamEntry {
+	team: Team;
+	lead: { id: string; name: string; removed: boolean };
+	members: number;
+}
+
+/**
+ * A member of a team. A removed agent stays in the graph, marked, until someone takes it out; a
+ * team stands for its lead in the edges.
+ */
+export type TeamMember =
+	| {
+			kind: "agent";
+			id: string;
+			name: string;
+			provider: ModelProvider;
+			model: string;
+			removed: boolean;
+	  }
+	| { kind: "team"; id: string; name: string; lead: { id: string; name: string }; members: number };
+
+/** One member may reach another, by their ids. */
+export interface TeamEdge {
+	from: string;
+	to: string;
+	kind: TeamEdgeKind;
+}
+
+export interface TeamDetail {
+	team: Team;
+	/** The lead first, then by name. */
+	members: TeamMember[];
+	edges: TeamEdge[];
+	/** The teams it is a member of. */
+	partOf: { id: string; name: string }[];
 }
 
 /** A secret an environment set declares. Its value is never part of this. */

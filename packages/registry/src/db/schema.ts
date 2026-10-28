@@ -16,6 +16,8 @@ import {
 	type RepositoryRuntime,
 	RUN_STATUSES,
 	type ScanProblem,
+	TEAM_EDGE_KINDS,
+	TEAM_MEMBER_KINDS,
 } from "@gateweave/agents-model";
 import { sql } from "drizzle-orm";
 import {
@@ -262,6 +264,49 @@ export const mcpChecks = sqliteTable("mcp_checks", {
 	error: text("error"),
 });
 
+/** Teams of agents run by Gateweave, which can nest (see `teams.ts`). */
+export const teams = sqliteTable("teams", {
+	id: text("id").primaryKey(),
+	name: text("name").notNull(),
+	description: text("description"),
+	/** One of its agent members: the one a chat with the team talks to. */
+	leadAgentId: text("lead_agent_id")
+		.notNull()
+		.references(() => agents.id),
+	createdAt: integer("created_at").notNull(),
+	updatedAt: integer("updated_at").notNull(),
+});
+
+/** Who is in each team: an agent or another team, by id. Ids are UUIDs, so the two never clash. */
+export const teamMembers = sqliteTable(
+	"team_members",
+	{
+		teamId: text("team_id")
+			.notNull()
+			.references(() => teams.id),
+		kind: text("kind", { enum: TEAM_MEMBER_KINDS }).notNull(),
+		memberId: text("member_id").notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.teamId, table.memberId] }),
+		index("team_members_member_idx").on(table.memberId),
+	],
+);
+
+/** Who may reach whom in each team, between the ids of two of its members. */
+export const teamEdges = sqliteTable(
+	"team_edges",
+	{
+		teamId: text("team_id")
+			.notNull()
+			.references(() => teams.id),
+		fromId: text("from_id").notNull(),
+		toId: text("to_id").notNull(),
+		kind: text("kind", { enum: TEAM_EDGE_KINDS }).notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.teamId, table.fromId, table.toId, table.kind] })],
+);
+
 export const setups = sqliteTable("setups", {
 	id: text("id").primaryKey(),
 	name: text("name").notNull(),
@@ -447,3 +492,4 @@ export type SetupRow = typeof setups.$inferSelect;
 export type SetupApplicationRow = typeof setupApplications.$inferSelect;
 export type ProviderKeyRow = typeof providerKeys.$inferSelect;
 export type EnvSecretRow = typeof envSecrets.$inferSelect;
+export type TeamRow = typeof teams.$inferSelect;

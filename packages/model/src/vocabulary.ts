@@ -88,3 +88,15 @@ export const INSTRUCTION_KINDS = ["instructions", "prompt"] as const satisfies r
  */
 export const RUN_STATUSES = ["running", "succeeded", "failed", "stopped", "interrupted"] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
+
+/**
+ * How one member of a team may reach another: `delegate` hands over a task and waits for the
+ * result, `ask` asks one question that is answered without tools, and `report` sends a message
+ * without waiting.
+ */
+export const TEAM_EDGE_KINDS = ["delegate", "ask", "report"] as const;
+export type TeamEdgeKind = (typeof TEAM_EDGE_KINDS)[number];
+
+/** A member of a team is an agent run by Gateweave, or another team, reached through its lead. */
+export const TEAM_MEMBER_KINDS = ["agent", "team"] as const;
+export type TeamMemberKind = (typeof TEAM_MEMBER_KINDS)[number];

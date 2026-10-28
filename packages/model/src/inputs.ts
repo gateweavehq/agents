@@ -10,6 +10,8 @@ import {
 	REPOSITORY_PROVIDERS,
 	REPOSITORY_RUNTIMES,
 	RUN_STATUSES,
+	TEAM_EDGE_KINDS,
+	TEAM_MEMBER_KINDS,
 } from "./vocabulary";
 
 /** A path inside a repository: relative, with forward slashes and no `.` or `..` segments. */
@@ -382,6 +384,72 @@ export const setupImportInput = setupInput
 		}
 	});
 export type SetupImportInput = z.input<typeof setupImportInput>;
+
+/** Most members a team has, and most edges between them. */
+export const MAX_TEAM_MEMBERS = 50;
+export const MAX_TEAM_EDGES = 200;
+
+const memberId = z.string().min(1).max(64);
+
+/** A team's name and description. */
+export const teamInput = projectInput;
+export type TeamInput = z.input<typeof teamInput>;
+
+/** A new team, with the agent run by Gateweave that leads it and is its first member. */
+export const newTeamInput = teamInput.extend({ lead: memberId });
+export type NewTeamInput = z.input<typeof newTeamInput>;
+
+/**
+ * Who is in a team and who may reach whom. The lead is one of its agents. A member is named by
+ * its id, an agent's or a team's, and an edge goes from one member to another.
+ */
+export const teamGraphInput = z
+	.object({
+		lead: memberId,
+		members: z
+			.array(z.object({ kind: z.enum(TEAM_MEMBER_KINDS), id: memberId }))
+			.min(1)
+			.max(MAX_TEAM_MEMBERS, `A team can have up to ${MAX_TEAM_MEMBERS} members`)
+			.refine(
+				(members) => new Set(members.map((member) => member.id)).size === members.length,
+				"A member is listed twice",
+			),
+		edges: z
+			.array(z.object({ from: memberId, to: memberId, kind: z.enum(TEAM_EDGE_KINDS) }))
+			.max(MAX_TEAM_EDGES, `A team can have up to ${MAX_TEAM_EDGES} edges`)
+			.refine(
+				(edges) =>
+					new Set(edges.map((edge) => `${edge.from} ${edge.to} ${edge.kind}`)).size ===
+					edges.length,
+				"An edge is listed twice",
+			),
+	})
+	.superRefine(({ lead, members, edges }, ctx) => {
+		const kinds = new Map(members.map((member) => [member.id, member.kind]));
+		if (kinds.get(lead) !== "agent") {
+			ctx.addIssue({
+				code: "custom",
+				path: ["lead"],
+				message: "The lead is one of the team's agents",
+			});
+		}
+		for (const edge of edges) {
+			if (edge.from === edge.to) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["edges"],
+					message: "An edge goes from one member to another",
+				});
+			} else if (!kinds.has(edge.from) || !kinds.has(edge.to)) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["edges"],
+					message: "An edge goes between members of the team",
+				});
+			}
+		}
+	});
+export type TeamGraphInput = z.input<typeof teamGraphInput>;
 
 /**
  * A model provider's key, as an owner or admin pastes it. Keys are printable ASCII with no

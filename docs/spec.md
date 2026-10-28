@@ -217,6 +217,14 @@ runtime is designed alongside it, so the data model fits both.
   or a secret applies from the next message. Connecting costs a round trip or two per turn. A
   tool call's span keeps the sizes of its input and output, not the content, for the same reason
   a trace keeps no message text.
+- **Teams as graphs in the registry** (AGT-33, 2026-10-28). A team's members are agents run by
+  Gateweave or other teams, and its edges are `delegate`, `ask` or `report`; a team stands for its
+  lead. The registry saves a graph whole and refuses one where a team would contain itself, or
+  where `delegate` and `ask` edges would go in a circle once teams stand for their leads, in the
+  team and in every team above it. These are the edges that wait, so no turn can end up waiting
+  on itself. Reports may go in a circle; the runtime limits how deep turns go. The team page draws
+  the graph itself, top-down from the lead, rather than with a graph library: a team has a few
+  dozen members at most, and the drawing has to fit the app's look in both themes.
 - **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
   asset when its hash equals one of the library asset's versions; no link is stored. There is
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the

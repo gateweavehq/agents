@@ -38,6 +38,8 @@ import { Route as WorkspaceSettingsMembersRouteImport } from './routes/$workspac
 import { Route as WorkspaceSettingsModelsRouteImport } from './routes/$workspace/settings.models'
 import { Route as WorkspaceSetupsIndexRouteImport } from './routes/$workspace/setups.index'
 import { Route as WorkspaceSetupsSetupIdRouteImport } from './routes/$workspace/setups.$setupId'
+import { Route as WorkspaceTeamsIndexRouteImport } from './routes/$workspace/teams.index'
+import { Route as WorkspaceTeamsTeamIdRouteImport } from './routes/$workspace/teams.$teamId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiGithubCallbackRouteImport } from './routes/api/github/callback'
 import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
@@ -194,6 +196,16 @@ const WorkspaceSetupsSetupIdRoute = WorkspaceSetupsSetupIdRouteImport.update({
   path: '/setups/$setupId',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const WorkspaceTeamsIndexRoute = WorkspaceTeamsIndexRouteImport.update({
+  id: '/teams/',
+  path: '/teams/',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceTeamsTeamIdRoute = WorkspaceTeamsTeamIdRouteImport.update({
+  id: '/teams/$teamId',
+  path: '/teams/$teamId',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -243,6 +255,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
   '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
+  '/$workspace/teams/$teamId': typeof WorkspaceTeamsTeamIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/install': typeof ApiGithubInstallRoute
@@ -255,6 +268,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/runs/': typeof WorkspaceRunsIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
+  '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -276,6 +290,7 @@ export interface FileRoutesByTo {
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
   '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
+  '/$workspace/teams/$teamId': typeof WorkspaceTeamsTeamIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/install': typeof ApiGithubInstallRoute
@@ -288,6 +303,7 @@ export interface FileRoutesByTo {
   '/$workspace/runs': typeof WorkspaceRunsIndexRoute
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups': typeof WorkspaceSetupsIndexRoute
+  '/$workspace/teams': typeof WorkspaceTeamsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -313,6 +329,7 @@ export interface FileRoutesById {
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
   '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
+  '/$workspace/teams/$teamId': typeof WorkspaceTeamsTeamIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/install': typeof ApiGithubInstallRoute
@@ -325,6 +342,7 @@ export interface FileRoutesById {
   '/$workspace/runs/': typeof WorkspaceRunsIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
+  '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -351,6 +369,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
     | '/$workspace/setups/$setupId'
+    | '/$workspace/teams/$teamId'
     | '/api/auth/$'
     | '/api/github/callback'
     | '/api/github/install'
@@ -363,6 +382,7 @@ export interface FileRouteTypes {
     | '/$workspace/runs/'
     | '/$workspace/settings/'
     | '/$workspace/setups/'
+    | '/$workspace/teams/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -384,6 +404,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
     | '/$workspace/setups/$setupId'
+    | '/$workspace/teams/$teamId'
     | '/api/auth/$'
     | '/api/github/callback'
     | '/api/github/install'
@@ -396,6 +417,7 @@ export interface FileRouteTypes {
     | '/$workspace/runs'
     | '/$workspace/settings'
     | '/$workspace/setups'
+    | '/$workspace/teams'
   id:
     | '__root__'
     | '/'
@@ -420,6 +442,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
     | '/$workspace/setups/$setupId'
+    | '/$workspace/teams/$teamId'
     | '/api/auth/$'
     | '/api/github/callback'
     | '/api/github/install'
@@ -432,6 +455,7 @@ export interface FileRouteTypes {
     | '/$workspace/runs/'
     | '/$workspace/settings/'
     | '/$workspace/setups/'
+    | '/$workspace/teams/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -653,6 +677,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceSetupsSetupIdRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/$workspace/teams/': {
+      id: '/$workspace/teams/'
+      path: '/teams'
+      fullPath: '/$workspace/teams/'
+      preLoaderRoute: typeof WorkspaceTeamsIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/teams/$teamId': {
+      id: '/$workspace/teams/$teamId'
+      path: '/teams/$teamId'
+      fullPath: '/$workspace/teams/$teamId'
+      preLoaderRoute: typeof WorkspaceTeamsTeamIdRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -735,11 +773,13 @@ interface WorkspaceRouteChildren {
   WorkspaceRepositoriesRepositoryIdRoute: typeof WorkspaceRepositoriesRepositoryIdRoute
   WorkspaceRunsRunIdRoute: typeof WorkspaceRunsRunIdRoute
   WorkspaceSetupsSetupIdRoute: typeof WorkspaceSetupsSetupIdRoute
+  WorkspaceTeamsTeamIdRoute: typeof WorkspaceTeamsTeamIdRoute
   WorkspaceAgentsIndexRoute: typeof WorkspaceAgentsIndexRoute
   WorkspaceProjectsIndexRoute: typeof WorkspaceProjectsIndexRoute
   WorkspaceRepositoriesIndexRoute: typeof WorkspaceRepositoriesIndexRoute
   WorkspaceRunsIndexRoute: typeof WorkspaceRunsIndexRoute
   WorkspaceSetupsIndexRoute: typeof WorkspaceSetupsIndexRoute
+  WorkspaceTeamsIndexRoute: typeof WorkspaceTeamsIndexRoute
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
@@ -756,11 +796,13 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
     WorkspaceRepositoriesRepositoryIdRoute,
   WorkspaceRunsRunIdRoute: WorkspaceRunsRunIdRoute,
   WorkspaceSetupsSetupIdRoute: WorkspaceSetupsSetupIdRoute,
+  WorkspaceTeamsTeamIdRoute: WorkspaceTeamsTeamIdRoute,
   WorkspaceAgentsIndexRoute: WorkspaceAgentsIndexRoute,
   WorkspaceProjectsIndexRoute: WorkspaceProjectsIndexRoute,
   WorkspaceRepositoriesIndexRoute: WorkspaceRepositoriesIndexRoute,
   WorkspaceRunsIndexRoute: WorkspaceRunsIndexRoute,
   WorkspaceSetupsIndexRoute: WorkspaceSetupsIndexRoute,
+  WorkspaceTeamsIndexRoute: WorkspaceTeamsIndexRoute,
 }
 
 const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(
