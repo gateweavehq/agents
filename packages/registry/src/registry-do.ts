@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
 	type Agent,
+	type AssetDetail,
 	type AssetVersion,
 	type Overview,
 	type Project,
@@ -23,6 +24,7 @@ import migrations from "../drizzle/migrations";
 import * as schema from "./db/schema";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
+	getAsset,
 	getAssetVersion,
 	getRepository,
 	listAgents,
@@ -93,6 +95,11 @@ export class RegistryDO extends DurableObject {
 		return listAgents(this.#db);
 	}
 
+	getAsset(assetId: string, version?: number): AssetDetail | null {
+		const at = z.number().int().positive().optional().parse(version);
+		return getAsset(this.#db, id.parse(assetId), at);
+	}
+
 	getAssetVersion(assetId: string, version?: number): AssetVersion | null {
 		const at = z.number().int().positive().optional().parse(version);
 		return getAssetVersion(this.#db, id.parse(assetId), at);
@@ -149,10 +156,14 @@ export class RegistryDO extends DurableObject {
 		this.#write(() => removeInstallation(this.#db, installation, Date.now()));
 	}
 
-	/** Queues a scan of each repository. Returns how many are live and queued. */
-	async requestScans(repositoryIds: string[]): Promise<number> {
+	/**
+	 * Queues a scan of each repository. A forced one reads the repository even if nothing was
+	 * pushed since the last scan. Returns how many are live and queued.
+	 */
+	async requestScans(repositoryIds: string[], force = false): Promise<number> {
 		const repositories = ids.parse(repositoryIds);
-		const queued = this.#write(() => requestScans(this.#db, repositories, Date.now()));
+		const forced = z.boolean().parse(force);
+		const queued = this.#write(() => requestScans(this.#db, repositories, Date.now(), forced));
 		await this.#scheduleScans();
 		return queued;
 	}
@@ -228,7 +239,7 @@ export class RegistryDO extends DurableObject {
 		}
 		const startedAt = Date.now();
 		try {
-			const result = await scanRepository(this.#db, source, repository, startedAt);
+			const result = await scanRepository(this.#db, source, repository, startedAt, request.force);
 			// Validated like a scan from outside: a bug in an adapter must not store bad data.
 			const scan = result === null ? null : scanResult.parse(result);
 			this.#write(() => {

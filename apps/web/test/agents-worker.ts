@@ -45,6 +45,7 @@ export interface RegistryStub {
 	listRepositories(): Promise<Repository[]>;
 	getRepository(repositoryId: string): Promise<RepositoryDetail | null>;
 	getAssetVersion(assetId: string): Promise<AssetVersion | null>;
+	requestScans(repositoryIds: string[], force?: boolean): Promise<number>;
 }
 
 /** The address Agents sends from in tests. */

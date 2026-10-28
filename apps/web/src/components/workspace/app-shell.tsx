@@ -1,7 +1,9 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
 	ArrowLeftRight,
+	Bot,
 	ChevronDown,
+	FolderGit2,
 	LayoutDashboard,
 	LogOut,
 	Menu,
@@ -90,6 +92,24 @@ function Sidebar() {
 				>
 					<LayoutDashboard className="size-4" />
 					Overview
+				</Link>
+				<Link
+					to="/$workspace/repositories"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<FolderGit2 className="size-4" />
+					Repositories
+				</Link>
+				<Link
+					to="/$workspace/agents"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<Bot className="size-4" />
+					Agents
 				</Link>
 				<Link
 					to="/$workspace/settings"

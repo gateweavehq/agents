@@ -258,7 +258,7 @@ describe("scanning", () => {
 		expect(
 			await connect(headers.cookie, repository.owner, installationId, `${repository.owner}-gh`),
 		).toContain("github=connected");
-		return workspaceId;
+		return { workspaceId, cookie: headers.cookie };
 	}
 
 	function push(installationId: string, repository: FakeRepository, branch = "main") {
@@ -282,7 +282,7 @@ describe("scanning", () => {
 				"src/index.ts": "export {};\n",
 			},
 		};
-		const workspaceId = await connected("601", repository);
+		const { workspaceId } = await connected("601", repository);
 
 		const first = await scannedAt(workspaceId, headOf(repository));
 		expect(first?.agents.map((agent) => `${agent.runtime}:${agent.key}`)).toEqual([
@@ -315,7 +315,7 @@ describe("scanning", () => {
 			name: "apollo",
 			files: { "AGENTS.md": "Shared rules.\n", "CLAUDE.md": { symlink: "AGENTS.md" } },
 		};
-		const workspaceId = await connected("602", repository);
+		const { workspaceId } = await connected("602", repository);
 
 		const detail = await scannedAt(workspaceId, headOf(repository));
 		const claudeMd = detail?.assets.find((asset) => asset.key === "CLAUDE.md");
@@ -338,7 +338,7 @@ describe("scanning", () => {
 			name: "clu",
 			files: { "AGENTS.md": "Rules.\n" },
 		};
-		const workspaceId = await connected("603", repository);
+		const { workspaceId } = await connected("603", repository);
 		const commit = headOf(repository);
 		await scannedAt(workspaceId, commit);
 
@@ -355,5 +355,126 @@ describe("scanning", () => {
 			{ timeout: 10_000, interval: 50 },
 		);
 		expect((await registry.overview()).assets).toBe(1);
+	});
+
+	it("reads an unchanged branch again only when asked to", async () => {
+		const repository: FakeRepository = {
+			id: 64,
+			owner: "dijkstra",
+			name: "semaphores",
+			files: { "AGENTS.md": "Rules.\n" },
+		};
+		const { workspaceId } = await connected("604", repository);
+		const first = await scannedAt(workspaceId, headOf(repository));
+		const id = first?.repository.id ?? "";
+		const registry = await agents.registry(workspaceId);
+
+		// A push or a reconnect at the same commit has nothing new to read.
+		expect(await registry.requestScans([id])).toBe(1);
+		await vi.waitFor(
+			async () => expect((await registry.getRepository(id))?.repository.scanPending).toBe(false),
+			{ timeout: 10_000, interval: 50 },
+		);
+		expect((await registry.getRepository(id))?.repository.scannedAt).toBe(
+			first?.repository.scannedAt,
+		);
+
+		// "Scan now" reads it anyway, for after the adapters learn something new.
+		expect(await registry.requestScans([id], true)).toBe(1);
+		await vi.waitFor(
+			async () => {
+				const again = (await registry.getRepository(id))?.repository;
+				expect(again?.scanPending).toBe(false);
+				expect(again?.scannedAt).toBeGreaterThan(first?.repository.scannedAt ?? 0);
+			},
+			{ timeout: 10_000, interval: 50 },
+		);
+	});
+});
+
+describe("registry pages", () => {
+	async function page(path: string, cookie: string) {
+		const response = await agents.fetch(`${origin}${path}`, { headers: { cookie } });
+		expect(response.status).toBe(200);
+		return response.text();
+	}
+
+	it("show members each repository, its agents and the text of what they read", async () => {
+		const repository: FakeRepository = {
+			id: 71,
+			owner: "backus",
+			name: "compiler",
+			files: {
+				"CLAUDE.md": "Prefer small diffs.\n",
+				".claude/skills/review/SKILL.md":
+					"---\nname: review\ndescription: Reviews a change.\n---\nReview it.\n",
+			},
+		};
+		github.installations.set("701", {
+			account: { login: "backus", type: "User" },
+			repositories: [repository],
+		});
+		github.people.set("backus-gh", new Set(["701"]));
+		const { headers } = await signUp(agents, origin, "backus");
+		const workspaceId = await createWorkspace(agents, origin, headers, "backus");
+		await connect(headers.cookie, "backus", "701", "backus-gh");
+		const registry = await agents.registry(workspaceId);
+		const detail = await vi.waitFor(
+			async () => {
+				const [found] = await registry.listRepositories();
+				const scanned = found ? await registry.getRepository(found.id) : null;
+				expect(scanned?.repository.scannedCommit).toBe(headOf(repository));
+				return scanned;
+			},
+			{ timeout: 10_000, interval: 50 },
+		);
+		if (!detail) throw new Error("Not scanned");
+		const { repository: scanned, assets } = detail;
+		const claudeMd = assets.find((asset) => asset.key === "CLAUDE.md");
+		if (!claudeMd) throw new Error("No CLAUDE.md");
+		const cookie = headers.cookie;
+
+		expect(await page("/backus", cookie)).toContain('aria-label="Uses Claude Code"');
+		expect(await page("/backus/repositories", cookie)).toContain("compiler");
+		const repositoryPage = await page(`/backus/repositories/${scanned.id}`, cookie);
+		expect(repositoryPage).toContain("Reviews a change.");
+		expect(repositoryPage).toContain(`/backus/assets/${claudeMd.id}`);
+		expect(await page("/backus/agents", cookie)).toContain(`/backus/repositories/${scanned.id}`);
+		expect(await page(`/backus/assets/${claudeMd.id}`, cookie)).toContain("Prefer small diffs.");
+
+		// Earlier versions stay readable after a push changes the file.
+		repository.files = { ...repository.files, "CLAUDE.md": "Prefer smaller diffs.\n" };
+		await deliver("push", {
+			ref: "refs/heads/main",
+			after: headOf(repository),
+			repository: { id: repository.id, default_branch: "main" },
+			installation: { id: 701 },
+		});
+		await vi.waitFor(
+			async () =>
+				expect((await registry.getRepository(scanned.id))?.repository.scannedCommit).toBe(
+					headOf(repository),
+				),
+			{ timeout: 10_000, interval: 50 },
+		);
+		expect(await page(`/backus/assets/${claudeMd.id}`, cookie)).toContain("Prefer smaller diffs.");
+		const first = await page(`/backus/assets/${claudeMd.id}?version=1`, cookie);
+		expect(first).toContain("Prefer small diffs.");
+		expect(first).not.toContain("Prefer smaller diffs.");
+
+		// Someone outside the workspace gets the answer a missing workspace gets.
+		const { headers: eve } = await signUp(agents, origin, "eve-pages");
+		for (const path of [
+			`/backus/repositories/${scanned.id}`,
+			`/backus/assets/${claudeMd.id}`,
+			"/backus/agents",
+		]) {
+			const response = await agents.fetch(`${origin}${path}`, { headers: { cookie: eve.cookie } });
+			expect(response.status).toBe(404);
+			const html = await response.text();
+			expect(html).toContain("Workspace not found");
+			expect(html).not.toContain("compiler");
+			expect(html).not.toContain("Prefer small");
+		}
 	});
 });
