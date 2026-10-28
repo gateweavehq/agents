@@ -4,7 +4,10 @@ export const Route = createFileRoute("/$workspace/settings")({
 	component: SettingsLayout,
 });
 
-const TABS = [{ to: "/$workspace/settings/members", label: "Members" }] as const;
+const TABS = [
+	{ to: "/$workspace/settings/members", label: "Members" },
+	{ to: "/$workspace/settings/github", label: "GitHub" },
+] as const;
 
 function SettingsLayout() {
 	const { workspace } = Route.useParams();

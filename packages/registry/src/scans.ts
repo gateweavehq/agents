@@ -1,7 +1,6 @@
 import type {
 	DetectedAsset,
 	RepositoryInput,
-	RepositoryProvider,
 	ScannedFile,
 	ScanResult,
 } from "@gateweave/agents-model";
@@ -28,8 +27,9 @@ export type ScanOutcome = "applied" | "stale" | "not_found";
 const encoder = new TextEncoder();
 
 /**
- * Adds repositories the connection reaches and updates the ones it already knew, matched by
- * the provider's id, so a renamed repository keeps its id. Returns the ids in input order.
+ * Adds repositories an installation reaches and updates the ones already known, matched by the
+ * provider's id, so a renamed or transferred repository keeps its id. Returns the ids in input
+ * order.
  */
 export function syncRepositories(db: Db, inputs: RepositoryInput[], now: number): string[] {
 	return inputs.map((input) => {
@@ -51,9 +51,17 @@ export function syncRepositories(db: Db, inputs: RepositoryInput[], now: number)
 			return id;
 		}
 		if (existing.removedAt !== null || !sameFields(existing, input)) {
-			const { owner, name, defaultBranch, private: isPrivate } = input;
+			const { installationId, owner, name, defaultBranch, private: isPrivate } = input;
 			db.update(repositories)
-				.set({ owner, name, defaultBranch, private: isPrivate, removedAt: null, updatedAt: now })
+				.set({
+					installationId,
+					owner,
+					name,
+					defaultBranch,
+					private: isPrivate,
+					removedAt: null,
+					updatedAt: now,
+				})
 				.where(eq(repositories.id, existing.id))
 				.run();
 		}
@@ -61,25 +69,39 @@ export function syncRepositories(db: Db, inputs: RepositoryInput[], now: number)
 	});
 }
 
-/** Marks repositories the connection no longer reaches as removed. */
-export function removeRepositories(
+/**
+ * Makes the installation's repositories match the list GitHub gave: adds and updates those in
+ * it, and marks the installation's others as removed. Returns the ids in input order.
+ */
+export function reconcileInstallation(
 	db: Db,
-	provider: RepositoryProvider,
-	externalIds: string[],
+	installationId: string,
+	inputs: RepositoryInput[],
 	now: number,
-): void {
-	for (const externalId of externalIds) {
+): string[] {
+	const ids = syncRepositories(db, inputs, now);
+	const kept = new Set(ids);
+	const known = db
+		.select({ id: repositories.id })
+		.from(repositories)
+		.where(and(eq(repositories.installationId, installationId), isNull(repositories.removedAt)))
+		.all();
+	for (const { id } of known) {
+		if (kept.has(id)) continue;
 		db.update(repositories)
 			.set({ removedAt: now, updatedAt: now })
-			.where(
-				and(
-					eq(repositories.provider, provider),
-					eq(repositories.externalId, externalId),
-					isNull(repositories.removedAt),
-				),
-			)
+			.where(eq(repositories.id, id))
 			.run();
 	}
+	return ids;
+}
+
+/** Marks every repository of an installation as removed, when it is uninstalled or unlinked. */
+export function removeInstallation(db: Db, installationId: string, now: number): void {
+	db.update(repositories)
+		.set({ removedAt: now, updatedAt: now })
+		.where(and(eq(repositories.installationId, installationId), isNull(repositories.removedAt)))
+		.run();
 }
 
 /** Records why a scan failed. What earlier scans found stays. */

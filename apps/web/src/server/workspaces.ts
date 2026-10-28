@@ -28,6 +28,26 @@ export async function findMembership(
 	return row ? { ...row, role: toRole(row.role) } : null;
 }
 
+/** The user's membership in the workspace with this id, with its slug, or null. */
+export async function findMembershipById(
+	db: Database,
+	workspaceId: string,
+	userId: string,
+): Promise<(Membership & { slug: string }) | null> {
+	const row = await db
+		.select({
+			workspaceId: schema.member.organizationId,
+			workspaceName: schema.organization.name,
+			slug: schema.organization.slug,
+			role: schema.member.role,
+		})
+		.from(schema.member)
+		.innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+		.where(and(eq(schema.organization.id, workspaceId), eq(schema.member.userId, userId)))
+		.get();
+	return row ? { ...row, role: toRole(row.role) } : null;
+}
+
 export interface WorkspaceSummary {
 	slug: string;
 	name: string;

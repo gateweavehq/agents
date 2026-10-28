@@ -11,5 +11,15 @@ declare namespace Cloudflare {
 		 * onboarded to Cloudflare Email Sending. Email is off when unset.
 		 */
 		EMAIL_FROM?: string;
+		/**
+		 * The GitHub App that reads repositories (see docs/github-app.md). Connecting GitHub is off
+		 * unless all six are set.
+		 */
+		GITHUB_APP_ID?: string;
+		GITHUB_APP_SLUG?: string;
+		GITHUB_APP_CLIENT_ID?: string;
+		GITHUB_APP_CLIENT_SECRET?: string;
+		GITHUB_APP_PRIVATE_KEY?: string;
+		GITHUB_APP_WEBHOOK_SECRET?: string;
 	}
 }

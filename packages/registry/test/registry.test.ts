@@ -23,10 +23,15 @@ const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 const inside = <T>(stub: ReturnType<typeof registry>, fn: (instance: RegistryDO) => T) =>
 	runInDurableObject(stub, (instance: RegistryDO) => fn(instance));
 
-function github(externalId: string, name = `repo-${externalId}`): RepositoryInput {
+function github(
+	externalId: string,
+	name = `repo-${externalId}`,
+	installationId = "100",
+): RepositoryInput {
 	return {
 		provider: "github",
 		externalId,
+		installationId,
 		owner: "acme",
 		name,
 		defaultBranch: "main",
@@ -131,7 +136,7 @@ describe("repositories", () => {
 		expect(await stub.syncRepositories([github("42", "website")])).toEqual([id]);
 		expect((await stub.listRepositories())[0]).toMatchObject({ id, name: "website" });
 
-		await stub.removeRepositories("github", ["42"]);
+		await stub.removeInstallation("100");
 		expect(await stub.listRepositories()).toEqual([]);
 		expect(await stub.getRepository(id ?? "")).toBeNull();
 		expect(await stub.overview()).toEqual({ projects: 1, repositories: 0, agents: 0, assets: 0 });
@@ -142,6 +147,38 @@ describe("repositories", () => {
 		expect(await stub.syncRepositories([github("42", "website")])).toEqual([id]);
 		expect(await stub.overview()).toEqual({ projects: 1, repositories: 1, agents: 1, assets: 1 });
 		expect((await stub.listProjects())[0]?.repositoryIds).toEqual([id]);
+	});
+
+	it("follow their installation's list", async () => {
+		const stub = registry();
+		const [web, api] = await stub.reconcileInstallation("100", [
+			github("1", "web"),
+			github("2", "api"),
+		]);
+		const [other] = await stub.syncRepositories([github("3", "other", "200")]);
+
+		// GitHub no longer lists api for installation 100; the other installation is untouched.
+		expect(await stub.reconcileInstallation("100", [github("1", "web")])).toEqual([web]);
+		expect((await stub.listRepositories()).map((r) => r.id).sort()).toEqual([web, other].sort());
+
+		// A repository transferred to an account where installation 200 reaches it keeps its id,
+		// and installation 100 losing it does not remove it.
+		expect(await stub.syncRepositories([github("1", "web", "200")])).toEqual([web]);
+		await stub.reconcileInstallation("100", []);
+		const listed = await stub.listRepositories();
+		expect(listed.map((r) => [r.id, r.installationId]).sort()).toEqual(
+			[
+				[web, "200"],
+				[other, "200"],
+			].sort(),
+		);
+		expect(api).toBeDefined();
+	});
+
+	it("refuses repositories of another installation in a reconcile", async () => {
+		await inside(registry(), (instance) => {
+			expect(() => instance.reconcileInstallation("100", [github("1", "web", "200")])).toThrow();
+		});
 	});
 });
 

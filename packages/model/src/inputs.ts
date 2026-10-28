@@ -44,6 +44,8 @@ export const repositoryInput = z.object({
 	provider: z.enum(REPOSITORY_PROVIDERS),
 	/** The provider's own id, which survives renames and transfers. */
 	externalId: z.string().min(1).max(100),
+	/** The GitHub App installation that reaches it, which the registry scans it through. */
+	installationId: z.string().min(1).max(100),
 	owner: z.string().min(1).max(100),
 	name: z.string().min(1).max(100),
 	defaultBranch: z.string().min(1).max(255),

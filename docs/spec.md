@@ -159,3 +159,9 @@ runtime is designed alongside it, so the data model fits both.
   without being downloaded, and drift is a comparison of hashes. What a scan no longer finds is marked
   removed, not deleted, so ids and history survive. Metadata read from files stays flat (text,
   numbers, lists of text): the files hold the full configuration.
+- **GitHub connection** (AGT-4, 2026-10-28). A GitHub App, not an OAuth app: it asks for read
+  access to metadata and contents of the repositories each account chooses, nothing more, and
+  works without a person signed in. An installation links to one workspace, and only after the
+  OAuth web flow shows that the admin linking it can reach it on GitHub, because the setup
+  redirect's installation id can be forged. The client is a small module on `fetch` and WebCrypto
+  instead of Octokit, to keep Node polyfills out of the Worker.

@@ -43,6 +43,8 @@ export const repositories = sqliteTable(
 		id: text("id").primaryKey(),
 		provider: text("provider", { enum: REPOSITORY_PROVIDERS }).notNull(),
 		externalId: text("external_id").notNull(),
+		/** The GitHub App installation that reaches it. */
+		installationId: text("installation_id"),
 		owner: text("owner").notNull(),
 		name: text("name").notNull(),
 		defaultBranch: text("default_branch").notNull(),
@@ -59,7 +61,10 @@ export const repositories = sqliteTable(
 		/** Set when the connection no longer reaches it. What it held is kept for when it returns. */
 		removedAt: integer("removed_at"),
 	},
-	(table) => [uniqueIndex("repositories_external_idx").on(table.provider, table.externalId)],
+	(table) => [
+		uniqueIndex("repositories_external_idx").on(table.provider, table.externalId),
+		index("repositories_installation_idx").on(table.installationId),
+	],
 );
 
 export const projectRepositories = sqliteTable(
