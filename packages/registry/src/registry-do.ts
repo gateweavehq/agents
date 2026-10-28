@@ -8,11 +8,9 @@ import {
 	type ProjectPatch,
 	projectInput,
 	projectPatch,
-	REPOSITORY_PROVIDERS,
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
-	type RepositoryProvider,
 	repositoryInput,
 	type ScanResult,
 	scanResult,
@@ -33,8 +31,9 @@ import {
 } from "./queries";
 import {
 	applyScan,
+	reconcileInstallation,
 	recordScanError,
-	removeRepositories,
+	removeInstallation,
 	type ScanOutcome,
 	syncRepositories,
 } from "./scans";
@@ -117,10 +116,18 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => syncRepositories(this.#db, data, Date.now()));
 	}
 
-	removeRepositories(provider: RepositoryProvider, externalIds: string[]): void {
-		const from = z.enum(REPOSITORY_PROVIDERS).parse(provider);
-		const removed = ids.parse(externalIds);
-		this.#write(() => removeRepositories(this.#db, from, removed, Date.now()));
+	reconcileInstallation(installationId: string, inputs: RepositoryInput[]): string[] {
+		const installation = id.parse(installationId);
+		const data = z
+			.array(repositoryInput.refine((input) => input.installationId === installation))
+			.max(5000)
+			.parse(inputs);
+		return this.#write(() => reconcileInstallation(this.#db, installation, data, Date.now()));
+	}
+
+	removeInstallation(installationId: string): void {
+		const installation = id.parse(installationId);
+		this.#write(() => removeInstallation(this.#db, installation, Date.now()));
 	}
 
 	applyScan(repositoryId: string, scan: ScanResult): ScanOutcome {

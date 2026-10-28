@@ -48,11 +48,29 @@ not synced to the browser yet (see "Decisions" in the spec).
   in the app and assets in the library (phases 2 and 3). Setups, teams and runs come as tables
   of their own when those phases start.
 
+## GitHub
+
+A workspace reads its repositories through a GitHub App ([github-app.md](github-app.md) sets one
+up). `packages/github` is the app's client: a JWT signed with WebCrypto, installation tokens
+cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It needs nothing but
+`fetch` and `crypto.subtle`, so it runs in workerd without Node polyfills.
+
+- **Linking.** A `github_installation` row in D1 links an installation to one workspace. An
+  admin links it through install, setup and callback (`apps/web/src/server/github/flow.ts`).
+  The installation id that GitHub's setup redirect carries is not trusted: the link is made only
+  after a user token shows that this person can reach the installation on GitHub. The token is
+  not kept.
+- **Staying in step.** Linking, and webhooks for installation and repository changes, list the
+  installation's repositories and reconcile them into the registry: new ones appear, renamed ones
+  keep their history (they are matched by GitHub's id), and ones the app no longer reaches are
+  marked removed. Uninstalling the app, or disconnecting it, removes them all. Webhooks are
+  verified with the app's secret; deliveries for installations no workspace linked are
+  acknowledged and dropped.
+
 ## What comes next
 
-- A **GitHub App**. Installing it on an account or organization links that installation to a
-  workspace in D1. Webhooks and scans read each repository's agent configuration with the
-  narrowest permissions that allow it, and report it to the registry.
+- **Scans.** Pushes to a default branch, and linking, queue a scan of the repository. The
+  registry reads the files the format adapters ask for and applies what they detect.
 - **Format adapters**: small, pure modules that turn the files of one agent (Claude Code, Codex,
   Gemini CLI, Cursor) into a scan, each tested against real examples.
 

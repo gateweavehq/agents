@@ -18,8 +18,13 @@ import { Route as WorkspaceIndexRouteImport } from './routes/$workspace/index'
 import { Route as WorkspaceSettingsRouteImport } from './routes/$workspace/settings'
 import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitationId'
 import { Route as WorkspaceSettingsIndexRouteImport } from './routes/$workspace/settings.index'
+import { Route as WorkspaceSettingsGithubRouteImport } from './routes/$workspace/settings.github'
 import { Route as WorkspaceSettingsMembersRouteImport } from './routes/$workspace/settings.members'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiGithubCallbackRouteImport } from './routes/api/github/callback'
+import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
+import { Route as ApiGithubSetupRouteImport } from './routes/api/github/setup'
+import { Route as ApiGithubWebhooksRouteImport } from './routes/api/github/webhooks'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -66,6 +71,11 @@ const WorkspaceSettingsIndexRoute = WorkspaceSettingsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => WorkspaceSettingsRoute,
 } as any)
+const WorkspaceSettingsGithubRoute = WorkspaceSettingsGithubRouteImport.update({
+  id: '/github',
+  path: '/github',
+  getParentRoute: () => WorkspaceSettingsRoute,
+} as any)
 const WorkspaceSettingsMembersRoute =
   WorkspaceSettingsMembersRouteImport.update({
     id: '/members',
@@ -75,6 +85,26 @@ const WorkspaceSettingsMembersRoute =
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubCallbackRoute = ApiGithubCallbackRouteImport.update({
+  id: '/api/github/callback',
+  path: '/api/github/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubInstallRoute = ApiGithubInstallRouteImport.update({
+  id: '/api/github/install',
+  path: '/api/github/install',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubSetupRoute = ApiGithubSetupRouteImport.update({
+  id: '/api/github/setup',
+  path: '/api/github/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiGithubWebhooksRoute = ApiGithubWebhooksRouteImport.update({
+  id: '/api/github/webhooks',
+  path: '/api/github/webhooks',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -87,8 +117,13 @@ export interface FileRoutesByFullPath {
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
+  '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/github/callback': typeof ApiGithubCallbackRoute
+  '/api/github/install': typeof ApiGithubInstallRoute
+  '/api/github/setup': typeof ApiGithubSetupRoute
+  '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -98,8 +133,13 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace': typeof WorkspaceIndexRoute
+  '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/github/callback': typeof ApiGithubCallbackRoute
+  '/api/github/install': typeof ApiGithubInstallRoute
+  '/api/github/setup': typeof ApiGithubSetupRoute
+  '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
 }
 export interface FileRoutesById {
@@ -112,8 +152,13 @@ export interface FileRoutesById {
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
+  '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/github/callback': typeof ApiGithubCallbackRoute
+  '/api/github/install': typeof ApiGithubInstallRoute
+  '/api/github/setup': typeof ApiGithubSetupRoute
+  '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
 }
 export interface FileRouteTypes {
@@ -127,8 +172,13 @@ export interface FileRouteTypes {
     | '/$workspace/settings'
     | '/invite/$invitationId'
     | '/$workspace/'
+    | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/api/auth/$'
+    | '/api/github/callback'
+    | '/api/github/install'
+    | '/api/github/setup'
+    | '/api/github/webhooks'
     | '/$workspace/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -138,8 +188,13 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/invite/$invitationId'
     | '/$workspace'
+    | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/api/auth/$'
+    | '/api/github/callback'
+    | '/api/github/install'
+    | '/api/github/setup'
+    | '/api/github/webhooks'
     | '/$workspace/settings'
   id:
     | '__root__'
@@ -151,8 +206,13 @@ export interface FileRouteTypes {
     | '/$workspace/settings'
     | '/invite/$invitationId'
     | '/$workspace/'
+    | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/api/auth/$'
+    | '/api/github/callback'
+    | '/api/github/install'
+    | '/api/github/setup'
+    | '/api/github/webhooks'
     | '/$workspace/settings/'
   fileRoutesById: FileRoutesById
 }
@@ -164,6 +224,10 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   InviteInvitationIdRoute: typeof InviteInvitationIdRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiGithubCallbackRoute: typeof ApiGithubCallbackRoute
+  ApiGithubInstallRoute: typeof ApiGithubInstallRoute
+  ApiGithubSetupRoute: typeof ApiGithubSetupRoute
+  ApiGithubWebhooksRoute: typeof ApiGithubWebhooksRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -231,6 +295,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceSettingsIndexRouteImport
       parentRoute: typeof WorkspaceSettingsRoute
     }
+    '/$workspace/settings/github': {
+      id: '/$workspace/settings/github'
+      path: '/github'
+      fullPath: '/$workspace/settings/github'
+      preLoaderRoute: typeof WorkspaceSettingsGithubRouteImport
+      parentRoute: typeof WorkspaceSettingsRoute
+    }
     '/$workspace/settings/members': {
       id: '/$workspace/settings/members'
       path: '/members'
@@ -245,15 +316,45 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/github/callback': {
+      id: '/api/github/callback'
+      path: '/api/github/callback'
+      fullPath: '/api/github/callback'
+      preLoaderRoute: typeof ApiGithubCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/install': {
+      id: '/api/github/install'
+      path: '/api/github/install'
+      fullPath: '/api/github/install'
+      preLoaderRoute: typeof ApiGithubInstallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/setup': {
+      id: '/api/github/setup'
+      path: '/api/github/setup'
+      fullPath: '/api/github/setup'
+      preLoaderRoute: typeof ApiGithubSetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/github/webhooks': {
+      id: '/api/github/webhooks'
+      path: '/api/github/webhooks'
+      fullPath: '/api/github/webhooks'
+      preLoaderRoute: typeof ApiGithubWebhooksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 interface WorkspaceSettingsRouteChildren {
+  WorkspaceSettingsGithubRoute: typeof WorkspaceSettingsGithubRoute
   WorkspaceSettingsMembersRoute: typeof WorkspaceSettingsMembersRoute
   WorkspaceSettingsIndexRoute: typeof WorkspaceSettingsIndexRoute
 }
 
 const WorkspaceSettingsRouteChildren: WorkspaceSettingsRouteChildren = {
+  WorkspaceSettingsGithubRoute: WorkspaceSettingsGithubRoute,
   WorkspaceSettingsMembersRoute: WorkspaceSettingsMembersRoute,
   WorkspaceSettingsIndexRoute: WorkspaceSettingsIndexRoute,
 }
@@ -283,6 +384,10 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   InviteInvitationIdRoute: InviteInvitationIdRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiGithubCallbackRoute: ApiGithubCallbackRoute,
+  ApiGithubInstallRoute: ApiGithubInstallRoute,
+  ApiGithubSetupRoute: ApiGithubSetupRoute,
+  ApiGithubWebhooksRoute: ApiGithubWebhooksRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

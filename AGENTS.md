@@ -20,7 +20,8 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 | `apps/web`          | The Worker: TanStack Start UI, Better Auth, D1, the gateway to the registry |
 | `packages/model`    | The registry's vocabulary, entities and input schemas (zod). No server code |
 | `packages/registry` | `RegistryDO`: each workspace's projects, repositories, agents and assets    |
-| `docs/`             | The product spec and the architecture                                       |
+| `packages/github`   | The GitHub App's client: JWT, installation tokens, OAuth, webhooks          |
+| `docs/`             | The product spec, the architecture and setting up the GitHub App            |
 | `scripts/`          | Repository tooling (`doctor`)                                               |
 | `.claude/skills/`   | Step-by-step playbooks for recurring tasks (plain Markdown, any agent)      |
 | `wrangler.jsonc`    | The Worker's config, at the root because the Deploy button reads it there   |
@@ -71,7 +72,11 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    I/O in global scope, and `test/startup-logs.test.ts` fails if a cold start logs an error.
 6. **Migrations are append-only.** Generate them with Drizzle Kit and commit them. Never edit a
    migration that has been merged. Follow `.claude/skills/schema-change/SKILL.md`.
-7. **Secrets stay local.** Never commit `.dev.vars` or print its contents. Secrets the app will
+7. **GitHub installation ids are not trusted until GitHub vouches for them.** Anyone can call
+   the setup URL with any id. Link an installation to a workspace only after a user token shows
+   the person can reach it, as `apps/web/src/server/github/flow.ts` does, and act on webhooks
+   only after their signature checks out.
+8. **Secrets stay local.** Never commit `.dev.vars` or print its contents. Secrets the app will
    hold for users (model keys, MCP credentials) are stored by reference, never in prompts or logs.
 
 ## Code shared with Track
@@ -108,10 +113,12 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
 - `packages/registry` tests run inside workerd (`@cloudflare/vitest-plugin`) against a real
   `RegistryDO`. Call it over RPC; for a call expected to throw, use `runInDurableObject`, because
   the test pool reports an exception thrown inside a Durable Object as unhandled.
-- `packages/model` tests run in Node.
+- `packages/model` and `packages/github` tests run in Node.
 - `apps/web` has unit tests in `src/` and Worker tests in `test/`. The Worker tests build the app
   and run it in workerd through Miniflare, with every outbound request failing as a deployed
-  Worker's request to its own hostname does; see `test/agents-worker.ts`.
+  Worker's request to its own hostname does; see `test/agents-worker.ts`. Tests that connect
+  GitHub pass a `FakeGitHub` (`test/fake-github.ts`), which answers for github.com and
+  api.github.com and checks the app's JWT, PKCE and who can reach which installation.
 - Every bug fix gets a test that fails without the fix. Never weaken or skip a test to make a
   change pass.
 

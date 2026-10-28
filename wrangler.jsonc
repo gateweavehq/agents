@@ -32,8 +32,8 @@
 	// Email through Cloudflare Email Service. Nothing is sent until EMAIL_FROM names a sender on a
 	// domain onboarded to Email Sending; without it, Agents runs with email off.
 	"send_email": [{ "name": "EMAIL" }],
-	// Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM
-	// (see src/server/env.d.ts).
+	// Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, and the six
+	// GITHUB_APP_* settings of the GitHub App (see apps/web/src/server/env.d.ts).
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
 	// The top level is production. Staging is a separate Worker with its own database and
 	// workspaces; bindings are not inherited, so they are repeated here.

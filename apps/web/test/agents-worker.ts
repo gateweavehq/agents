@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Overview, Project, ProjectInput } from "@gateweave/agents-model";
+import type { Overview, Project, ProjectInput, Repository } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
+import type { FakeGitHub } from "./fake-github";
 
 const app = resolve(import.meta.dirname, "..");
 const serverDir = join(app, "dist/server");
@@ -34,6 +35,7 @@ export interface SentEmail {
 export interface RegistryStub {
 	createProject(input: ProjectInput): Promise<Project>;
 	overview(): Promise<Overview>;
+	listRepositories(): Promise<Repository[]>;
 }
 
 /** The address Agents sends from in tests. */
@@ -76,8 +78,14 @@ function builtModules(): V4ModuleDefinition[] {
  *
  * With `isolates` above 1, more copies of the Worker share the database and Durable Objects but
  * nothing in memory, as isolates in production do. `fetchIn` reaches a given one.
+ *
+ * With `github`, the Worker is set up as that GitHub App, and its requests to github.com and
+ * api.github.com reach the fake instead of failing.
  */
-export async function startAgents(origin: string, { isolates = 1 }: { isolates?: number } = {}) {
+export async function startAgents(
+	origin: string,
+	{ isolates = 1, github }: { isolates?: number; github?: FakeGitHub } = {},
+) {
 	const config = JSON.parse(readFileSync(join(serverDir, "wrangler.json"), "utf8")) as BuiltConfig;
 	const outbound: string[] = [];
 	const logs: WorkerLog[] = [];
@@ -107,6 +115,7 @@ export async function startAgents(origin: string, { isolates = 1 }: { isolates?:
 						BETTER_AUTH_SECRET: secret,
 						BETTER_AUTH_URL: origin,
 						EMAIL_FROM: `${EMAIL_FROM.name} <${EMAIL_FROM.email}>`,
+						...github?.bindings(),
 					},
 					serviceBindings: { EMAIL: "outbox" },
 					d1Databases: { DB: "agents-test" },
@@ -117,6 +126,10 @@ export async function startAgents(origin: string, { isolates = 1 }: { isolates?:
 					},
 					outboundService: (request: Request) => {
 						outbound.push(request.url);
+						const host = new URL(request.url).host;
+						if (github && (host === "github.com" || host === "api.github.com")) {
+							return github.handle(request);
+						}
 						return new Response("Outbound requests are blocked in this test", { status: 502 });
 					},
 				})),

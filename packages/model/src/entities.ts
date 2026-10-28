@@ -16,6 +16,7 @@ export interface Repository {
 	id: string;
 	provider: RepositoryProvider;
 	externalId: string;
+	installationId: string | null;
 	owner: string;
 	name: string;
 	defaultBranch: string;

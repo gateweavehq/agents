@@ -28,7 +28,4 @@ export function useMyRole(): MemberRole {
 	return useWorkspace().role;
 }
 
-/** Owners and admins manage members and invitations. */
-export function isAdmin(role: MemberRole): boolean {
-	return role !== "member";
-}
+export { isAdmin } from "#/lib/roles";
