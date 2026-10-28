@@ -64,7 +64,9 @@ export const getRuns = createServerFn({ method: "GET" })
 
 /**
  * One run with its trace, or null when the caller may not see it. The trace is null once its
- * conversation is deleted. `conversation` is set when the caller can open the conversation.
+ * conversation is deleted. `conversation` is set when the caller can open the conversation, which
+ * a nested run of a team has none of: it ran in a conversation of its own, reached only by its
+ * caller's.
  */
 export const getRun = createServerFn({ method: "GET" })
 	.validator(z.object({ slug: z.string().min(1), runId: z.string().min(1).max(64) }))
@@ -84,7 +86,8 @@ export const getRun = createServerFn({ method: "GET" })
 			return {
 				run: named(run, names),
 				trace,
-				conversation: run.startedBy === viewer.userId ? conversationId : null,
+				conversation:
+					run.startedBy === viewer.userId && run.parentRunId === null ? conversationId : null,
 			};
 		},
 	);

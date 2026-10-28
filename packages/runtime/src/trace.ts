@@ -1,18 +1,21 @@
 /**
  * The trace of each run, kept in the conversation's own SQLite next to its messages: one span per
  * model request, with its timing, tokens, estimated cost and AI Gateway log id, one per call to a
- * tool, and one per MCP server the turn connected to. The registry gets the sum when the run ends
+ * tool, one per MCP server the turn connected to, and one per edge of a team it took, with the run
+ * that started. The registry gets the sum when the run ends
  * (`RunFinish`); the trace stays here, private like the conversation, and goes when the
  * conversation is deleted.
  */
 import {
 	type AgentSnapshot,
 	type ConnectSpan,
+	type EdgeSpan,
 	type ModelSpan,
 	type RunFinish,
 	type RunSpan,
 	type RunStatus,
 	requestCost,
+	type TeamEdgeKind,
 	type ToolSpan,
 } from "@gateweave/agents-model";
 import type { StepResult, ToolSet } from "ai";
@@ -31,6 +34,7 @@ type Base = "id" | "kind" | "step" | "status" | "startedAt" | "endedAt";
 type ModelAttributes = Omit<ModelSpan, Base>;
 type ToolAttributes = Omit<ToolSpan, Base>;
 type ConnectAttributes = Omit<ConnectSpan, Base>;
+type EdgeAttributes = Omit<EdgeSpan, Base>;
 
 interface SpanRow {
 	id: string;
@@ -166,6 +170,21 @@ export class RunRecorder {
 		this.#end(span, outcome.error === null ? "ok" : "error", outcome, now);
 	}
 
+	/** Starts a call over a team's edge, in the model request under way. Returns the span's id. */
+	edgeStarted(edge: TeamEdgeKind, to: string, now = Date.now()): string {
+		const attributes: EdgeAttributes = { edge, to, childRunId: null, error: null };
+		return this.#insert("edge", this.#step, attributes, now);
+	}
+
+	/** Ends a call over an edge, with the run it started, and why it failed when it did. */
+	edgeEnded(
+		span: string,
+		outcome: { childRunId: string | null; error: string | null },
+		now = Date.now(),
+	): void {
+		this.#end(span, outcome.error === null ? "ok" : "error", outcome, now);
+	}
+
 	/**
 	 * Ends the run, once. Returns what the registry should record, or null when the run had ended
 	 * already, since a turn can report its end through more than one callback.
@@ -252,7 +271,7 @@ export function closeInterruptedRuns(sql: Sql): { runId: string; finish: Require
 
 /**
  * A run's spans in order, or none when this conversation has no such run: by model request, and
- * within one, connecting first, then the request, then the tools it called.
+ * within one, connecting first, then the request, then the tools it called and the edges it took.
  */
 export function readTrace(sql: Sql, runId: string): RunSpan[] {
 	return sql<SpanRow>`

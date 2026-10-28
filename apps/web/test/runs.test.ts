@@ -96,7 +96,9 @@ it("records each answer as a run, with its trace and estimated cost", async () =
 	expect(overview).toContain("$0.00007");
 
 	// Deleting the conversation takes its trace along, and the run stays counted.
-	expect(await registry.removeConversation(conversation.id, owner.userId)).toBe(true);
+	expect(await registry.removeConversation(conversation.id, owner.userId)).toEqual([
+		conversation.id,
+	]);
 	const after = await page(`/runs-forge/runs/${listed.id}`, cookie);
 	expect(after).toContain("was deleted, and its trace with it");
 	expect(after).not.toContain("Open the conversation");

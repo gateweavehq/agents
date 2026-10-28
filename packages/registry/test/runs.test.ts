@@ -94,7 +94,7 @@ describe("runs", () => {
 		const { runId: priceless } = await turn(stub);
 		await stub.finishRun(priceless, { ...finished, cost: null, inputTokens: 10, outputTokens: 5 });
 
-		expect(await stub.removeConversation(conversation, ADA)).toBe(true);
+		expect(await stub.removeConversation(conversation, ADA)).toEqual([conversation]);
 		expect((await stub.getRun(runId))?.conversationId).toBeNull();
 		expect(await stub.runUsage(0)).toEqual({
 			runs: 2,

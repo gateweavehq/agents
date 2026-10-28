@@ -440,10 +440,21 @@ export const conversations = sqliteTable(
 		title: text("title"),
 		createdAt: integer("created_at").notNull(),
 		updatedAt: integer("updated_at").notNull(),
+		/**
+		 * The team it is with, whose lead answers each turn. No foreign key: a deleted team leaves
+		 * its conversations to be read.
+		 */
+		teamId: text("team_id"),
+		/**
+		 * For a turn a team's agent took over an edge, in a conversation of its own: the
+		 * conversation the person started, which it goes with. Such conversations are not listed.
+		 */
+		rootId: text("root_id"),
 	},
 	(table) => [
 		index("conversations_started_by_idx").on(table.startedBy, table.updatedAt),
 		index("conversations_agent_idx").on(table.agentId),
+		index("conversations_root_idx").on(table.rootId),
 	],
 );
 
@@ -473,11 +484,22 @@ export const runs = sqliteTable(
 		cost: integer("cost"),
 		startedAt: integer("started_at").notNull(),
 		endedAt: integer("ended_at"),
+		/** For a run another run called over a team's edge: that run, and its span for the call. */
+		parentRunId: text("parent_run_id"),
+		parentSpanId: text("parent_span_id"),
+		/** The run of the person's message that led to this one. */
+		rootRunId: text("root_run_id"),
+		edge: text("edge", { enum: TEAM_EDGE_KINDS }),
+		depth: integer("depth").notNull().default(0),
+		/** The teams from the one the person talks to down to the one the agent acts in. */
+		teamPath: text("team_path", { mode: "json" }).$type<string[]>(),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),
 		index("runs_started_by_idx").on(table.startedBy, table.startedAt),
 		index("runs_conversation_idx").on(table.conversationId),
+		index("runs_parent_idx").on(table.parentRunId),
+		index("runs_root_idx").on(table.rootRunId),
 	],
 );
 

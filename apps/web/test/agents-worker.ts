@@ -115,8 +115,9 @@ export interface RegistryStub {
 	setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal>;
 	resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null>;
 	startConversation(agentId: string, startedBy: string): Promise<Conversation | null>;
+	startTeamConversation(teamId: string, startedBy: string): Promise<Conversation | null>;
 	getConversation(conversationId: string, startedBy: string): Promise<Conversation | null>;
-	removeConversation(conversationId: string, startedBy: string): Promise<boolean>;
+	removeConversation(conversationId: string, startedBy: string): Promise<string[]>;
 	beginTurn(conversationId: string, text: string): Promise<{ runId: string } | ProviderRefusal>;
 	finishRun(runId: string, finish: RunFinish): Promise<boolean>;
 	listRuns(options?: { startedBy?: string; before?: RunCursor }): Promise<Run[]>;

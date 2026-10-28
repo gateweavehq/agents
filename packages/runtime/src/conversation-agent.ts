@@ -1,6 +1,7 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
-import type { RunSpan } from "@gateweave/agents-model";
-import type { RegistryDO } from "@gateweave/agents-registry";
+import type { RunSpan, TurnEdge, TurnVia } from "@gateweave/agents-model";
+import type { ConversationTurn, RegistryDO } from "@gateweave/agents-registry";
+import { type Agent, getAgentByName } from "agents";
 import {
 	convertToModelMessages,
 	createUIMessageStream,
@@ -9,18 +10,44 @@ import {
 	streamText,
 	type UIMessage,
 } from "ai";
+import { edgeTools } from "./edges";
 import { describeFailure, failureForLogs, type GatewaySettings, languageModel } from "./models";
 import { connectTools } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
 interface RuntimeEnv extends GatewaySettings {
 	REGISTRY: DurableObjectNamespace<RegistryDO>;
+	CONVERSATIONS: DurableObjectNamespace<Agent<Cloudflare.Env>>;
 }
 
 const SEPARATOR = ":";
 
 /** The model requests one turn may make: the first, and one after each round of tool calls. */
 export const MAX_STEPS = 10;
+
+/** Most characters of a nested turn's answer that the model which asked for it reads. */
+export const MAX_ANSWER = 50_000;
+
+/** A turn that a turn of another conversation asks for over a team's edge. */
+export interface NestedTurnRequest {
+	text: string;
+	via: TurnVia;
+}
+
+/** How a nested turn went: its run and answer (none for a report), or why it had none. */
+export type NestedTurnOutcome =
+	| { runId: string; answer: string | null }
+	| { runId: string | null; error: string };
+
+/**
+ * What a conversation reaches of another over RPC. Narrower than the class's own stub, whose type
+ * TypeScript cannot work out from inside the class.
+ */
+interface NestedConversation {
+	nestedTurn(request: NestedTurnRequest): Promise<NestedTurnOutcome>;
+	stopNestedTurn(): Promise<void>;
+	destroy(): Promise<void>;
+}
 
 /** The name of a conversation's Durable Object: its workspace and its id. */
 export function conversationName(workspaceId: string, conversationId: string): string {
@@ -40,12 +67,23 @@ export function conversationName(workspaceId: string, conversationId: string): s
  * Each turn that calls the model is a run. Its trace is kept here (`./trace.ts`) and its sum goes
  * to the registry when it ends. The agent's MCP servers are connected for each turn and closed
  * when it ends (`./tools.ts`).
+ *
+ * In a conversation with a team, the lead's turn also has the team's edges as tools
+ * (`./edges.ts`). Taking one starts a nested turn in a new conversation of the same class, reached
+ * over RPC alone (`nestedTurn`); it begins with the edge it came through, which the registry
+ * checks, and never takes another message.
  */
 export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	// The name holds the workspace's id, which the page has no use for.
 	static override options = { sendIdentityOnConnect: false };
 
 	#traceTables = false;
+	/** The turn `nestedTurn` began, which the next `onChatMessage` takes up. */
+	#nested: ConversationTurn | null = null;
+	/** Stops the nested turn under way, when the turn waiting for it stops. */
+	#stopNested: AbortController | null = null;
+	/** Why the turn under way failed, in the app's words; null while it has not. */
+	#failure: string | null = null;
 
 	override async onStart(): Promise<void> {
 		// A restart cut these runs short: they will not end on their own.
@@ -63,18 +101,66 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		return readTrace(this.#sql, runId);
 	}
 
+	/**
+	 * Takes the one turn this conversation exists for, which a turn of another conversation asked
+	 * for over a team's edge. The registry checks the edge and begins the turn; then a delegate or
+	 * an ask waits for the answer, and a report only for the start.
+	 */
+	async nestedTurn({ text, via }: NestedTurnRequest): Promise<NestedTurnOutcome> {
+		const { conversationId, registry } = this.#parties();
+		const turn = await registry.beginTurn(conversationId, text, via);
+		if ("status" in turn) return { runId: null, error: turn.message };
+		this.#nested = turn;
+		const stop = new AbortController();
+		this.#stopNested = stop;
+		const message: UIMessage = {
+			id: crypto.randomUUID(),
+			role: "user",
+			parts: [{ type: "text", text }],
+		};
+		const done = this.saveMessages((messages) => [...messages, message], { signal: stop.signal });
+		if (via.kind === "report") {
+			// Nobody waits for it, so the conversation stays awake until it ends.
+			this.keepAliveWhile(() => done).catch((error: unknown) =>
+				console.error("A reported turn failed", failureForLogs(error)),
+			);
+			return { runId: turn.runId, answer: null };
+		}
+		const result = await done;
+		if (this.#failure !== null) return { runId: turn.runId, error: this.#failure };
+		if (result.status === "aborted") return { runId: turn.runId, error: "The turn was stopped" };
+		if (result.status !== "completed") {
+			return { runId: turn.runId, error: `${turn.agent.name} could not finish its answer` };
+		}
+		return { runId: turn.runId, answer: answerOf(this.messages, turn.agent.name) };
+	}
+
+	/** Stops the nested turn under way. */
+	stopNestedTurn(): void {
+		this.#stopNested?.abort();
+	}
+
 	override async onChatMessage(
 		_onFinish: unknown,
 		options?: OnChatMessageOptions,
 	): Promise<Response> {
 		const env = this.env as unknown as RuntimeEnv;
 		const { workspaceId, conversationId, registry } = this.#parties();
-		const turn = await registry.beginTurn(conversationId, lastUserText(this.messages));
+		const nested = this.#nested;
+		this.#nested = null;
+		this.#failure = null;
+		const turn = nested ?? (await registry.beginTurn(conversationId, lastUserText(this.messages)));
 		if ("status" in turn) return failed(turn.message);
-		const { agent, key, mcpServers, runId } = turn;
+		const { agent, key, mcpServers, edges, runId } = turn;
 		const run = new RunRecorder(this.#sql, runId, agent);
 		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
+		// An edge is named after a member of the team, so it wins over a server's tool of that name.
+		const tools = {
+			...toolbox.tools,
+			...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
+		};
 		const end = async (status: "succeeded" | "failed" | "stopped", error: string | null = null) => {
+			if (error !== null) this.#failure = error;
 			await toolbox.close();
 			const finish = run.finish(status, error);
 			if (finish) await this.#report(registry, runId, finish);
@@ -91,10 +177,10 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 				// A turn stopped during a tool call leaves the call without a result, which providers
 				// refuse in a later turn.
 				messages: await convertToModelMessages(this.messages, {
-					tools: toolbox.tools,
+					tools,
 					ignoreIncompleteToolCalls: true,
 				}),
-				tools: toolbox.tools,
+				tools,
 				stopWhen: stepCountIs(MAX_STEPS),
 				abortSignal: options?.abortSignal,
 				onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
@@ -119,6 +205,51 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			await end("failed", message);
 			return failed(message);
 		}
+	}
+
+	/**
+	 * Takes one of a team's edges: a nested turn of the agent at the other end, in a new
+	 * conversation. The caller's trace gets a span for it, which the nested run points back to.
+	 */
+	async #takeEdge(
+		run: RunRecorder,
+		edge: TurnEdge,
+		text: string,
+		signal?: AbortSignal,
+	): Promise<string> {
+		const env = this.env as unknown as RuntimeEnv;
+		const { workspaceId } = this.#parties();
+		const span = run.edgeStarted(edge.kind, edge.name);
+		let nested: NestedConversation | undefined;
+		let outcome: NestedTurnOutcome;
+		// The nested turn stops with the turn that waits for it.
+		const stop = () => {
+			nested?.stopNestedTurn().catch(() => {});
+		};
+		signal?.addEventListener("abort", stop, { once: true });
+		try {
+			const name = conversationName(workspaceId, crypto.randomUUID());
+			nested = (await getAgentByName(env.CONVERSATIONS, name)) as unknown as NestedConversation;
+			const { kind, team, to } = edge;
+			outcome = await nested.nestedTurn({
+				text,
+				via: { parentRunId: run.runId, parentSpanId: span, kind, team, to },
+			});
+		} catch (error) {
+			run.edgeEnded(span, { childRunId: null, error: "It could not be reached" });
+			console.error("An edge could not be taken", { edge: edge.kind, ...failureForLogs(error) });
+			throw new Error(`${edge.name} could not be reached`);
+		} finally {
+			signal?.removeEventListener("abort", stop);
+		}
+		const error = "error" in outcome ? outcome.error : null;
+		run.edgeEnded(span, { childRunId: outcome.runId, error });
+		if ("error" in outcome) {
+			// A turn the registry refused leaves a conversation it never heard of.
+			if (outcome.runId === null) await nested.destroy().catch(() => {});
+			throw new Error(outcome.error);
+		}
+		return outcome.answer ?? `${edge.name} has the message and takes a turn of its own on it.`;
 	}
 
 	/** The conversation's SQLite, with the trace's tables made on first use. */
@@ -163,6 +294,19 @@ function lastUserText(messages: UIMessage[]): string {
 	return (message?.parts ?? [])
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join("\n");
+}
+
+/** The text of the conversation's last answer, cut to what a caller's model reads. */
+function answerOf(messages: UIMessage[], name: string): string {
+	const message = messages.findLast((candidate) => candidate.role === "assistant");
+	const text = (message?.parts ?? [])
+		.flatMap((part) => (part.type === "text" ? [part.text] : []))
+		.join("\n\n")
+		.trim();
+	if (text === "") return `${name} finished without an answer.`;
+	return text.length <= MAX_ANSWER
+		? text
+		: `${text.slice(0, MAX_ANSWER)}\n\n[${name}'s answer was cut short here.]`;
 }
 
 /** A turn that ends before the model is called, with why. */

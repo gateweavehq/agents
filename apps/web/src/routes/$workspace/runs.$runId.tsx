@@ -1,4 +1,4 @@
-import { MODEL_PROVIDER_NAMES, type RunSpan } from "@gateweave/agents-model";
+import { MODEL_PROVIDER_NAMES, type RunSpan, type TeamEdgeKind } from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { MessagesSquare } from "lucide-react";
 import type { ReactNode } from "react";
@@ -38,6 +38,19 @@ function RunPage() {
 					<p className="text-sm text-muted-foreground">
 						Started by {run.startedByName} on {formatDateTime(run.startedAt)}
 					</p>
+					{run.parentRunId && run.edge && (
+						<p className="text-sm text-muted-foreground">
+							{EDGE_REACHED[run.edge]}{" "}
+							<Link
+								to="/$workspace/runs/$runId"
+								params={{ workspace: slug, runId: run.parentRunId }}
+								className="underline underline-offset-4 hover:text-foreground"
+							>
+								another run
+							</Link>{" "}
+							in a team
+						</p>
+					)}
 				</div>
 				{conversation && (
 					<Button asChild size="sm" variant="outline">
@@ -129,6 +142,20 @@ const FINISH_REASONS: Record<string, string> = {
 	other: "Stopped",
 };
 
+/** How a nested run was reached, before a link to the run that reached it. */
+const EDGE_REACHED: Record<TeamEdgeKind, string> = {
+	delegate: "Delegated to by",
+	ask: "Asked by",
+	report: "Reported to by",
+};
+
+/** What a call over an edge did, before the name of the member it went to. */
+const EDGE_CALLS: Record<TeamEdgeKind, string> = {
+	delegate: "Delegate to",
+	ask: "Ask",
+	report: "Report to",
+};
+
 const SPAN_COLORS: Record<RunSpan["status"], string> = {
 	running: "bg-sky-500",
 	ok: "bg-emerald-500",
@@ -137,9 +164,10 @@ const SPAN_COLORS: Record<RunSpan["status"], string> = {
 
 /**
  * Each span on one time axis, from the start of the run to its end: connecting to the agent's MCP
- * servers, each model request, and the tools each request called, under it.
+ * servers, each model request, and the tools each request called and the edges it took, under it.
  */
 function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
+	const { slug } = useWorkspace();
 	const end = Math.max(
 		run.endedAt ?? (run.status === "running" ? Date.now() : run.startedAt),
 		...trace.map((span) => span.endedAt ?? span.startedAt),
@@ -151,9 +179,15 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 		<ol className="divide-y rounded-lg border">
 			{trace.map((span) => {
 				const spanEnd = span.endedAt ?? end;
-				const { title, meta, details } = describeSpan(span, spanEnd);
+				const { title, meta, details } = describeSpan(span, spanEnd, slug);
 				return (
-					<li key={span.id} className={cn("space-y-2 p-3", span.kind === "tool" && "pl-8")}>
+					<li
+						key={span.id}
+						className={cn(
+							"space-y-2 p-3",
+							(span.kind === "tool" || span.kind === "edge") && "pl-8",
+						)}
+					>
 						<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
 							<span className="min-w-0 text-sm">{title}</span>
 							<span className="text-xs text-muted-foreground tabular-nums">{meta}</span>
@@ -187,9 +221,31 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 function describeSpan(
 	span: RunSpan,
 	spanEnd: number,
+	slug: string,
 ): { title: ReactNode; meta: string; details: ReactNode[] } {
 	const duration = formatDuration(spanEnd - span.startedAt);
 	switch (span.kind) {
+		case "edge":
+			return {
+				title: (
+					<>
+						{EDGE_CALLS[span.edge]} <span className="font-medium">{span.to}</span>
+					</>
+				),
+				meta: duration,
+				details: span.childRunId
+					? [
+							<Link
+								key="run"
+								to="/$workspace/runs/$runId"
+								params={{ workspace: slug, runId: span.childRunId }}
+								className="underline underline-offset-4 hover:text-foreground"
+							>
+								Open its run
+							</Link>,
+						]
+					: [],
+			};
 		case "connect":
 			return {
 				title: (

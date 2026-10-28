@@ -33,10 +33,10 @@ describe("conversations", () => {
 		expect(await stub.getConversation(id, ADA)).toEqual(first);
 		expect(await stub.getConversation(id, GRACE)).toBeNull();
 		expect(await stub.listConversations(GRACE)).toEqual([]);
-		expect(await stub.removeConversation(id, GRACE)).toBe(false);
+		expect(await stub.removeConversation(id, GRACE)).toEqual([]);
 		expect(await stub.listConversations(ADA)).toEqual([first]);
 
-		expect(await stub.removeConversation(id, ADA)).toBe(true);
+		expect(await stub.removeConversation(id, ADA)).toEqual([id]);
 		expect(await stub.getConversation(id, ADA)).toBeNull();
 	});
 
@@ -102,6 +102,7 @@ describe("conversations", () => {
 			},
 			key: "sk-ant-api03-abcdefgh",
 			mcpServers: [],
+			edges: [],
 			runId: expect.any(String),
 		});
 

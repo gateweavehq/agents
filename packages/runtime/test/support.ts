@@ -133,11 +133,11 @@ export interface ModelRequest {
 }
 
 /**
- * Answers each model request with `answer`, given how many came before it. Requests to a host in
- * `others` go to its handler instead, as an MCP server's do.
+ * Answers each model request with `answer`, given how many came before it and the request itself.
+ * Requests to a host in `others` go to its handler instead, as an MCP server's do.
  */
 export function fakeModel(
-	answer: (call: number) => Response,
+	answer: (call: number, request: ModelRequest) => Response | Promise<Response>,
 	others: Record<string, (request: Request) => Promise<Response>> = {},
 ) {
 	const requests: ModelRequest[] = [];
@@ -145,13 +145,14 @@ export function fakeModel(
 		const request = new Request(input, init);
 		const other = others[new URL(request.url).host];
 		if (other) return other(request);
-		requests.push({
+		const recorded = {
 			url: request.url,
 			headers: request.headers,
 			body: (await request.clone().json()) as Record<string, unknown>,
 			signal: init?.signal ?? null,
-		});
-		return answer(requests.length - 1);
+		};
+		requests.push(recorded);
+		return answer(requests.length - 1, recorded);
 	});
 	return requests;
 }

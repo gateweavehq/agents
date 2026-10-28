@@ -426,8 +426,8 @@ A team is a directed graph of agents run by Gateweave (`packages/registry/src/te
 lives in the registry: `teams`, `team_members` and `team_edges`.
 
 - **Members** are agents run by Gateweave or other teams, by id; ids are UUIDs, so an agent's
-  never clashes with a team's. One of the agents is the lead, the one a chat with the team will
-  talk to (AGT-34). In edges, a team stands for its lead.
+  never clashes with a team's. One of the agents is the lead, the one a chat with the team talks
+  to. In edges, a team stands for its lead.
 - **Edges** go from one member to another: `delegate` hands over a task and waits for the result,
   `ask` asks one question that is answered without tools, and `report` sends a message without
   waiting.
@@ -443,6 +443,45 @@ lives in the registry: `teams`, `team_members` and `team_edges`.
 - **A removed agent stays where it was**, marked, until someone takes it out, so removing an
   agent never changes a graph by itself. It cannot join a team anew or start leading one. A team
   that is in another team cannot be deleted until it is taken out of there.
+
+### A team's turns
+
+A conversation can be with a team (`conversations.team_id`). Each turn is answered by the team's
+lead as it is then (`packages/registry/src/team-turns.ts`, `packages/runtime/src/edges.ts`).
+
+- **Where an agent stands** is the path of teams from the one the person talks to down to the
+  one it acts in, and the agent. The lead of the team being chatted with stands at the top. The
+  registry keeps each run's place (`runs.team_path`), so the runtime never says where a turn is.
+- **Its edges are its tools.** A turn gets one tool per edge its agent can take where it stands:
+  its own edges in the team it acts in and, when it leads that team, the team's own edges in the
+  team above. That is what "a team stands for its lead" means in a turn. Tools are named
+  `delegate__<member>`, `ask__<member>` and `report__<member>` and sorted by name, so a turn's
+  tools come in the same order each time. Edges to removed agents are left out.
+- **Taking an edge is a nested turn** of the agent at the other end. It runs in a new
+  conversation of its own, a `ConversationAgent` reached by RPC (`nestedTurn`). It sees only the
+  task, question or message, never the conversation that called it.
+  - `delegate` gets the agent's MCP tools and its own edges, and the caller waits for the answer.
+  - `ask` is one model request without tools or edges, and the caller waits.
+  - `report` gets a full turn, and the caller goes on as soon as the registry has begun it. The
+    nested conversation stays awake until the turn ends (`keepAliveWhile`).
+  - Stopping a turn stops the delegates and asks it waits on; reports go on.
+- **The registry decides each one.** The nested turn calls `beginTurn` with the edge it came
+  through: the calling run, its span for the call, the edge's kind, team and member. The registry
+  checks it against the graphs as they are, from the calling run's stored place, and checks the
+  limits. It does so again in the write that opens the run, so two calls at once cannot both
+  slip under a limit. A refusal comes back to the calling model as the tool's error, in our
+  words.
+- **The limits** (`TEAM_TURN_LIMITS`): a message's turns nest at most 4 edges deep, one turn
+  takes at most 8 edges, and one message leads to at most 32 nested turns in all. An answer to an
+  `ask` takes no edges. Reports may go in a circle, so these limits are what keeps a team from
+  running away with the workspace's keys.
+- **Nested runs** have the calling run (`parent_run_id`), its span for the call
+  (`parent_span_id`), the run of the person's message (`root_run_id`), the edge and the depth.
+  The caller's trace has an `edge` span per call, pointing at the run it started. A nested run
+  belongs to the member whose message started it all, and counts once in usage, like any run.
+- **No public route.** A nested conversation (`conversations.root_id`) is not listed or opened
+  by the registry, so the chat gateway sends 404 for it. A turn there without an edge is refused.
+  Deleting the person's conversation deletes the nested ones with it, Durable Objects included.
 
 ## The CLI
 
@@ -490,9 +529,10 @@ workspace.
   agent cannot answer and why. An agent's page has a Chat button too.
 - **Runs** lists runs, the latest first, fifty at a time (`apps/web/src/lib/runs.ts`): owners
   and admins see everyone's, since they answer for what runs spend, and members see their own. A
-  run's page shows its summary and its trace as a timeline of connections, model requests and
-  tool calls, and links the conversation only for the member who started it. The Overview sums
-  the last 30 days of runs.
+  run's page shows its summary and its trace as a timeline of connections, model requests,
+  tool calls and calls over a team's edges, each linking the run it started, and links the
+  conversation only for the member who started it. A nested run links the run that called it.
+  The Overview sums the last 30 days of runs.
 - **Environment** lists the environment sets with their variables, their secrets as set or
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
@@ -527,9 +567,8 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): chatting with a team, its edges as
-  tools and nested runs (AGT-34), teams in Chat and Runs (AGT-35), and cloud runners for servers
-  that run as local commands (AGT-9).
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): teams in Chat and Runs (AGT-35),
+  and cloud runners for servers that run as local commands (AGT-9).
 
 ## Deploys
 
