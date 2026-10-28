@@ -2,7 +2,6 @@ import { MODEL_PROVIDER_NAMES, type RunSpan, type TeamEdgeKind } from "@gateweav
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ChevronRight, MessagesSquare } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { toast } from "sonner";
 import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
@@ -340,7 +339,7 @@ function NestedRun({ id, run }: { id: string; run: RunEntry | null }) {
 	const { slug } = useWorkspace();
 	const [open, setOpen] = useState(false);
 	const [detail, setDetail] = useState<Awaited<ReturnType<typeof getRun>>>(null);
-	const [loading, setLoading] = useState(false);
+	const [failed, setFailed] = useState(false);
 	const status = run?.status;
 	const running = run?.total.running;
 
@@ -348,16 +347,14 @@ function NestedRun({ id, run }: { id: string; run: RunEntry | null }) {
 	useEffect(() => {
 		if (!open) return;
 		let live = true;
-		setLoading(true);
 		getRun({ data: { slug, runId: id } })
 			.then((fetched) => {
-				if (live) setDetail(fetched);
+				if (!live) return;
+				setDetail(fetched);
+				setFailed(fetched === null);
 			})
-			.catch((error: unknown) => {
-				if (live) toast.error(error instanceof Error ? error.message : "Something went wrong");
-			})
-			.finally(() => {
-				if (live) setLoading(false);
+			.catch(() => {
+				if (live) setFailed(true);
 			});
 		return () => {
 			live = false;
@@ -403,7 +400,7 @@ function NestedRun({ id, run }: { id: string; run: RunEntry | null }) {
 					<Trace run={detail.run} trace={detail.trace} nested={detail.nested} />
 				) : (
 					<p className="px-1.5 text-xs text-muted-foreground">
-						{loading ? "Loading its trace…" : "Its trace could not be read."}
+						{failed ? "Its trace could not be read." : "Loading its trace…"}
 					</p>
 				))}
 		</div>
