@@ -96,14 +96,31 @@ Each workspace's `RegistryDO` scans its own repositories. Requests wait in its S
   files the adapters want (`wantsFile`), fifty blobs per GraphQL request. Texts the registry
   already holds, by blob id, are not downloaded again, so a scan after a push downloads what the
   push changed. A wanted symlink, such as `CLAUDE.md` pointing to `AGENTS.md`, is read as its
-  target. A head the last successful scan already read is not scanned again.
+  target. A head the last successful scan already read is not scanned again, unless a member
+  asks with "Scan now", which forces a read for after the adapters learn something new.
 - **Writes stay synchronous.** A scan awaits GitHub outside any transaction, then validates the
   result like any other scan and applies it in one. A failure is recorded on the repository and
   tried again after a minute, ten minutes and an hour; what earlier scans found stays.
 
+## Pages
+
+The workspace's pages read the registry through server functions in `apps/web/src/lib/registry.ts`,
+each of which checks membership first, so a non-member gets the same "not found" as a missing
+workspace.
+
+- **Overview** counts what the registry holds and shows a matrix of repositories by the coding
+  agents each one configures.
+- **Repositories** lists them with their scan status; a repository's page shows its agents, the
+  assets they read grouped by kind, and the problems the last scan found.
+- **Agents** lists every agent and subagent by runtime.
+- **An asset's page** shows the text of each of its files, the agents that read it, how many
+  other assets have the same content, and every earlier version.
+
+Pages refresh themselves while a scan of what they show is waiting or running.
+
 ## What comes next
 
-- **Pages** for projects, repositories, agents and assets (AGT-5).
+- **Projects**, grouping repositories, with their own pages.
 
 ## Deploys
 

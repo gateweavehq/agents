@@ -207,7 +207,9 @@ describe("scan requests", () => {
 		// The test worker has no GitHub App, so the scan cannot read anything, and trying again
 		// would not help.
 		expect(await scanError(stub, web)).toBe("GitHub is not set up on this server");
-		expect((await stub.getRepository(web))?.repository.scannedCommit).toBeNull();
+		const repository = (await stub.getRepository(web))?.repository;
+		expect(repository?.scannedCommit).toBeNull();
+		expect(repository?.scanPending).toBe(false);
 		expect(await alarmOf(stub)).toBeNull();
 	});
 
@@ -231,6 +233,16 @@ describe("scan requests", () => {
 		expect(await stub.requestScanOf("github", "2")).toBe(false);
 		await stub.reconcileInstallation("100", []);
 		expect(await stub.requestScanOf("github", "1")).toBe(false);
+	});
+
+	it("show on the repository while they wait", async () => {
+		await inside(registry(), async (instance) => {
+			const [web = ""] = instance.syncRepositories([github("1", "web")]);
+			expect(instance.getRepository(web)?.repository.scanPending).toBe(false);
+			// One call, so the alarm cannot run in between.
+			expect(await instance.requestScans([web], true)).toBe(1);
+			expect(instance.listRepositories()[0]?.scanPending).toBe(true);
+		});
 	});
 });
 
@@ -453,6 +465,38 @@ describe("applyScan", () => {
 });
 
 describe("destroy", () => {
+	it("describes an asset: its repository, its readers, its versions and its twins", async () => {
+		const stub = registry();
+		const [web = "", api = ""] = await stub.syncRepositories([
+			github("1", "web"),
+			github("2", "api"),
+		]);
+		await stub.applyScan(web, scan());
+		await stub.applyScan(api, scan());
+		const assetOf = async (id: string) => (await stub.getRepository(id))?.assets[0]?.id ?? "";
+		const asset = await assetOf(web);
+
+		const first = await stub.getAsset(asset);
+		expect(first?.repository?.id).toBe(web);
+		expect(first?.agents.map((agent) => agent.key)).toEqual(["main"]);
+		// The same CLAUDE.md is in api.
+		expect(first?.sameContent).toBe(1);
+
+		await stub.applyScan(
+			web,
+			scan({ commit: COMMIT_B, scannedAt: 2_000, assets: [instructions("CLAUDE.md", "bye\n")] }),
+		);
+		const second = await stub.getAsset(asset);
+		expect(second?.version.files[0]?.content).toBe("bye\n");
+		expect(second?.versions.map((version) => [version.version, version.commit])).toEqual([
+			[2, COMMIT_B],
+			[1, COMMIT_A],
+		]);
+		expect(second?.sameContent).toBe(0);
+		expect((await stub.getAsset(asset, 1))?.version.files[0]?.content).toBe("hello\n");
+		expect(await stub.getAsset("missing")).toBeNull();
+	});
+
 	it("deletes the whole registry", async () => {
 		const name = crypto.randomUUID();
 		const stub = env.REGISTRY.getByName(name);

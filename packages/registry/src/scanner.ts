@@ -34,16 +34,17 @@ export interface LastScan {
 
 /**
  * Reads the repository and detects what it holds. Null when the default branch is still at the
- * commit the last successful scan read.
+ * commit the last successful scan read, unless the scan is forced.
  */
 export async function scanRepository(
 	db: Db,
 	source: RepositorySource,
 	last: LastScan,
 	startedAt: number,
+	force = false,
 ): Promise<ScanResult | null> {
 	const head = await source.head();
-	if (head.commit === last.scannedCommit && last.scanError === null) return null;
+	if (!force && head.commit === last.scannedCommit && last.scanError === null) return null;
 	const listing = await source.files(head.tree);
 	const problems: ScanProblem[] = [];
 	if (listing.truncated) {

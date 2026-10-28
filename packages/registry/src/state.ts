@@ -20,9 +20,15 @@ export const toRepository = (
 	{ removedAt: _, ...row }: schema.RepositoryRow,
 	projectIds: string[],
 	runtimes: Iterable<AgentRuntime>,
+	scanPending: boolean,
 ): Repository => {
 	const found = new Set(runtimes);
-	return { ...row, projectIds, runtimes: AGENT_RUNTIMES.filter((runtime) => found.has(runtime)) };
+	return {
+		...row,
+		projectIds,
+		runtimes: AGENT_RUNTIMES.filter((runtime) => found.has(runtime)),
+		scanPending,
+	};
 };
 
 export const toAgent = ({ removedAt: _, ...row }: schema.AgentRow, assetIds: string[]): Agent => ({

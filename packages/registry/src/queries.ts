@@ -2,6 +2,7 @@
 // looked up one by one rather than passed to IN (...).
 import type {
 	Agent,
+	AssetDetail,
 	AssetFile,
 	AssetVersion,
 	Overview,
@@ -9,7 +10,7 @@ import type {
 	Repository,
 	RepositoryDetail,
 } from "@gateweave/agents-model";
-import { and, asc, count, eq, isNull, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
 import {
 	agentAssets,
 	agents,
@@ -19,6 +20,7 @@ import {
 	projectRepositories,
 	projects,
 	repositories,
+	scanRequests,
 } from "./db/schema";
 import { type Db, groupBy, toAgent, toAsset, toProject, toRepository } from "./state";
 
@@ -106,13 +108,24 @@ function repositoriesWhere(db: Db, where?: SQL): Repository[] {
 			.all()
 			.map((row) => [row.repositoryId, row.runtime] as const),
 	);
+	const pending = new Set(
+		db
+			.select({ id: scanRequests.repositoryId })
+			.from(scanRequests)
+			.innerJoin(repositories, eq(scanRequests.repositoryId, repositories.id))
+			.where(live)
+			.all()
+			.map((row) => row.id),
+	);
 	return db
 		.select()
 		.from(repositories)
 		.where(live)
 		.orderBy(asc(repositories.owner), asc(repositories.name))
 		.all()
-		.map((row) => toRepository(row, links.get(row.id) ?? [], runtimes.get(row.id) ?? []));
+		.map((row) =>
+			toRepository(row, links.get(row.id) ?? [], runtimes.get(row.id) ?? [], pending.has(row.id)),
+		);
 }
 
 export const listRepositories = (db: Db): Repository[] => repositoriesWhere(db);
@@ -185,4 +198,48 @@ export function getAssetVersion(db: Db, assetId: string, version?: number): Asse
 		}),
 	);
 	return { ...row, files };
+}
+
+/** A live asset with its repository, the agents that read it and one version's files. */
+export function getAsset(db: Db, assetId: string, version?: number): AssetDetail | null {
+	const row = db
+		.select({ asset: assets })
+		.from(assets)
+		.leftJoin(repositories, eq(assets.repositoryId, repositories.id))
+		.where(and(eq(assets.id, assetId), liveIn(assets)))
+		.get()?.asset;
+	if (!row) return null;
+	const files = getAssetVersion(db, assetId, version);
+	if (!files) return null;
+	// A subquery, not a list of ids: it binds one parameter however many agents read the asset.
+	const readers = db
+		.select({ id: agentAssets.agentId })
+		.from(agentAssets)
+		.where(eq(agentAssets.assetId, assetId));
+	const sameContent = db
+		.select({ n: count() })
+		.from(assets)
+		.leftJoin(repositories, eq(assets.repositoryId, repositories.id))
+		.where(and(eq(assets.hash, row.hash), ne(assets.id, assetId), liveIn(assets)))
+		.get();
+	return {
+		asset: toAsset(row),
+		repository: row.repositoryId
+			? (repositoriesWhere(db, eq(repositories.id, row.repositoryId))[0] ?? null)
+			: null,
+		agents: agentsWhere(db, and(liveIn(agents), inArray(agents.id, readers))),
+		version: files,
+		versions: db
+			.select({
+				version: assetVersions.version,
+				hash: assetVersions.hash,
+				commit: assetVersions.commit,
+				createdAt: assetVersions.createdAt,
+			})
+			.from(assetVersions)
+			.where(eq(assetVersions.assetId, assetId))
+			.orderBy(desc(assetVersions.version))
+			.all(),
+		sameContent: sameContent?.n ?? 0,
+	};
 }

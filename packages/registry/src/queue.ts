@@ -1,12 +1,20 @@
-import { and, asc, eq, isNull, lte, min } from "drizzle-orm";
+import { and, asc, eq, isNull, lte, min, sql } from "drizzle-orm";
 import { repositories, type ScanRequestRow, scanRequests } from "./db/schema";
 import type { Db } from "./state";
 
 /** Waits after the first, second and third failed try. The request is dropped after that. */
 export const RETRY_DELAYS_MS = [60_000, 10 * 60_000, 60 * 60_000] as const;
 
-/** Queues a scan of each live repository, or moves its waiting request to the front. */
-export function requestScans(db: Db, repositoryIds: Iterable<string>, now: number): number {
+/**
+ * Queues a scan of each live repository, or moves its waiting request to the front. A forced
+ * scan reads the repository even if nothing was pushed since the last one.
+ */
+export function requestScans(
+	db: Db,
+	repositoryIds: Iterable<string>,
+	now: number,
+	force = false,
+): number {
 	let queued = 0;
 	for (const repositoryId of new Set(repositoryIds)) {
 		const live = db
@@ -17,8 +25,12 @@ export function requestScans(db: Db, repositoryIds: Iterable<string>, now: numbe
 		if (!live) continue;
 		const fields = { requestedAt: now, attempts: 0, notBefore: now };
 		db.insert(scanRequests)
-			.values({ repositoryId, ...fields })
-			.onConflictDoUpdate({ target: scanRequests.repositoryId, set: fields })
+			.values({ repositoryId, ...fields, force })
+			.onConflictDoUpdate({
+				target: scanRequests.repositoryId,
+				// A waiting forced request stays forced.
+				set: { ...fields, force: sql`max(${scanRequests.force}, excluded.force)` },
+			})
 			.run();
 		queued++;
 	}

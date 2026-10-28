@@ -188,6 +188,8 @@ export const scanRequests = sqliteTable(
 		attempts: integer("attempts").notNull().default(0),
 		/** When the next try may start. */
 		notBefore: integer("not_before").notNull(),
+		/** Read the repository even if its head has not moved, as "Scan now" asks. */
+		force: integer("force", { mode: "boolean" }).notNull().default(false),
 	},
 	(table) => [index("scan_requests_not_before_idx").on(table.notBefore)],
 );

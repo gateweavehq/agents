@@ -1,0 +1,1 @@
+ALTER TABLE `scan_requests` ADD `force` integer DEFAULT false NOT NULL;

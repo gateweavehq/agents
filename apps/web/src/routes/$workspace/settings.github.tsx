@@ -18,7 +18,7 @@ export const Route = createFileRoute("/$workspace/settings/github")({
 
 const MESSAGES: Record<(typeof RESULTS)[number], { text: string; ok: boolean }> = {
 	connected: {
-		text: "GitHub is connected. Its repositories are listed in this workspace.",
+		text: "GitHub is connected. Its repositories are listed in this workspace, and their agents appear as each one is scanned.",
 		ok: true,
 	},
 	requested: {
