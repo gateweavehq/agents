@@ -110,6 +110,10 @@ TypeScript with no I/O, so it runs in the Worker. The scanner lists the reposito
     `env` entry or header. A `<redacted>` anywhere else has no name to point at, so that server is
     reported and left out. No file ever contains `<redacted>`.
   - _Not written_ (reported as problems): `settings`, `prompt`, `script`, `env-set` and `plugin`.
+- **Applying is planned, not guessed.** `planApply` decides how those files land in a repository
+  (pure, like the writers): files it owns are replaced, symlinks and non-folders in the way are
+  reported and left alone, and in the four MCP configuration files only the setup's own servers
+  are merged in, so a repository's other servers and settings survive.
 
 ## Scans
 
