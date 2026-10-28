@@ -154,3 +154,8 @@ runtime is designed alongside it, so the data model fits both.
 - **Single sign-on** across products comes with Gateweave ID, which replaces each product's own
   accounts in Gateweave Cloud. Until then each product has its own sign-in.
 - **Local port.** 4720, following the Gateweave 47xx convention (site 4700, Track 4710).
+- **Registry data model** (AGT-3, 2026-10-28). Content is addressed by Git blob ids, so files
+  shared across repositories and versions are stored once, binary files can be named by id
+  without being downloaded, and drift is a comparison of hashes. What a scan no longer finds is marked
+  removed, not deleted, so ids and history survive. Metadata read from files stays flat (text,
+  numbers, lists of text): the files hold the full configuration.

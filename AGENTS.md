@@ -15,13 +15,15 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 
 ## Repository map
 
-| Path              | What lives there                                                          |
-| ----------------- | ------------------------------------------------------------------------- |
-| `apps/web`        | The Worker: TanStack Start UI, Better Auth, D1                            |
-| `docs/`           | The product spec and the architecture                                     |
-| `scripts/`        | Repository tooling (`doctor`)                                             |
-| `.claude/skills/` | Step-by-step playbooks for recurring tasks (plain Markdown, any agent)    |
-| `wrangler.jsonc`  | The Worker's config, at the root because the Deploy button reads it there |
+| Path                | What lives there                                                            |
+| ------------------- | --------------------------------------------------------------------------- |
+| `apps/web`          | The Worker: TanStack Start UI, Better Auth, D1, the gateway to the registry |
+| `packages/model`    | The registry's vocabulary, entities and input schemas (zod). No server code |
+| `packages/registry` | `RegistryDO`: each workspace's projects, repositories, agents and assets    |
+| `docs/`             | The product spec and the architecture                                       |
+| `scripts/`          | Repository tooling (`doctor`)                                               |
+| `.claude/skills/`   | Step-by-step playbooks for recurring tasks (plain Markdown, any agent)      |
+| `wrangler.jsonc`    | The Worker's config, at the root because the Deploy button reads it there   |
 
 Wrangler commands that use the build output (`deploy`, `versions upload`, `preview`) must run
 from the repository root, where the build leaves its pointer next to `wrangler.jsonc`. Use
@@ -54,15 +56,22 @@ Scope a command to one package with `pnpm --filter <name> <script>`, for example
 These are load-bearing. Breaking one breaks users' data or security, usually silently.
 
 1. **Workspaces are private.** Every server function that reads or changes workspace data checks
-   the caller's membership in D1 first (`findMembership` in `apps/web/src/server/workspaces.ts`).
+   the caller's membership in D1 first (`currentMember` in `apps/web/src/server/access.ts`).
    Non-members get the same "not found" as a missing workspace.
-2. **Server code never reaches the browser bundle.** In server functions, import server modules
+2. **The registry has no public route.** `RegistryDO` trusts its caller, so the Worker reaches
+   it (`registryFor`) only after that membership check. It still validates every input against
+   the schemas in `packages/model`.
+3. **Registry writes stay synchronous.** Each runs inside `ctx.storage.transactionSync` with
+   Drizzle's sync API (`.get()`, `.all()`, `.run()`), so it applies whole or not at all. Never
+   `await` in the middle of a write. Durable Object SQLite binds at most 100 parameters per
+   query: join, or loop, instead of passing a list of ids to `inArray`.
+4. **Server code never reaches the browser bundle.** In server functions, import server modules
    dynamically inside the handler, as `apps/web/src/lib/session.ts` does.
-3. **One Better Auth instance per isolate, built on first use** (`getAuth()`). workerd forbids
+5. **One Better Auth instance per isolate, built on first use** (`getAuth()`). workerd forbids
    I/O in global scope, and `test/startup-logs.test.ts` fails if a cold start logs an error.
-4. **Migrations are append-only.** Generate them with Drizzle Kit and commit them. Never edit a
+6. **Migrations are append-only.** Generate them with Drizzle Kit and commit them. Never edit a
    migration that has been merged. Follow `.claude/skills/schema-change/SKILL.md`.
-5. **Secrets stay local.** Never commit `.dev.vars` or print its contents. Secrets the app will
+7. **Secrets stay local.** Never commit `.dev.vars` or print its contents. Secrets the app will
    hold for users (model keys, MCP credentials) are stored by reference, never in prompts or logs.
 
 ## Code shared with Track
@@ -83,7 +92,8 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
 - Comments explain why, not what. Match the tone and density of the file you are editing.
 - Generated files are not edited by hand: `routeTree.gen.ts`, `worker-configuration.d.ts`,
   `apps/web/src/server/db/auth-schema.ts` (`pnpm --filter @gateweave/agents-web auth:schema`),
-  and everything under `migrations/`.
+  and everything under `migrations/` and `packages/registry/drizzle/` except the hand-written
+  `migrations.d.ts`.
 - Dependencies are pinned to exact versions. Shared ones go in the `catalog:` of
   `pnpm-workspace.yaml`. `drizzle-orm` stays on 0.45: the 1.0 migration format does not work
   with Wrangler's D1 migrations.
@@ -95,6 +105,10 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
 ## Testing
 
 - Test behavior through public APIs, not internals.
+- `packages/registry` tests run inside workerd (`@cloudflare/vitest-plugin`) against a real
+  `RegistryDO`. Call it over RPC; for a call expected to throw, use `runInDurableObject`, because
+  the test pool reports an exception thrown inside a Durable Object as unhandled.
+- `packages/model` tests run in Node.
 - `apps/web` has unit tests in `src/` and Worker tests in `test/`. The Worker tests build the app
   and run it in workerd through Miniflare, with every outbound request failing as a deployed
   Worker's request to its own hostname does; see `test/agents-worker.ts`.

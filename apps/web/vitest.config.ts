@@ -10,7 +10,7 @@ export default defineConfig({
 				test: { name: "unit", include: ["src/**/*.test.ts", "scripts/**/*.test.ts"] },
 			},
 			{
-				// The built Worker in workerd (see test/track-worker.ts). Building takes a while.
+				// The built Worker in workerd (see test/agents-worker.ts). Building takes a while.
 				test: {
 					name: "worker",
 					include: ["test/**/*.test.ts"],

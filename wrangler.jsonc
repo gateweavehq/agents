@@ -16,12 +16,17 @@
 			"migrations_dir": "apps/web/migrations"
 		}
 	],
-	// Rate limits on sign-in, password reset and email are counted in one Durable Object per
+	// Each workspace's registry (projects, repositories, the agents and assets found in them) is
+	// one Durable Object. Rate limits on sign-in, password reset and email are counted in one per
 	// client address or recipient.
 	"durable_objects": {
-		"bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }]
+		"bindings": [
+			{ "name": "REGISTRY", "class_name": "RegistryDO" },
+			{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+		]
 	},
 	"exports": {
+		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
 		"RateLimiter": { "type": "durable-object", "storage": "sqlite" }
 	},
 	// Email through Cloudflare Email Service. Nothing is sent until EMAIL_FROM names a sender on a
@@ -43,7 +48,10 @@
 				}
 			],
 			"durable_objects": {
-				"bindings": [{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }]
+				"bindings": [
+					{ "name": "REGISTRY", "class_name": "RegistryDO" },
+					{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+				]
 			},
 			"send_email": [{ "name": "EMAIL" }],
 			"secrets": { "required": ["BETTER_AUTH_SECRET"] }

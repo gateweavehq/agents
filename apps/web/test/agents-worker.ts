@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { Overview, Project, ProjectInput } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
 
 const app = resolve(import.meta.dirname, "..");
@@ -24,6 +25,15 @@ export interface SentEmail {
 	subject: string;
 	text: string;
 	html: string;
+}
+
+/**
+ * The registry calls tests make, typed by hand: `RegistryDO`'s own types need workerd's, which
+ * these Node tests do not load.
+ */
+export interface RegistryStub {
+	createProject(input: ProjectInput): Promise<Project>;
+	overview(): Promise<Overview>;
 }
 
 /** The address Agents sends from in tests. */
@@ -102,6 +112,7 @@ export async function startAgents(origin: string, { isolates = 1 }: { isolates?:
 					d1Databases: { DB: "agents-test" },
 					// Every copy uses the first one's Durable Objects.
 					durableObjects: {
+						REGISTRY: { className: "RegistryDO", useSQLite: true, scriptName: names[0] },
 						RATE_LIMITER: { className: "RateLimiter", useSQLite: true, scriptName: names[0] },
 					},
 					outboundService: (request: Request) => {
@@ -176,6 +187,13 @@ export async function startAgents(origin: string, { isolates = 1 }: { isolates?:
 		},
 		/** The D1 database, for setting up state the app has no endpoint for. */
 		db,
+		/** A workspace's registry, for the same purpose. */
+		async registry(workspaceId: string): Promise<RegistryStub> {
+			const namespace = (await mf.getDurableObjectNamespace("REGISTRY")) as unknown as {
+				getByName(name: string): RegistryStub;
+			};
+			return namespace.getByName(workspaceId);
+		},
 		dispose: () => mf.dispose(),
 	};
 }

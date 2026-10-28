@@ -1,0 +1,14 @@
+// Worker used only by the test suite to host RegistryDO in isolation.
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "agents-registry-test",
+	"main": "./worker.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"durable_objects": {
+		"bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }]
+	},
+	"exports": {
+		"RegistryDO": { "type": "durable-object", "storage": "sqlite" }
+	}
+}

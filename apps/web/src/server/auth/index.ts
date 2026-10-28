@@ -2,6 +2,7 @@ import { env, waitUntil } from "cloudflare:workers";
 import { createDb } from "../db";
 import { mailer } from "../email";
 import { authRateLimits } from "../rate-limit";
+import { registryFor } from "../registry";
 import { createAuth } from "./config";
 
 export const db = createDb(env.DB);
@@ -32,7 +33,19 @@ function buildAuth() {
 		mailer,
 		runInBackground: waitUntil,
 		rateLimitStorage: authRateLimits,
+		// The registry is deleted with its workspace. A failure is logged for the operator; until
+		// then the data stays unreachable, since only members get through and none are left.
+		onWorkspaceDeleted: (workspaceId) =>
+			logFailure(registryFor(workspaceId).destroy(), "workspace deletion"),
 	});
+}
+
+async function logFailure(work: Promise<unknown>, what: string) {
+	try {
+		await work;
+	} catch (error) {
+		console.error(`auth: ${what} failed`, error);
+	}
 }
 
 export const githubEnabled = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);

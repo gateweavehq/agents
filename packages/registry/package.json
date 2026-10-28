@@ -1,0 +1,28 @@
+{
+	"name": "@gateweave/agents-registry",
+	"version": "0.0.0",
+	"private": true,
+	"license": "AGPL-3.0-only",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typegen": "wrangler types --config test/wrangler.jsonc",
+		"typecheck": "wrangler types --config test/wrangler.jsonc && tsc",
+		"test": "vitest run",
+		"db:generate": "drizzle-kit generate"
+	},
+	"dependencies": {
+		"@gateweave/agents-model": "workspace:*",
+		"drizzle-orm": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-plugin": "catalog:",
+		"drizzle-kit": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:",
+		"wrangler": "catalog:"
+	}
+}
