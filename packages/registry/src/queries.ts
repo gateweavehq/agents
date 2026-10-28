@@ -1,5 +1,7 @@
 // Durable Object SQLite binds at most 100 parameters per query, so lists of ids are joined or
 // looked up one by one rather than passed to IN (...).
+
+import { type AssetToWrite, writeAssets } from "@gateweave/agents-adapters";
 import type {
 	Agent,
 	Asset,
@@ -13,6 +15,8 @@ import type {
 	ProjectDetail,
 	Repository,
 	RepositoryDetail,
+	SetupDetail,
+	SetupEntry,
 } from "@gateweave/agents-model";
 import {
 	and,
@@ -38,8 +42,10 @@ import {
 	projects,
 	repositories,
 	scanRequests,
+	setupAssets,
+	setups,
 } from "./db/schema";
-import { type Db, groupBy, toAgent, toAsset, toProject, toRepository } from "./state";
+import { type Db, groupBy, toAgent, toAsset, toProject, toRepository, toSetup } from "./state";
 
 const liveRepository = isNull(repositories.removedAt);
 
@@ -344,6 +350,65 @@ function libraryMatches(db: Db, hash: string): { asset: Asset; version: number }
 			matches.set(asset.id, { asset: toAsset(asset), version });
 	}
 	return [...matches.values()];
+}
+
+/** Every setup by name, with how many assets it pins and how many of those have a newer version. */
+export function listSetups(db: Db): SetupEntry[] {
+	const pins = db
+		.select({
+			setupId: setupAssets.setupId,
+			version: setupAssets.version,
+			latest: assets.version,
+			removedAt: assets.removedAt,
+		})
+		.from(setupAssets)
+		.innerJoin(assets, eq(setupAssets.assetId, assets.id))
+		.all();
+	const bySetup = groupBy(pins.map((pin) => [pin.setupId, pin] as const));
+	return db
+		.select()
+		.from(setups)
+		.orderBy(asc(setups.name), asc(setups.createdAt))
+		.all()
+		.map((row) => {
+			const pinned = bySetup.get(row.id) ?? [];
+			return {
+				setup: toSetup(row),
+				assets: pinned.length,
+				updates: pinned.filter((pin) => pin.removedAt === null && pin.version < pin.latest).length,
+			};
+		});
+}
+
+/** A setup with its pinned assets and the files it would write, which the writers produce. */
+export function getSetup(db: Db, id: string): SetupDetail | null {
+	const row = db.select().from(setups).where(eq(setups.id, id)).get();
+	if (!row) return null;
+	const pinned = db
+		.select({ asset: assets, version: setupAssets.version })
+		.from(setupAssets)
+		.innerJoin(assets, eq(setupAssets.assetId, assets.id))
+		.where(eq(setupAssets.setupId, id))
+		.orderBy(asc(assets.kind), asc(assets.name))
+		.all();
+	const toWrite = pinned.flatMap(({ asset, version }): AssetToWrite[] => {
+		const content = getAssetVersion(db, asset.id, version);
+		if (!content) return [];
+		const files = content.files.map(({ path, content }) => ({ path, content }));
+		const { kind, name, description, metadata } = asset;
+		return [{ kind, name, description, metadata, files }];
+	});
+	const { files, problems } = writeAssets(toWrite, row.runtimes);
+	return {
+		setup: toSetup(row),
+		assets: pinned.map(({ asset, version }) => ({
+			asset: toAsset(asset),
+			version,
+			removed: asset.removedAt !== null,
+		})),
+		files,
+		problems,
+	};
 }
 
 /** Every library asset, by kind and name, with how many repository assets carry it. */

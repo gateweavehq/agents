@@ -1,6 +1,6 @@
 /** What the registry returns. Times are milliseconds since the epoch. */
 import type { Metadata, ScanProblem } from "./inputs";
-import type { AgentRuntime, AssetKind, RepositoryProvider } from "./vocabulary";
+import type { AgentRuntime, AssetKind, RepositoryProvider, RepositoryRuntime } from "./vocabulary";
 
 /** A product or initiative. Groups repositories; a repository can be in several projects. */
 export interface Project {
@@ -141,6 +141,41 @@ export interface AssetDetail {
 	uses: LibraryUse[];
 	/** For a repository asset: the library assets with a version of the same content. */
 	library: { asset: Asset; version: number }[];
+}
+
+/** Library assets pinned to versions, for the coding agents it configures. */
+export interface Setup {
+	id: string;
+	name: string;
+	description: string | null;
+	runtimes: RepositoryRuntime[];
+	createdAt: number;
+	updatedAt: number;
+}
+
+/** A setup with how many assets it pins, and how many of those have a newer version. */
+export interface SetupEntry {
+	setup: Setup;
+	assets: number;
+	updates: number;
+}
+
+/** One pinned asset. `asset.version` is the latest, so a lower `version` has an update. */
+export interface SetupAsset {
+	asset: Asset;
+	version: number;
+	/** True when it has left the library. The pinned version still exists and is still written. */
+	removed: boolean;
+}
+
+/** A setup with its assets and what it would write into a repository. */
+export interface SetupDetail {
+	setup: Setup;
+	assets: SetupAsset[];
+	/** Relative to the repository root, sorted by path. */
+	files: { path: string; content: string }[];
+	/** Assets, or parts of them, that cannot be written for these coding agents, and why. */
+	problems: { asset: string; message: string }[];
 }
 
 export interface Overview {

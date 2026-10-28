@@ -12,6 +12,9 @@ import type {
 	RepositoryDetail,
 	RepositoryInput,
 	ScanResult,
+	Setup,
+	SetupInput,
+	SetupPins,
 	WrittenAssetInput,
 } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
@@ -57,6 +60,8 @@ export interface RegistryStub {
 	addToLibrary(sourceAssetId: string, target: LibraryTarget): Promise<string>;
 	createLibraryAsset(input: WrittenAssetInput): Promise<string>;
 	editLibraryAsset(input: LibraryEditInput): Promise<number>;
+	createSetup(input: SetupInput): Promise<Setup>;
+	setSetupAssets(setupId: string, pins: SetupPins): Promise<Setup | null>;
 }
 
 /** The address Agents sends from in tests. */

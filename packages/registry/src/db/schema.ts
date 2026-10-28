@@ -10,6 +10,7 @@ import {
 	ASSET_KINDS,
 	type Metadata,
 	REPOSITORY_PROVIDERS,
+	type RepositoryRuntime,
 	type ScanProblem,
 } from "@gateweave/agents-model";
 import { sql } from "drizzle-orm";
@@ -177,6 +178,36 @@ export const agentAssets = sqliteTable(
 	],
 );
 
+export const setups = sqliteTable("setups", {
+	id: text("id").primaryKey(),
+	name: text("name").notNull(),
+	description: text("description"),
+	runtimes: text("runtimes", { mode: "json" }).$type<RepositoryRuntime[]>().notNull(),
+	createdAt: integer("created_at").notNull(),
+	updatedAt: integer("updated_at").notNull(),
+});
+
+/**
+ * A setup's library assets, each pinned to a version. A pin moves only when someone moves it, so
+ * a new version in the library never changes what a setup writes by itself.
+ */
+export const setupAssets = sqliteTable(
+	"setup_assets",
+	{
+		setupId: text("setup_id")
+			.notNull()
+			.references(() => setups.id),
+		assetId: text("asset_id")
+			.notNull()
+			.references(() => assets.id),
+		version: integer("version").notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.setupId, table.assetId] }),
+		index("setup_assets_asset_idx").on(table.assetId),
+	],
+);
+
 /**
  * Repositories waiting for a scan, which the Durable Object's alarm works through. A repository
  * has one request at most; asking again while it waits moves it to the front.
@@ -203,3 +234,4 @@ export type RepositoryRow = typeof repositories.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type ScanRequestRow = typeof scanRequests.$inferSelect;
+export type SetupRow = typeof setups.$inferSelect;

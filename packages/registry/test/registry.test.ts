@@ -490,31 +490,33 @@ describe("applyScan", () => {
 	});
 });
 
-describe("library", () => {
-	const REVIEW = ".claude/skills/review";
+const REVIEW = ".claude/skills/review";
 
-	/** Scans each repository with one review skill whose SKILL.md says `text`. */
-	async function withReviewSkills(stub: ReturnType<typeof registry>, texts: string[]) {
-		const ids = await stub.syncRepositories(texts.map((_, at) => github(String(at + 1))));
-		const skills: string[] = [];
-		for (const [at, text] of texts.entries()) {
-			const id = ids[at] ?? "";
-			await stub.applyScan(
-				id,
-				scan({
-					agents: [claude(["CLAUDE.md", REVIEW])],
-					assets: [
-						instructions("CLAUDE.md", "hello\n"),
-						skill(REVIEW, [{ path: "SKILL.md", content: text }]),
-					],
-				}),
-			);
-			const asset = (await stub.getRepository(id))?.assets.find((a) => a.key === REVIEW);
-			skills.push(asset?.id ?? "");
-		}
-		return { repositories: ids, skills };
+/** Scans each repository with a `CLAUDE.md` and one review skill whose SKILL.md says `text`. */
+async function withReviewSkills(stub: ReturnType<typeof registry>, texts: string[]) {
+	const ids = await stub.syncRepositories(texts.map((_, at) => github(String(at + 1))));
+	const skills: string[] = [];
+	const claudeMds: string[] = [];
+	for (const [at, text] of texts.entries()) {
+		const id = ids[at] ?? "";
+		await stub.applyScan(
+			id,
+			scan({
+				agents: [claude(["CLAUDE.md", REVIEW])],
+				assets: [
+					instructions("CLAUDE.md", "hello\n"),
+					skill(REVIEW, [{ path: "SKILL.md", content: text }]),
+				],
+			}),
+		);
+		const assets = (await stub.getRepository(id))?.assets ?? [];
+		skills.push(assets.find((a) => a.key === REVIEW)?.id ?? "");
+		claudeMds.push(assets.find((a) => a.key === "CLAUDE.md")?.id ?? "");
 	}
+	return { repositories: ids, skills, claudeMds };
+}
 
+describe("library", () => {
 	it("keeps a repository's asset as versions, and shows where each one is used", async () => {
 		const stub = registry();
 		const {
@@ -736,6 +738,115 @@ describe("library, written in the app", () => {
 		await inside(stub, (instance) => {
 			expect(() => instance.editLibraryAsset(edit(rules, "AGENTS.md"))).toThrow(/does not exist/);
 		});
+	});
+});
+
+describe("setups", () => {
+	const paths = (detail: { files: { path: string }[] } | null) =>
+		detail?.files.map((file) => file.path);
+
+	it("pin library versions and preview what they write until a pin moves", async () => {
+		const stub = registry();
+		const {
+			skills: [web = "", docs = ""],
+			claudeMds: [claudeMd = ""],
+		} = await withReviewSkills(stub, ["Review it.\n", "Review it well.\n"]);
+		const review = await stub.addToLibrary(web, { name: "review" });
+		const rules = await stub.addToLibrary(claudeMd, { name: "CLAUDE.md" });
+
+		const setup = await stub.createSetup({
+			name: "Reviewers",
+			description: "  ",
+			runtimes: ["codex", "claude-code", "codex"],
+		});
+		expect(setup).toMatchObject({ description: null, runtimes: ["claude-code", "codex"] });
+		await stub.setSetupAssets(setup.id, [
+			{ assetId: review, version: 1 },
+			{ assetId: rules, version: 1 },
+		]);
+
+		const detail = await stub.getSetup(setup.id);
+		expect(
+			detail?.assets.map(({ asset, version, removed }) => [asset.id, version, removed]),
+		).toEqual([
+			[rules, 1, false],
+			[review, 1, false],
+		]);
+		// Claude Code reads its own CLAUDE.md and skill folder; Codex reads the shared one.
+		expect(paths(detail)).toEqual([
+			".agents/skills/review/SKILL.md",
+			".claude/skills/review/SKILL.md",
+			"CLAUDE.md",
+		]);
+		expect(detail?.files[0]?.content).toBe("Review it.\n");
+		expect(detail?.problems).toEqual([]);
+		expect(await stub.listSetups()).toEqual([
+			{ setup: expect.objectContaining({ id: setup.id }), assets: 2, updates: 0 },
+		]);
+
+		// A new version in the library is an update, and changes nothing until the pin moves.
+		await stub.addToLibrary(docs, { libraryAssetId: review });
+		expect((await stub.listSetups())[0]?.updates).toBe(1);
+		const behind = await stub.getSetup(setup.id);
+		expect(behind?.assets[1]).toMatchObject({ asset: { version: 2 }, version: 1 });
+		expect(behind?.files[0]?.content).toBe("Review it.\n");
+
+		await stub.setSetupAssets(setup.id, [
+			{ assetId: review, version: 2 },
+			{ assetId: rules, version: 1 },
+		]);
+		expect((await stub.listSetups())[0]?.updates).toBe(0);
+		expect((await stub.getSetup(setup.id))?.files[0]?.content).toBe("Review it well.\n");
+
+		// Only Cursor: the Claude Code text is not Cursor's, and the skill goes to the shared folder.
+		await stub.updateSetup(setup.id, { name: "Cursor", description: null, runtimes: ["cursor"] });
+		expect(paths(await stub.getSetup(setup.id))).toEqual([".agents/skills/review/SKILL.md"]);
+	});
+
+	it("refuse pins that are not library versions, and keep one whose asset left", async () => {
+		const stub = registry();
+		const {
+			skills: [web = ""],
+		} = await withReviewSkills(stub, ["Review it.\n"]);
+		const review = await stub.addToLibrary(web, { name: "review" });
+		const runtimes = ["claude-code" as const];
+		const setup = await stub.createSetup({ name: "Reviewers", description: null, runtimes });
+		await stub.setSetupAssets(setup.id, [{ assetId: review, version: 1 }]);
+
+		await inside(stub, (instance) => {
+			expect(() => instance.setSetupAssets(setup.id, [{ assetId: web, version: 1 }])).toThrow(
+				/does not exist/,
+			);
+			expect(() => instance.setSetupAssets(setup.id, [{ assetId: review, version: 9 }])).toThrow(
+				/has no version 9/,
+			);
+			const twice = { assetId: review, version: 1 };
+			expect(() => instance.setSetupAssets(setup.id, [twice, twice])).toThrow(/pinned once/);
+			expect(() =>
+				instance.createSetup({ name: "Nobody", description: null, runtimes: [] }),
+			).toThrow(/at least one/);
+		});
+		// A refused change leaves the pins as they were.
+		expect((await stub.getSetup(setup.id))?.assets).toHaveLength(1);
+
+		// Leaving the library does not change what the setup writes.
+		await stub.removeFromLibrary(review);
+		const kept = await stub.getSetup(setup.id);
+		expect(kept?.assets[0]).toMatchObject({ removed: true, version: 1 });
+		expect(paths(kept)).toEqual([".claude/skills/review/SKILL.md"]);
+		await stub.setSetupAssets(setup.id, [{ assetId: review, version: 1 }]);
+		const other = await stub.createSetup({ name: "Other", description: null, runtimes });
+		await inside(stub, (instance) => {
+			expect(() => instance.setSetupAssets(other.id, [{ assetId: review, version: 1 }])).toThrow(
+				/no longer in the library/,
+			);
+		});
+
+		expect(await stub.setSetupAssets("no-such-setup", [])).toBeNull();
+		expect(await stub.getSetup("no-such-setup")).toBeNull();
+		expect(await stub.deleteSetup(setup.id)).toBe(true);
+		expect(await stub.deleteSetup(setup.id)).toBe(false);
+		expect((await stub.listSetups()).map((entry) => entry.setup.name)).toEqual(["Other"]);
 	});
 });
 

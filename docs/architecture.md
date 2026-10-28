@@ -152,6 +152,18 @@ keep: assets with no repository (`packages/registry/src/library.ts`).
   changes its copy stops counting at its next scan.
 - **Removing** marks the library asset removed, frees its name and leaves repositories alone.
 
+## Setups
+
+A setup is a set of library assets, each pinned to one of its versions, for the coding agents it
+configures (`packages/registry/src/setups.ts`). Owners and admins manage them.
+
+- **Pins move by hand.** A new version in the library shows on the setup as an update, and the
+  setup keeps writing the pinned version until someone moves the pin. An asset that leaves the
+  library keeps its pin, since its versions are kept, but cannot be pinned anew.
+- **The preview is the writers' output.** The registry reads each pinned version's files and
+  runs `writeAssets` from `packages/adapters` for the setup's coding agents, so the page shows
+  exactly the files a setup writes, and what it cannot write and why.
+
 ## Pages
 
 The workspace's pages read the registry through server functions in `apps/web/src/lib/registry.ts`,
@@ -168,6 +180,8 @@ workspace.
 - **Agents** lists every agent and subagent by runtime.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind.
+- **Setups** lists them with how many assets each pins and how many have updates; a setup's page
+  shows its pins, moves one to the latest version, and previews the files it writes.
 - **An asset's page** shows the text of each of its files and every earlier version. For a
   repository asset it also shows the agents that read it, the library assets it matches, and how
   many other assets have the same content; for a library asset, the repository assets that use it.
@@ -180,8 +194,9 @@ Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
-- **Setups** (phase 2 in `docs/spec.md`): library assets chosen for a set of agents, applied to
-  repositories by pull request, with drift shown in the app and the CLI.
+- **Applying setups** (phase 2 in `docs/spec.md`): a pull request that writes a setup into a
+  repository, merging into configuration files that hold more than the setup's part, then drift
+  shown in the app and the CLI.
 
 ## Deploys
 

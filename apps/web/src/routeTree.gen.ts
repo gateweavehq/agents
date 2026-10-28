@@ -27,6 +27,8 @@ import { Route as WorkspaceRepositoriesRepositoryIdRouteImport } from './routes/
 import { Route as WorkspaceSettingsIndexRouteImport } from './routes/$workspace/settings.index'
 import { Route as WorkspaceSettingsGithubRouteImport } from './routes/$workspace/settings.github'
 import { Route as WorkspaceSettingsMembersRouteImport } from './routes/$workspace/settings.members'
+import { Route as WorkspaceSetupsIndexRouteImport } from './routes/$workspace/setups.index'
+import { Route as WorkspaceSetupsSetupIdRouteImport } from './routes/$workspace/setups.$setupId'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiGithubCallbackRouteImport } from './routes/api/github/callback'
 import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
@@ -127,6 +129,16 @@ const WorkspaceSettingsMembersRoute =
     path: '/members',
     getParentRoute: () => WorkspaceSettingsRoute,
   } as any)
+const WorkspaceSetupsIndexRoute = WorkspaceSetupsIndexRouteImport.update({
+  id: '/setups/',
+  path: '/setups/',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceSetupsSetupIdRoute = WorkspaceSetupsSetupIdRouteImport.update({
+  id: '/setups/$setupId',
+  path: '/setups/$setupId',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -169,6 +181,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
+  '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/install': typeof ApiGithubInstallRoute
@@ -177,6 +190,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
+  '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -192,6 +206,7 @@ export interface FileRoutesByTo {
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
+  '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/install': typeof ApiGithubInstallRoute
@@ -200,6 +215,7 @@ export interface FileRoutesByTo {
   '/$workspace/projects': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
+  '/$workspace/setups': typeof WorkspaceSetupsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -218,6 +234,7 @@ export interface FileRoutesById {
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
+  '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/github/callback': typeof ApiGithubCallbackRoute
   '/api/github/install': typeof ApiGithubInstallRoute
@@ -226,6 +243,7 @@ export interface FileRoutesById {
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
+  '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -245,6 +263,7 @@ export interface FileRouteTypes {
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
+    | '/$workspace/setups/$setupId'
     | '/api/auth/$'
     | '/api/github/callback'
     | '/api/github/install'
@@ -253,6 +272,7 @@ export interface FileRouteTypes {
     | '/$workspace/projects/'
     | '/$workspace/repositories/'
     | '/$workspace/settings/'
+    | '/$workspace/setups/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -268,6 +288,7 @@ export interface FileRouteTypes {
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
+    | '/$workspace/setups/$setupId'
     | '/api/auth/$'
     | '/api/github/callback'
     | '/api/github/install'
@@ -276,6 +297,7 @@ export interface FileRouteTypes {
     | '/$workspace/projects'
     | '/$workspace/repositories'
     | '/$workspace/settings'
+    | '/$workspace/setups'
   id:
     | '__root__'
     | '/'
@@ -293,6 +315,7 @@ export interface FileRouteTypes {
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
+    | '/$workspace/setups/$setupId'
     | '/api/auth/$'
     | '/api/github/callback'
     | '/api/github/install'
@@ -301,6 +324,7 @@ export interface FileRouteTypes {
     | '/$workspace/projects/'
     | '/$workspace/repositories/'
     | '/$workspace/settings/'
+    | '/$workspace/setups/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -445,6 +469,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceSettingsMembersRouteImport
       parentRoute: typeof WorkspaceSettingsRoute
     }
+    '/$workspace/setups/': {
+      id: '/$workspace/setups/'
+      path: '/setups'
+      fullPath: '/$workspace/setups/'
+      preLoaderRoute: typeof WorkspaceSetupsIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/setups/$setupId': {
+      id: '/$workspace/setups/$setupId'
+      path: '/setups/$setupId'
+      fullPath: '/$workspace/setups/$setupId'
+      preLoaderRoute: typeof WorkspaceSetupsSetupIdRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -506,8 +544,10 @@ interface WorkspaceRouteChildren {
   WorkspaceAssetsAssetIdRoute: typeof WorkspaceAssetsAssetIdRoute
   WorkspaceProjectsProjectIdRoute: typeof WorkspaceProjectsProjectIdRoute
   WorkspaceRepositoriesRepositoryIdRoute: typeof WorkspaceRepositoriesRepositoryIdRoute
+  WorkspaceSetupsSetupIdRoute: typeof WorkspaceSetupsSetupIdRoute
   WorkspaceProjectsIndexRoute: typeof WorkspaceProjectsIndexRoute
   WorkspaceRepositoriesIndexRoute: typeof WorkspaceRepositoriesIndexRoute
+  WorkspaceSetupsIndexRoute: typeof WorkspaceSetupsIndexRoute
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
@@ -519,8 +559,10 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceProjectsProjectIdRoute: WorkspaceProjectsProjectIdRoute,
   WorkspaceRepositoriesRepositoryIdRoute:
     WorkspaceRepositoriesRepositoryIdRoute,
+  WorkspaceSetupsSetupIdRoute: WorkspaceSetupsSetupIdRoute,
   WorkspaceProjectsIndexRoute: WorkspaceProjectsIndexRoute,
   WorkspaceRepositoriesIndexRoute: WorkspaceRepositoriesIndexRoute,
+  WorkspaceSetupsIndexRoute: WorkspaceSetupsIndexRoute,
 }
 
 const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(

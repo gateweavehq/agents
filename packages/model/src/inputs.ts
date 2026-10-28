@@ -1,6 +1,6 @@
 /**
- * What the registry accepts: repositories from a connection, the result of scanning one, and
- * projects people create. The registry validates every call against these, so a scanner or a
+ * What the registry accepts: repositories from a connection, the result of scanning one, and the
+ * projects, library and setups people manage. The registry validates every call against these, so a scanner or a
  * gateway with a bug cannot store something the pages would choke on.
  */
 import { z } from "zod";
@@ -229,3 +229,27 @@ export const libraryEditInput = z.object({
 		),
 });
 export type LibraryEditInput = z.input<typeof libraryEditInput>;
+export const setupInput = projectInput.extend({
+	/** The coding agents it configures, kept in the order of `REPOSITORY_RUNTIMES`. */
+	runtimes: z
+		.array(z.enum(REPOSITORY_RUNTIMES))
+		.min(1, "Choose at least one coding agent")
+		.max(REPOSITORY_RUNTIMES.length)
+		.transform((chosen) => REPOSITORY_RUNTIMES.filter((runtime) => chosen.includes(runtime))),
+});
+export type SetupInput = z.input<typeof setupInput>;
+
+/** A setup's library assets, each pinned to one of its versions. */
+export const setupPins = z
+	.array(
+		z.object({
+			assetId: z.string().min(1).max(64),
+			version: z.number().int().positive(),
+		}),
+	)
+	.max(200)
+	.refine(
+		(pins) => new Set(pins.map((pin) => pin.assetId)).size === pins.length,
+		"An asset can be pinned once",
+	);
+export type SetupPins = z.input<typeof setupPins>;
