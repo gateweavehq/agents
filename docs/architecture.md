@@ -336,6 +336,16 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
 - **A server that cannot be reached** is a failed span in the trace, with why in our words (its
   credentials refused, nothing at its URL, a redirect, no answer in time), never what it said.
   The turn goes on without it.
+- **A check** (`checkMcpServer` in the same file) connects the way a turn does, with one shared
+  connect path, and lists the server's tools. An owner or admin runs it from the MCP page; the
+  server function asks `mcpCheckTarget` for the server at its current version, with the headers
+  filled in from the environment set of an agent that pins it (one pinned to the current version
+  if there is one, else any live agent, else no environment), runs the check in the Worker and
+  keeps the result with `recordMcpCheck` in `mcp_checks`: when, which version, whether it worked,
+  the tools with their descriptions (cut to a sensible size), and the error in our words. The
+  headers live in that request's memory and never reach the browser; the check keeps no header
+  value and nothing the server said but its tools' names and descriptions. Servers that run as a
+  local command are listed as unavailable and cannot be checked until cloud runners (AGT-9).
 
 ## Chat
 
@@ -457,6 +467,10 @@ workspace.
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
   and remove values.
+- **MCP** lists the library's MCP servers: transport and URL (or why an agent cannot reach it, with
+  local commands marked unavailable until cloud runners), the variables its headers need, the
+  agents that pin it with their versions, and its last check with the tools it listed. Members see
+  all of it; owners and admins get a Check button per remote server.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind. Owners and admins write instructions, prompts
   and skills there, and add MCP servers.
@@ -483,8 +497,8 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): the MCP page, with each server's
-  tools and health (AGT-32), and teams (AGT-27).
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): teams (AGT-27), and cloud runners for
+  servers that run as local commands (AGT-9).
 
 ## Deploys
 

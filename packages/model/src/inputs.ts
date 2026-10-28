@@ -612,3 +612,23 @@ export const runCursor = z.object({
 	id: z.string().min(1).max(64),
 });
 export type RunCursor = z.infer<typeof runCursor>;
+
+/** Most tools, and the longest name and description, a check of an MCP server keeps. */
+export const MCP_CHECK_LIMITS = { tools: 200, name: 200, description: 500 };
+
+/** What checking an MCP server found: its tools, or why it could not be reached. */
+export const mcpCheckResult = z.discriminatedUnion("ok", [
+	z.object({
+		ok: z.literal(true),
+		tools: z
+			.array(
+				z.object({
+					name: z.string().max(MCP_CHECK_LIMITS.name),
+					description: z.string().max(MCP_CHECK_LIMITS.description),
+				}),
+			)
+			.max(MCP_CHECK_LIMITS.tools),
+	}),
+	z.object({ ok: z.literal(false), error: z.string().max(1000) }),
+]);
+export type McpCheckResult = z.infer<typeof mcpCheckResult>;

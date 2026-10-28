@@ -5,7 +5,7 @@
  * the conversation's SQLite and keep the connection open.
  */
 import { createMCPClient, type MCPClient, MCPClientError } from "@ai-sdk/mcp";
-import type { TurnMcpServer } from "@gateweave/agents-model";
+import { MCP_CHECK_LIMITS, type McpCheckResult, type TurnMcpServer } from "@gateweave/agents-model";
 import type { ToolSet } from "ai";
 import { failureForLogs } from "./models";
 import type { RunRecorder } from "./trace";
@@ -60,8 +60,71 @@ async function connect(server: TurnMcpServer, run: RunRecorder, signal?: AbortSi
 		return null;
 	}
 	const span = run.serverConnecting(server.name);
+	const { deadline, options } = timeLimit(signal);
+	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
+	try {
+		opened = await openClient(server, options);
+		const { client, definitions } = opened;
+		const tools = client.toolsFromDefinitions(definitions);
+		run.serverConnected(span, Object.keys(tools).length);
+		return { name: server.name, client, tools };
+	} catch (error) {
+		await opened?.client.close().catch(() => {});
+		run.serverFailed(span, describeServerFailure(error, deadline));
+		console.error("An MCP server did not connect", {
+			server: server.name,
+			...failureForLogs(error),
+		});
+		return null;
+	}
+}
+
+/**
+ * Whether a server can be reached with these headers, and the tools it lists: what the MCP page
+ * records. It connects the way a turn does and always closes the connection. The result holds
+ * the server's tool names and descriptions, which are its own public description of itself;
+ * a failure is in the app's words, and neither the headers nor what the server said are kept.
+ */
+export async function checkMcpServer(server: TurnMcpServer): Promise<McpCheckResult> {
+	if ("problem" in server) return { ok: false, error: server.problem };
+	const { deadline, options } = timeLimit();
+	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
+	try {
+		opened = await openClient(server, options);
+		return {
+			ok: true,
+			tools: opened.definitions.tools.slice(0, MCP_CHECK_LIMITS.tools).map((tool) => ({
+				name: shorten(tool.name, MCP_CHECK_LIMITS.name),
+				description: shorten(tool.description ?? "", MCP_CHECK_LIMITS.description),
+			})),
+		};
+	} catch (error) {
+		console.error("An MCP server check failed", { server: server.name, ...failureForLogs(error) });
+		return { ok: false, error: describeServerFailure(error, deadline) };
+	} finally {
+		await opened?.client.close().catch(() => {});
+	}
+}
+
+function shorten(text: string, length: number): string {
+	const clean = text.trim();
+	return clean.length <= length ? clean : `${clean.slice(0, length - 1)}…`;
+}
+
+/** The limit on connecting and listing tools, joined with the caller's own signal. */
+function timeLimit(signal?: AbortSignal) {
 	const deadline = AbortSignal.timeout(CONNECT_TIMEOUT_MS);
-	const options = { signal: signal ? AbortSignal.any([signal, deadline]) : deadline };
+	return { deadline, options: { signal: signal ? AbortSignal.any([signal, deadline]) : deadline } };
+}
+
+/**
+ * The one way to a server's tools, for turns and checks: connects, initializes and lists them.
+ * It closes the client itself when that fails; the caller closes it otherwise.
+ */
+async function openClient(
+	server: Extract<TurnMcpServer, { url: string }>,
+	options: { signal: AbortSignal },
+) {
 	let client: MCPClient | undefined;
 	try {
 		client = await createMCPClient({
@@ -74,17 +137,10 @@ async function connect(server: TurnMcpServer, run: RunRecorder, signal?: AbortSi
 			},
 			initializationOptions: options,
 		});
-		const tools = client.toolsFromDefinitions(await client.listTools({ options }));
-		run.serverConnected(span, Object.keys(tools).length);
-		return { name: server.name, client, tools };
+		return { client, definitions: await client.listTools({ options }) };
 	} catch (error) {
 		await client?.close().catch(() => {});
-		run.serverFailed(span, describeServerFailure(error, deadline));
-		console.error("An MCP server did not connect", {
-			server: server.name,
-			...failureForLogs(error),
-		});
-		return null;
+		throw error;
 	}
 }
 

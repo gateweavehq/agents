@@ -245,4 +245,135 @@ describe("MCP servers", () => {
 		});
 		expect(await stub.listAgents()).toEqual([]);
 	});
+
+	it("are checked with the environment set of an agent that pins them", async () => {
+		const stub = registry();
+		const acme = await stub.createMcpServer(ACME);
+		const open = await stub.createMcpServer({
+			name: "open",
+			transport: "http",
+			url: "https://open.acme.dev/mcp",
+			headers: [],
+		});
+		const target = (assetId: string) => stub.mcpCheckTarget(assetId);
+
+		// No agent pins it: the check has no environment, so a header's variable is missing.
+		expect(await target(open)).toEqual({
+			name: "open",
+			transport: "http",
+			url: "https://open.acme.dev/mcp",
+			headers: {},
+		});
+		expect(await target(acme)).toEqual({
+			name: "acme",
+			problem: "ACME_TEAM, ACME_TOKEN have no value in the agent's environment set",
+		});
+
+		const sets = {
+			old: await stub.createEnvSet({
+				name: "old",
+				variables: { ACME_TEAM: "legacy" },
+				secrets: ["ACME_TOKEN"],
+			}),
+			current: await stub.createEnvSet({
+				name: "current",
+				variables: { ACME_TEAM: "platform" },
+				secrets: ["ACME_TOKEN"],
+			}),
+		};
+		await stub.setEnvSecret({ assetId: sets.old, name: "ACME_TOKEN", value: "old-token" }, "Ada");
+		await stub.setEnvSecret(
+			{ assetId: sets.current, name: "ACME_TOKEN", value: "current-token" },
+			"Ada",
+		);
+		const pinned = (name: string, set: string, version: number) => ({
+			...reviewer([{ assetId: acme, version }]),
+			name,
+			environment: { assetId: set, version: 1 },
+		});
+		await stub.createAgent(pinned("Aardvark", sets.old, 1));
+		expect(await target(acme)).toMatchObject({
+			headers: { Authorization: "Bearer old-token", "X-Team": "legacy" },
+		});
+
+		// A second version: the agent that pins the current one wins over one that sorts first.
+		await stub.editMcpServer({
+			assetId: acme,
+			transport: "http",
+			url: "https://mcp.acme.dev/v2",
+			headers: ACME.headers,
+		});
+		await stub.createAgent(pinned("Zebra", sets.current, 2));
+		expect(await target(acme)).toEqual({
+			name: "acme",
+			transport: "http",
+			url: "https://mcp.acme.dev/v2",
+			headers: { Authorization: "Bearer current-token", "X-Team": "platform" },
+		});
+
+		// Gone, removed or not an MCP server: nothing to check.
+		const rules = await stub.createLibraryAsset({
+			kind: "instructions",
+			name: "rules",
+			text: "Hi\n",
+		});
+		expect(await target(rules)).toBeNull();
+		expect(await target("missing")).toBeNull();
+		await stub.removeFromLibrary(open);
+		expect(await target(open)).toBeNull();
+	});
+
+	it("keep the last check of each, and list on the MCP page with it", async () => {
+		const stub = registry();
+		const acme = await stub.createMcpServer(ACME);
+		const local = await scannedServer(stub, "local", { command: "npx", args: ["-y", "@acme/mcp"] });
+		const prod = await stub.createEnvSet({ name: "prod", variables: {}, secrets: [] });
+		const agent = await stub.createAgent({
+			...reviewer([{ assetId: acme, version: 1 }]),
+			environment: { assetId: prod, version: 1 },
+		});
+
+		const before = await stub.listMcpServers();
+		expect(before.map((entry) => entry.asset.name)).toEqual(["acme", "local"]);
+		expect(before[0]).toMatchObject({
+			connection: { transport: "http", url: "https://mcp.acme.dev/mcp" },
+			variables: ["ACME_TEAM", "ACME_TOKEN"],
+			agents: [{ id: agent.id, name: "Reviewer", version: 1 }],
+			check: null,
+		});
+		expect(before[1]).toMatchObject({
+			connection: { problem: expect.stringContaining("local command") },
+			variables: [],
+			agents: [],
+		});
+
+		const tools = [{ name: "search", description: "Searches the tracker" }];
+		expect(await stub.recordMcpCheck(acme, { ok: true, tools })).toMatchObject({
+			version: 1,
+			ok: true,
+			tools,
+			error: null,
+		});
+		// A later check replaces the earlier one.
+		const failed = await stub.recordMcpCheck(acme, { ok: false, error: "It could not be reached" });
+		expect(failed).toMatchObject({ ok: false, tools: [], error: "It could not be reached" });
+		expect((await stub.listMcpServers())[0]?.check).toEqual(failed);
+
+		await inside(stub, (instance) => {
+			expect(() =>
+				instance.recordMcpCheck(acme, {
+					ok: true,
+					tools: [{ name: "x".repeat(300), description: "" }],
+				}),
+			).toThrow();
+		});
+		expect(await stub.recordMcpCheck("missing", { ok: true, tools: [] })).toBeNull();
+
+		// An agent that is removed stops being listed as a user; a server that is removed, too.
+		await stub.removeAgent(agent.id);
+		expect((await stub.listMcpServers())[0]?.agents).toEqual([]);
+		await stub.removeFromLibrary(acme);
+		expect((await stub.listMcpServers()).map((entry) => entry.asset.name)).toEqual(["local"]);
+		expect(await stub.recordMcpCheck(acme, { ok: true, tools: [] })).toBeNull();
+	});
 });

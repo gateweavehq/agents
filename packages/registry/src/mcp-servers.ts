@@ -9,6 +9,9 @@ import { type McpConnection, readMcpConnection } from "@gateweave/agents-adapter
 import {
 	type AgentMcpServer,
 	MCP_SERVER_FILE,
+	type McpCheck,
+	type McpCheckResult,
+	type McpServerEntry,
 	type Metadata,
 	type mcpServerEditInput,
 	type mcpServerInput,
@@ -18,12 +21,20 @@ import {
 } from "@gateweave/agents-model";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
-import { agentMcpServers, assets, assetVersions, type FileEntry } from "./db/schema";
+import {
+	agentDefinitions,
+	agentMcpServers,
+	agents,
+	assets,
+	assetVersions,
+	type FileEntry,
+	mcpChecks,
+} from "./db/schema";
 import { assetHash } from "./hash";
 import { libraryKey } from "./library";
 import { getAssetVersion } from "./queries";
 import { MAX_KEPT_FILE_BYTES, storeFile } from "./scans";
-import type { Db } from "./state";
+import { type Db, toAsset } from "./state";
 
 /** A change to an MCP server that is refused, with a message fit to show the person who asked. */
 export class McpServerError extends Error {}
@@ -226,4 +237,122 @@ export function turnServer(
 		name,
 		problem: `${names.join(", ")} ${names.length === 1 ? "has" : "have"} no value in the agent's environment set`,
 	};
+}
+
+/** The live agents run by Gateweave that pin a server, by name. */
+function pinners(db: Db, assetId: string): { id: string; name: string; version: number }[] {
+	return db
+		.select({ id: agents.id, name: agents.name, version: agentMcpServers.version })
+		.from(agentMcpServers)
+		.innerJoin(agents, eq(agents.id, agentMcpServers.agentId))
+		.innerJoin(agentDefinitions, eq(agentDefinitions.agentId, agents.id))
+		.where(and(eq(agentMcpServers.assetId, assetId), isNull(agents.removedAt)))
+		.orderBy(asc(agents.name), asc(agents.id))
+		.all();
+}
+
+/** A live library `mcp-server` asset, or null. */
+function liveServer(db: Db, assetId: string) {
+	return (
+		db
+			.select()
+			.from(assets)
+			.where(
+				and(
+					eq(assets.id, assetId),
+					isNull(assets.repositoryId),
+					isNull(assets.removedAt),
+					eq(assets.kind, "mcp-server"),
+				),
+			)
+			.get() ?? null
+	);
+}
+
+/**
+ * What a check of a library server needs: the server as of its current version, and the agent
+ * whose environment set fills its headers. That is an agent pinned to the current version if
+ * there is one, else any live agent that pins it; with none, the check has no environment.
+ */
+export function mcpCheckPlan(
+	db: Db,
+	assetId: string,
+): {
+	name: string;
+	reading: ReturnType<typeof agentServers>[number]["reading"];
+	agentId: string | null;
+} | null {
+	const asset = liveServer(db, assetId);
+	if (!asset) return null;
+	const users = pinners(db, assetId);
+	const agent = users.find((user) => user.version === asset.version) ?? users[0];
+	return {
+		name: asset.name,
+		reading: remoteServer(getAssetVersion(db, asset.id)?.files ?? []),
+		agentId: agent?.id ?? null,
+	};
+}
+
+/** Keeps the last check of a server, in place of the one before. Null when it is not in the library. */
+export function recordMcpCheck(
+	db: Db,
+	assetId: string,
+	result: McpCheckResult,
+	now: number,
+): McpCheck | null {
+	const asset = liveServer(db, assetId);
+	if (!asset) return null;
+	const check = {
+		version: asset.version,
+		checkedAt: now,
+		ok: result.ok,
+		tools: result.ok ? result.tools : [],
+		error: result.ok ? null : result.error,
+	};
+	db.insert(mcpChecks)
+		.values({ assetId, ...check })
+		.onConflictDoUpdate({ target: mcpChecks.assetId, set: check })
+		.run();
+	return check;
+}
+
+/** Every live library MCP server for the MCP page: how it is reached, who pins it, its last check. */
+export function listMcpServers(db: Db): McpServerEntry[] {
+	const rows = db
+		.select()
+		.from(assets)
+		.where(
+			and(isNull(assets.repositoryId), isNull(assets.removedAt), eq(assets.kind, "mcp-server")),
+		)
+		.orderBy(asc(assets.name), asc(assets.id))
+		.all();
+	const checks = new Map(
+		db
+			.select()
+			.from(mcpChecks)
+			.all()
+			.map((row) => [row.assetId, row]),
+	);
+	return rows.map((row) => {
+		const reading = remoteServer(getAssetVersion(db, row.id)?.files ?? []);
+		const check = checks.get(row.id);
+		return {
+			asset: toAsset(row),
+			connection:
+				"problem" in reading
+					? reading
+					: { transport: reading.server.transport, url: reading.server.url },
+			variables: "problem" in reading ? [] : serverVariables(reading.server),
+			agents: pinners(db, row.id),
+			check: check
+				? {
+						version: check.version,
+						checkedAt: check.checkedAt,
+						ok: check.ok,
+						tools: check.tools,
+						error: check.error,
+					}
+				: null,
+		};
+	});
 }

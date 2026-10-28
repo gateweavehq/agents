@@ -26,11 +26,15 @@ import {
 	type LibraryTarget,
 	libraryEditInput,
 	libraryTarget,
+	type McpCheck,
+	type McpCheckResult,
 	type McpServerEditInput,
+	type McpServerEntry,
 	type McpServerInput,
 	MODEL_PROVIDER_NAMES,
 	MODEL_PROVIDERS,
 	type ModelProvider,
+	mcpCheckResult,
 	mcpServerEditInput,
 	mcpServerInput,
 	type Overview,
@@ -68,6 +72,7 @@ import {
 	setupImportInput,
 	setupInput,
 	setupPins,
+	type TurnMcpServer,
 	type WrittenAssetInput,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
@@ -105,7 +110,15 @@ import {
 	storeEnvSecret,
 } from "./environment";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
-import { agentServers, createMcpServer, editMcpServer, turnServer } from "./mcp-servers";
+import {
+	agentServers,
+	createMcpServer,
+	editMcpServer,
+	listMcpServers,
+	mcpCheckPlan,
+	recordMcpCheck,
+	turnServer,
+} from "./mcp-servers";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	keyPlace,
@@ -409,6 +422,30 @@ export class RegistryDO extends DurableObject {
 	editMcpServer(input: McpServerEditInput): number {
 		const data = mcpServerEditInput.parse(input);
 		return this.#write(() => editMcpServer(this.#db, data, Date.now()));
+	}
+
+	/** The live library MCP servers with how an agent reaches each, who pins it and its last check. */
+	listMcpServers(): McpServerEntry[] {
+		return listMcpServers(this.#db);
+	}
+
+	/**
+	 * A server as a check connects to it, headers filled in from the environment set of an agent
+	 * that pins it: for the runtime alone, like `beginTurn`. No server function may return it
+	 * to a browser. Null when no live library MCP server has this id.
+	 */
+	async mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null> {
+		const plan = mcpCheckPlan(this.#db, id.parse(assetId));
+		if (!plan) return null;
+		const environment = plan.agentId ? await this.resolveEnvironment(plan.agentId) : null;
+		return turnServer({ name: plan.name, reading: plan.reading }, environment);
+	}
+
+	/** Keeps how checking a server went as its last check. Null when it is not in the library. */
+	recordMcpCheck(assetId: string, result: McpCheckResult): McpCheck | null {
+		const asset = id.parse(assetId);
+		const data = mcpCheckResult.parse(result);
+		return this.#write(() => recordMcpCheck(this.#db, asset, data, Date.now()));
 	}
 
 	/** Stores a secret's value, sealed, in place of the earlier one. */
