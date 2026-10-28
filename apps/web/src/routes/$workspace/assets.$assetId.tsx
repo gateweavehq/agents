@@ -116,7 +116,7 @@ function AssetPage() {
 						path={
 							asset.path === null
 								? null
-								: repositoryPathOf({ path: asset.path }, version.files, file)
+								: repositoryPathOf({ kind: asset.kind, path: asset.path }, version.files, file)
 						}
 					/>
 				))}

@@ -4,7 +4,15 @@
  * - https://code.claude.com/docs/en/skills
  * - https://code.claude.com/docs/en/sub-agents
  * - https://code.claude.com/docs/en/mcp (.mcp.json)
- * - https://code.claude.com/docs/en/plugins-reference (.claude-plugin/plugin.json)
+ * - https://code.claude.com/docs/en/plugins-reference (.claude-plugin/plugin.json; the page now
+ *   redirects to the manifest reference and the standard layout:
+ *   https://code.claude.com/docs/en/plugins/manifest-reference)
+ * - https://code.claude.com/docs/en/plugin-marketplaces (marketplace.json, relative plugin paths)
+ *
+ * Plugins: the manifest is the only file in `.claude-plugin/`; every component (skills/,
+ * commands/, agents/, hooks/hooks.json, .mcp.json, .lsp.json, ...) sits in the plugin root beside
+ * it, and "Put every other plugin file at the plugin root, not inside .claude-plugin/". The
+ * manifest itself is optional in the docs; we only find plugins that have one.
  *
  * Skipped on purpose: CLAUDE.local.md and .claude/settings.local.json, which are personal and
  * normally gitignored.
@@ -49,8 +57,12 @@ function isMarkdown(path: string): boolean {
 
 function wants(path: string): boolean {
 	if (basename(path) === "CLAUDE.md") return true;
-	if (path === MCP || path === SETTINGS) return true;
+	if (path === SETTINGS) return true;
+	// `wants` sees one path at a time, so it takes the plugin files that are recognizable alone.
 	if (under(path, ".claude-plugin")) return true;
+	if (basename(path) === MCP || path === "hooks/hooks.json" || path.endsWith("/hooks/hooks.json")) {
+		return true;
+	}
 	if (under(path, SKILL_ROOT)) return !isEnvFile(path);
 	return (
 		isMarkdown(path) &&
@@ -100,11 +112,9 @@ function detect(tree: RepositoryTree): Detection {
 	const mcp = readConfig(tree, MCP, "json", found.problems);
 	if (mcp) found.readAll(mcpServerAssets(mcp, mcp.parsed.mcpServers, found.problems));
 
-	for (const path of paths) {
-		if (basename(path) === "plugin.json" && basename(dirname(path)) === ".claude-plugin") {
-			found.read(plugin(tree, path, found.problems));
-		}
-	}
+	const manifests = pluginManifests(paths);
+	const roots = manifests.map((manifest) => dirname(dirname(manifest)));
+	for (const manifest of manifests) found.read(plugin(tree, manifest, roots, found.problems));
 
 	// A repository whose only Claude Code files are subagents still has Claude Code in it.
 	const agents = [...subagents];
@@ -199,13 +209,81 @@ function subagentOf(
 	};
 }
 
-/** A plugin is its `.claude-plugin` folder; manifests are redacted like any other configuration. */
+/** Where a plugin keeps its components when its manifest does not say otherwise. */
+const PLUGIN_COMPONENT_ROOTS = [
+	".claude-plugin",
+	"skills",
+	"commands",
+	"agents",
+	"hooks",
+	"output-styles",
+	"workflows",
+	"themes",
+	"monitors",
+	"bin",
+];
+const PLUGIN_COMPONENT_FILES = [".mcp.json", ".lsp.json", "settings.json", "SKILL.md"];
+
+/** Manifest keys whose values are paths (or lists of them) to components. */
+const PLUGIN_PATH_KEYS = [
+	"skills",
+	"commands",
+	"agents",
+	"hooks",
+	"mcpServers",
+	"lspServers",
+	"outputStyles",
+	"workflows",
+];
+
+/** The `plugin.json` files of the tree: one plugin each, rooted above its `.claude-plugin`. */
+function pluginManifests(paths: readonly string[]): string[] {
+	return paths.filter(
+		(path) => basename(path) === "plugin.json" && basename(dirname(path)) === ".claude-plugin",
+	);
+}
+
+/**
+ * Paths a manifest points at, inside the plugin. The plugin root itself and anything outside it
+ * are ignored.
+ */
+function declaredComponentPaths(manifest: Record<string, unknown>): string[] {
+	const values: unknown[] = PLUGIN_PATH_KEYS.map((key) => manifest[key]);
+	const experimental = manifest.experimental;
+	if (isPlainObject(experimental)) values.push(experimental.themes, experimental.monitors);
+	if (isPlainObject(manifest.commands)) {
+		for (const command of Object.values(manifest.commands)) {
+			if (isPlainObject(command)) values.push(command.source);
+		}
+	}
+	const found: string[] = [];
+	for (const value of values.flat()) {
+		if (typeof value !== "string") continue;
+		const path = value.replace(/^\.\//, "").replace(/\/+$/, "");
+		if (path === "" || path === "." || path.split("/").includes("..") || /^[a-z]+:/i.test(path)) {
+			continue;
+		}
+		found.push(path);
+	}
+	return found;
+}
+
+function isWithin(path: string, root: string): boolean {
+	return path === root || path.startsWith(`${root}/`);
+}
+
+/**
+ * A plugin is its root folder, the parent of `.claude-plugin`: its components live beside the
+ * manifest, so a change to a command or a hook must change the asset. Configuration is stored
+ * redacted like any other; the rest is given by blob and size, which is all the hash needs.
+ */
 function plugin(
 	tree: RepositoryTree,
 	manifest: string,
+	roots: readonly string[],
 	problems: ScanProblem[],
 ): DetectedAsset | null {
-	const directory = dirname(manifest);
+	const root = dirname(dirname(manifest));
 	const text = readText(tree, manifest, problems);
 	if (text === null) return null;
 	const parsed = parseJsonConfig(text);
@@ -213,13 +291,38 @@ function plugin(
 		addProblem(problems, manifest, parsed.message);
 		return null;
 	}
-	const files = directoryFiles(tree, directory, problems, (relative, content) => {
-		if (!relative.endsWith(".json")) return content;
-		const json = parseJsonConfig(content);
-		if (json.ok) return redactedText(json.value, "json");
-		addProblem(problems, `${directory}/${relative}`, json.message);
-		return null;
-	});
+	// A repository-root plugin cannot be "" as a path, so it keeps the `.claude-plugin` key that
+	// the manifest's folder always had; its files are still relative to the plugin root, the one
+	// exception `repositoryPathOf` in the model knows about.
+	const path = root === "" ? ".claude-plugin" : root;
+	// Another plugin's folder is not this plugin's, however deep it sits.
+	const others = roots.filter((other) => other !== root && (root === "" || isWithin(other, root)));
+	const declared = declaredComponentPaths(parsed.value);
+	const include = (relative: string): boolean => {
+		const full = root === "" ? relative : `${root}/${relative}`;
+		if (relative.startsWith("node_modules/") || relative.includes("/node_modules/")) return false;
+		if (others.some((other) => isWithin(full, other))) return false;
+		// At the repository root the plugin's folder is the whole repository: take only components.
+		if (root !== "") return true;
+		return (
+			PLUGIN_COMPONENT_FILES.includes(relative) ||
+			PLUGIN_COMPONENT_ROOTS.some((dir) => isWithin(relative, dir)) ||
+			declared.some((declaredPath) => isWithin(relative, declaredPath))
+		);
+	};
+	const files = directoryFiles(
+		tree,
+		root,
+		problems,
+		(relative, content) => {
+			if (!isPluginConfig(relative)) return null;
+			const json = parseJsonConfig(content);
+			if (json.ok) return redactedText(json.value, "json");
+			addProblem(problems, root === "" ? relative : `${root}/${relative}`, json.message);
+			return null;
+		},
+		{ include, problemPath: path },
+	);
 	const safe = redact(parsed.value);
 	const fields = isPlainObject(safe) ? safe : {};
 	const metadata = flatFields(fields, ["name", "description"]);
@@ -228,13 +331,19 @@ function plugin(
 	const description = str(parsed.value.description);
 	return {
 		kind: "plugin",
-		key: directory,
-		name: truncate(str(parsed.value.name) ?? (basename(dirname(directory)) || "plugin"), 200),
+		key: path,
+		name: truncate(str(parsed.value.name) ?? (basename(root) || "plugin"), 200),
 		description: description === null ? null : truncate(description, 2000),
-		path: directory,
+		path,
 		files,
 		metadata,
 	};
+}
+
+/** Files of a plugin whose text is kept: its manifests and the two component configurations. */
+function isPluginConfig(relative: string): boolean {
+	if (relative === MCP || relative === "hooks/hooks.json") return true;
+	return relative.startsWith(".claude-plugin/") && relative.endsWith(".json");
 }
 
 export const claudeCode: Adapter = { runtime: "claude-code", wants, detect };

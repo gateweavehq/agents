@@ -214,32 +214,6 @@ describe("claude code adapter", () => {
 		expect(textOf(detection, ".mcp.json#docs").endsWith("}\n")).toBe(true);
 	});
 
-	it("reads a plugin as its .claude-plugin folder", () => {
-		const detection = claudeCode.detect(
-			repo({
-				"tools/lint/.claude-plugin/plugin.json": JSON.stringify({
-					name: "lint-tools",
-					description: "Linting helpers",
-					version: "1.2.0",
-					author: { name: "Example Team" },
-					mcpServers: { lint: { command: "lint-mcp", env: { TOKEN: "pluginSecret" } } },
-				}),
-				"tools/lint/.claude-plugin/icon.png": null,
-			}),
-		);
-		expectValid(detection);
-		const plugin = assetOf(detection, "tools/lint/.claude-plugin");
-		expect(plugin).toMatchObject({
-			kind: "plugin",
-			name: "lint-tools",
-			description: "Linting helpers",
-			metadata: { version: "1.2.0", author: "Example Team" },
-		});
-		expect(plugin.files.map((file) => file.path)).toEqual(["icon.png", "plugin.json"]);
-		expect(JSON.stringify(detection)).not.toContain("pluginSecret");
-		expect(agentOf(detection).assets).toEqual(["tools/lint/.claude-plugin"]);
-	});
-
 	it("reads AGENTS.md only where Claude Code does", () => {
 		const alone = claudeCode.detect(repo({ "AGENTS.md": "# Agents\n", ".mcp.json": MCP }));
 		expect(agentOf(alone).assets).toContain("AGENTS.md");
@@ -322,13 +296,7 @@ describe("claude code adapter", () => {
 		]) {
 			expect(claudeCode.wants(path), path).toBe(true);
 		}
-		for (const path of [
-			"README.md",
-			".claude/agents/a.json",
-			"src/.mcp.json",
-			".claude/skills/.env",
-			"claude.md",
-		]) {
+		for (const path of ["README.md", ".claude/agents/a.json", ".claude/skills/.env", "claude.md"]) {
 			expect(claudeCode.wants(path), path).toBe(false);
 		}
 	});

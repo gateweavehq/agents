@@ -81,6 +81,13 @@ TypeScript with no I/O, so it runs in the Worker. The scanner lists the reposito
 - **Secrets stay in the adapters.** Settings and MCP configuration are stored as canonical JSON
   (or TOML) with every value under `env` or `headers`, and anything that looks like a credential,
   replaced by `<redacted>`. Metadata carries the names of variables and headers, never values.
+- **A Claude Code plugin is its root folder**, the parent of `.claude-plugin/`, because its
+  commands, agents, skills and hooks live beside the manifest and a change to them must change
+  the asset. Files are given by blob and size; only `.claude-plugin/*.json`, `.mcp.json` and
+  `hooks/hooks.json` keep their (redacted) text. Another plugin's folder is never part of a
+  plugin, and a plugin at the repository root takes only the documented component locations (and
+  the paths its manifest names), not the whole repository. A root plugin is keyed
+  `.claude-plugin`, since a path cannot be empty.
 - **Problems, not exceptions.** A file that is missing its text or does not parse becomes a
   `ScanProblem` and is skipped; the rest of the scan goes on.
 

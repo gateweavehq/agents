@@ -99,19 +99,29 @@ export function instructionsAsset(
 	return content === null ? null : { ...base, files: [{ path: name, content }] };
 }
 
-/** Every file under a directory, in path order. Files without text are given by blob and size. */
+/**
+ * Every file under a directory ("" is the repository root), in path order, or only those
+ * `options.include` accepts. Files without text are given by blob and size. `problemPath` names
+ * the directory in a problem when it is "".
+ */
 export function directoryFiles(
 	tree: RepositoryTree,
 	directory: string,
 	problems: ScanProblem[],
 	render?: (relativePath: string, content: string) => string | null,
+	options: { include?: (relativePath: string) => boolean; problemPath?: string } = {},
 ): ScannedFile[] {
-	const prefix = `${directory}/`;
-	const paths = [...tree.keys()].filter((path) => path.startsWith(prefix)).sort(compare);
+	const prefix = directory === "" ? "" : `${directory}/`;
+	const paths = [...tree.keys()]
+		.filter(
+			(path) =>
+				path.startsWith(prefix) && (!options.include || options.include(path.slice(prefix.length))),
+		)
+		.sort(compare);
 	if (paths.length > MAX_FILES) {
 		addProblem(
 			problems,
-			directory,
+			options.problemPath ?? directory,
 			`Only the first ${MAX_FILES} of ${paths.length} files are kept`,
 		);
 	}
