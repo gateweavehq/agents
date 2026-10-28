@@ -3,10 +3,11 @@
  * What a setup writes comes from the pinned versions alone, so it changes only when someone moves
  * a pin.
  */
-import type { Setup, setupInput, setupPins } from "@gateweave/agents-model";
+import type { Setup, setupImportInput, setupInput, setupPins } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { assets, assetVersions, setupApplications, setupAssets, setups } from "./db/schema";
+import { importLibraryAsset } from "./library";
 import { type Db, toSetup } from "./state";
 
 /** A change to a setup that is refused, with a message fit to show the person who asked. */
@@ -93,4 +94,21 @@ export function setSetupAssets(
 		.returning()
 		.get();
 	return row ? toSetup(row) : null;
+}
+
+/**
+ * Adds a setup that arrives with its assets' files, such as a ready-made one: each asset goes to
+ * the library (see `importLibraryAsset`) and the new setup pins the result. Rows go in one at a
+ * time, since a Durable Object binds at most 100 parameters per query. Returns the setup.
+ */
+export function importSetup(db: Db, input: z.output<typeof setupImportInput>, now: number): Setup {
+	const { assets: given, ...fields } = input;
+	const setup = createSetup(db, fields, now);
+	for (const asset of given) {
+		const pin = importLibraryAsset(db, asset, now);
+		db.insert(setupAssets)
+			.values({ setupId: setup.id, ...pin })
+			.run();
+	}
+	return setup;
 }

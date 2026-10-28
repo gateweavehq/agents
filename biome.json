@@ -12,7 +12,9 @@
 			"!**/routeTree.gen.ts",
 			"!**/worker-configuration.d.ts",
 			"!**/drizzle/meta",
-			"!**/migrations/meta"
+			"!**/migrations/meta",
+			"!setups/*/servers",
+			"!setups/*/**/*.md"
 		]
 	},
 	"formatter": {

@@ -2,6 +2,7 @@ import {
 	type Agent,
 	type ApplyOutcome,
 	type AssetDetail,
+	type AssetKind,
 	type LibraryEntry,
 	libraryEditInput,
 	libraryTarget,
@@ -11,6 +12,7 @@ import {
 	projectInput,
 	type Repository,
 	type RepositoryDetail,
+	type RepositoryRuntime,
 	type Setup,
 	type SetupDetail,
 	type SetupEntry,
@@ -250,6 +252,42 @@ export const createSetup = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<Setup> => {
 		const registry = await managedRegistryOf(data.slug);
 		return registry.createSetup(data.setup);
+	});
+
+/** A ready-made setup, as the Setups page lists it. */
+export interface ReadyMadeSummary {
+	slug: string;
+	name: string;
+	description: string | null;
+	runtimes: RepositoryRuntime[];
+	assets: { kind: AssetKind; name: string }[];
+}
+
+/** The setups that ship with the app, for any member to see. */
+export const getReadyMadeSetups = createServerFn({ method: "GET" })
+	.validator(z.string().min(1))
+	.handler(async ({ data: slug }): Promise<ReadyMadeSummary[] | null> => {
+		const registry = await registryOf(slug);
+		if (!registry) return null;
+		const { readyMadeSetups } = await import("#/server/ready-made");
+		return readyMadeSetups().map(({ slug: folder, setup }) => ({
+			slug: folder,
+			name: setup.name,
+			description: setup.description,
+			runtimes: setup.runtimes,
+			assets: setup.assets.map(({ kind, name }) => ({ kind, name })),
+		}));
+	});
+
+/** Adds a ready-made setup to the workspace and returns the new setup's id. */
+export const addReadyMadeSetup = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), setup: z.string().min(1).max(100) }))
+	.handler(async ({ data }): Promise<string> => {
+		const registry = await managedRegistryOf(data.slug);
+		const { importInputOf, readyMadeSetups } = await import("#/server/ready-made");
+		const found = readyMadeSetups().find((candidate) => candidate.slug === data.setup);
+		if (!found) throw new Error("There is no such ready-made setup");
+		return registry.importSetup(importInputOf(found));
 	});
 
 export const updateSetup = createServerFn({ method: "POST" })

@@ -1,0 +1,25 @@
+{
+	"name": "Baseline",
+	"description": "Working agreements, a code review skill and the GitHub server, for any repository.",
+	"runtimes": ["claude-code", "codex", "gemini-cli", "cursor"],
+	"assets": [
+		{
+			"kind": "instructions",
+			"name": "Working agreements",
+			"description": "General working agreements for coding agents.",
+			"path": "AGENTS.md"
+		},
+		{
+			"kind": "skill",
+			"name": "code-review",
+			"description": "Review a change for correctness, risk and clarity.",
+			"path": "skills/code-review"
+		},
+		{
+			"kind": "mcp-server",
+			"name": "github",
+			"description": "GitHub's remote server: issues, pull requests and code search.",
+			"path": "servers/github.json"
+		}
+	]
+}
