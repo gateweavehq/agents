@@ -391,6 +391,13 @@ describe("MCP servers", () => {
 		});
 	});
 
+	it("keeps a Gemini server that has only a URL on SSE, which is what Gemini means by it", () => {
+		const events = server("events", { url: "https://events.acme.dev/sse" }, "settings.json");
+		expect(json(write([events], "claude-code"), ".mcp.json")).toEqual({
+			mcpServers: { events: { type: "sse", url: "https://events.acme.dev/sse" } },
+		});
+	});
+
 	it("keeps values that are not secrets", () => {
 		const plain = server("plain", { command: "node", env: { MODE: "dev" } });
 		expect(json(write([plain], "claude-code"), ".mcp.json")).toEqual({
