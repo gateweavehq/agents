@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
 	AssetVersion,
+	LibraryEditInput,
 	LibraryTarget,
 	Overview,
 	Project,
@@ -11,6 +12,7 @@ import type {
 	RepositoryDetail,
 	RepositoryInput,
 	ScanResult,
+	WrittenAssetInput,
 } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
 import type { FakeGitHub } from "./fake-github";
@@ -53,6 +55,8 @@ export interface RegistryStub {
 	applyScan(repositoryId: string, scan: ScanResult): Promise<unknown>;
 	setProjectRepositories(projectId: string, repositoryIds: string[]): Promise<Project | null>;
 	addToLibrary(sourceAssetId: string, target: LibraryTarget): Promise<string>;
+	createLibraryAsset(input: WrittenAssetInput): Promise<string>;
+	editLibraryAsset(input: LibraryEditInput): Promise<number>;
 }
 
 /** The address Agents sends from in tests. */

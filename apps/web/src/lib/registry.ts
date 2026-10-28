@@ -2,6 +2,7 @@ import {
 	type Agent,
 	type AssetDetail,
 	type LibraryEntry,
+	libraryEditInput,
 	libraryTarget,
 	type Overview,
 	type Project,
@@ -9,9 +10,11 @@ import {
 	projectInput,
 	type Repository,
 	type RepositoryDetail,
+	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import type { FileDiff } from "#/lib/version-diff";
 
 const id = z.string().min(1).max(64);
 
@@ -180,4 +183,43 @@ export const removeFromLibrary = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<void> => {
 		const registry = await managedRegistryOf(data.slug);
 		await registry.removeFromLibrary(data.assetId);
+	});
+
+/** Creates a library asset from text typed in the app. Returns its id. */
+export const createLibraryAsset = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), asset: writtenAssetInput }))
+	.handler(async ({ data }): Promise<string> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.createLibraryAsset(data.asset);
+	});
+
+/** Saves new text for a library asset's files. Returns the version it is at now. */
+export const editLibraryAsset = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), edit: libraryEditInput }))
+	.handler(async ({ data }): Promise<number> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.editLibraryAsset(data.edit);
+	});
+
+/** The files that differ between two versions of an asset, as line diffs. */
+export const getVersionDiff = createServerFn({ method: "GET" })
+	.validator(
+		z.object({
+			slug: z.string().min(1),
+			assetId: id,
+			from: z.number().int().positive(),
+			to: z.number().int().positive(),
+		}),
+	)
+	.handler(async ({ data }): Promise<FileDiff[] | null> => {
+		const registry = await registryOf(data.slug);
+		if (!registry) return null;
+		const [from, to] = await Promise.all([
+			registry.getAssetVersion(data.assetId, data.from),
+			registry.getAssetVersion(data.assetId, data.to),
+		]);
+		if (!from || !to) return null;
+		// Imported here so the diff library stays out of the browser bundle.
+		const { diffFiles } = await import("#/lib/version-diff");
+		return diffFiles(from.files, to.files);
 	});

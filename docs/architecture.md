@@ -138,6 +138,14 @@ keep: assets with no repository (`packages/registry/src/library.ts`).
   or as the next version of one of the same kind. Content the library asset already has as its
   latest version adds nothing. A library asset is keyed by its kind and name, and a name is
   unique among the library's live assets of that kind.
+- **Writing.** An owner or admin can also type a library asset in the app: an `instructions`,
+  `prompt` or `skill`, one text file each. The file is named as a scan names the same file
+  (`AGENTS.md`, `SKILL.md`, and `<prompt name>.md`), and its blob id and the asset hash are computed
+  the way a scan does, so a repository carrying that text counts as a use.
+- **Editing.** On a library asset's page, an owner or admin edits the text of any file the registry
+  kept (up to 256 KiB each) and saves it as the next version. A version is added only when the
+  asset hash changes. A skill's description follows its `SKILL.md` front matter. Repository assets
+  cannot be edited: the repository is the source of their text.
 - **Uses come from content.** A repository asset uses a library asset when its hash equals one of
   that asset's versions, and is behind when that version is not the latest. Nothing links them,
   so a file copied by hand counts the same as one a setup will write, and a repository that
@@ -163,14 +171,17 @@ workspace.
 - **An asset's page** shows the text of each of its files and every earlier version. For a
   repository asset it also shows the agents that read it, the library assets it matches, and how
   many other assets have the same content; for a library asset, the repository assets that use it.
+  An asset with two versions or more offers "Compare versions": any two, as a line diff per file
+  (added, removed and changed files). The server function computes it with `diffLines` from the
+  `diff` package, imported inside the handler so it stays out of the browser bundle. A file whose
+  text is not kept shows only that it changed.
 
 Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
 - **Setups** (phase 2 in `docs/spec.md`): library assets chosen for a set of agents, applied to
-  repositories by pull request, with drift shown in the app and the CLI. Editing library assets
-  in the app and diffs between versions come with them.
+  repositories by pull request, with drift shown in the app and the CLI.
 
 ## Deploys
 

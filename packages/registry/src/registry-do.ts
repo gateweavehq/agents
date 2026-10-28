@@ -3,8 +3,10 @@ import {
 	type Agent,
 	type AssetDetail,
 	type AssetVersion,
+	type LibraryEditInput,
 	type LibraryEntry,
 	type LibraryTarget,
+	libraryEditInput,
 	libraryTarget,
 	type Overview,
 	type Project,
@@ -19,6 +21,8 @@ import {
 	repositoryInput,
 	type ScanResult,
 	scanResult,
+	type WrittenAssetInput,
+	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
@@ -26,7 +30,7 @@ import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { z } from "zod";
 import migrations from "../drizzle/migrations";
 import * as schema from "./db/schema";
-import { addToLibrary, removeFromLibrary } from "./library";
+import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	getAsset,
@@ -149,6 +153,18 @@ export class RegistryDO extends DurableObject {
 		const source = id.parse(sourceAssetId);
 		const into = libraryTarget.parse(target);
 		return this.#write(() => addToLibrary(this.#db, source, into, Date.now()));
+	}
+
+	/** Creates a library asset from text typed in the app. Returns its id. */
+	createLibraryAsset(input: WrittenAssetInput): string {
+		const data = writtenAssetInput.parse(input);
+		return this.#write(() => createLibraryAsset(this.#db, data, Date.now()));
+	}
+
+	/** Saves new text for a library asset's files. Returns the asset's current version. */
+	editLibraryAsset(input: LibraryEditInput): number {
+		const data = libraryEditInput.parse(input);
+		return this.#write(() => editLibraryAsset(this.#db, data, Date.now()));
 	}
 
 	removeFromLibrary(assetId: string): boolean {

@@ -198,3 +198,34 @@ export const libraryTarget = z.union([
 	z.object({ libraryAssetId: z.string().min(1).max(64) }),
 ]);
 export type LibraryTarget = z.input<typeof libraryTarget>;
+
+/**
+ * Most characters of text a person may write or save in the app. The registry keeps text of up to
+ * 256 KiB; a character takes at least one byte, so the registry also checks the bytes.
+ */
+export const MAX_WRITTEN_LENGTH = 256 * 1024;
+
+/** The kinds a person can write in the app: one text file each. */
+export const WRITTEN_ASSET_KINDS = ["instructions", "prompt", "skill"] as const;
+
+/** An asset typed into the library, with no repository behind it. */
+export const writtenAssetInput = z.object({
+	kind: z.enum(WRITTEN_ASSET_KINDS),
+	name: z.string().trim().min(1).max(200),
+	text: z.string().min(1).max(MAX_WRITTEN_LENGTH),
+});
+export type WrittenAssetInput = z.input<typeof writtenAssetInput>;
+
+/** New text for some files of a library asset; the files not listed keep their text. */
+export const libraryEditInput = z.object({
+	libraryAssetId: z.string().min(1).max(64),
+	files: z
+		.array(z.object({ path: repositoryPath, content: z.string().max(MAX_WRITTEN_LENGTH) }))
+		.min(1)
+		.max(500)
+		.refine(
+			(files) => new Set(files.map((file) => file.path)).size === files.length,
+			"A file is listed twice",
+		),
+});
+export type LibraryEditInput = z.input<typeof libraryEditInput>;
