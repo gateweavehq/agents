@@ -1,4 +1,4 @@
-import { DurableObject } from "cloudflare:workers";
+﻿import { DurableObject } from "cloudflare:workers";
 import {
 	type Agent,
 	type AgentDefinitionInput,
@@ -45,6 +45,7 @@ import {
 	type RepositoryDetail,
 	type RepositoryInput,
 	type ResolvedEnvironment,
+	type RunnableAgent,
 	repositoryInput,
 	type ScanResult,
 	type Setup,
@@ -115,6 +116,7 @@ import {
 	listLibrary,
 	listProjects,
 	listRepositories,
+	listRunnableAgents,
 	listSetups,
 	readOverview,
 } from "./queries";
@@ -193,6 +195,11 @@ export class RegistryDO extends DurableObject {
 
 	listAgents(): Agent[] {
 		return listAgents(this.#db);
+	}
+
+	/** The chat list's agents in one read: the live Gateweave agents with their provider and model. */
+	listRunnableAgents(): RunnableAgent[] {
+		return listRunnableAgents(this.#db);
 	}
 
 	getAgent(agentId: string): AgentDetail | null {

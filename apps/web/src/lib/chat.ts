@@ -33,17 +33,21 @@ async function memberOf(slug: string) {
 
 /** The agents run by Gateweave, with the providers the workspace has keys for. */
 async function chatAgents(registry: NonNullable<Awaited<ReturnType<typeof memberOf>>>["registry"]) {
-	const [agents, keys] = await Promise.all([registry.listAgents(), registry.listProviderKeys()]);
+	const [agents, keys] = await Promise.all([
+		registry.listRunnableAgents(),
+		registry.listProviderKeys(),
+	]);
 	const keyed = new Set(keys.map((key) => key.provider));
-	const runnable = agents.filter((agent) => agent.runtime === "gateweave");
-	const details = await Promise.all(runnable.map((agent) => registry.getAgent(agent.id)));
-	return details.flatMap((detail): ChatAgent[] => {
-		const definition = detail?.definition;
-		if (!detail || !definition) return [];
-		const { id, name, description } = detail.agent;
-		const { provider, model } = definition;
-		return [{ id, name, description, provider, model, keyed: keyed.has(provider) }];
-	});
+	return agents.map(
+		({ id, name, description, provider, model }): ChatAgent => ({
+			id,
+			name,
+			description,
+			provider,
+			model,
+			keyed: keyed.has(provider),
+		}),
+	);
 }
 
 /** The caller's conversations, the latest first, and the agents they can start one with. */

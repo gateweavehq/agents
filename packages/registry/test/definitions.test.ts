@@ -153,6 +153,65 @@ describe("agents run by Gateweave", () => {
 		expect(await stub.removeAgent(crypto.randomUUID())).toBe(false);
 	});
 
+	it("are listed for chat in one call, in name order, without the removed or the scanned", async () => {
+		const stub = registry();
+		const beta = await stub.createAgent(reviewer(null, { name: "Beta" }));
+		const alpha = await stub.createAgent(
+			reviewer(null, { name: "Alpha", description: "Reviews", model: "claude-opus-5-5" }),
+		);
+		const gone = await stub.createAgent(reviewer(null, { name: "Gone" }));
+		expect(await stub.removeAgent(gone.id)).toBe(true);
+
+		// An agent found in a repository runs on its own runtime, not Gateweave's.
+		const [repository = ""] = await stub.syncRepositories([
+			{
+				provider: "github",
+				externalId: "1",
+				installationId: "100",
+				owner: "acme",
+				name: "web",
+				defaultBranch: "main",
+				private: true,
+			},
+		]);
+		await stub.applyScan(repository, {
+			commit: "a".repeat(40),
+			scannedAt: 1_000,
+			agents: [
+				{
+					runtime: "claude-code",
+					key: "main",
+					name: "Scanned",
+					description: null,
+					model: null,
+					path: null,
+					metadata: {},
+					assets: [],
+				},
+			],
+			assets: [],
+			problems: [],
+			files: [],
+		});
+
+		expect(await stub.listRunnableAgents()).toEqual([
+			{
+				id: alpha.id,
+				name: "Alpha",
+				description: "Reviews",
+				provider: "anthropic",
+				model: "claude-opus-5-5",
+			},
+			{
+				id: beta.id,
+				name: "Beta",
+				description: null,
+				provider: "anthropic",
+				model: "claude-sonnet-5-5",
+			},
+		]);
+	});
+
 	it("choose from the models the workspace's key can use", async () => {
 		const stub = registry();
 		expect(await stub.listModels("anthropic")).toEqual({

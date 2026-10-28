@@ -1,4 +1,4 @@
-/** What the registry returns. Times are milliseconds since the epoch. */
+﻿/** What the registry returns. Times are milliseconds since the epoch. */
 import type { Metadata, ScanProblem } from "./inputs";
 import type {
 	AgentRuntime,
@@ -335,6 +335,15 @@ export interface AgentDetail {
 	definition: AgentDefinition | null;
 	/** The files of its instructions at the pinned version. */
 	instructions: AssetFile[];
+}
+
+/** An agent run by Gateweave that a person can chat with, as the chat list shows it. */
+export interface RunnableAgent {
+	id: string;
+	name: string;
+	description: string | null;
+	provider: ModelProvider;
+	model: string;
 }
 
 /**
