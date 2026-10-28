@@ -15,8 +15,9 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > repository by pull request and show where a repository has drifted from them since. Ready-made
 > setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click,
 > and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI. Workspaces
-> keep their own model provider keys, and define agents that Gateweave will run with a model and
-> instructions from the library; running them comes next. See [docs/spec.md](docs/spec.md) for
+> keep their own model provider keys and environment sets (variables, and secrets whose values
+> are stored encrypted), and define agents that Gateweave will run with a model, instructions
+> from the library and an environment set; running them comes next. See [docs/spec.md](docs/spec.md) for
 > the plan.
 
 ## Tech stack
@@ -40,10 +41,10 @@ Sign up with any email and password, then create a workspace. To enable "Sign in
 uncomment and fill in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.dev.vars`. To connect
 workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes.
 
-Workspaces keep their model provider keys encrypted with the server's `SECRETS_KEY`, which
+Workspaces keep their model provider keys and environment secrets encrypted with the server's `SECRETS_KEY`, which
 `pnpm dev:setup` generates for local development. On a deployed Worker, set it once with
 `openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY` and keep it: if it changes,
-workspaces have to add their keys again.
+workspaces have to add their keys and secret values again.
 
 ## Contributing
 

@@ -7,6 +7,7 @@ import {
 	MODEL_PROVIDER_NAMES,
 	MODEL_PROVIDERS,
 	type ModelProvider,
+	type PinnedAsset,
 	type ProviderModel,
 } from "@gateweave/agents-model";
 import { Link } from "@tanstack/react-router";
@@ -53,6 +54,7 @@ export function AgentDialog({
 }) {
 	const { slug } = useWorkspace();
 	const pinned = agent?.definition.instructions ?? null;
+	const pinnedEnv = agent?.definition.environment ?? null;
 	const [name, setName] = useState(agent?.agent.name ?? "");
 	const [description, setDescription] = useState(agent?.agent.description ?? "");
 	const [provider, setProvider] = useState<ModelProvider>(
@@ -60,6 +62,7 @@ export function AgentDialog({
 	);
 	const [model, setModel] = useState(agent?.definition.model ?? "");
 	const [instructions, setInstructions] = useState(pinned?.asset.id ?? "");
+	const [environment, setEnvironment] = useState(pinnedEnv?.asset.id ?? "");
 	const [models, setModels] = useState<ProviderModel[] | string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -81,17 +84,14 @@ export function AgentDialog({
 		(INSTRUCTION_KINDS as readonly string[]).includes(asset.kind),
 	);
 
+	const sets = library.filter(({ asset }) => asset.kind === "env-set");
+
 	async function onSubmit(event: FormEvent) {
 		event.preventDefault();
 		setPending(true);
 		setError(null);
-		const chosen = choices.find(({ asset }) => asset.id === instructions)?.asset;
-		const pin =
-			pinned && instructions === pinned.asset.id
-				? { assetId: pinned.asset.id, version: pinned.version }
-				: chosen
-					? { assetId: chosen.id, version: chosen.version }
-					: null;
+		const pin = pinFor(instructions, pinned, choices);
+		const environmentPin = pinFor(environment, pinnedEnv, sets);
 		try {
 			await onSave({
 				name: name.trim(),
@@ -99,6 +99,7 @@ export function AgentDialog({
 				provider,
 				model: model.trim(),
 				instructions: pin,
+				environment: environmentPin,
 			});
 			onClose();
 		} catch (failure) {
@@ -208,6 +209,34 @@ export function AgentDialog({
 							</p>
 						)}
 					</div>
+					<div className="space-y-2">
+						<Label htmlFor="agent-environment">Environment</Label>
+						<select
+							id="agent-environment"
+							value={environment}
+							onChange={(event) => setEnvironment(event.target.value)}
+							className={SELECT}
+						>
+							<option value="">None</option>
+							{pinnedEnv?.removed && (
+								<option value={pinnedEnv.asset.id}>
+									{pinnedEnv.asset.name} (v{pinnedEnv.version}, left the library)
+								</option>
+							)}
+							{sets.map(({ asset }) => (
+								<option key={asset.id} value={asset.id}>
+									{asset.name} (
+									{asset.id === pinnedEnv?.asset.id ? `v${pinnedEnv.version}` : `v${asset.version}`}
+									)
+								</option>
+							))}
+						</select>
+						<p className="text-xs text-muted-foreground">
+							{sets.length === 0 && !pinnedEnv
+								? "Create an environment set on the Environment page to give the agent variables and secrets."
+								: "The variables and secrets the agent runs with."}
+						</p>
+					</div>
 					{error && (
 						<p role="alert" className="text-sm text-destructive">
 							{error}
@@ -225,6 +254,19 @@ export function AgentDialog({
 			</DialogContent>
 		</Dialog>
 	);
+}
+
+/** What to pin for a select's choice: the version already pinned, or the latest of a new asset. */
+function pinFor(
+	chosenId: string,
+	pinned: PinnedAsset | null,
+	choices: LibraryEntry[],
+): { assetId: string; version: number } | null {
+	if (pinned && chosenId === pinned.asset.id) {
+		return { assetId: pinned.asset.id, version: pinned.version };
+	}
+	const chosen = choices.find(({ asset }) => asset.id === chosenId)?.asset;
+	return chosen ? { assetId: chosen.id, version: chosen.version } : null;
 }
 
 function ModelsHint({

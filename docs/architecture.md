@@ -272,6 +272,32 @@ with no repository and its own id as its key, and a row in `agent_definitions` b
 - **Removing an agent** marks it removed, as scans do, so its id stays known to whatever names
   it later, such as runs.
 
+## Environment sets
+
+An environment set is what an agent run by Gateweave runs with: variables and secrets. Owners and
+admins manage them on the Environment page (`packages/registry/src/environment.ts`).
+
+- **A set is a library asset** of kind `env-set` with one file, `environment.json`:
+  `{ "variables": { "NAME": "value" }, "secrets": ["NAME"] }`. Names match `^[A-Z_][A-Z0-9_]*$`,
+  there are at most 200 entries, and a name is a variable or a secret, never both. The registry
+  writes the file with sorted keys, so the same content is the same bytes: an edit that changes
+  nothing makes no version, and variables are versioned, shown and diffed like any asset. Secret
+  values are never in the file. A set cannot be edited as plain files or copied from a
+  repository, which would bypass those rules.
+- **Secret values** are sealed (see "Model providers") in `env_secrets`, with the place
+  `env-sets/<asset id>/<name>`. They belong to the set, not to a version, so moving a pin keeps
+  them. A value can be set only for a name that is a secret in the set's current version. When an
+  edit drops a name, its value is kept and shown as unused until someone removes it, so a typo
+  fixed back finds its value again.
+- **An agent picks one set**, pinned to a version like its instructions (`agent_definitions`,
+  and `agent_assets` for the asset's page). A new version changes nothing until the pin moves.
+  `agentSnapshot` does not carry it.
+- **The runtime opens it.** `resolveEnvironment(agentId)` returns the pinned version's variables
+  and the opened secrets, with the names that have no value (or whose value no longer opens)
+  as `missing`. No page or server function calls it; the others only see `set` or `missing`.
+- **Without `SECRETS_KEY`** the page says so and values cannot be set; sets with only variables
+  work as they are.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -307,6 +333,10 @@ workspace.
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, and
   its pinned instructions with their text.
+- **Environment** lists the environment sets with their variables, their secrets as set or
+  missing (never a value), values kept for names that are no longer secrets, and the agents that
+  run with each. Members see all of it; owners and admins create and edit sets and set, replace
+  and remove values.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind.
 - **Setups** lists them with how many assets each pins and how many have updates, and below them

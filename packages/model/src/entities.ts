@@ -320,6 +320,8 @@ export interface AgentDefinition {
 	model: string;
 	/** Null when it has none. */
 	instructions: PinnedAsset | null;
+	/** The environment set it runs with; null when it has none. */
+	environment: PinnedAsset | null;
 }
 
 /** An agent with where it is configured and what it reads. */
@@ -348,4 +350,48 @@ export interface AgentSnapshot {
 	instructions: string | null;
 	/** When the definition last changed. */
 	updatedAt: number;
+}
+
+/** A secret an environment set declares. Its value is never part of this. */
+export interface EnvSecret {
+	name: string;
+	/** Whether a value is stored for it. */
+	state: "set" | "missing";
+	/** Who stored the value, and when; null while it is missing. */
+	setBy: string | null;
+	setAt: number | null;
+}
+
+/** A value stored for a name the set's current version no longer declares as a secret. */
+export interface EnvOrphan {
+	name: string;
+	setBy: string;
+	setAt: number;
+}
+
+/** An environment set as the Environment page shows it: names, never secret values. */
+export interface EnvSetEntry {
+	/** `asset.version` is the current version. */
+	asset: Asset;
+	variables: Record<string, string>;
+	secrets: EnvSecret[];
+	orphans: EnvOrphan[];
+	/** The live agents that run with it, and the version each has pinned. */
+	agents: { id: string; name: string; version: number }[];
+}
+
+/** Why a secret's value was not stored or removed, fit to show the person who asked. */
+export interface EnvRefusal {
+	status: "refused";
+	message: string;
+}
+
+/**
+ * The environment an agent runs with: the pinned version's variables and the opened secrets, and
+ * the names of secrets that have no value yet. For the runtime only; no page or server function
+ * may return it.
+ */
+export interface ResolvedEnvironment {
+	values: Record<string, string>;
+	missing: string[];
 }

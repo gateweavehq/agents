@@ -5,6 +5,7 @@ import {
 	Boxes,
 	ChevronDown,
 	FolderGit2,
+	KeyRound,
 	Layers,
 	LayoutDashboard,
 	Library,
@@ -131,6 +132,15 @@ function Sidebar() {
 				>
 					<Library className="size-4" />
 					Library
+				</Link>
+				<Link
+					to="/$workspace/environment"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<KeyRound className="size-4" />
+					Environment
 				</Link>
 				<Link
 					to="/$workspace/setups"

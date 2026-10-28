@@ -24,7 +24,10 @@ export class LibraryError extends Error {}
 const INSTRUCTION_FILES = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md"]);
 
 /** The key of a library asset: unique among live library assets of every kind. */
-const libraryKey = (kind: string, name: string) => `${kind}:${name}`;
+export const libraryKey = (kind: string, name: string) => `${kind}:${name}`;
+
+/** Environment sets hold secrets by name, so they are written only through `environment.ts`. */
+const ENVIRONMENT_ONLY = "Environment sets are managed on the Environment page";
 
 /**
  * Copies a repository asset's current content into the library, as a new library asset or a new
@@ -51,6 +54,7 @@ export function addToLibrary(
 		)
 		.get()?.asset;
 	if (!source) throw new LibraryError("That asset is not in a repository of this workspace");
+	if (source.kind === "env-set") throw new LibraryError(ENVIRONMENT_ONLY);
 	const content = db
 		.select()
 		.from(assetVersions)
@@ -235,6 +239,7 @@ export function editLibraryAsset(
 		.where(and(eq(assets.id, input.libraryAssetId), isNull(assets.removedAt)))
 		.get();
 	if (!asset) throw new LibraryError("That library asset does not exist");
+	if (asset.kind === "env-set") throw new LibraryError(ENVIRONMENT_ONLY);
 	if (asset.repositoryId !== null) {
 		throw new LibraryError("Only library assets can be edited here; a repository's files are read");
 	}
@@ -298,6 +303,7 @@ export function importLibraryAsset(
 	input: z.output<typeof setupImportInput>["assets"][number],
 	now: number,
 ): { assetId: string; version: number } {
+	if (input.kind === "env-set") throw new LibraryError(ENVIRONMENT_ONLY);
 	const files = input.files.map((file) => {
 		checkSize(file.path, file.content);
 		return storeFile(db, file);

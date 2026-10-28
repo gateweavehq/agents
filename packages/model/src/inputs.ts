@@ -414,5 +414,82 @@ export const agentDefinitionInput = projectInput.extend({
 	instructions: z
 		.object({ assetId: z.string().min(1).max(64), version: z.number().int().positive() })
 		.nullable(),
+	/** An environment set (an `env-set` library asset) pinned to a version; none by default. */
+	environment: z
+		.object({ assetId: z.string().min(1).max(64), version: z.number().int().positive() })
+		.nullable()
+		.default(null),
 });
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
+
+/** The one file of an environment set, as the library stores it. */
+export const ENV_FILE = "environment.json";
+
+/** Most variables and secrets one environment set may hold, together. */
+export const MAX_ENV_ENTRIES = 200;
+
+/** Longest value, in characters, of a variable or a secret. */
+export const MAX_ENV_VALUE_LENGTH = 10_000;
+
+/** An environment variable's name, as shells and runtimes read it. */
+export const envName = z
+	.string()
+	.max(100)
+	.regex(
+		/^[A-Z_][A-Z0-9_]*$/,
+		"Names use capital letters, digits and underscores, and do not start with a digit",
+	);
+
+/**
+ * What an environment set holds, as `environment.json` has it: variables with their values, and
+ * the names of the secrets whose values live sealed in the registry, never in the file. A name is
+ * a variable or a secret, not both.
+ */
+export const envSetContent = z
+	.object({
+		variables: z.record(envName, z.string().max(MAX_ENV_VALUE_LENGTH)),
+		secrets: z.array(envName),
+	})
+	.superRefine((content, ctx) => {
+		const names = Object.keys(content.variables);
+		if (names.length + content.secrets.length > MAX_ENV_ENTRIES) {
+			ctx.addIssue({
+				code: "custom",
+				message: `At most ${MAX_ENV_ENTRIES} variables and secrets`,
+			});
+		}
+		const seen = new Set(names);
+		for (const [index, name] of content.secrets.entries()) {
+			if (seen.has(name)) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["secrets", index],
+					message: `${name} is listed twice: a name is a variable or a secret`,
+				});
+			}
+			seen.add(name);
+		}
+	});
+export type EnvSetContent = z.infer<typeof envSetContent>;
+
+/** A new environment set: a library asset of kind `env-set`. */
+export const envSetInput = envSetContent.and(z.object({ name: z.string().trim().min(1).max(200) }));
+export type EnvSetInput = z.input<typeof envSetInput>;
+
+/** New content for an environment set; saved as its next version only if it differs. */
+export const envSetEditInput = envSetContent.and(z.object({ assetId: z.string().min(1).max(64) }));
+export type EnvSetEditInput = z.input<typeof envSetEditInput>;
+
+/**
+ * A secret's value, as an owner or admin types it. Only one trailing newline is dropped, the one
+ * a paste often brings; spaces and other newlines may be part of the value.
+ */
+export const envSecretInput = z.object({
+	assetId: z.string().min(1).max(64),
+	name: envName,
+	value: z
+		.string()
+		.transform((value) => value.replace(/\r?\n$/, ""))
+		.pipe(z.string().min(1, "A value cannot be empty").max(MAX_ENV_VALUE_LENGTH)),
+});
+export type EnvSecretInput = z.input<typeof envSecretInput>;

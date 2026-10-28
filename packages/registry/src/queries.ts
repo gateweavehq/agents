@@ -13,6 +13,7 @@ import type {
 	LibraryEntry,
 	LibraryUse,
 	Overview,
+	PinnedAsset,
 	Project,
 	ProjectDetail,
 	Repository,
@@ -257,22 +258,24 @@ export function getAgent(db: Db, id: string): AgentDetail | null {
 
 	const row = db.select().from(agentDefinitions).where(eq(agentDefinitions.agentId, id)).get();
 	if (!row) return { agent, repository, assets: read, definition: null, instructions: [] };
-	const { instructionsAssetId: assetId, instructionsVersion: version } = row;
-	const pinned =
-		assetId !== null && version !== null
-			? db.select().from(assets).where(eq(assets.id, assetId)).get()
-			: undefined;
+	const pinned = pinnedAsset(db, row.instructionsAssetId, row.instructionsVersion);
 	const definition: AgentDefinition = {
 		provider: row.provider,
 		model: row.model,
-		instructions:
-			pinned && version !== null
-				? { asset: toAsset(pinned), version, removed: pinned.removedAt !== null }
-				: null,
+		instructions: pinned,
+		environment: pinnedAsset(db, row.envSetAssetId, row.envSetVersion),
 	};
-	const instructions =
-		pinned && version !== null ? (getAssetVersion(db, pinned.id, version)?.files ?? []) : [];
+	const instructions = pinned
+		? (getAssetVersion(db, pinned.asset.id, pinned.version)?.files ?? [])
+		: [];
 	return { agent, repository, assets: read, definition, instructions };
+}
+
+/** A library asset an agent has pinned, or null when it pins none. */
+function pinnedAsset(db: Db, assetId: string | null, version: number | null): PinnedAsset | null {
+	if (assetId === null || version === null) return null;
+	const row = db.select().from(assets).where(eq(assets.id, assetId)).get();
+	return row ? { asset: toAsset(row), version, removed: row.removedAt !== null } : null;
 }
 
 /** Agents matching `where`, which may refer to their repository, with the assets they read. */

@@ -1,7 +1,8 @@
 /**
  * Agents defined in the app and run by Gateweave. Each is a row in `agents` (the `gateweave`
  * runtime, no repository) with its definition beside it in `agent_definitions`, and reads its
- * instructions through `agent_assets` like any agent, so the library asset's page lists it.
+ * instructions and environment set through `agent_assets` like any agent, so the library asset's
+ * page lists it.
  * Removing one marks it removed, as scans do, so its id stays known.
  */
 import {
@@ -23,6 +24,7 @@ type Definition = z.output<typeof agentDefinitionInput>;
 
 export function createAgent(db: Db, input: Definition, now: number): Agent {
 	checkInstructions(db, input.instructions, null);
+	checkEnvironment(db, input.environment, null);
 	const id = crypto.randomUUID();
 	const row = {
 		id,
@@ -48,6 +50,7 @@ export function updateAgent(db: Db, id: string, input: Definition, now: number):
 	const current = definitionOf(db, id);
 	if (!current) return null;
 	checkInstructions(db, input.instructions, current.instructionsAssetId);
+	checkEnvironment(db, input.environment, current.envSetAssetId);
 	const row = db
 		.update(agents)
 		.set({
@@ -102,7 +105,10 @@ export function agentSnapshot(db: Db, id: string): AgentSnapshot | null {
 /** The definition of a live agent run by Gateweave. */
 function definitionOf(db: Db, id: string) {
 	return db
-		.select({ instructionsAssetId: agentDefinitions.instructionsAssetId })
+		.select({
+			instructionsAssetId: agentDefinitions.instructionsAssetId,
+			envSetAssetId: agentDefinitions.envSetAssetId,
+		})
 		.from(agentDefinitions)
 		.innerJoin(agents, eq(agents.id, agentDefinitions.agentId))
 		.where(and(eq(agentDefinitions.agentId, id), isNull(agents.removedAt)))
@@ -116,15 +122,19 @@ function definitionRow(agentId: string, input: Definition) {
 		model: input.model,
 		instructionsAssetId: input.instructions?.assetId ?? null,
 		instructionsVersion: input.instructions?.version ?? null,
+		envSetAssetId: input.environment?.assetId ?? null,
+		envSetVersion: input.environment?.version ?? null,
 	};
 }
 
-/** Makes the agent read exactly its instructions. Returns the ids of the assets it reads. */
+/** Makes the agent read exactly its instructions and environment set. Returns their asset ids. */
 function linkInstructions(db: Db, agentId: string, input: Definition): string[] {
 	db.delete(agentAssets).where(eq(agentAssets.agentId, agentId)).run();
-	if (!input.instructions) return [];
-	db.insert(agentAssets).values({ agentId, assetId: input.instructions.assetId }).run();
-	return [input.instructions.assetId];
+	const assetIds = [input.instructions?.assetId, input.environment?.assetId].filter(
+		(assetId): assetId is string => assetId !== undefined,
+	);
+	for (const assetId of assetIds) db.insert(agentAssets).values({ agentId, assetId }).run();
+	return assetIds;
 }
 
 /**
@@ -138,21 +148,48 @@ function checkInstructions(
 	pinnedAssetId: string | null,
 ): void {
 	if (!pin) return;
+	const asset = checkPin(db, pin, pinnedAssetId, (name, kind) =>
+		(INSTRUCTION_KINDS as readonly string[]).includes(kind)
+			? null
+			: `${name} is not instructions or a prompt`,
+	);
+	if (getAssetVersion(db, pin.assetId, pin.version)?.files.some((file) => file.content === null)) {
+		throw new AgentError(`${asset.name} has a file that is not text or is too large to read`);
+	}
+}
+
+/** The environment set must be a version of a library asset of kind `env-set`; the same leave rule. */
+function checkEnvironment(
+	db: Db,
+	pin: Definition["environment"],
+	pinnedAssetId: string | null,
+): void {
+	if (!pin) return;
+	checkPin(db, pin, pinnedAssetId, (name, kind) =>
+		kind === "env-set" ? null : `${name} is not an environment set`,
+	);
+}
+
+/** The library asset a pin names, once it is known to be pinnable: of the right kind, there, with the version. */
+function checkPin(
+	db: Db,
+	pin: { assetId: string; version: number },
+	pinnedAssetId: string | null,
+	wrongKind: (name: string, kind: string) => string | null,
+): { name: string; kind: string } {
 	const asset = db
 		.select({ name: assets.name, kind: assets.kind, removedAt: assets.removedAt })
 		.from(assets)
 		.where(and(eq(assets.id, pin.assetId), isNull(assets.repositoryId)))
 		.get();
 	if (!asset) throw new AgentError("That library asset does not exist");
-	if (!(INSTRUCTION_KINDS as readonly string[]).includes(asset.kind)) {
-		throw new AgentError(`${asset.name} is not instructions or a prompt`);
-	}
+	const refusal = wrongKind(asset.name, asset.kind);
+	if (refusal) throw new AgentError(refusal);
 	if (asset.removedAt !== null && pin.assetId !== pinnedAssetId) {
 		throw new AgentError(`${asset.name} is no longer in the library`);
 	}
-	const version = getAssetVersion(db, pin.assetId, pin.version);
-	if (!version) throw new AgentError(`${asset.name} has no version ${pin.version}`);
-	if (version.files.some((file) => file.content === null)) {
-		throw new AgentError(`${asset.name} has a file that is not text or is too large to read`);
+	if (!getAssetVersion(db, pin.assetId, pin.version)) {
+		throw new AgentError(`${asset.name} has no version ${pin.version}`);
 	}
+	return asset;
 }
