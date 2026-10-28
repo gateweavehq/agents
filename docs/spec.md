@@ -1,7 +1,6 @@
 # Gateweave Agents: product spec
 
-> **Status: draft for review.** Nothing here is built yet. Decisions marked _open_ need the
-> maintainer's call before work starts.
+> **Status: agreed.** Phase 1 (the registry) is being built. Decisions are recorded at the end.
 
 ## The problem
 
@@ -38,18 +37,18 @@ with a hosted version in Gateweave Cloud.
 
 ## Concepts
 
-| Concept         | What it is                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| Workspace       | The team, shared with every Gateweave product: one account, members and roles                 |
-| Project         | A product or initiative; groups repositories                                                  |
-| Repository      | A GitHub repository (others later), with the agent configuration found in it                  |
-| Agent           | A configured agent: its runtime, model, instructions, tools, permissions and environment      |
-| Runtime         | Where an agent runs: an external coding agent (Claude Code, Codex, Gemini CLI, Cursor) or the Gateweave runtime |
-| Asset           | A versioned item in the library: prompt, skill, plugin, script, MCP server or environment set |
-| Setup           | A bundle of assets for one or more agents that can be applied to repositories                 |
-| Team            | A graph of agents with roles (lead, member, reviewer) and allowed communication; teams nest   |
-| Run             | One execution of an agent or team: messages, delegations, tool calls, tokens, cost and result |
-| Connection      | An integration: the GitHub app, model providers, MCP servers                                  |
+| Concept    | What it is                                                                                                      |
+| ---------- | --------------------------------------------------------------------------------------------------------------- |
+| Workspace  | The team, shared with every Gateweave product: one account, members and roles                                   |
+| Project    | A product or initiative; groups repositories                                                                    |
+| Repository | A GitHub repository (others later), with the agent configuration found in it                                    |
+| Agent      | A configured agent: its runtime, model, instructions, tools, permissions and environment                        |
+| Runtime    | Where an agent runs: an external coding agent (Claude Code, Codex, Gemini CLI, Cursor) or the Gateweave runtime |
+| Asset      | A versioned item in the library: prompt, skill, plugin, script, MCP server or environment set                   |
+| Setup      | A bundle of assets for one or more agents that can be applied to repositories                                   |
+| Team       | A graph of agents with roles (lead, member, reviewer) and allowed communication; teams nest                     |
+| Run        | One execution of an agent or team: messages, delegations, tool calls, tokens, cost and result                   |
+| Connection | An integration: the GitHub app, model providers, MCP servers                                                    |
 
 Assets are versioned, and agents and setups pin versions, so a change to a shared skill is a
 reviewable update rather than a silent one.
@@ -71,20 +70,20 @@ and in the debugger.
 
 ## Pages
 
-| Page         | What it shows and does                                                                        |
-| ------------ | --------------------------------------------------------------------------------------------- |
-| Overview     | Projects, active agents, recent runs, cost and anything that needs attention (drift, failures) |
-| Projects     | Each project with its repositories, the agents working in them and the setups applied          |
-| Repositories | Agent configuration found in each repository, drift from its setup, and "Apply setup"          |
-| Agents       | Every agent: runtime, model, instructions, tools, permissions, and where it is used            |
-| Teams        | A visual editor for team graphs: roles, edges (delegate, ask, report) and nesting              |
-| Library      | Prompts, skills, plugins and scripts: versions, diffs and where each is used                   |
-| MCP          | Registered MCP servers, the tools they expose, their health, and which agents use them         |
-| Environment  | Variable sets per environment, secrets by reference, and which agents or repositories use them |
-| Setups       | Ready-made setups to apply in one click, and a builder for custom ones                         |
-| Chat         | Talk to an agent or a team; delegations and tool calls appear inline as they happen            |
+| Page         | What it shows and does                                                                                                  |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Overview     | Projects, active agents, recent runs, cost and anything that needs attention (drift, failures)                          |
+| Projects     | Each project with its repositories, the agents working in them and the setups applied                                   |
+| Repositories | Agent configuration found in each repository, drift from its setup, and "Apply setup"                                   |
+| Agents       | Every agent: runtime, model, instructions, tools, permissions, and where it is used                                     |
+| Teams        | A visual editor for team graphs: roles, edges (delegate, ask, report) and nesting                                       |
+| Library      | Prompts, skills, plugins and scripts: versions, diffs and where each is used                                            |
+| MCP          | Registered MCP servers, the tools they expose, their health, and which agents use them                                  |
+| Environment  | Variable sets per environment, secrets by reference, and which agents or repositories use them                          |
+| Setups       | Ready-made setups to apply in one click, and a builder for custom ones                                                  |
+| Chat         | Talk to an agent or a team; delegations and tool calls appear inline as they happen                                     |
 | Runs         | A trace of every run: messages, sub-agent spans, tool calls, inputs and outputs, timing, tokens and cost; replay a step |
-| Settings     | Workspace, members, model providers, the GitHub connection and billing                         |
+| Settings     | Workspace, members, model providers, the GitHub connection and billing                                                  |
 
 Debugging lives in Runs: a run opens as a timeline of spans, the way a distributed trace does.
 
@@ -107,9 +106,8 @@ The same shape as Track: one Worker per product and one Durable Object per works
 - **Interface and API.** TanStack Start on Workers, the same stack as Track. Better Auth for
   accounts; later a shared Gateweave identity Worker so one sign-in covers every product.
 - **Registry data** (projects, repositories, agents, assets, setups, teams) lives in a
-  per-workspace Durable Object with SQLite, synced to the browser with Track's sync engine. Agents
-  is the second product to need it, so starting it is when `@gateweave/sync` and `@gateweave/ui`
-  are extracted from Track, as `docs/ecosystem.md` plans.
+  per-workspace Durable Object with SQLite. Pages read it through server functions at first, and
+  it moves to Track's sync engine when realtime matters (see "Decisions").
 - **Runtime.** Each running agent is a Cloudflare Agents SDK agent (a Durable Object with its own
   state, storage and scheduling). Team messages are RPC calls between those objects, checked
   against the team graph. Long, multi-step jobs run as Workflows, so they survive restarts.
@@ -142,9 +140,17 @@ runtime is designed alongside it, so the data model fits both.
 5. **Cloud runners.** Coding agents in Sandboxes, started on a schedule or by an event, such as a
    new issue labeled for an agent.
 
-## Open decisions
+## Decisions
 
-- **Repository layout.** This repository holds the product. Shared packages extracted from Track
-  (`@gateweave/sync`, `@gateweave/ui`) are published from a platform repository or kept in Track
-  for now.
-- **Local port.** 4720, following the Gateweave 47xx convention.
+- **Repository layout** (AGT-1, 2026-10-28). This repository holds the product. Code it shares
+  with Track (auth, rate limiting, email, the Worker test harness, UI primitives) is copied in
+  and owned here, the way shadcn/ui components are, rather than published as packages. With two
+  consumers, a package would add releases and versioning to code that still changes every week.
+  Fixes to shared code, auth above all, are checked against both repositories.
+- **Sync comes later.** Registry data is written mostly by the server (GitHub scans and
+  webhooks), so optimistic local writes buy little in phase 1, and extracting Track's sync engine
+  now would churn Track right after its launch. When Agents needs realtime (chat and runs in phase
+  3), the engine is extracted from the Track monorepo as `@gateweave/sync` and published to npm.
+- **Single sign-on** across products comes with Gateweave ID, which replaces each product's own
+  accounts in Gateweave Cloud. Until then each product has its own sign-in.
+- **Local port.** 4720, following the Gateweave 47xx convention (site 4700, Track 4710).
