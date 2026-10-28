@@ -1,7 +1,6 @@
-import { type Overview, REPOSITORY_RUNTIMES, RUNTIME_NAMES } from "@gateweave/agents-model";
+import type { Overview } from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check } from "lucide-react";
-import { RuntimeBadge, ScanStatus } from "#/components/registry/labels";
+import { RuntimeMatrix } from "#/components/registry/runtime-matrix";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { useRefreshWhile } from "#/lib/refresh";
@@ -48,72 +47,8 @@ function OverviewPage() {
 					</div>
 				))}
 			</dl>
-			{repositories.length === 0 ? <GetStarted /> : <RuntimeMatrix />}
+			{repositories.length === 0 ? <GetStarted /> : <RuntimeMatrix repositories={repositories} />}
 		</div>
-	);
-}
-
-/** Repositories down, coding agents across: the question this product answers first. */
-function RuntimeMatrix() {
-	const { slug } = useWorkspace();
-	const repositories = Route.useLoaderData()?.repositories ?? [];
-
-	return (
-		<section aria-labelledby="matrix-heading" className="space-y-3">
-			<h2 id="matrix-heading" className="text-sm font-medium">
-				Agents by repository
-			</h2>
-			<div className="overflow-x-auto rounded-lg border">
-				<table className="w-full text-sm">
-					<thead className="border-b bg-muted/40 text-xs text-muted-foreground">
-						<tr>
-							<th scope="col" className="px-3 py-2 text-left font-medium">
-								Repository
-							</th>
-							{REPOSITORY_RUNTIMES.map((runtime) => (
-								<th key={runtime} scope="col" className="px-3 py-2 text-center font-medium">
-									<RuntimeBadge runtime={runtime} className="border-0 px-0" />
-								</th>
-							))}
-							<th scope="col" className="px-3 py-2 text-right font-medium">
-								<span className="sr-only">Scan</span>
-							</th>
-						</tr>
-					</thead>
-					<tbody className="divide-y">
-						{repositories.map((repository) => (
-							<tr key={repository.id}>
-								<th scope="row" className="px-3 py-2 text-left font-normal">
-									<Link
-										to="/$workspace/repositories/$repositoryId"
-										params={{ workspace: slug, repositoryId: repository.id }}
-										className="hover:underline"
-									>
-										<span className="text-muted-foreground">{repository.owner}/</span>
-										{repository.name}
-									</Link>
-								</th>
-								{REPOSITORY_RUNTIMES.map((runtime) => (
-									<td key={runtime} className="px-3 py-2 text-center">
-										{repository.runtimes.includes(runtime) ? (
-											<Check
-												aria-label={`Uses ${RUNTIME_NAMES[runtime]}`}
-												className="mx-auto size-4"
-											/>
-										) : (
-											<span className="sr-only">Does not use {RUNTIME_NAMES[runtime]}</span>
-										)}
-									</td>
-								))}
-								<td className="px-3 py-2 text-right">
-									<ScanStatus repository={repository} />
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
-		</section>
 	);
 }
 

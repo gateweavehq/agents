@@ -8,6 +8,8 @@ import type {
 	ProjectInput,
 	Repository,
 	RepositoryDetail,
+	RepositoryInput,
+	ScanResult,
 } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
 import type { FakeGitHub } from "./fake-github";
@@ -46,6 +48,9 @@ export interface RegistryStub {
 	getRepository(repositoryId: string): Promise<RepositoryDetail | null>;
 	getAssetVersion(assetId: string): Promise<AssetVersion | null>;
 	requestScans(repositoryIds: string[], force?: boolean): Promise<number>;
+	syncRepositories(inputs: RepositoryInput[]): Promise<string[]>;
+	applyScan(repositoryId: string, scan: ScanResult): Promise<unknown>;
+	setProjectRepositories(projectId: string, repositoryIds: string[]): Promise<Project | null>;
 }
 
 /** The address Agents sends from in tests. */

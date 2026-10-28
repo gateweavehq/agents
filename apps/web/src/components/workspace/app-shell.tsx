@@ -2,6 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
 	ArrowLeftRight,
 	Bot,
+	Boxes,
 	ChevronDown,
 	FolderGit2,
 	LayoutDashboard,
@@ -92,6 +93,15 @@ function Sidebar() {
 				>
 					<LayoutDashboard className="size-4" />
 					Overview
+				</Link>
+				<Link
+					to="/$workspace/projects"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<Boxes className="size-4" />
+					Projects
 				</Link>
 				<Link
 					to="/$workspace/repositories"

@@ -1,3 +1,4 @@
+import type { RepositoryInput, ScanResult } from "@gateweave/agents-model";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
@@ -63,4 +64,82 @@ it("deletes the registry with its workspace", async () => {
 		assets: 0,
 	});
 	expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
+});
+
+function repository(externalId: string, name: string): RepositoryInput {
+	return {
+		provider: "github",
+		externalId,
+		installationId: "100",
+		owner: "acme",
+		name,
+		defaultBranch: "main",
+		private: false,
+	};
+}
+
+/** What a scan of a repository with only a CLAUDE.md finds. */
+const CLAUDE_ONLY: ScanResult = {
+	commit: "c".repeat(40),
+	scannedAt: 1_000,
+	agents: [
+		{
+			runtime: "claude-code",
+			key: "main",
+			name: "Claude Code",
+			description: null,
+			model: null,
+			path: null,
+			metadata: {},
+			assets: ["CLAUDE.md"],
+		},
+	],
+	assets: [
+		{
+			kind: "instructions",
+			key: "CLAUDE.md",
+			name: "CLAUDE.md",
+			description: null,
+			path: "CLAUDE.md",
+			files: [{ path: "CLAUDE.md", content: "Be brief.\n" }],
+			metadata: {},
+		},
+	],
+	problems: [],
+};
+
+it("shows members each project with its repositories and their agents", async () => {
+	const { headers: ada } = await signUp(agents, origin, "ada-projects");
+	const id = await createWorkspace(agents, origin, ada, "studio");
+	const registry = await agents.registry(id);
+	const [shop = "", docs = ""] = await registry.syncRepositories([
+		repository("1", "shop"),
+		repository("2", "docs"),
+	]);
+	await registry.applyScan(shop, CLAUDE_ONLY);
+	const project = await registry.createProject({ name: "Storefront", description: "Selling." });
+	await registry.setProjectRepositories(project.id, [shop, docs]);
+
+	const list = await agents.fetch(`${origin}/studio/projects`, { headers: { cookie: ada.cookie } });
+	expect(list.status).toBe(200);
+	const listHtml = await list.text();
+	expect(listHtml).toContain("Storefront");
+	expect(listHtml).toContain(`/studio/projects/${project.id}`);
+
+	const page = await agents.fetch(`${origin}/studio/projects/${project.id}`, {
+		headers: { cookie: ada.cookie },
+	});
+	expect(page.status).toBe(200);
+	const html = await page.text();
+	expect(html).toContain("Selling.");
+	expect(html).toContain('aria-label="Uses Claude Code"');
+	expect(html).toContain(`/studio/repositories/${shop}`);
+	expect(html).toContain(`/studio/repositories/${docs}`);
+
+	const { headers: eve } = await signUp(agents, origin, "eve-projects");
+	for (const path of ["/studio/projects", `/studio/projects/${project.id}`]) {
+		const response = await agents.fetch(`${origin}${path}`, { headers: { cookie: eve.cookie } });
+		expect(response.status).toBe(404);
+		expect(await response.text()).not.toContain("Storefront");
+	}
 });
