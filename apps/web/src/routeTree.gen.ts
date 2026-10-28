@@ -15,6 +15,7 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as WorkspaceIndexRouteImport } from './routes/$workspace/index'
+import { Route as WorkspaceEnvironmentRouteImport } from './routes/$workspace/environment'
 import { Route as WorkspaceLibraryRouteImport } from './routes/$workspace/library'
 import { Route as WorkspaceSettingsRouteImport } from './routes/$workspace/settings'
 import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitationId'
@@ -65,6 +66,11 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
 const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceEnvironmentRoute = WorkspaceEnvironmentRouteImport.update({
+  id: '/environment',
+  path: '/environment',
   getParentRoute: () => WorkspaceRoute,
 } as any)
 const WorkspaceLibraryRoute = WorkspaceLibraryRouteImport.update({
@@ -183,6 +189,7 @@ export interface FileRoutesByFullPath {
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
@@ -211,6 +218,7 @@ export interface FileRoutesByTo {
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace': typeof WorkspaceIndexRoute
@@ -240,6 +248,7 @@ export interface FileRoutesById {
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
@@ -271,6 +280,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/login'
     | '/reset-password'
+    | '/$workspace/environment'
     | '/$workspace/library'
     | '/$workspace/settings'
     | '/invite/$invitationId'
@@ -299,6 +309,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/login'
     | '/reset-password'
+    | '/$workspace/environment'
     | '/$workspace/library'
     | '/invite/$invitationId'
     | '/$workspace'
@@ -327,6 +338,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/login'
     | '/reset-password'
+    | '/$workspace/environment'
     | '/$workspace/library'
     | '/$workspace/settings'
     | '/invite/$invitationId'
@@ -407,6 +419,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/$workspace/'
       preLoaderRoute: typeof WorkspaceIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/environment': {
+      id: '/$workspace/environment'
+      path: '/environment'
+      fullPath: '/$workspace/environment'
+      preLoaderRoute: typeof WorkspaceEnvironmentRouteImport
       parentRoute: typeof WorkspaceRoute
     }
     '/$workspace/library': {
@@ -577,6 +596,7 @@ const WorkspaceSettingsRouteWithChildren =
   WorkspaceSettingsRoute._addFileChildren(WorkspaceSettingsRouteChildren)
 
 interface WorkspaceRouteChildren {
+  WorkspaceEnvironmentRoute: typeof WorkspaceEnvironmentRoute
   WorkspaceLibraryRoute: typeof WorkspaceLibraryRoute
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRouteWithChildren
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
@@ -592,6 +612,7 @@ interface WorkspaceRouteChildren {
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
+  WorkspaceEnvironmentRoute: WorkspaceEnvironmentRoute,
   WorkspaceLibraryRoute: WorkspaceLibraryRoute,
   WorkspaceSettingsRoute: WorkspaceSettingsRouteWithChildren,
   WorkspaceIndexRoute: WorkspaceIndexRoute,

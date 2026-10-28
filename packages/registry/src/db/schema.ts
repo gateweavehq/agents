@@ -213,8 +213,14 @@ export const agentDefinitions = sqliteTable(
 		model: text("model").notNull(),
 		instructionsAssetId: text("instructions_asset_id").references(() => assets.id),
 		instructionsVersion: integer("instructions_version"),
+		/** The environment set (an `env-set` library asset) it runs with, pinned like instructions. */
+		envSetAssetId: text("env_set_asset_id").references(() => assets.id),
+		envSetVersion: integer("env_set_version"),
 	},
-	(table) => [index("agent_definitions_instructions_idx").on(table.instructionsAssetId)],
+	(table) => [
+		index("agent_definitions_instructions_idx").on(table.instructionsAssetId),
+		index("agent_definitions_env_set_idx").on(table.envSetAssetId),
+	],
 );
 
 export const setups = sqliteTable("setups", {
@@ -315,6 +321,25 @@ export const providerKeys = sqliteTable("provider_keys", {
 	checkModels: integer("check_models"),
 });
 
+/**
+ * The values of environment sets' secrets, encrypted (see `secrets.ts`). They belong to the set,
+ * not to one of its versions, so moving a pin keeps them. Only the runtime decrypts one; the app
+ * sees which names have a value.
+ */
+export const envSecrets = sqliteTable(
+	"env_secrets",
+	{
+		assetId: text("asset_id")
+			.notNull()
+			.references(() => assets.id),
+		name: text("name").notNull(),
+		sealed: text("sealed").notNull(),
+		setBy: text("set_by").notNull(),
+		setAt: integer("set_at").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.assetId, table.name] })],
+);
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
@@ -325,3 +350,4 @@ export type ScanRequestRow = typeof scanRequests.$inferSelect;
 export type SetupRow = typeof setups.$inferSelect;
 export type SetupApplicationRow = typeof setupApplications.$inferSelect;
 export type ProviderKeyRow = typeof providerKeys.$inferSelect;
+export type EnvSecretRow = typeof envSecrets.$inferSelect;

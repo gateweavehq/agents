@@ -10,6 +10,16 @@ import {
 	type AssetDetail,
 	type AssetVersion,
 	agentDefinitionInput,
+	type EnvRefusal,
+	type EnvSecret,
+	type EnvSecretInput,
+	type EnvSetEditInput,
+	type EnvSetEntry,
+	type EnvSetInput,
+	envName,
+	envSecretInput,
+	envSetEditInput,
+	envSetInput,
 	type LibraryEditInput,
 	type LibraryEntry,
 	type LibraryTarget,
@@ -33,6 +43,7 @@ import {
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
+	type ResolvedEnvironment,
 	repositoryInput,
 	type ScanResult,
 	type Setup,
@@ -62,6 +73,16 @@ import {
 } from "./apply";
 import * as schema from "./db/schema";
 import { agentSnapshot, createAgent, removeAgent, updateAgent } from "./definitions";
+import {
+	checkEnvSecretName,
+	createEnvSet,
+	editEnvSet,
+	listEnvSets,
+	pinnedEnvironment,
+	removeEnvSecret,
+	secretPlace,
+	storeEnvSecret,
+} from "./environment";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
@@ -325,6 +346,72 @@ export class RegistryDO extends DurableObject {
 	/** What the runtime reads at the start of a turn: the whole definition, in one read. */
 	agentSnapshot(agentId: string): AgentSnapshot | null {
 		return agentSnapshot(this.#db, id.parse(agentId));
+	}
+
+	// Environment sets, which owners and admins manage. Secret values go in and never come out:
+	// the pages see which names have one, and only `resolveEnvironment` opens them.
+
+	listEnvSets(): EnvSetEntry[] {
+		return listEnvSets(this.#db);
+	}
+
+	/** Creates a set. Returns its id. */
+	createEnvSet(input: EnvSetInput): string {
+		const data = envSetInput.parse(input);
+		return this.#write(() => createEnvSet(this.#db, data, Date.now()));
+	}
+
+	/** Saves a set's variables and secret names as its next version. Returns its current version. */
+	editEnvSet(input: EnvSetEditInput): number {
+		const data = envSetEditInput.parse(input);
+		return this.#write(() => editEnvSet(this.#db, data, Date.now()));
+	}
+
+	/** Stores a secret's value, sealed, in place of the earlier one. */
+	async setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal> {
+		const { assetId, name, value } = envSecretInput.parse(input);
+		const by = z.string().trim().min(1).max(200).parse(setBy);
+		// Refuse early, before sealing; the write checks again, since the set may change meanwhile.
+		checkEnvSecretName(this.#db, assetId, name);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
+		const sealed = await sealer.seal(secretPlace(assetId, name), value);
+		const now = Date.now();
+		this.#write(() => storeEnvSecret(this.#db, { assetId, name, sealed, setBy: by }, now));
+		return { name, state: "set", setBy: by, setAt: now };
+	}
+
+	/** Removes a stored value, even one for a name the set no longer declares. */
+	removeEnvSecret(assetId: string, name: string): boolean {
+		const set = id.parse(assetId);
+		const secret = envName.parse(name);
+		return this.#write(() => removeEnvSecret(this.#db, set, secret));
+	}
+
+	/**
+	 * The environment an agent runs with, secrets opened: for the runtime only. No server function
+	 * or page may return this. A value that cannot be opened, because the server's `SECRETS_KEY`
+	 * changed, counts as missing: it has to be set again. Null when there is no such live agent.
+	 */
+	async resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null> {
+		const pinned = pinnedEnvironment(this.#db, id.parse(agentId));
+		if (!pinned) return null;
+		const values = { ...pinned.variables };
+		const missing: string[] = [];
+		const stored = pinned.secrets.filter((secret) => secret.sealed !== null);
+		const sealer = stored.length > 0 ? await this.#sealerOf() : null;
+		for (const { name, sealed } of pinned.secrets) {
+			if (sealed === null || sealer === null || "unavailable" in sealer || !pinned.assetId) {
+				missing.push(name);
+				continue;
+			}
+			try {
+				values[name] = await sealer.open(secretPlace(pinned.assetId, name), sealed);
+			} catch {
+				missing.push(name);
+			}
+		}
+		return { values, missing };
 	}
 
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the

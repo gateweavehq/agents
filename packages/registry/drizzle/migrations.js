@@ -9,6 +9,7 @@ import m0007 from "./0007_repository_files.sql";
 import m0008 from "./0008_rescan_for_drift.sql";
 import m0009 from "./0009_provider_keys.sql";
 import m0010 from "./0010_agent_definitions.sql";
+import m0011 from "./0011_environment_sets.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -25,5 +26,6 @@ export default {
 		m0008,
 		m0009,
 		m0010,
+		m0011,
 	},
 };

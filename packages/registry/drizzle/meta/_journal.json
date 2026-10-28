@@ -78,6 +78,13 @@
       "when": 1793207940303,
       "tag": "0010_agent_definitions",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1793209025260,
+      "tag": "0011_environment_sets",
+      "breakpoints": true
     }
   ]
 }

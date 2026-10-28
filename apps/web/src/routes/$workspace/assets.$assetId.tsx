@@ -55,7 +55,13 @@ function AssetPage() {
 	const current = version.version === asset.version;
 	const inLibrary = asset.repositoryId === null;
 	// Only the current version is edited: a save always makes the next one.
-	const canEdit = admin && inLibrary && current && version.files.some((f) => f.content !== null);
+	// Environment sets are edited on their own page, which keeps secrets out of the file.
+	const canEdit =
+		admin &&
+		inLibrary &&
+		current &&
+		asset.kind !== "env-set" &&
+		version.files.some((f) => f.content !== null);
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -307,6 +313,8 @@ function LibraryActions({ asset }: { asset: Asset }) {
 	if (!admin) return null;
 
 	if (asset.repositoryId !== null) {
+		// The library keeps environment sets written on the Environment page only.
+		if (asset.kind === "env-set") return null;
 		return (
 			<>
 				<Button variant="outline" size="sm" onClick={() => setOpen(true)}>

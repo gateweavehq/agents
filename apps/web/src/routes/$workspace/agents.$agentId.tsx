@@ -106,7 +106,7 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 				{definition.instructions ? (
 					<>
 						<ul className="rounded-lg border text-sm">
-							<InstructionsRow pin={definition.instructions} admin={admin} />
+							<PinRow field="instructions" pin={definition.instructions} admin={admin} />
 						</ul>
 						{data.instructions.map((file) => (
 							<details key={file.path} open className="overflow-hidden rounded-lg border">
@@ -126,12 +126,49 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 					</p>
 				)}
 			</section>
+
+			<section aria-labelledby="environment-heading" className="space-y-3">
+				<h2 id="environment-heading" className="text-sm font-medium">
+					Environment
+				</h2>
+				{definition.environment ? (
+					<>
+						<ul className="rounded-lg border text-sm">
+							<PinRow field="environment" pin={definition.environment} admin={admin} />
+						</ul>
+						<p className="text-xs text-muted-foreground">
+							Its variables and secrets are on the{" "}
+							<Link
+								to="/$workspace/environment"
+								params={{ workspace: slug }}
+								className="underline underline-offset-2"
+							>
+								Environment page
+							</Link>
+							.
+						</p>
+					</>
+				) : (
+					<p className="rounded-lg border p-6 text-sm text-muted-foreground">
+						No environment: the agent runs with no variables or secrets.
+						{admin ? " Choose a set with Edit." : ""}
+					</p>
+				)}
+			</section>
 		</>
 	);
 }
 
-/** The pinned instructions, and their newer version if the library has one. */
-function InstructionsRow({ pin, admin }: { pin: PinnedAsset; admin: boolean }) {
+/** A pinned library asset, and its newer version if the library has one. */
+function PinRow({
+	field,
+	pin,
+	admin,
+}: {
+	field: "instructions" | "environment";
+	pin: PinnedAsset;
+	admin: boolean;
+}) {
 	const { slug } = useWorkspace();
 	const router = useRouter();
 	const data = Route.useLoaderData();
@@ -153,7 +190,15 @@ function InstructionsRow({ pin, admin }: { pin: PinnedAsset; admin: boolean }) {
 						description: agent.description,
 						provider: definition.provider,
 						model: definition.model,
-						instructions: { assetId: asset.id, version: asset.version },
+						// Only the pin of this row moves; the other stays where it is.
+						instructions:
+							field === "instructions"
+								? { assetId: asset.id, version: asset.version }
+								: keep(definition.instructions),
+						environment:
+							field === "environment"
+								? { assetId: asset.id, version: asset.version }
+								: keep(definition.environment),
 					},
 				},
 			});
@@ -199,6 +244,11 @@ function InstructionsRow({ pin, admin }: { pin: PinnedAsset; admin: boolean }) {
 			)}
 		</li>
 	);
+}
+
+/** What an agent update sends for a pin it keeps. */
+function keep(pin: PinnedAsset | null): { assetId: string; version: number } | null {
+	return pin && { assetId: pin.asset.id, version: pin.version };
 }
 
 /** Where a coding agent found in a repository is configured, and what it reads. */

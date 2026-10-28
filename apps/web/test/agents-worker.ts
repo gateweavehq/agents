@@ -7,6 +7,12 @@ import type {
 	ApplyOutcome,
 	ApplyRefusal,
 	AssetVersion,
+	EnvRefusal,
+	EnvSecret,
+	EnvSecretInput,
+	EnvSetEditInput,
+	EnvSetEntry,
+	EnvSetInput,
 	LibraryEditInput,
 	LibraryTarget,
 	Overview,
@@ -18,6 +24,7 @@ import type {
 	Repository,
 	RepositoryDetail,
 	RepositoryInput,
+	ResolvedEnvironment,
 	ScanResult,
 	Setup,
 	SetupDetail,
@@ -81,6 +88,11 @@ export interface RegistryStub {
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
+	createEnvSet(input: EnvSetInput): Promise<string>;
+	editEnvSet(input: EnvSetEditInput): Promise<number>;
+	listEnvSets(): Promise<EnvSetEntry[]>;
+	setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal>;
+	resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null>;
 }
 
 /** The address Agents sends from in tests. */
