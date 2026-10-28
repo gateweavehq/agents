@@ -47,6 +47,7 @@ import {
 	setupAssets,
 	setups,
 } from "./db/schema";
+import { type DriftEntry, mostUrgent, readDrift } from "./drift";
 import {
 	type Db,
 	groupBy,
@@ -133,7 +134,8 @@ export function getProject(db: Db, id: string): ProjectDetail | null {
 }
 
 /** Live repositories, by owner and name, with their projects and the runtimes found in them. */
-function repositoriesWhere(db: Db, where?: SQL): Repository[] {
+/** `drift` is what `readDriftOf` returned for these repositories, when the caller has it. */
+function repositoriesWhere(db: Db, where?: SQL, drift?: readonly DriftEntry[]): Repository[] {
 	const live = where ? and(liveRepository, where) : liveRepository;
 	const links = groupBy(
 		db
@@ -167,21 +169,37 @@ function repositoriesWhere(db: Db, where?: SQL): Repository[] {
 			.all()
 			.map((row) => row.id),
 	);
-	return db
+	const rows = db
 		.select()
 		.from(repositories)
 		.where(live)
 		.orderBy(asc(repositories.owner), asc(repositories.name))
-		.all()
-		.map((row) =>
-			toRepository(row, links.get(row.id) ?? [], runtimes.get(row.id) ?? [], pending.has(row.id)),
-		);
+		.all();
+	const states = groupBy(
+		(drift ?? readDriftOf(db, { repositoryIds: new Set(rows.map((row) => row.id)) })).map(
+			(entry) => [entry.repository.id, entry.drift.state] as const,
+		),
+	);
+	return rows.map((row) =>
+		toRepository(
+			row,
+			links.get(row.id) ?? [],
+			runtimes.get(row.id) ?? [],
+			pending.has(row.id),
+			mostUrgent(states.get(row.id) ?? []),
+		),
+	);
 }
+
+/** Drift, with each setup's files as its pins write them now. */
+const readDriftOf = (db: Db, filter: { setupId?: string; repositoryIds?: ReadonlySet<string> }) =>
+	readDrift(db, filter, (setup) => writeSetup(db, setup).written.files);
 
 export const listRepositories = (db: Db): Repository[] => repositoriesWhere(db);
 
 export function getRepository(db: Db, id: string): RepositoryDetail | null {
-	const [repository] = repositoriesWhere(db, eq(repositories.id, id));
+	const drift = readDriftOf(db, { repositoryIds: new Set([id]) });
+	const [repository] = repositoriesWhere(db, eq(repositories.id, id), drift);
 	if (!repository) return null;
 	return {
 		repository,
@@ -204,6 +222,9 @@ export function getRepository(db: Db, id: string): RepositoryDetail | null {
 			.orderBy(desc(setupApplications.createdAt))
 			.all()
 			.map(({ application, setup }) => ({ application: toApplication(application), setup })),
+		applied: drift
+			.map(({ setup: { id, name }, drift }) => ({ setup: { id, name }, drift }))
+			.sort((a, b) => compareText(a.setup.name, b.setup.name)),
 	};
 }
 
@@ -430,7 +451,22 @@ export function getSetup(db: Db, id: string): SetupDetail | null {
 				application: toApplication(application),
 				repository,
 			})),
+		applied: readDriftOf(db, { setupId: id })
+			.map(({ repository: { id, owner, name }, drift }) => ({
+				repository: { id, owner, name },
+				drift,
+			}))
+			.sort((a, b) =>
+				compareText(
+					`${a.repository.owner}/${a.repository.name}`,
+					`${b.repository.owner}/${b.repository.name}`,
+				),
+			),
 	};
+}
+
+function compareText(a: string, b: string): number {
+	return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /** A setup's pins, and the files its pinned versions write. */

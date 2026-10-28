@@ -27,8 +27,9 @@ import {
 	setupApplications,
 	setups,
 } from "./db/schema";
-import { gitBlobId } from "./hash";
+import { textBlobId } from "./hash";
 import { writeSetup } from "./queries";
+import { requestScans } from "./queue";
 import type { RepositorySource, SourceFile } from "./scanner";
 import type { Db } from "./state";
 
@@ -180,7 +181,7 @@ async function run(
 	}
 
 	const owned = [
-		...plan.changes.map((file) => ({ path: file.path, blob: blobOf(file.content) })),
+		...plan.changes.map((file) => ({ path: file.path, blob: textBlobId(file.content) })),
 		...plan.unchanged.map((path) => ({ path, blob: entries.get(path)?.blob ?? "" })),
 	].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 	if (open && sameFiles(open.files, owned)) {
@@ -240,10 +241,13 @@ async function run(
 
 export function saveApplication(db: Db, saved: Saved, now: number): void {
 	if (saved.kind === "state") {
-		db.update(setupApplications)
+		const row = db
+			.update(setupApplications)
 			.set({ state: saved.state, updatedAt: now })
 			.where(eq(setupApplications.id, saved.id))
-			.run();
+			.returning({ repositoryId: setupApplications.repositoryId })
+			.get();
+		if (row && saved.state === "merged") scanMerge(db, row.repositoryId, now);
 		return;
 	}
 	const { row } = saved;
@@ -267,18 +271,35 @@ export function recordPullRequest(
 	state: ApplicationState,
 	now: number,
 ): boolean {
-	const changed = db
-		.update(setupApplications)
-		.set({ state, updatedAt: now })
+	const rows = db
+		.select({ id: setupApplications.id, state: setupApplications.state })
+		.from(setupApplications)
 		.where(
 			and(
 				eq(setupApplications.repositoryId, repositoryId),
 				eq(setupApplications.pullNumber, pullNumber),
 			),
 		)
-		.returning({ id: setupApplications.id })
 		.all();
-	return changed.length > 0;
+	for (const row of rows) {
+		// GitHub may deliver a webhook twice, and a merge's time is when it was first recorded.
+		if (row.state === state) continue;
+		db.update(setupApplications)
+			.set({ state, updatedAt: now })
+			.where(eq(setupApplications.id, row.id))
+			.run();
+		if (state === "merged") scanMerge(db, repositoryId, now);
+	}
+	return rows.length > 0;
+}
+
+/**
+ * Queues a scan of a repository a setup was merged into, so drift has something to compare. It
+ * is forced: a scan that read the merge may have started before the merge was recorded, and an
+ * unforced one skips a head the last scan read.
+ */
+function scanMerge(db: Db, repositoryId: string, now: number): void {
+	requestScans(db, [repositoryId], now, true);
 }
 
 /**
@@ -298,7 +319,7 @@ async function textsFor(
 		const entry = entries.get(file.path);
 		if (!entry || entry.symlink) continue;
 		if (!MERGED_FILES.has(file.path)) {
-			texts.set(file.path, entry.blob === blobOf(file.content) ? file.content : null);
+			texts.set(file.path, entry.blob === textBlobId(file.content) ? file.content : null);
 			continue;
 		}
 		// The last scan most likely brought this file's text already.
@@ -332,12 +353,6 @@ function sameFiles(a: readonly OwnedFile[], b: readonly OwnedFile[]): boolean {
 function samePins(a: readonly Pin[], b: readonly Pin[]): boolean {
 	const versions = new Map(a.map((pin) => [pin.assetId, pin.version]));
 	return a.length === b.length && b.every((pin) => versions.get(pin.assetId) === pin.version);
-}
-
-const encoder = new TextEncoder();
-
-function blobOf(text: string): string {
-	return gitBlobId(encoder.encode(text));
 }
 
 /** `gateweave/<the setup's name as a slug>-<the application's id>`, unique to the application. */

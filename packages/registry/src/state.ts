@@ -3,6 +3,7 @@ import {
 	type Agent,
 	type AgentRuntime,
 	type Asset,
+	type DriftState,
 	type Project,
 	type Repository,
 	type Setup,
@@ -23,6 +24,7 @@ export const toRepository = (
 	projectIds: string[],
 	runtimes: Iterable<AgentRuntime>,
 	scanPending: boolean,
+	drift: DriftState | null,
 ): Repository => {
 	const found = new Set(runtimes);
 	return {
@@ -30,6 +32,7 @@ export const toRepository = (
 		projectIds,
 		runtimes: AGENT_RUNTIMES.filter((runtime) => found.has(runtime)),
 		scanPending,
+		drift,
 	};
 };
 

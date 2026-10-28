@@ -3,6 +3,7 @@ import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-r
 import { GitPullRequest, Library, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DriftRow } from "#/components/registry/drift";
 import { KindLabel, PullState, RuntimeBadge } from "#/components/registry/labels";
 import {
 	ApplySetupDialog,
@@ -14,6 +15,7 @@ import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
+import { useRefreshWhile } from "#/lib/refresh";
 import {
 	applySetup,
 	deleteSetup,
@@ -41,11 +43,18 @@ function SetupPage() {
 	const data = Route.useLoaderData();
 	const admin = isAdmin(useMyRole());
 	useDocumentTitle(data ? data.setup.name : "Setup");
+	// A merge queues a scan of the repository; drift is known once it has run.
+	const scanning = new Set(data?.repositories.filter((r) => r.scanPending).map((r) => r.id));
+	useRefreshWhile(
+		data?.applied.some(
+			({ repository, drift }) => drift.state === "unscanned" && scanning.has(repository.id),
+		) ?? false,
+	);
 
 	if (!data) {
 		return <Notice title="Setup not found">It may have been deleted.</Notice>;
 	}
-	const { setup, assets, files, problems, applications } = data;
+	const { setup, assets, files, problems, applications, applied } = data;
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -84,6 +93,7 @@ function SetupPage() {
 				)}
 			</section>
 
+			{applied.length > 0 && <AppliedTo admin={admin} />}
 			{applications.length > 0 && <Applications />}
 
 			{assets.length > 0 && <Preview files={files} problems={problems} />}
@@ -150,6 +160,41 @@ function PinRow({ pin, admin }: { pin: SetupAsset; admin: boolean }) {
 				</Button>
 			)}
 		</li>
+	);
+}
+
+/** The repositories this setup was merged into, and where each has moved away from it. */
+function AppliedTo({ admin }: { admin: boolean }) {
+	const { slug } = useWorkspace();
+	const data = Route.useLoaderData();
+	if (!data) return null;
+	const reached = new Map(data.repositories.map((repository) => [repository.id, repository]));
+	return (
+		<section aria-labelledby="applied-heading" className="space-y-3">
+			<h2 id="applied-heading" className="text-sm font-medium">
+				Repositories · {data.applied.length}
+			</h2>
+			<ul className="divide-y rounded-lg border text-sm">
+				{data.applied.map(({ repository, drift }) => (
+					<DriftRow
+						key={repository.id}
+						title={
+							<Link
+								to="/$workspace/repositories/$repositoryId"
+								params={{ workspace: slug, repositoryId: repository.id }}
+								className="hover:underline"
+							>
+								{repository.owner}/{repository.name}
+							</Link>
+						}
+						drift={drift}
+						setup={data.setup}
+						repository={reached.get(repository.id)}
+						admin={admin}
+					/>
+				))}
+			</ul>
+		</section>
 	);
 }
 

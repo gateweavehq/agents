@@ -7,6 +7,13 @@ export function gitBlobId(bytes: Uint8Array): string {
 	return createHash("sha1").update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex");
 }
 
+const encoder = new TextEncoder();
+
+/** Git's id for a file with this text, in UTF-8. */
+export function textBlobId(text: string): string {
+	return gitBlobId(encoder.encode(text));
+}
+
 /**
  * The hash of an asset's content: its files' paths and blob ids, in path order. Paths cannot
  * contain NUL and blob ids have a fixed length, so no two file lists produce the same input.

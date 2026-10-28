@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { Check } from "lucide-react";
 import { useId } from "react";
 import { useWorkspace } from "#/components/workspace/context";
+import { DriftBadge } from "./drift";
 import { RuntimeBadge, ScanStatus } from "./labels";
 
 /** Repositories down, coding agents across: the question this product answers first. */
@@ -33,6 +34,9 @@ export function RuntimeMatrix({
 									<RuntimeBadge runtime={runtime} className="border-0 px-0" />
 								</th>
 							))}
+							<th scope="col" className="px-3 py-2 text-center font-medium">
+								Setups
+							</th>
 							<th scope="col" className="px-3 py-2 text-right font-medium">
 								<span className="sr-only">Scan</span>
 							</th>
@@ -63,6 +67,13 @@ export function RuntimeMatrix({
 										)}
 									</td>
 								))}
+								<td className="px-3 py-2 text-center">
+									{repository.drift ? (
+										<DriftBadge state={repository.drift} />
+									) : (
+										<span className="sr-only">No setup applied</span>
+									)}
+								</td>
 								<td className="px-3 py-2 text-right">
 									<ScanStatus repository={repository} />
 								</td>

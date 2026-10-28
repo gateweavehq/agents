@@ -138,6 +138,9 @@ merges it.
 - **A pull request's state** (open, merged or closed) comes from the **Pull request** webhook, and
   is checked again on GitHub whenever the setup is applied there, so a missed delivery is caught
   up.
+- **After the merge**, the repository's and the setup's pages show drift: whether the repository
+  still holds what the setup writes, or someone edited or deleted its files, or the setup has
+  moved on since. **Apply again** opens a new pull request.
 
 An installation belongs to one workspace at a time. **Disconnect** forgets it and its
 repositories; the app stays installed on GitHub until you uninstall it there, which also

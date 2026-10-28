@@ -2,6 +2,7 @@ import type {
 	DetectedAsset,
 	RepositoryInput,
 	ScannedFile,
+	ScannedTreeFile,
 	ScanResult,
 } from "@gateweave/agents-model";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -14,8 +15,9 @@ import {
 	blobs,
 	type FileEntry,
 	repositories,
+	repositoryFiles,
 } from "./db/schema";
-import { assetHash, gitBlobId } from "./hash";
+import { assetHash, gitBlobId, textBlobId } from "./hash";
 import { requestScans } from "./queue";
 import type { Db } from "./state";
 
@@ -163,6 +165,7 @@ export function applyScan(
 	if (repository.scannedAt !== null && scan.scannedAt < repository.scannedAt) return "stale";
 
 	const assetIds = applyAssets(db, repositoryId, scan, now);
+	applyFiles(db, repositoryId, scan.files);
 
 	const knownAgents = new Map(
 		db
@@ -288,6 +291,51 @@ function applyAssets(
 		db.update(assets).set({ removedAt: now, updatedAt: now }).where(eq(assets.id, gone.id)).run();
 	}
 	return ids;
+}
+
+/**
+ * Makes the repository's recorded files match the scan's. Only new and changed files are
+ * written, and the text of each is kept by its blob id, so drift can read a shared
+ * configuration file without asking GitHub. A text that does not encode back to its blob, as
+ * GitHub's can for a file that is not valid UTF-8, is not kept.
+ */
+function applyFiles(db: Db, repositoryId: string, files: readonly ScannedTreeFile[]): void {
+	const known = new Map(
+		db
+			.select({
+				path: repositoryFiles.path,
+				blob: repositoryFiles.blob,
+				symlink: repositoryFiles.symlink,
+			})
+			.from(repositoryFiles)
+			.where(eq(repositoryFiles.repositoryId, repositoryId))
+			.all()
+			.map((row) => [row.path, row]),
+	);
+	for (const file of files) {
+		const { path, blob, size, symlink } = file;
+		const row = known.get(path);
+		known.delete(path);
+		if (row?.blob === blob && row.symlink === symlink) continue;
+		// A symlink's blob is the path it points to, not a file worth keeping.
+		if (!symlink) {
+			const { content } = file;
+			const kept = content !== undefined && textBlobId(content) === blob;
+			storeFile(db, kept ? { path, blob, content } : { path, blob, size });
+		}
+		db.insert(repositoryFiles)
+			.values({ repositoryId, path, blob, size, symlink })
+			.onConflictDoUpdate({
+				target: [repositoryFiles.repositoryId, repositoryFiles.path],
+				set: { blob, size, symlink },
+			})
+			.run();
+	}
+	for (const path of known.keys()) {
+		db.delete(repositoryFiles)
+			.where(and(eq(repositoryFiles.repositoryId, repositoryId), eq(repositoryFiles.path, path)))
+			.run();
+	}
 }
 
 function assetFields({ kind, name, description, path, metadata }: DetectedAsset) {

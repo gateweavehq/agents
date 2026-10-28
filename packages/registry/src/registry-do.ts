@@ -104,6 +104,8 @@ export class RegistryDO extends DurableObject {
 		this.#db = drizzle(ctx.storage, { schema });
 		void ctx.blockConcurrencyWhile(async () => {
 			await migrate(this.#db, migrations);
+			// A migration may queue scans, as 0008 does.
+			await this.#scheduleScans();
 		});
 	}
 
@@ -256,6 +258,9 @@ export class RegistryDO extends DurableObject {
 			throw error;
 		} finally {
 			this.#applying.delete(key);
+			// Finding an old pull request merged queued a scan of the repository, even if applying
+			// was refused after that.
+			await this.#scheduleScans();
 		}
 	}
 
@@ -314,17 +319,22 @@ export class RegistryDO extends DurableObject {
 	 * Follows the state of a pull request in the repository with this provider id, as a
 	 * `pull_request` webhook reports it. False when it is not one that applies a setup.
 	 */
-	recordPullRequest(
+	async recordPullRequest(
 		provider: string,
 		externalId: string,
 		pullNumber: number,
 		state: string,
-	): boolean {
+	): Promise<boolean> {
 		const repository = this.#liveRepositoryOf(provider, externalId);
 		if (!repository) return false;
 		const number = z.number().int().positive().parse(pullNumber);
 		const to = z.enum(APPLICATION_STATES).parse(state);
-		return this.#write(() => recordPullRequest(this.#db, repository, number, to, Date.now()));
+		const known = this.#write(() =>
+			recordPullRequest(this.#db, repository, number, to, Date.now()),
+		);
+		// A merge queues a scan of the repository, for drift.
+		await this.#scheduleScans();
+		return known;
 	}
 
 	applyScan(repositoryId: string, scan: ScanResult): ScanOutcome {

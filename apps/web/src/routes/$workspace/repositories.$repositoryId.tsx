@@ -3,9 +3,10 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { ExternalLink, Lock, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { DriftRow } from "#/components/registry/drift";
 import { PullState, RuntimeBadge, repositoryUrl, ScanStatus } from "#/components/registry/labels";
 import { Button } from "#/components/ui/button";
-import { useWorkspace } from "#/components/workspace/context";
+import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
 import { useRefreshWhile } from "#/lib/refresh";
@@ -30,7 +31,7 @@ function RepositoryPage() {
 			</Notice>
 		);
 	}
-	const { repository, agents, assets, applications } = detail;
+	const { repository, agents, assets, applications, applied } = detail;
 	const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
 
 	return (
@@ -154,6 +155,7 @@ function RepositoryPage() {
 				</section>
 			)}
 
+			{applied.length > 0 && <AppliedSetups />}
 			{applications.length > 0 && <Applications />}
 
 			{repository.problems.length > 0 && (
@@ -175,7 +177,42 @@ function RepositoryPage() {
 	);
 }
 
-/** The setups applied to this repository, by their pull requests. */
+/** The setups merged into this repository, and where the repository has moved away from each. */
+function AppliedSetups() {
+	const { slug } = useWorkspace();
+	const admin = isAdmin(useMyRole());
+	const detail = Route.useLoaderData();
+	if (!detail) return null;
+	return (
+		<section aria-labelledby="setups-heading" className="space-y-3">
+			<h2 id="setups-heading" className="text-sm font-medium">
+				Setups · {detail.applied.length}
+			</h2>
+			<ul className="divide-y rounded-lg border text-sm">
+				{detail.applied.map(({ setup, drift }) => (
+					<DriftRow
+						key={setup.id}
+						title={
+							<Link
+								to="/$workspace/setups/$setupId"
+								params={{ workspace: slug, setupId: setup.id }}
+								className="hover:underline"
+							>
+								{setup.name}
+							</Link>
+						}
+						drift={drift}
+						setup={setup}
+						repository={detail.repository}
+						admin={admin}
+					/>
+				))}
+			</ul>
+		</section>
+	);
+}
+
+/** The pull requests that applied setups to this repository, newest first. */
 function Applications() {
 	const { slug } = useWorkspace();
 	const detail = Route.useLoaderData();
@@ -183,7 +220,7 @@ function Applications() {
 	return (
 		<section aria-labelledby="applications-heading" className="space-y-3">
 			<h2 id="applications-heading" className="text-sm font-medium">
-				Setups
+				Pull requests · {detail.applications.length}
 			</h2>
 			<ul className="divide-y rounded-lg border text-sm">
 				{detail.applications.map(({ application, setup }) => (

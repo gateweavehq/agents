@@ -5,7 +5,7 @@ import {
 } from "@gateweave/agents-model";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
-import { type AssetToWrite, detect, writeAssets } from "../src";
+import { type AssetToWrite, detect, wantsFile, writeAssets } from "../src";
 import { repo } from "./support";
 
 function asset(
@@ -511,6 +511,10 @@ describe("byte stability", () => {
 	it("never writes a redaction placeholder", () => {
 		const result = writeAssets(everything, [...REPOSITORY_RUNTIMES]);
 		for (const file of result.files) expect(file.content).not.toContain("<redacted>");
+	});
+	it("writes only files a scan reads, so drift sees every one of them", () => {
+		const result = writeAssets(everything, [...REPOSITORY_RUNTIMES]);
+		for (const file of result.files) expect(wantsFile(file.path), file.path).toBe(true);
 	});
 });
 

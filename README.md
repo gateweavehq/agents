@@ -11,8 +11,8 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > CLI, Cursor) and what they read are found and kept up to date on every push, and can be browsed
 > by project, by repository, by agent and by asset. A workspace library keeps versions of the
 > assets worth sharing and shows which repositories carry each one and which are behind, and
-> setups pin them for a set of coding agents, preview the files they write and apply them to a
-> repository by pull request. See
+> setups pin them for a set of coding agents, preview the files they write, apply them to a
+> repository by pull request and show where a repository has drifted from them since. See
 > [docs/spec.md](docs/spec.md) for the plan.
 
 ## Tech stack

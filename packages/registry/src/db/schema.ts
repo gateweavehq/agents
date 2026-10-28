@@ -69,6 +69,25 @@ export const repositories = sqliteTable(
 	],
 );
 
+/**
+ * The files the last scan of a repository read: every file an adapter wants, which includes
+ * every file a setup writes. Drift compares them with what a setup wrote there.
+ */
+export const repositoryFiles = sqliteTable(
+	"repository_files",
+	{
+		repositoryId: text("repository_id")
+			.notNull()
+			.references(() => repositories.id),
+		path: text("path").notNull(),
+		blob: text("blob").notNull(),
+		size: integer("size").notNull(),
+		/** A symlink's blob holds the path it points to. */
+		symlink: integer("symlink", { mode: "boolean" }).notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.repositoryId, table.path] })],
+);
+
 export const projectRepositories = sqliteTable(
 	"project_repositories",
 	{
@@ -262,6 +281,7 @@ export const scanRequests = sqliteTable(
 
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
+export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type ScanRequestRow = typeof scanRequests.$inferSelect;

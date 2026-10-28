@@ -81,6 +81,25 @@ export const scannedFile = z
 	);
 export type ScannedFile = z.infer<typeof scannedFile>;
 
+/**
+ * A file a scan read, as the repository's tree has it: every file an adapter wants, which
+ * includes every file a setup writes. Drift compares them with what a setup wrote there.
+ */
+export const scannedTreeFile = z.object({
+	path: repositoryPath,
+	blob: gitObjectId,
+	/** In bytes. */
+	size: z.number().int().nonnegative(),
+	/** A symlink's blob holds the path it points to. */
+	symlink: z.boolean(),
+	/** The text, when the scan read it. The registry checks it against `blob`. */
+	content: z.string().max(MAX_FILE_LENGTH).optional(),
+});
+export type ScannedTreeFile = z.infer<typeof scannedTreeFile>;
+
+/** Most files one scan may list. Agent configuration is far smaller. */
+export const MAX_SCANNED_FILES = 10_000;
+
 export const detectedAsset = z.object({
 	kind: z.enum(ASSET_KINDS),
 	/**
@@ -135,8 +154,16 @@ export const scanResult = z
 		agents: z.array(detectedAgent).max(500),
 		assets: z.array(detectedAsset).max(5000),
 		problems: z.array(scanProblem).max(100),
+		files: z.array(scannedTreeFile).max(MAX_SCANNED_FILES),
 	})
 	.superRefine((scan, ctx) => {
+		const filePaths = new Set<string>();
+		for (const [index, file] of scan.files.entries()) {
+			if (filePaths.has(file.path)) {
+				ctx.addIssue({ code: "custom", path: ["files", index, "path"], message: "Duplicate path" });
+			}
+			filePaths.add(file.path);
+		}
 		const assetKeys = new Set<string>();
 		for (const [index, asset] of scan.assets.entries()) {
 			if (assetKeys.has(asset.key)) {
