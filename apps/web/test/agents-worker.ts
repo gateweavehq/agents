@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
 	AssetVersion,
+	LibraryTarget,
 	Overview,
 	Project,
 	ProjectInput,
@@ -51,6 +52,7 @@ export interface RegistryStub {
 	syncRepositories(inputs: RepositoryInput[]): Promise<string[]>;
 	applyScan(repositoryId: string, scan: ScanResult): Promise<unknown>;
 	setProjectRepositories(projectId: string, repositoryIds: string[]): Promise<Project | null>;
+	addToLibrary(sourceAssetId: string, target: LibraryTarget): Promise<string>;
 }
 
 /** The address Agents sends from in tests. */

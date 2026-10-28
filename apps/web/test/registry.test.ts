@@ -143,3 +143,55 @@ it("shows members each project with its repositories and their agents", async ()
 		expect(await response.text()).not.toContain("Storefront");
 	}
 });
+
+/** CLAUDE_ONLY with other text in its CLAUDE.md. */
+function claudeSays(text: string): ScanResult {
+	const [asset] = CLAUDE_ONLY.assets;
+	if (!asset) throw new Error("No asset");
+	return { ...CLAUDE_ONLY, assets: [{ ...asset, files: [{ path: "CLAUDE.md", content: text }] }] };
+}
+
+it("shows the library, where each version is used, and which repositories are behind", async () => {
+	const { headers: ada } = await signUp(agents, origin, "ada-library");
+	const id = await createWorkspace(agents, origin, ada, "atelier");
+	const registry = await agents.registry(id);
+	const [old = "", fresh = ""] = await registry.syncRepositories([
+		repository("1", "legacy"),
+		repository("2", "modern"),
+	]);
+	await registry.applyScan(old, claudeSays("Be brief.\n"));
+	await registry.applyScan(fresh, claudeSays("Be briefer.\n"));
+	const assetOf = async (repositoryId: string) =>
+		(await registry.getRepository(repositoryId))?.assets[0]?.id ?? "";
+	const legacyRules = await assetOf(old);
+	const rules = await registry.addToLibrary(legacyRules, { name: "House rules" });
+	await registry.addToLibrary(await assetOf(fresh), { libraryAssetId: rules });
+	const page = async (path: string) => {
+		const response = await agents.fetch(`${origin}${path}`, { headers: { cookie: ada.cookie } });
+		expect(response.status).toBe(200);
+		return response.text();
+	};
+
+	const library = await page("/atelier/library");
+	expect(library).toContain("House rules");
+	expect(library).toContain(`/atelier/assets/${rules}`);
+	expect(library).toContain("on an older version");
+
+	const asset = await page(`/atelier/assets/${rules}`);
+	expect(asset).toContain("Be briefer.");
+	expect(asset).toContain("legacy");
+	expect(asset).toContain("modern");
+	expect(asset).toContain("behind");
+
+	// The repository's copy links back to the library, and says it is behind.
+	const copy = await page(`/atelier/assets/${legacyRules}`);
+	expect(copy).toContain(`/atelier/assets/${rules}`);
+	expect(copy).toMatch(/behind v(<!-- -->)?2/);
+
+	const { headers: eve } = await signUp(agents, origin, "eve-library");
+	const response = await agents.fetch(`${origin}/atelier/library`, {
+		headers: { cookie: eve.cookie },
+	});
+	expect(response.status).toBe(404);
+	expect(await response.text()).not.toContain("House rules");
+});

@@ -1,6 +1,8 @@
 import {
 	type Agent,
 	type AssetDetail,
+	type LibraryEntry,
+	libraryTarget,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -156,4 +158,26 @@ export const setProjectRepositories = createServerFn({ method: "POST" })
 		const project = await registry.setProjectRepositories(data.projectId, data.repositoryIds);
 		if (!project) throw new Error("Project not found");
 		return project;
+	});
+
+export const getLibrary = createServerFn({ method: "GET" })
+	.validator(z.string().min(1))
+	.handler(async ({ data: slug }): Promise<LibraryEntry[] | null> => {
+		const registry = await registryOf(slug);
+		return registry ? registry.listLibrary() : null;
+	});
+
+/** Copies a repository asset into the library. Returns the library asset's id. */
+export const addToLibrary = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), assetId: id, target: libraryTarget }))
+	.handler(async ({ data }): Promise<string> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.addToLibrary(data.assetId, data.target);
+	});
+
+export const removeFromLibrary = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), assetId: id }))
+	.handler(async ({ data }): Promise<void> => {
+		const registry = await managedRegistryOf(data.slug);
+		await registry.removeFromLibrary(data.assetId);
 	});

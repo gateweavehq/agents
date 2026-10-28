@@ -108,6 +108,22 @@ export interface ProjectDetail {
 /** A version of an asset, without its files. */
 export type AssetVersionSummary = Omit<AssetVersion, "assetId" | "files">;
 
+/** A repository asset whose content is one version of a library asset. */
+export interface LibraryUse {
+	asset: Asset;
+	repository: Repository;
+	/** The library asset's version it matches; below the current one, the repository is behind. */
+	version: number;
+}
+
+/** A library asset with how many repository assets carry one of its versions. */
+export interface LibraryEntry {
+	asset: Asset;
+	uses: number;
+	/** Of those, the ones on an older version. */
+	behind: number;
+}
+
 /** An asset with where it lives, who reads it and its history. */
 export interface AssetDetail {
 	asset: Asset;
@@ -119,8 +135,12 @@ export interface AssetDetail {
 	version: AssetVersion;
 	/** Every version, newest first. */
 	versions: AssetVersionSummary[];
-	/** Live assets elsewhere with the same content, which is how a shared skill shows. */
+	/** Live repository assets elsewhere with the same content, which is how a shared skill shows. */
 	sameContent: number;
+	/** For a library asset: the repository assets that carry one of its versions. */
+	uses: LibraryUse[];
+	/** For a repository asset: the library assets with a version of the same content. */
+	library: { asset: Asset; version: number }[];
 }
 
 export interface Overview {

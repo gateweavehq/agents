@@ -109,6 +109,21 @@ Each workspace's `RegistryDO` scans its own repositories. Requests wait in its S
   result like any other scan and applies it in one. A failure is recorded on the repository and
   tried again after a minute, ten minutes and an hour; what earlier scans found stays.
 
+## The library
+
+The library is the workspace's own copy of the skills, prompts and configuration it wants to
+keep: assets with no repository (`packages/registry/src/library.ts`).
+
+- **Adding.** An owner or admin adds a repository asset's current content, as a new library asset
+  or as the next version of one of the same kind. Content the library asset already has as its
+  latest version adds nothing. A library asset is keyed by its kind and name, and a name is
+  unique among the library's live assets of that kind.
+- **Uses come from content.** A repository asset uses a library asset when its hash equals one of
+  that asset's versions, and is behind when that version is not the latest. Nothing links them,
+  so a file copied by hand counts the same as one a setup will write, and a repository that
+  changes its copy stops counting at its next scan.
+- **Removing** marks the library asset removed, frees its name and leaves repositories alone.
+
 ## Pages
 
 The workspace's pages read the registry through server functions in `apps/web/src/lib/registry.ts`,
@@ -123,15 +138,19 @@ workspace.
 - **Repositories** lists them with their scan status; a repository's page shows its agents, the
   assets they read grouped by kind, and the problems the last scan found.
 - **Agents** lists every agent and subagent by runtime.
-- **An asset's page** shows the text of each of its files, the agents that read it, how many
-  other assets have the same content, and every earlier version.
+- **Library** lists the library's assets by kind, with how many repository assets carry one of
+  their versions and how many of those are behind.
+- **An asset's page** shows the text of each of its files and every earlier version. For a
+  repository asset it also shows the agents that read it, the library assets it matches, and how
+  many other assets have the same content; for a library asset, the repository assets that use it.
 
 Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
-- **The library and setups** (phase 2 in `docs/spec.md`): assets kept outside any repository, and
-  setups that apply them to repositories.
+- **Setups** (phase 2 in `docs/spec.md`): library assets chosen for a set of agents, applied to
+  repositories by pull request, with drift shown in the app and the CLI. Editing library assets
+  in the app and diffs between versions come with them.
 
 ## Deploys
 

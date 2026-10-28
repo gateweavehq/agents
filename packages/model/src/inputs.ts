@@ -188,3 +188,13 @@ export type ProjectInput = z.input<typeof projectInput>;
 
 export const projectPatch = projectInput.partial();
 export type ProjectPatch = z.input<typeof projectPatch>;
+
+/**
+ * Where "Add to library" puts a repository asset: a new library asset with this name, or a new
+ * version of a library asset of the same kind.
+ */
+export const libraryTarget = z.union([
+	z.object({ name: z.string().trim().min(1).max(200) }),
+	z.object({ libraryAssetId: z.string().min(1).max(64) }),
+]);
+export type LibraryTarget = z.input<typeof libraryTarget>;

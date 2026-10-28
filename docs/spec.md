@@ -170,3 +170,8 @@ runtime is designed alongside it, so the data model fits both.
   each other, need no extra infrastructure, and survive restarts. Blob texts come through GraphQL,
   fifty per request, and texts already stored are not downloaded again, which keeps a scan within
   the free plan's 50 subrequests per invocation.
+- **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
+  asset when its hash equals one of the library asset's versions; no link is stored. There is
+  nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the
+  repository all show correctly after the next scan. Two library assets that share a version both
+  claim the repository assets that carry it, and the asset page lists both.

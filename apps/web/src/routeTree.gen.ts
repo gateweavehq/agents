@@ -16,6 +16,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as WorkspaceIndexRouteImport } from './routes/$workspace/index'
 import { Route as WorkspaceAgentsRouteImport } from './routes/$workspace/agents'
+import { Route as WorkspaceLibraryRouteImport } from './routes/$workspace/library'
 import { Route as WorkspaceSettingsRouteImport } from './routes/$workspace/settings'
 import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitationId'
 import { Route as WorkspaceAssetsAssetIdRouteImport } from './routes/$workspace/assets.$assetId'
@@ -65,6 +66,11 @@ const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
 const WorkspaceAgentsRoute = WorkspaceAgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceLibraryRoute = WorkspaceLibraryRouteImport.update({
+  id: '/library',
+  path: '/library',
   getParentRoute: () => WorkspaceRoute,
 } as any)
 const WorkspaceSettingsRoute = WorkspaceSettingsRouteImport.update({
@@ -154,6 +160,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/$workspace/agents': typeof WorkspaceAgentsRoute
+  '/$workspace/library': typeof WorkspaceLibraryRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
@@ -177,6 +184,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/$workspace/agents': typeof WorkspaceAgentsRoute
+  '/$workspace/library': typeof WorkspaceLibraryRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace': typeof WorkspaceIndexRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
@@ -201,6 +209,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
   '/$workspace/agents': typeof WorkspaceAgentsRoute
+  '/$workspace/library': typeof WorkspaceLibraryRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/$workspace/agents'
+    | '/$workspace/library'
     | '/$workspace/settings'
     | '/invite/$invitationId'
     | '/$workspace/'
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/$workspace/agents'
+    | '/$workspace/library'
     | '/invite/$invitationId'
     | '/$workspace'
     | '/$workspace/assets/$assetId'
@@ -273,6 +284,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/reset-password'
     | '/$workspace/agents'
+    | '/$workspace/library'
     | '/$workspace/settings'
     | '/invite/$invitationId'
     | '/$workspace/'
@@ -354,6 +366,13 @@ declare module '@tanstack/react-router' {
       path: '/agents'
       fullPath: '/$workspace/agents'
       preLoaderRoute: typeof WorkspaceAgentsRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/library': {
+      id: '/$workspace/library'
+      path: '/library'
+      fullPath: '/$workspace/library'
+      preLoaderRoute: typeof WorkspaceLibraryRouteImport
       parentRoute: typeof WorkspaceRoute
     }
     '/$workspace/settings': {
@@ -481,6 +500,7 @@ const WorkspaceSettingsRouteWithChildren =
 
 interface WorkspaceRouteChildren {
   WorkspaceAgentsRoute: typeof WorkspaceAgentsRoute
+  WorkspaceLibraryRoute: typeof WorkspaceLibraryRoute
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRouteWithChildren
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
   WorkspaceAssetsAssetIdRoute: typeof WorkspaceAssetsAssetIdRoute
@@ -492,6 +512,7 @@ interface WorkspaceRouteChildren {
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceAgentsRoute: WorkspaceAgentsRoute,
+  WorkspaceLibraryRoute: WorkspaceLibraryRoute,
   WorkspaceSettingsRoute: WorkspaceSettingsRouteWithChildren,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
   WorkspaceAssetsAssetIdRoute: WorkspaceAssetsAssetIdRoute,
