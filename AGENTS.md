@@ -22,6 +22,7 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 | `packages/adapters` | Turn a repository's files into a scan: one adapter per coding agent. Pure   |
 | `packages/registry` | `RegistryDO`: each workspace's projects, repositories, agents and assets    |
 | `packages/github`   | The GitHub App's client: JWT, installation tokens, OAuth, webhooks          |
+| `packages/cli`      | `@gateweave/agents`: applies and checks a setup in a working tree           |
 | `docs/`             | The product spec, the architecture and setting up the GitHub App            |
 | `scripts/`          | Repository tooling (`doctor`)                                               |
 | `.claude/skills/`   | Step-by-step playbooks for recurring tasks (plain Markdown, any agent)      |
@@ -118,6 +119,7 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
   on their own before `runDurableObjectAlarm` does, so assert on what a scan left behind, not on
   whether the alarm was still waiting.
 - `packages/model` and `packages/github` tests run in Node.
+- `packages/cli` tests run in Node and call `run` on folders in the system's temporary folder.
 - `packages/adapters` tests run in Node, on in-memory repositories. Every test that checks output
   also checks that `scanResult` accepts it.
 - `apps/web` has unit tests in `src/` and Worker tests in `test/`. The Worker tests build the app

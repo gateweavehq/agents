@@ -1,0 +1,35 @@
+{
+	"name": "@gateweave/agents",
+	"version": "0.1.0",
+	"description": "Write a Gateweave Agents setup into a repository, and check in CI that the repository still holds it.",
+	"private": true,
+	"license": "AGPL-3.0-only",
+	"type": "module",
+	"bin": {
+		"gateweave-agents": "./dist/main.js"
+	},
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/gateweavehq/agents.git",
+		"directory": "packages/cli"
+	},
+	"scripts": {
+		"build": "vite build",
+		"typecheck": "tsc",
+		"test": "vitest run"
+	},
+	"devDependencies": {
+		"@gateweave/agents-adapters": "workspace:*",
+		"@gateweave/agents-model": "workspace:*",
+		"@types/node": "26.6.5",
+		"typescript": "catalog:",
+		"vite": "8.3.5",
+		"vitest": "catalog:"
+	}
+}
