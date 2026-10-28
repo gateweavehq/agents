@@ -127,9 +127,12 @@ function readServer(asset: AssetToWrite): Server {
 		: parseJsonConfig(file.content);
 	if (!parsed.ok) fail(parsed.message);
 	const stored = parsed.value;
+	// Gemini's servers are stored from its `settings.json`; one copied by hand may only show by
+	// the fields that only Gemini has. The format decides what a bare `url` means.
 	const dialect: Dialect = file.path.endsWith(".toml")
 		? "codex"
-		: ["httpUrl", "trust", "includeTools", "excludeTools"].some((key) => key in stored)
+		: file.path === "settings.json" ||
+				["httpUrl", "trust", "includeTools", "excludeTools"].some((key) => key in stored)
 			? "gemini"
 			: "json";
 
