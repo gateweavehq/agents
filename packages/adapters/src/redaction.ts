@@ -8,10 +8,20 @@ import { isPlainObject } from "./util";
 
 export const REDACTED = "<redacted>";
 
-/** Objects whose every value is replaced, whatever it is: environments and request headers. */
-const SECRET_CONTAINERS = new Set(["env", "headers", "http_headers"]);
+/**
+ * Objects whose every value is replaced, whatever it is: environments, request headers and
+ * query parameters, and Codex's `shell_environment_policy.set`, which sets environment variables.
+ */
+const SECRET_CONTAINERS = new Set(["env", "headers", "http_headers", "query_params", "set"]);
 /** Keys that hold a credential in their own right, such as `CLIENT_SECRET` or `apiKey`. */
-const SECRET_KEY = /(secret|password|passwd|token|api[-_]?key)$/i;
+const SECRET_KEY =
+	/(secret|password|passwd|token|api[-_]?key|private[-_]?key|access[-_]?key|credentials?|authorization)$/i;
+/**
+ * Credentials whose shape gives them away wherever they sit, such as a token passed as a plain
+ * argument: GitHub, OpenAI and Anthropic, Slack, AWS access key ids, Google API keys.
+ */
+const KNOWN_CREDENTIAL =
+	/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{30,}|sk-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})/g;
 const URL_KEYS = new Set(["url", "httpUrl"]);
 /** `--token=abc`, `-e GITHUB_TOKEN=abc`: an argument that assigns a credential. */
 const SECRET_ASSIGNMENT = /^(-{0,2}[\w-]*(?:token|secret|password|passwd|key|auth)[\w-]*=)(.+)$/is;
@@ -34,9 +44,11 @@ export function redact(value: unknown, key = ""): unknown {
 		);
 	}
 	if (typeof value === "string") {
-		if (URL_KEYS.has(key)) return redactUrl(value);
 		if (SECRET_KEY.test(key) && !isReference(value)) return REDACTED;
-	} else if (typeof value === "number" && SECRET_KEY.test(key)) {
+		const text = value.replace(KNOWN_CREDENTIAL, REDACTED);
+		return URL_KEYS.has(key) ? redactUrl(text) : text;
+	}
+	if (typeof value === "number" && SECRET_KEY.test(key)) {
 		return REDACTED;
 	}
 	return value;
@@ -51,11 +63,12 @@ function redactAll(value: unknown): unknown {
 
 function redactArguments(args: unknown[]): unknown[] {
 	let afterFlag = false;
-	return args.map((arg) => {
-		if (typeof arg !== "string") {
+	return args.map((item) => {
+		if (typeof item !== "string") {
 			afterFlag = false;
-			return arg;
+			return item;
 		}
+		const arg = item.replace(KNOWN_CREDENTIAL, REDACTED);
 		if (afterFlag && !arg.startsWith("-")) {
 			afterFlag = false;
 			return isReference(arg) ? arg : REDACTED;

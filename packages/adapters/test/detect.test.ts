@@ -124,6 +124,40 @@ describe("detect", () => {
 		expect(detection.problems.length).toBeLessThanOrEqual(100);
 		expect(detection.assets).toHaveLength(150);
 	});
+
+	it("keeps at most as many assets as a scan holds, and the agent's links to them", () => {
+		const files: Record<string, string> = {};
+		for (let index = 0; index < 5010; index++) files[`.claude/commands/c${index}.md`] = "Do it.\n";
+		const detection = detect(repo(files));
+		expectValid(detection);
+		expect(detection.assets).toHaveLength(5000);
+		expect(agentOf(detection).assets).toHaveLength(5000);
+		expect(detection.problems[0]?.message).toBe("Left out: a scan keeps at most 5000 of these");
+	});
+
+	it("leaves out a piece that does not fit the model, not the whole scan", () => {
+		const detection = detect(
+			repo({
+				// A command with an empty name, and a skill file whose name Git allows but paths cannot hold.
+				".claude/commands/.md": "Nameless.\n",
+				".claude/commands/ok.md": "Fine.\n",
+				".claude/skills/odd/SKILL.md": "---\nname: odd\n---\n",
+				".claude/skills/odd/a\\b.sh": "echo\n",
+			}),
+		);
+		expectValid(detection);
+		expect(detection.assets.map((asset) => asset.key)).toEqual([
+			".claude/commands/ok.md",
+			".claude/skills/odd",
+		]);
+		expect(assetOf(detection, ".claude/skills/odd").files.map((file) => file.path)).toEqual([
+			"SKILL.md",
+		]);
+		expect(detection.problems).toEqual([
+			{ path: ".claude/commands/.md", message: "Left out: it does not fit the registry's limits" },
+			{ path: ".claude/skills/odd", message: "Left out: the path cannot be stored" },
+		]);
+	});
 });
 
 describe("wantsFile", () => {

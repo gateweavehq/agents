@@ -74,6 +74,44 @@ describe("redact", () => {
 			url: "https://<redacted>@example.com/mcp?token=<redacted>&q=1&sig=${SIG}",
 		});
 	});
+
+	it("replaces Codex's shell environment, query parameters and other credential keys", () => {
+		expect(
+			redact({
+				shell_environment_policy: { inherit: "core", set: { DB_PASSWORD: "secret" } },
+				query_params: { "api-key": "secret" },
+				privateKey: "secret",
+				aws_access_key: "secret",
+				credentials: "secret",
+				Authorization: "Bearer secret",
+			}),
+		).toEqual({
+			shell_environment_policy: { inherit: "core", set: { DB_PASSWORD: "<redacted>" } },
+			query_params: { "api-key": "<redacted>" },
+			privateKey: "<redacted>",
+			aws_access_key: "<redacted>",
+			credentials: "<redacted>",
+			Authorization: "<redacted>",
+		});
+	});
+
+	it("replaces well-known tokens wherever they appear", () => {
+		const github = `ghp_${"a".repeat(36)}`;
+		const openai = `sk-proj-${"b".repeat(40)}`;
+		expect(
+			redact({
+				args: ["-y", "@acme/server", github],
+				command: `run --with ${openai}`,
+				url: `https://example.com/mcp/${github}`,
+				description: "Ask before running tasks.",
+			}),
+		).toEqual({
+			args: ["-y", "@acme/server", "<redacted>"],
+			command: "run --with <redacted>",
+			url: "https://example.com/mcp/<redacted>",
+			description: "Ask before running tasks.",
+		});
+	});
 });
 
 describe("canonicalJson", () => {

@@ -43,7 +43,8 @@ export function flatFields(
 	const fields: Metadata = {};
 	for (const [key, value] of Object.entries(source)) {
 		if (Object.keys(fields).length >= MAX_FIELDS) break;
-		if (skip.includes(key) || key === "" || key.length > 100) continue;
+		// Assigning `__proto__` would replace the object's prototype instead of adding a field.
+		if (skip.includes(key) || key === "" || key.length > 100 || key === "__proto__") continue;
 		const flat = flatValue(value);
 		if (flat !== undefined) fields[key] = flat;
 	}
