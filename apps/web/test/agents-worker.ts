@@ -1,7 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Overview, Project, ProjectInput, Repository } from "@gateweave/agents-model";
+import type {
+	AssetVersion,
+	Overview,
+	Project,
+	ProjectInput,
+	Repository,
+	RepositoryDetail,
+} from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
 import type { FakeGitHub } from "./fake-github";
 
@@ -36,6 +43,8 @@ export interface RegistryStub {
 	createProject(input: ProjectInput): Promise<Project>;
 	overview(): Promise<Overview>;
 	listRepositories(): Promise<Repository[]>;
+	getRepository(repositoryId: string): Promise<RepositoryDetail | null>;
+	getAssetVersion(assetId: string): Promise<AssetVersion | null>;
 }
 
 /** The address Agents sends from in tests. */

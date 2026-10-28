@@ -84,10 +84,26 @@ TypeScript with no I/O, so it runs in the Worker. The scanner lists the reposito
 - **Problems, not exceptions.** A file that is missing its text or does not parse becomes a
   `ScanProblem` and is skipped; the rest of the scan goes on.
 
+## Scans
+
+Each workspace's `RegistryDO` scans its own repositories. Requests wait in its SQLite database
+(`scan_requests`), and its alarm works through them a few at a time.
+
+- **What asks for a scan.** A push to a repository's default branch (the webhook), and a
+  reconcile that finds a repository new, back after removal, on another default branch or never
+  scanned. Asking again while a request waits moves it to the front.
+- **What a scan reads.** The default branch's head and its whole tree, then the text of the
+  files the adapters want (`wantsFile`), fifty blobs per GraphQL request. Texts the registry
+  already holds, by blob id, are not downloaded again, so a scan after a push downloads what the
+  push changed. A wanted symlink, such as `CLAUDE.md` pointing to `AGENTS.md`, is read as its
+  target. A head the last successful scan already read is not scanned again.
+- **Writes stay synchronous.** A scan awaits GitHub outside any transaction, then validates the
+  result like any other scan and applies it in one. A failure is recorded on the repository and
+  tried again after a minute, ten minutes and an hour; what earlier scans found stays.
+
 ## What comes next
 
-- **Scans.** Pushes to a default branch, and linking, queue a scan of the repository. The
-  registry reads the files the format adapters ask for and applies what they detect.
+- **Pages** for projects, repositories, agents and assets (AGT-5).
 
 ## Deploys
 

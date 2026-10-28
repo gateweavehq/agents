@@ -102,6 +102,13 @@ the old one.
    token, checks that the installation is one this person can reach on GitHub, and only then
    links it to the workspace and lists its repositories. It does not keep the token.
 
+Every member of the workspace sees the agent configuration found in the repositories the
+admin connects, private ones included, whether or not they can open those repositories on
+GitHub. Choose the repositories on GitHub with that in mind.
+
+After that, a push to a repository's default branch has the workspace read its agent files
+again; only the files the push changed are downloaded.
+
 An installation belongs to one workspace at a time. **Disconnect** forgets it and its
 repositories; the app stays installed on GitHub until you uninstall it there, which also
 disconnects it. The code is in `apps/web/src/server/github/flow.ts`.

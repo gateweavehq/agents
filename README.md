@@ -6,10 +6,10 @@ place, apply them to any repository in a click, and run your own teams of agents
 Gateweave Agents is part of [Gateweave](https://gateweave.com), the family of open-source business
 tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gateweavehq/track).
 
-> **Status: early development.** Accounts, workspaces, members and invitations work, each
-> workspace has its registry, and workspaces connect to GitHub to list their repositories.
-> Finding the agents configured in each repository is being built; see
-> [docs/spec.md](docs/spec.md) for the plan.
+> **Status: early development.** Accounts, workspaces, members and invitations work. Workspaces
+> connect to GitHub, and the agents configured in each repository (Claude Code, Codex, Gemini
+> CLI, Cursor) and what they read are found and kept up to date on every push. Pages to browse
+> them come next; see [docs/spec.md](docs/spec.md) for the plan.
 
 ## Tech stack
 

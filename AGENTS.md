@@ -65,7 +65,8 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    the schemas in `packages/model`.
 3. **Registry writes stay synchronous.** Each runs inside `ctx.storage.transactionSync` with
    Drizzle's sync API (`.get()`, `.all()`, `.run()`), so it applies whole or not at all. Never
-   `await` in the middle of a write. Durable Object SQLite binds at most 100 parameters per
+   `await` in the middle of a write. A scan awaits GitHub first and writes after, in a
+   transaction of its own. Durable Object SQLite binds at most 100 parameters per
    query: join, or loop, instead of passing a list of ids to `inArray`.
 4. **Server code never reaches the browser bundle.** In server functions, import server modules
    dynamically inside the handler, as `apps/web/src/lib/session.ts` does.
@@ -113,7 +114,9 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
 - Test behavior through public APIs, not internals.
 - `packages/registry` tests run inside workerd (`@cloudflare/vitest-plugin`) against a real
   `RegistryDO`. Call it over RPC; for a call expected to throw, use `runInDurableObject`, because
-  the test pool reports an exception thrown inside a Durable Object as unhandled.
+  the test pool reports an exception thrown inside a Durable Object as unhandled. Alarms may run
+  on their own before `runDurableObjectAlarm` does, so assert on what a scan left behind, not on
+  whether the alarm was still waiting.
 - `packages/model` and `packages/github` tests run in Node.
 - `packages/adapters` tests run in Node, on in-memory repositories. Every test that checks output
   also checks that `scanResult` accepts it.
@@ -121,7 +124,8 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
   and run it in workerd through Miniflare, with every outbound request failing as a deployed
   Worker's request to its own hostname does; see `test/agents-worker.ts`. Tests that connect
   GitHub pass a `FakeGitHub` (`test/fake-github.ts`), which answers for github.com and
-  api.github.com and checks the app's JWT, PKCE and who can reach which installation.
+  api.github.com and checks the app's JWT, PKCE and who can reach which installation. Give its
+  repositories `files` to test scans; it serves their branches, trees and blobs.
 - Every bug fix gets a test that fails without the fix. Never weaken or skip a test to make a
   change pass.
 

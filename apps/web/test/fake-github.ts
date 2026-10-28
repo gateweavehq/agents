@@ -12,6 +12,34 @@ export interface FakeRepository {
 	owner: string;
 	defaultBranch?: string;
 	private?: boolean;
+	/** The default branch's files: text, or `{ symlink }` for a symlink to that path. */
+	files?: Record<string, string | { symlink: string }>;
+}
+
+/** `git hash-object` of this text. */
+export function gitBlobId(text: string): string {
+	const bytes = Buffer.from(text, "utf8");
+	return createHash("sha1")
+		.update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes]))
+		.digest("hex");
+}
+
+function fakeCommit(repository: FakeRepository, kind: "commit" | "tree"): string {
+	return createHash("sha1")
+		.update(`${kind}\0${JSON.stringify(Object.entries(repository.files ?? {}).sort())}`)
+		.digest("hex");
+}
+
+/** The id a fake repository's default branch is at: it changes whenever its files do. */
+export function headOf(repository: FakeRepository): string {
+	return fakeCommit(repository, "commit");
+}
+
+function blobsOf(repository: FakeRepository) {
+	return Object.entries(repository.files ?? {}).map(([path, file]) => {
+		const text = typeof file === "string" ? file : file.symlink;
+		return { path, text, symlink: typeof file !== "string", sha: gitBlobId(text) };
+	});
 }
 
 interface FakeInstallation {
@@ -41,6 +69,10 @@ export class FakeGitHub {
 	});
 	readonly #codes = new Map<string, { login: string; challenge: string; redirectUri: string }>();
 	readonly #tokens = new Map<string, string>();
+	/** Every blob id a GraphQL request asked for, in order. */
+	readonly blobRequests: string[] = [];
+	/** Repositories whose reads fail, by `owner/name`, with the status GitHub answers. */
+	readonly failing = new Map<string, number>();
 
 	/** The Worker's settings for this app. */
 	bindings(): Record<string, string> {
@@ -99,7 +131,62 @@ export class FakeGitHub {
 			return Response.json({ token, expires_at: expiresAt }, { status: 201 });
 		}
 
+		const contents = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/(branches|git\/trees)\/(.+)$/);
+		if (url.host === "api.github.com" && request.method === "GET" && contents) {
+			const [, owner = "", name = "", kind, rest = ""] = contents;
+			const repository = this.#reachable(bearer, owner, name);
+			if (!repository) return Response.json({ message: "Not Found" }, { status: 404 });
+			const failing = this.failing.get(`${owner}/${name}`);
+			if (failing) return Response.json({ message: "Something broke" }, { status: failing });
+			if (kind === "branches") {
+				if (decodeURIComponent(rest) !== (repository.defaultBranch ?? "main")) {
+					return Response.json({ message: "Branch not found" }, { status: 404 });
+				}
+				const tree = fakeCommit(repository, "tree");
+				return Response.json({
+					commit: { sha: headOf(repository), commit: { tree: { sha: tree } } },
+				});
+			}
+			if (rest !== fakeCommit(repository, "tree") || url.searchParams.get("recursive") !== "1") {
+				return Response.json({ message: "Not Found" }, { status: 404 });
+			}
+			return Response.json({
+				sha: rest,
+				truncated: false,
+				tree: blobsOf(repository).map((blob) => ({
+					path: blob.path,
+					mode: blob.symlink ? "120000" : "100644",
+					type: "blob",
+					sha: blob.sha,
+					size: Buffer.byteLength(blob.text),
+				})),
+			});
+		}
+
 		switch (route) {
+			case "POST api.github.com/graphql": {
+				const { query, variables } = (await request.json()) as {
+					query: string;
+					variables: { owner: string; name: string };
+				};
+				const repository = this.#reachable(bearer, variables.owner, variables.name);
+				if (!repository) {
+					return Response.json({
+						data: { repository: null },
+						errors: [{ message: "Could not resolve" }],
+					});
+				}
+				const blobs = new Map(blobsOf(repository).map((blob) => [blob.sha, blob.text]));
+				const answer: Record<string, unknown> = {};
+				for (const [, alias = "", oid = ""] of query.matchAll(
+					/(b\d+): object\(oid: "([0-9a-f]{40})"\)/g,
+				)) {
+					this.blobRequests.push(oid);
+					const text = blobs.get(oid);
+					answer[alias] = text === undefined ? null : { text, isBinary: false, isTruncated: false };
+				}
+				return Response.json({ data: { repository: answer } });
+			}
 			case "GET api.github.com/installation/repositories": {
 				const installation = this.installations.get(this.#tokens.get(bearer) ?? "");
 				if (!installation) return Response.json({ message: "Bad credentials" }, { status: 401 });
@@ -145,6 +232,14 @@ export class FakeGitHub {
 			default:
 				return Response.json({ message: `No fake for ${route}` }, { status: 404 });
 		}
+	}
+
+	/** The repository, if the installation behind this token reaches it. */
+	#reachable(token: string, owner: string, name: string): FakeRepository | undefined {
+		const installation = this.installations.get(this.#tokens.get(token) ?? "");
+		return installation?.repositories.find(
+			(repository) => repository.owner === owner && repository.name === name,
+		);
 	}
 
 	#validJwt(token: string): boolean {

@@ -165,3 +165,8 @@ runtime is designed alongside it, so the data model fits both.
   OAuth web flow shows that the admin linking it can reach it on GitHub, because the setup
   redirect's installation id can be forged. The client is a small module on `fetch` and WebCrypto
   instead of Octokit, to keep Node polyfills out of the Worker.
+- **Scans run in the registry** (AGT-4, 2026-10-28). Each workspace's Durable Object queues its
+  own scans in SQLite and works through them with its alarm, so scans of one workspace never race
+  each other, need no extra infrastructure, and survive restarts. Blob texts come through GraphQL,
+  fifty per request, and texts already stored are not downloaded again, which keeps a scan within
+  the free plan's 50 subrequests per invocation.

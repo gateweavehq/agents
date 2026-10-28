@@ -16,6 +16,7 @@ import {
 	repositories,
 } from "./db/schema";
 import { assetHash, gitBlobId } from "./hash";
+import { requestScans } from "./queue";
 import type { Db } from "./state";
 
 /** Files larger than this keep their blob id and size, but not their text. */
@@ -32,6 +33,18 @@ const encoder = new TextEncoder();
  * order.
  */
 export function syncRepositories(db: Db, inputs: RepositoryInput[], now: number): string[] {
+	return syncEach(db, inputs, now).map(({ id }) => id);
+}
+
+/**
+ * `syncRepositories`, also saying which repositories need a scan: new ones, ones back after
+ * being removed, ones whose default branch changed and ones never scanned.
+ */
+function syncEach(
+	db: Db,
+	inputs: RepositoryInput[],
+	now: number,
+): { id: string; needsScan: boolean }[] {
 	return inputs.map((input) => {
 		const existing = db
 			.select()
@@ -48,8 +61,12 @@ export function syncRepositories(db: Db, inputs: RepositoryInput[], now: number)
 			db.insert(repositories)
 				.values({ id, ...input, createdAt: now, updatedAt: now })
 				.run();
-			return id;
+			return { id, needsScan: true };
 		}
+		const needsScan =
+			existing.removedAt !== null ||
+			existing.defaultBranch !== input.defaultBranch ||
+			existing.scannedCommit === null;
 		if (existing.removedAt !== null || !sameFields(existing, input)) {
 			const { installationId, owner, name, defaultBranch, private: isPrivate } = input;
 			db.update(repositories)
@@ -65,13 +82,14 @@ export function syncRepositories(db: Db, inputs: RepositoryInput[], now: number)
 				.where(eq(repositories.id, existing.id))
 				.run();
 		}
-		return existing.id;
+		return { id: existing.id, needsScan };
 	});
 }
 
 /**
  * Makes the installation's repositories match the list GitHub gave: adds and updates those in
- * it, and marks the installation's others as removed. Returns the ids in input order.
+ * it, marks the installation's others as removed, and queues a scan of those that need one.
+ * Returns the ids in input order.
  */
 export function reconcileInstallation(
 	db: Db,
@@ -79,7 +97,13 @@ export function reconcileInstallation(
 	inputs: RepositoryInput[],
 	now: number,
 ): string[] {
-	const ids = syncRepositories(db, inputs, now);
+	const synced = syncEach(db, inputs, now);
+	requestScans(
+		db,
+		synced.filter(({ needsScan }) => needsScan).map(({ id }) => id),
+		now,
+	);
+	const ids = synced.map(({ id }) => id);
 	const kept = new Set(ids);
 	const known = db
 		.select({ id: repositories.id })
