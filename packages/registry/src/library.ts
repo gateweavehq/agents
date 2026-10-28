@@ -4,7 +4,12 @@
  * repository assets by hash, so the registry can say where each version is used.
  */
 import { parseFrontMatter } from "@gateweave/agents-adapters";
-import type { libraryEditInput, libraryTarget, writtenAssetInput } from "@gateweave/agents-model";
+import type {
+	libraryEditInput,
+	libraryTarget,
+	setupImportInput,
+	writtenAssetInput,
+} from "@gateweave/agents-model";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import { assets, assetVersions, blobs, type FileEntry, repositories } from "./db/schema";
@@ -280,4 +285,75 @@ export function editLibraryAsset(
 		.where(eq(assets.id, asset.id))
 		.run();
 	return version;
+}
+
+/**
+ * Puts an asset's files in the library for a setup to pin, and returns the pin. A live library
+ * asset of the same kind and name that has ever had these exact files gives that version, so
+ * adding a setup twice, or two setups that share an asset, make no copies. Otherwise the files
+ * are the asset's next version, or its first when the library has none by that name.
+ */
+export function importLibraryAsset(
+	db: Db,
+	input: z.output<typeof setupImportInput>["assets"][number],
+	now: number,
+): { assetId: string; version: number } {
+	const files = input.files.map((file) => {
+		checkSize(file.path, file.content);
+		return storeFile(db, file);
+	});
+	const hash = assetHash(files);
+	const key = libraryKey(input.kind, input.name);
+	const existing = db
+		.select()
+		.from(assets)
+		.where(and(isNull(assets.repositoryId), isNull(assets.removedAt), eq(assets.key, key)))
+		.get();
+
+	if (!existing) {
+		const id = crypto.randomUUID();
+		db.insert(assets)
+			.values({
+				id,
+				repositoryId: null,
+				kind: input.kind,
+				key,
+				name: input.name,
+				description: input.description,
+				path: null,
+				metadata: input.metadata,
+				version: 1,
+				hash,
+				createdAt: now,
+				updatedAt: now,
+			})
+			.run();
+		db.insert(assetVersions)
+			.values({ assetId: id, version: 1, hash, commit: null, files, createdAt: now })
+			.run();
+		return { assetId: id, version: 1 };
+	}
+
+	const same = db
+		.select({ version: assetVersions.version })
+		.from(assetVersions)
+		.where(and(eq(assetVersions.assetId, existing.id), eq(assetVersions.hash, hash)))
+		.get();
+	if (same) return { assetId: existing.id, version: same.version };
+
+	const version = existing.version + 1;
+	db.insert(assetVersions)
+		.values({ assetId: existing.id, version, hash, commit: null, files, createdAt: now })
+		.run();
+	db.update(assets)
+		.set({
+			version,
+			hash,
+			description: input.description,
+			metadata: input.metadata,
+			updatedAt: now,
+		})
+		.where(eq(assets.id, existing.id))
+		.run();
+	return { assetId: existing.id, version };
 }

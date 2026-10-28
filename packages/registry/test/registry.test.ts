@@ -884,6 +884,129 @@ describe("setups", () => {
 	});
 });
 
+describe("importSetup", () => {
+	const RULES = "Be brief.\n";
+	const SKILL_MD = "---\nname: review\ndescription: Reviews a change\n---\nReview it.\n";
+	const input = (rules = RULES, skillText = SKILL_MD) => ({
+		name: "Baseline",
+		description: "Rules and a skill",
+		runtimes: ["codex" as const, "claude-code" as const],
+		assets: [
+			{
+				kind: "instructions" as const,
+				name: "Working agreements",
+				files: [{ path: "AGENTS.md", content: rules }],
+			},
+			{
+				kind: "skill" as const,
+				name: "review",
+				description: "Reviews a change",
+				files: [
+					{ path: "SKILL.md", content: skillText },
+					{ path: "scripts/check.sh", content: "echo ok\n" },
+				],
+			},
+		],
+	});
+	const pins = async (stub: ReturnType<typeof registry>, setupId: string) =>
+		Object.fromEntries(
+			(await stub.getSetup(setupId))?.assets.map(({ asset, version }) => [asset.name, version]) ??
+				[],
+		);
+
+	it("creates the library assets at version 1 and a setup that pins them", async () => {
+		const stub = registry();
+		const id = await stub.importSetup(input());
+		const detail = await stub.getSetup(id);
+		expect(detail?.setup).toMatchObject({
+			name: "Baseline",
+			description: "Rules and a skill",
+			runtimes: ["claude-code", "codex"],
+		});
+		expect(await pins(stub, id)).toEqual({ "Working agreements": 1, review: 1 });
+		expect(detail?.problems).toEqual([]);
+		expect(detail?.files.map((file) => file.path)).toEqual([
+			".agents/skills/review/SKILL.md",
+			".agents/skills/review/scripts/check.sh",
+			".claude/skills/review/SKILL.md",
+			".claude/skills/review/scripts/check.sh",
+			"AGENTS.md",
+			"CLAUDE.md",
+		]);
+		const library = await stub.listLibrary();
+		expect(
+			library.map((entry) => [entry.asset.kind, entry.asset.name, entry.asset.version]),
+		).toEqual(
+			expect.arrayContaining([
+				["instructions", "Working agreements", 1],
+				["skill", "review", 1],
+			]),
+		);
+		expect(library).toHaveLength(2);
+	});
+
+	it("reuses assets whose files are already in the library, adding no version", async () => {
+		const stub = registry();
+		const first = await stub.importSetup(input());
+		const second = await stub.importSetup(input());
+		expect(second).not.toBe(first);
+		expect(await stub.listLibrary()).toHaveLength(2);
+		expect(await pins(stub, second)).toEqual(await pins(stub, first));
+		for (const { asset } of await stub.listLibrary()) {
+			expect((await stub.getAsset(asset.id))?.versions).toHaveLength(1);
+		}
+		expect(await stub.listSetups()).toHaveLength(2);
+	});
+
+	it("adds changed files as a new version of the same asset and leaves older pins alone", async () => {
+		const stub = registry();
+		const first = await stub.importSetup(input());
+		const second = await stub.importSetup(input("Be brief, and kind.\n"));
+		expect(await pins(stub, first)).toEqual({ "Working agreements": 1, review: 1 });
+		expect(await pins(stub, second)).toEqual({ "Working agreements": 2, review: 1 });
+		expect(await stub.listLibrary()).toHaveLength(2);
+		// The old text comes back as the old version, not as a third.
+		const third = await stub.importSetup(input());
+		expect(await pins(stub, third)).toEqual({ "Working agreements": 1, review: 1 });
+	});
+
+	it("ignores library assets that were removed, and keeps pins on them", async () => {
+		const stub = registry();
+		const first = await stub.importSetup(input());
+		const asset = (await stub.listLibrary()).find((e) => e.asset.name === "review")?.asset;
+		await stub.removeFromLibrary(asset?.id ?? "");
+		const second = await stub.importSetup(input());
+		expect((await pins(stub, second))?.review).toBe(1);
+		expect(
+			(await stub.getSetup(second))?.assets.find((a) => a.asset.name === "review")?.asset.id,
+		).not.toBe(asset?.id);
+		expect((await stub.getSetup(first))?.assets.some((a) => a.removed)).toBe(true);
+	});
+
+	it("refuses invalid input and stores nothing when one asset is refused", async () => {
+		const stub = registry();
+		await inside(stub, (instance) => {
+			expect(() => instance.importSetup({ ...input(), runtimes: [] })).toThrow();
+			expect(() => instance.importSetup({ ...input(), assets: [] })).toThrow();
+			const [rules] = input().assets;
+			expect(() => instance.importSetup({ ...input(), assets: [rules, rules] as never })).toThrow(
+				/Another instructions is named/,
+			);
+			expect(() =>
+				instance.importSetup({
+					...input(),
+					assets: [{ ...input().assets[0], files: [{ path: "../x", content: "a" }] }] as never,
+				}),
+			).toThrow();
+			expect(() =>
+				instance.importSetup(input(RULES, `${"é".repeat(MAX_KEPT_FILE_BYTES / 2 + 1)}`) as never),
+			).toThrow(/too large/);
+		});
+		expect(await stub.listLibrary()).toEqual([]);
+		expect(await stub.listSetups()).toEqual([]);
+	});
+});
+
 describe("destroy", () => {
 	it("describes an asset: its repository, its readers, its versions and its twins", async () => {
 		const stub = registry();

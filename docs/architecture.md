@@ -174,6 +174,16 @@ configures (`packages/registry/src/setups.ts`). Owners and admins manage them.
 - **The preview is the writers' output.** The registry reads each pinned version's files and
   runs `writeAssets` from `packages/adapters` for the setup's coding agents, so the page shows
   exactly the files a setup writes, and what it cannot write and why.
+- **Ready-made setups are folders.** `setups/<slug>/` at the repository root holds a
+  `setup.json` and the files of its assets (see `setups/README.md`). The app bundles them into
+  the Worker as text (`apps/web/src/server/ready-made.ts`) and reads each with `readSetupFolder`.
+  Tests in `packages/adapters/test/ready-made.test.ts` hold every folder to the same rules: it
+  reads, writes cleanly for its coding agents, is found again by `detect`, and carries no secret.
+- **Adding one is one write.** `importSetup` runs in a single transaction: for each asset it
+  reuses the library asset of the same kind and name when one of its versions already has these
+  files, adds a version when the files differ, and creates the asset otherwise. It then creates
+  a setup pinning the result. Adding the same setup twice therefore makes no new versions. An
+  owner or admin reaches it from the Setups page.
 
 ## Applying setups
 
@@ -241,7 +251,8 @@ workspace.
 - **Agents** lists every agent and subagent by runtime.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind.
-- **Setups** lists them with how many assets each pins and how many have updates; a setup's page
+- **Setups** lists them with how many assets each pins and how many have updates, and below them
+  the ready-made setups, which an owner or admin adds to the workspace in one click; a setup's page
   shows its pins, moves one to the latest version, previews the files it writes, applies it to a
   repository, shows the drift of each repository it was merged into, and lists its pull requests.
 - **An asset's page** shows the text of each of its files and every earlier version. For a

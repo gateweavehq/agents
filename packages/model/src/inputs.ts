@@ -320,3 +320,59 @@ export const setupManifest = setupInput
 		}
 	});
 export type SetupManifest = z.infer<typeof setupManifest>;
+
+/**
+ * A setup to add to the library and create in one step, with its assets' files: what a ready-made
+ * setup folder holds once it is read. Each asset becomes a library asset, or a version of the one
+ * with the same kind and name, and the setup pins those versions.
+ */
+export const setupImportInput = setupInput
+	.extend({
+		description: z
+			.string()
+			.trim()
+			.max(2000)
+			.nullable()
+			.default(null)
+			.transform((description) => description || null),
+		assets: z
+			.array(
+				z.object({
+					kind: z.enum(ASSET_KINDS),
+					name: z.string().trim().min(1).max(200),
+					description: z
+						.string()
+						.trim()
+						.max(2000)
+						.nullable()
+						.default(null)
+						.transform((description) => description || null),
+					metadata: metadata.default({}),
+					files: z
+						.array(z.object({ path: repositoryPath, content: z.string().max(MAX_WRITTEN_LENGTH) }))
+						.min(1)
+						.max(500)
+						.refine(
+							(files) => new Set(files.map((file) => file.path)).size === files.length,
+							"A file is listed twice",
+						),
+				}),
+			)
+			.min(1)
+			.max(200),
+	})
+	.superRefine((input, ctx) => {
+		const seen = new Set<string>();
+		for (const [index, asset] of input.assets.entries()) {
+			const key = `${asset.kind}\0${asset.name}`;
+			if (seen.has(key)) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["assets", index, "name"],
+					message: `Another ${asset.kind} is named ${asset.name}`,
+				});
+			}
+			seen.add(key);
+		}
+	});
+export type SetupImportInput = z.input<typeof setupImportInput>;

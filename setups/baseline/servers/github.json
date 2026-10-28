@@ -1,0 +1,7 @@
+{
+  "headers": {
+    "Authorization": "<redacted>"
+  },
+  "type": "http",
+  "url": "https://api.githubcopilot.com/mcp/"
+}

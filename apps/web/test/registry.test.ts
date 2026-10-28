@@ -276,3 +276,22 @@ it("shows members each setup, its pins and the files it writes", async () => {
 		expect(await response.text()).not.toContain("Terse agents");
 	}
 });
+
+it("lists the ready-made setups on the Setups page, with a button to add each", async () => {
+	const { headers: ada } = await signUp(agents, origin, "ada-ready");
+	await createWorkspace(agents, origin, ada, "pantry");
+	const page = async (cookie: string) => {
+		const response = await agents.fetch(`${origin}/pantry/setups`, { headers: { cookie } });
+		expect(response.status).toBe(200);
+		return response.text();
+	};
+
+	const html = await page(ada.cookie);
+	expect(html).toContain("Ready-made");
+	for (const name of ["Baseline", "Review", "code-review", "github", "security-review"]) {
+		expect(html).toContain(name);
+	}
+	expect(html).toContain("Add to workspace");
+	// Nothing was added by looking.
+	expect(html).toContain("No setups yet.");
+});

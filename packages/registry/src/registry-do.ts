@@ -26,9 +26,11 @@ import {
 	type Setup,
 	type SetupDetail,
 	type SetupEntry,
+	type SetupImportInput,
 	type SetupInput,
 	type SetupPins,
 	scanResult,
+	setupImportInput,
 	setupInput,
 	setupPins,
 	type WrittenAssetInput,
@@ -72,7 +74,7 @@ import {
 	type ScanOutcome,
 	syncRepositories,
 } from "./scans";
-import { createSetup, deleteSetup, setSetupAssets, updateSetup } from "./setups";
+import { createSetup, deleteSetup, importSetup, setSetupAssets, updateSetup } from "./setups";
 import { type SourceEnv, sourceFor, writerFor } from "./sources";
 import { type Db, toApplication } from "./state";
 
@@ -209,6 +211,15 @@ export class RegistryDO extends DurableObject {
 	createSetup(input: SetupInput): Setup {
 		const data = setupInput.parse(input);
 		return this.#write(() => createSetup(this.#db, data, Date.now()));
+	}
+
+	/**
+	 * Creates a setup together with its assets: each is added to the library, or reused when the
+	 * library already has these files, and pinned. Returns the setup's id.
+	 */
+	importSetup(input: SetupImportInput): string {
+		const data = setupImportInput.parse(input);
+		return this.#write(() => importSetup(this.#db, data, Date.now()).id);
 	}
 
 	updateSetup(setupId: string, input: SetupInput): Setup | null {

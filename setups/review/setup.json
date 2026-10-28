@@ -1,0 +1,25 @@
+{
+	"name": "Review",
+	"description": "Skills for reviewing changes and their security, with the rules that keep a review useful.",
+	"runtimes": ["claude-code", "codex", "gemini-cli", "cursor"],
+	"assets": [
+		{
+			"kind": "instructions",
+			"name": "Review rules",
+			"description": "How to review a change.",
+			"path": "AGENTS.md"
+		},
+		{
+			"kind": "skill",
+			"name": "review-changes",
+			"description": "Review a diff for correctness, tests and clarity.",
+			"path": "skills/review-changes"
+		},
+		{
+			"kind": "skill",
+			"name": "security-review",
+			"description": "Look for security problems in a change.",
+			"path": "skills/security-review"
+		}
+	]
+}
