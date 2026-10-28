@@ -127,12 +127,12 @@ function valid<T>(
 function cleanProblems(problems: readonly ScanProblem[]): ScanProblem[] {
 	const unique = new Map<string, ScanProblem>();
 	for (const problem of problems) {
-		const path = storablePrefix(problem.path);
-		if (path === null) continue;
+		const path = problem.path === null ? null : storablePrefix(problem.path);
+		if (problem.path !== null && path === null) continue;
 		unique.set(`${path}\0${problem.message}`, { path, message: problem.message });
 	}
 	return [...unique.values()]
-		.sort((a, b) => compare(a.path, b.path) || compare(a.message, b.message))
+		.sort((a, b) => compare(a.path ?? "", b.path ?? "") || compare(a.message, b.message))
 		.slice(0, MAX_PROBLEMS);
 }
 

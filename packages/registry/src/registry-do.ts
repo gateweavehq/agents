@@ -15,6 +15,7 @@ import {
 	type ScanResult,
 	scanResult,
 } from "@gateweave/agents-model";
+import { and, eq, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { z } from "zod";
@@ -29,6 +30,8 @@ import {
 	listRepositories,
 	readOverview,
 } from "./queries";
+import { dueScans, finishScan, nextScanAt, requestScans, retryScan } from "./queue";
+import { scanRepository } from "./scanner";
 import {
 	applyScan,
 	reconcileInstallation,
@@ -37,10 +40,18 @@ import {
 	type ScanOutcome,
 	syncRepositories,
 } from "./scans";
+import { type SourceEnv, sourceFor } from "./sources";
 import type { Db } from "./state";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
+
+/**
+ * Scans per alarm. Each takes a few requests to GitHub; three stay well inside the 50
+ * subrequests a Worker on the free plan may make in one invocation. The alarm runs again for the
+ * rest.
+ */
+const SCANS_PER_ALARM = 3;
 
 /**
  * One instance per workspace, named by the workspace id. Holds the registry: projects,
@@ -116,18 +127,54 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => syncRepositories(this.#db, data, Date.now()));
 	}
 
-	reconcileInstallation(installationId: string, inputs: RepositoryInput[]): string[] {
+	/** Also queues a scan of the repositories that need one. */
+	async reconcileInstallation(
+		installationId: string,
+		inputs: RepositoryInput[],
+	): Promise<string[]> {
 		const installation = id.parse(installationId);
 		const data = z
 			.array(repositoryInput.refine((input) => input.installationId === installation))
 			.max(5000)
 			.parse(inputs);
-		return this.#write(() => reconcileInstallation(this.#db, installation, data, Date.now()));
+		const result = this.#write(() =>
+			reconcileInstallation(this.#db, installation, data, Date.now()),
+		);
+		await this.#scheduleScans();
+		return result;
 	}
 
 	removeInstallation(installationId: string): void {
 		const installation = id.parse(installationId);
 		this.#write(() => removeInstallation(this.#db, installation, Date.now()));
+	}
+
+	/** Queues a scan of each repository. Returns how many are live and queued. */
+	async requestScans(repositoryIds: string[]): Promise<number> {
+		const repositories = ids.parse(repositoryIds);
+		const queued = this.#write(() => requestScans(this.#db, repositories, Date.now()));
+		await this.#scheduleScans();
+		return queued;
+	}
+
+	/**
+	 * Queues a scan of the repository with this provider id, as a push to its default branch
+	 * asks. False when the registry has no live repository by that id.
+	 */
+	async requestScanOf(provider: string, externalId: string): Promise<boolean> {
+		const repository = this.#db
+			.select({ id: schema.repositories.id })
+			.from(schema.repositories)
+			.where(
+				and(
+					eq(schema.repositories.provider, z.enum(["github"]).parse(provider)),
+					eq(schema.repositories.externalId, z.string().min(1).max(100).parse(externalId)),
+					isNull(schema.repositories.removedAt),
+				),
+			)
+			.get();
+		if (!repository) return false;
+		return (await this.requestScans([repository.id])) > 0;
 	}
 
 	applyScan(repositoryId: string, scan: ScanResult): ScanOutcome {
@@ -142,11 +189,65 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => recordScanError(this.#db, repository, text, Date.now()));
 	}
 
+	/** Works through the scans that are due, then sets the alarm for the next one. */
+	override async alarm(): Promise<void> {
+		const due = dueScans(this.#db, Date.now(), SCANS_PER_ALARM);
+		for (const request of due) await this.#scan(request);
+		await this.#scheduleScans();
+	}
+
 	/** Deletes everything, when the workspace is deleted. */
 	async destroy(): Promise<void> {
 		await this.ctx.storage.deleteAll();
 		// This instance stays in memory until it is evicted, and answers as an empty registry.
 		await migrate(this.#db, migrations);
+	}
+
+	/**
+	 * Scans one repository and applies the result. Other calls may run while the scan waits on
+	 * GitHub; its writes come after, each in a transaction of its own.
+	 */
+	async #scan(request: schema.ScanRequestRow): Promise<void> {
+		const repository = this.#db
+			.select()
+			.from(schema.repositories)
+			.where(eq(schema.repositories.id, request.repositoryId))
+			.get();
+		if (!repository || repository.removedAt !== null) {
+			this.#write(() => finishScan(this.#db, request));
+			return;
+		}
+		const source = sourceFor(this.env as SourceEnv, repository);
+		if ("unavailable" in source) {
+			// Trying again changes nothing until the server is set up differently.
+			this.#write(() => {
+				recordScanError(this.#db, repository.id, source.unavailable, Date.now());
+				finishScan(this.#db, request);
+			});
+			return;
+		}
+		const startedAt = Date.now();
+		try {
+			const result = await scanRepository(this.#db, source, repository, startedAt);
+			// Validated like a scan from outside: a bug in an adapter must not store bad data.
+			const scan = result === null ? null : scanResult.parse(result);
+			this.#write(() => {
+				if (scan !== null) applyScan(this.#db, repository.id, scan, Date.now());
+				finishScan(this.#db, request);
+			});
+		} catch (error) {
+			const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
+			console.error(`registry: scanning ${repository.owner}/${repository.name} failed`, message);
+			this.#write(() => {
+				recordScanError(this.#db, repository.id, message || "The scan failed", Date.now());
+				retryScan(this.#db, request, Date.now());
+			});
+		}
+	}
+
+	async #scheduleScans(): Promise<void> {
+		const next = nextScanAt(this.#db);
+		if (next !== null) await this.ctx.storage.setAlarm(Math.max(next, Date.now()));
 	}
 
 	// Every write is one synchronous transaction: it applies whole or not at all, and nothing

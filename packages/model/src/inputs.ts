@@ -115,9 +115,12 @@ export const detectedAgent = z.object({
 });
 export type DetectedAgent = z.infer<typeof detectedAgent>;
 
-/** Something a scan could not read, such as a settings file that is not valid JSON. */
+/**
+ * Something a scan could not read, such as a settings file that is not valid JSON. `path` is null
+ * for a problem with the repository as a whole, such as a tree too large to read whole.
+ */
 export const scanProblem = z.object({
-	path: repositoryPath,
+	path: repositoryPath.nullable(),
 	message: z.string().min(1).max(500),
 });
 export type ScanProblem = z.infer<typeof scanProblem>;

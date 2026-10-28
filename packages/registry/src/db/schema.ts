@@ -173,7 +173,27 @@ export const agentAssets = sqliteTable(
 	],
 );
 
+/**
+ * Repositories waiting for a scan, which the Durable Object's alarm works through. A repository
+ * has one request at most; asking again while it waits moves it to the front.
+ */
+export const scanRequests = sqliteTable(
+	"scan_requests",
+	{
+		repositoryId: text("repository_id")
+			.primaryKey()
+			.references(() => repositories.id),
+		requestedAt: integer("requested_at").notNull(),
+		/** Failed tries so far. The request is dropped after the last one. */
+		attempts: integer("attempts").notNull().default(0),
+		/** When the next try may start. */
+		notBefore: integer("not_before").notNull(),
+	},
+	(table) => [index("scan_requests_not_before_idx").on(table.notBefore)],
+);
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
+export type ScanRequestRow = typeof scanRequests.$inferSelect;

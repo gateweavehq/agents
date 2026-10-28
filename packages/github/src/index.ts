@@ -6,6 +6,15 @@ export {
 	type Installation,
 	userInstallationIds,
 } from "./app";
+export {
+	type BranchHead,
+	branchHead,
+	type RepositoryName,
+	readTexts,
+	readTree,
+	TEXTS_PER_REQUEST,
+	type TreeEntry,
+} from "./contents";
 export { appJwt, importAppKey } from "./jwt";
 export {
 	AUTHORIZE_URL,

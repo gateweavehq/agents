@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type {
 	DetectedAgent,
@@ -6,7 +6,7 @@ import type {
 	RepositoryInput,
 	ScanResult,
 } from "@gateweave/agents-model";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_KEPT_FILE_BYTES, type RegistryDO } from "../src";
 
 /** `git hash-object` of "hello\n". */
@@ -176,9 +176,61 @@ describe("repositories", () => {
 	});
 
 	it("refuses repositories of another installation in a reconcile", async () => {
-		await inside(registry(), (instance) => {
-			expect(() => instance.reconcileInstallation("100", [github("1", "web", "200")])).toThrow();
+		await inside(registry(), async (instance) => {
+			await expect(
+				instance.reconcileInstallation("100", [github("1", "web", "200")]),
+			).rejects.toThrow();
 		});
+	});
+});
+
+describe("scan requests", () => {
+	/** The time the registry's alarm is set for, or null when nothing waits. */
+	const alarmOf = (stub: ReturnType<typeof registry>) =>
+		runInDurableObject(stub, (_instance: RegistryDO, state) => state.storage.getAlarm());
+
+	/** Runs the alarm now, unless it already ran, and waits for the scan to record its error. */
+	async function scanError(stub: ReturnType<typeof registry>, id: string) {
+		await runDurableObjectAlarm(stub);
+		let error: string | null | undefined;
+		await vi.waitFor(async () => {
+			error = (await stub.getRepository(id))?.repository.scanError;
+			expect(error).not.toBeNull();
+		});
+		return error;
+	}
+
+	it("are queued for new repositories, and record why they cannot run on this server", async () => {
+		const stub = registry();
+		const [web = ""] = await stub.reconcileInstallation("100", [github("1", "web")]);
+
+		// The test worker has no GitHub App, so the scan cannot read anything, and trying again
+		// would not help.
+		expect(await scanError(stub, web)).toBe("GitHub is not set up on this server");
+		expect((await stub.getRepository(web))?.repository.scannedCommit).toBeNull();
+		expect(await alarmOf(stub)).toBeNull();
+	});
+
+	it("are not queued again for repositories already scanned, unless their branch changed", async () => {
+		const stub = registry();
+		const [web = ""] = await stub.syncRepositories([github("1", "web")]);
+		await stub.applyScan(web, scan());
+
+		await stub.reconcileInstallation("100", [github("1", "web")]);
+		expect(await alarmOf(stub)).toBeNull();
+
+		await stub.reconcileInstallation("100", [{ ...github("1", "web"), defaultBranch: "trunk" }]);
+		expect(await scanError(stub, web)).toBe("GitHub is not set up on this server");
+	});
+
+	it("are made by the provider's id, for live repositories only", async () => {
+		const stub = registry();
+		await stub.syncRepositories([github("1", "web")]);
+
+		expect(await stub.requestScanOf("github", "1")).toBe(true);
+		expect(await stub.requestScanOf("github", "2")).toBe(false);
+		await stub.reconcileInstallation("100", []);
+		expect(await stub.requestScanOf("github", "1")).toBe(false);
 	});
 });
 

@@ -1,7 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Repository } from "@gateweave/agents-model";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
-import { FakeGitHub } from "./fake-github";
+import { FakeGitHub, type FakeRepository, gitBlobId, headOf } from "./fake-github";
 
 const origin = "https://agents.test";
 const github = new FakeGitHub();
@@ -227,5 +228,132 @@ describe("GitHub webhooks", () => {
 		expect(await linkedInstallations(workspaceId)).toEqual([]);
 		expect(await repositoryNames(workspaceId)).toEqual([]);
 		expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
+	});
+});
+
+describe("scanning", () => {
+	/** Waits until the workspace's only repository has been scanned at `commit`. */
+	async function scannedAt(workspaceId: string, commit: string) {
+		const registry = await agents.registry(workspaceId);
+		let found: Repository | undefined;
+		await vi.waitFor(
+			async () => {
+				[found] = await registry.listRepositories();
+				expect(found?.scannedCommit).toBe(commit);
+			},
+			{ timeout: 10_000, interval: 50 },
+		);
+		if (!found) throw new Error("No repository");
+		return (await registry.getRepository(found.id)) ?? undefined;
+	}
+
+	async function connected(installationId: string, repository: FakeRepository) {
+		github.installations.set(installationId, {
+			account: { login: repository.owner, type: "User" },
+			repositories: [repository],
+		});
+		github.people.set(`${repository.owner}-gh`, new Set([installationId]));
+		const { headers } = await signUp(agents, origin, repository.owner);
+		const workspaceId = await createWorkspace(agents, origin, headers, repository.owner);
+		expect(
+			await connect(headers.cookie, repository.owner, installationId, `${repository.owner}-gh`),
+		).toContain("github=connected");
+		return workspaceId;
+	}
+
+	function push(installationId: string, repository: FakeRepository, branch = "main") {
+		return deliver("push", {
+			ref: `refs/heads/${branch}`,
+			after: headOf(repository),
+			repository: { id: repository.id, default_branch: repository.defaultBranch ?? "main" },
+			installation: { id: Number(installationId) },
+		});
+	}
+
+	it("finds the agents of a connected repository, and reads again what a push changes", async () => {
+		const skill = "---\nname: review\ndescription: Reviews a change.\n---\nReview it.\n";
+		const repository: FakeRepository = {
+			id: 61,
+			owner: "lovelace",
+			name: "engine",
+			files: {
+				"CLAUDE.md": "Be brief.\n",
+				".claude/skills/review/SKILL.md": skill,
+				"src/index.ts": "export {};\n",
+			},
+		};
+		const workspaceId = await connected("601", repository);
+
+		const first = await scannedAt(workspaceId, headOf(repository));
+		expect(first?.agents.map((agent) => `${agent.runtime}:${agent.key}`)).toEqual([
+			"claude-code:main",
+		]);
+		expect(first?.assets.map((asset) => asset.key).sort()).toEqual([
+			".claude/skills/review",
+			"CLAUDE.md",
+		]);
+		// Only the files an adapter reads are downloaded.
+		expect(github.blobRequests).not.toContain(gitBlobId("export {};\n"));
+
+		const asked = github.blobRequests.length;
+		repository.files = { ...repository.files, "CLAUDE.md": "Be briefer.\n" };
+		expect((await push("601", repository)).status).toBe(204);
+		const second = await scannedAt(workspaceId, headOf(repository));
+		const claudeMd = second?.assets.find((asset) => asset.key === "CLAUDE.md");
+		expect(claudeMd?.version).toBe(2);
+		// The skill is unchanged and the registry has its text, so only CLAUDE.md is downloaded.
+		expect(github.blobRequests.slice(asked)).toEqual([gitBlobId("Be briefer.\n")]);
+
+		// Pushes to other branches are not scanned.
+		expect((await push("601", repository, "feature")).status).toBe(202);
+	});
+
+	it("reads a CLAUDE.md that is a symlink as the file it points to", async () => {
+		const repository: FakeRepository = {
+			id: 62,
+			owner: "hamilton",
+			name: "apollo",
+			files: { "AGENTS.md": "Shared rules.\n", "CLAUDE.md": { symlink: "AGENTS.md" } },
+		};
+		const workspaceId = await connected("602", repository);
+
+		const detail = await scannedAt(workspaceId, headOf(repository));
+		const claudeMd = detail?.assets.find((asset) => asset.key === "CLAUDE.md");
+		const version = await (await agents.registry(workspaceId)).getAssetVersion(claudeMd?.id ?? "");
+		expect(version?.files).toEqual([
+			{
+				path: "CLAUDE.md",
+				blob: gitBlobId("Shared rules.\n"),
+				size: 14,
+				content: "Shared rules.\n",
+			},
+		]);
+		expect(detail?.repository.problems).toEqual([]);
+	});
+
+	it("records why a scan failed, and keeps what the last one found", async () => {
+		const repository: FakeRepository = {
+			id: 63,
+			owner: "liskov",
+			name: "clu",
+			files: { "AGENTS.md": "Rules.\n" },
+		};
+		const workspaceId = await connected("603", repository);
+		const commit = headOf(repository);
+		await scannedAt(workspaceId, commit);
+
+		github.failing.set("liskov/clu", 502);
+		repository.files = { "AGENTS.md": "New rules.\n" };
+		expect((await push("603", repository)).status).toBe(204);
+		const registry = await agents.registry(workspaceId);
+		await vi.waitFor(
+			async () => {
+				const [found] = await registry.listRepositories();
+				expect(found?.scanError).toContain("GitHub answered 502");
+				expect(found?.scannedCommit).toBe(commit);
+			},
+			{ timeout: 10_000, interval: 50 },
+		);
+		expect((await registry.overview()).assets).toBe(1);
 	});
 });

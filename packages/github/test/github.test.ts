@@ -1,6 +1,15 @@
 import { createHash, createHmac, createVerify, generateKeyPairSync } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { appJwt, GitHubApp, importAppKey, pkcePair, verifyWebhook } from "../src";
+import {
+	appJwt,
+	branchHead,
+	GitHubApp,
+	importAppKey,
+	pkcePair,
+	readTexts,
+	readTree,
+	verifyWebhook,
+} from "../src";
 
 const { privateKey: pkcs1, publicKey } = generateKeyPairSync("rsa", {
 	modulusLength: 2048,
@@ -59,6 +68,80 @@ describe("pkcePair", () => {
 		const { verifier, challenge } = await pkcePair();
 		expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
 		expect(challenge).toBe(createHash("sha256").update(verifier).digest("base64url"));
+	});
+});
+
+describe("repository contents", () => {
+	const repository = { owner: "acme", name: "site" };
+	const sha = (char: string) => char.repeat(40);
+
+	it("reads a branch's head, branch names with slashes included", async () => {
+		const calls: string[] = [];
+		vi.stubGlobal("fetch", async (input: string) => {
+			calls.push(input);
+			return Response.json({ commit: { sha: sha("a"), commit: { tree: { sha: sha("b") } } } });
+		});
+		expect(await branchHead("ghs_x", repository, "release/2.0")).toEqual({
+			commit: sha("a"),
+			tree: sha("b"),
+		});
+		expect(calls).toEqual(["https://api.github.com/repos/acme/site/branches/release/2.0"]);
+	});
+
+	it("lists the files of a tree, marking symlinks and leaving out folders and submodules", async () => {
+		vi.stubGlobal("fetch", async () =>
+			Response.json({
+				sha: sha("b"),
+				truncated: false,
+				tree: [
+					{ path: "docs", mode: "040000", type: "tree", sha: sha("c") },
+					{ path: "AGENTS.md", mode: "100644", type: "blob", sha: sha("d"), size: 12 },
+					{ path: "CLAUDE.md", mode: "120000", type: "blob", sha: sha("e"), size: 9 },
+					{ path: "vendor/lib", mode: "160000", type: "commit", sha: sha("f") },
+				],
+			}),
+		);
+		expect(await readTree("ghs_x", repository, sha("b"))).toEqual({
+			truncated: false,
+			files: [
+				{ path: "AGENTS.md", blob: sha("d"), size: 12, symlink: false },
+				{ path: "CLAUDE.md", blob: sha("e"), size: 9, symlink: true },
+			],
+		});
+	});
+
+	it("reads texts fifty blobs per request, and none for binary or truncated blobs", async () => {
+		const requests: { query: string; variables: unknown }[] = [];
+		vi.stubGlobal("fetch", async (_input: string, init?: RequestInit) => {
+			const body = JSON.parse(String(init?.body)) as { query: string; variables: unknown };
+			requests.push(body);
+			const answer: Record<string, unknown> = {};
+			for (const [, alias, id] of body.query.matchAll(/(b\d+): object\(oid: "([0-9a-f]{40})"\)/g)) {
+				answer[alias ?? ""] =
+					id === sha("0")
+						? { text: null, isBinary: true, isTruncated: false }
+						: id === sha("1")
+							? { text: "partial", isBinary: false, isTruncated: true }
+							: { text: `text of ${id?.slice(0, 4)}`, isBinary: false, isTruncated: false };
+			}
+			return Response.json({ data: { repository: answer } });
+		});
+		const ids = Array.from({ length: 60 }, (_, index) => index.toString(16).padStart(40, "a"));
+		const texts = await readTexts("ghs_x", repository, [...ids, sha("0"), sha("1"), ids[0] ?? ""]);
+
+		expect(requests).toHaveLength(2);
+		expect(requests[0]?.variables).toEqual({ owner: "acme", name: "site" });
+		expect(texts.size).toBe(62);
+		expect(texts.get(ids[0] ?? "")).toBe("text of aaaa");
+		expect(texts.get(sha("0"))).toBeNull();
+		expect(texts.get(sha("1"))).toBeNull();
+	});
+
+	it("fails when GitHub answers without the repository", async () => {
+		vi.stubGlobal("fetch", async () =>
+			Response.json({ data: { repository: null }, errors: [{ message: "Could not resolve" }] }),
+		);
+		await expect(readTexts("ghs_x", repository, [sha("2")])).rejects.toThrow("Could not resolve");
 	});
 });
 

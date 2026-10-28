@@ -407,6 +407,12 @@ importers:
 
   packages/registry:
     dependencies:
+      '@gateweave/agents-adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@gateweave/agents-github':
+        specifier: workspace:*
+        version: link:../github
       '@gateweave/agents-model':
         specifier: workspace:*
         version: link:../model

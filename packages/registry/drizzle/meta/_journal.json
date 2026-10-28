@@ -15,6 +15,13 @@
       "when": 1793193831492,
       "tag": "0001_repository_installation",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793195491497,
+      "tag": "0002_scan_requests",
+      "breakpoints": true
     }
   ]
 }

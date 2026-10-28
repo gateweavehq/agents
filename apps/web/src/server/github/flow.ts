@@ -9,7 +9,8 @@
  *    checks that the installation is among the ones this person can reach, and only then links
  *    it to the workspace and lists its repositories. The token is not kept.
  *
- * Webhooks then report installs, uninstalls and changes to the repositories the app reaches.
+ * Webhooks then report installs, uninstalls and changes to the repositories the app reaches,
+ * and pushes, which queue a scan of the repository when they reach its default branch.
  */
 import { env } from "cloudflare:workers";
 import {
@@ -18,10 +19,12 @@ import {
 	pkcePair,
 	userInstallationIds,
 	verifyWebhook,
+	type WebhookPayload,
 	webhookPayload,
 } from "@gateweave/agents-github";
 import { isAdmin } from "#/lib/roles";
 import { db, getAuth } from "../auth";
+import { registryFor } from "../registry";
 import { findMembership, findMembershipById } from "../workspaces";
 import { github } from "./config";
 import {
@@ -39,6 +42,7 @@ export type ConnectResult = "connected" | "denied" | "taken" | "requested" | "fa
 const PKCE_COOKIE = "github_pkce";
 const VERIFY_LIFETIME_MS = 10 * 60 * 1000;
 const INSTALLATION_ID = /^\d{1,20}$/;
+const NO_COMMIT = "0".repeat(40);
 
 export async function startInstall(request: Request): Promise<Response> {
 	const config = github();
@@ -177,7 +181,7 @@ export async function receiveWebhook(request: Request): Promise<Response> {
 	if (!parsed.success || !linked) return new Response(null, { status: 202 });
 
 	try {
-		return await handleEvent(request.headers.get("x-github-event"), parsed.data.action, linked);
+		return await handleEvent(request.headers.get("x-github-event"), parsed.data, linked);
 	} catch (error) {
 		// GitHub shows the failed delivery, and it can be redelivered from the app's settings.
 		console.error("github: webhook failed", error);
@@ -187,9 +191,10 @@ export async function receiveWebhook(request: Request): Promise<Response> {
 
 async function handleEvent(
 	event: string | null,
-	action: string | undefined,
+	payload: WebhookPayload,
 	linked: LinkedInstallation,
 ): Promise<Response> {
+	const { action, ref, after, repository } = payload;
 	switch (event) {
 		case "installation":
 			if (action === "deleted") {
@@ -203,6 +208,13 @@ async function handleEvent(
 		case "installation_repositories":
 		case "repository":
 			await syncInstallation(linked);
+			return new Response(null, { status: 204 });
+		case "push":
+			// Only the default branch is scanned. A push that deletes the branch has nothing to read.
+			if (!repository || ref !== `refs/heads/${repository.default_branch}` || after === NO_COMMIT) {
+				return new Response(null, { status: 202 });
+			}
+			await registryFor(linked.workspaceId).requestScanOf("github", repository.id);
 			return new Response(null, { status: 204 });
 		default:
 			return new Response(null, { status: 202 });

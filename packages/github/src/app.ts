@@ -132,6 +132,7 @@ export async function request(path: string, token: string, init: RequestInit = {
 				authorization: `Bearer ${token}`,
 				"user-agent": "gateweave-agents",
 				"x-github-api-version": "2022-11-28",
+				...(init.body === undefined ? {} : { "content-type": "application/json" }),
 			},
 		});
 	} catch (error) {
