@@ -181,6 +181,11 @@ runtime is designed alongside it, so the data model fits both.
   not values each workspace adds. Workers AI and AI Gateway's Unified Billing stay off unless a
   deployment turns them on, so a self-hosted server never spends its owner's money on someone
   else's workspace.
+- **Agents run by Gateweave live with the agents scans find** (AGT-22, 2026-10-28). They are rows
+  in the same `agents` table, so every page that lists agents shows them, with their definition
+  in a table of its own. Instructions come from the library, pinned to a version, rather than as
+  text typed into the agent: they are versioned, shared between agents and setups, and shown
+  wherever the library asset is.
 - **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
   asset when its hash equals one of the library asset's versions; no link is stored. There is
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the

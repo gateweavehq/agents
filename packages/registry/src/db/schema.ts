@@ -199,6 +199,24 @@ export const agentAssets = sqliteTable(
 	],
 );
 
+/**
+ * How an agent run by Gateweave works. Its row in `agents` has the `gateweave` runtime, no
+ * repository, and its own id as its key; its instructions are pinned like a setup's assets.
+ */
+export const agentDefinitions = sqliteTable(
+	"agent_definitions",
+	{
+		agentId: text("agent_id")
+			.primaryKey()
+			.references(() => agents.id),
+		provider: text("provider", { enum: MODEL_PROVIDERS }).notNull(),
+		model: text("model").notNull(),
+		instructionsAssetId: text("instructions_asset_id").references(() => assets.id),
+		instructionsVersion: integer("instructions_version"),
+	},
+	(table) => [index("agent_definitions_instructions_idx").on(table.instructionsAssetId)],
+);
+
 export const setups = sqliteTable("setups", {
 	id: text("id").primaryKey(),
 	name: text("name").notNull(),
@@ -301,6 +319,7 @@ export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
+export type AgentDefinitionRow = typeof agentDefinitions.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type ScanRequestRow = typeof scanRequests.$inferSelect;
 export type SetupRow = typeof setups.$inferSelect;

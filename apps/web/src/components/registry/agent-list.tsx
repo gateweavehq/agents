@@ -49,7 +49,13 @@ function AgentRow({ agent, repository }: { agent: Agent; repository: Repository 
 	return (
 		<li className="flex flex-wrap items-center gap-x-4 gap-y-1 p-3 text-sm">
 			<span className="min-w-0 flex-1">
-				<span className="font-medium">{agent.name}</span>
+				<Link
+					to="/$workspace/agents/$agentId"
+					params={{ workspace: slug, agentId: agent.id }}
+					className="font-medium hover:underline"
+				>
+					{agent.name}
+				</Link>
 				{agent.description && (
 					<span className="block truncate text-muted-foreground">{agent.description}</span>
 				)}

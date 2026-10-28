@@ -396,3 +396,23 @@ export const providerKeyInput = z.object({
 		.regex(/^[\x21-\x7e]+$/, "A key has no spaces or special characters"),
 });
 export type ProviderKeyInput = z.input<typeof providerKeyInput>;
+
+/**
+ * An agent defined in the app and run by Gateweave: the model it calls with the workspace's key
+ * for that provider, and what it always reads, a library asset pinned to a version (one of
+ * `INSTRUCTION_KINDS`).
+ */
+export const agentDefinitionInput = projectInput.extend({
+	provider: z.enum(MODEL_PROVIDERS),
+	/** The provider's id for the model, as its models API lists it. */
+	model: z
+		.string()
+		.trim()
+		.min(1, "Choose a model")
+		.max(200)
+		.regex(/^[\x21-\x7e]+$/, "A model id has no spaces or special characters"),
+	instructions: z
+		.object({ assetId: z.string().min(1).max(64), version: z.number().int().positive() })
+		.nullable(),
+});
+export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;

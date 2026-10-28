@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
+	Agent,
+	AgentDefinitionInput,
 	ApplyOutcome,
 	ApplyRefusal,
 	AssetVersion,
@@ -78,6 +80,7 @@ export interface RegistryStub {
 	): Promise<ApplyOutcome | ApplyRefusal>;
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
+	createAgent(input: AgentDefinitionInput): Promise<Agent>;
 }
 
 /** The address Agents sends from in tests. */

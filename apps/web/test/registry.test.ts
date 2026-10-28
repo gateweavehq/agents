@@ -145,6 +145,68 @@ it("shows members each project with its repositories and their agents", async ()
 	}
 });
 
+it("shows each agent's page: where a coding agent is configured, how a Gateweave agent works", async () => {
+	const { headers: ada } = await signUp(agents, origin, "ada-agents");
+	const id = await createWorkspace(agents, origin, ada, "crew");
+	const registry = await agents.registry(id);
+	const [shop = ""] = await registry.syncRepositories([repository("1", "shop")]);
+	await registry.applyScan(shop, CLAUDE_ONLY);
+	const coding = (await registry.getRepository(shop))?.agents[0]?.id ?? "";
+	const rules = await registry.createLibraryAsset({
+		kind: "instructions",
+		name: "Reviewer rules",
+		text: "Review every change.\n",
+	});
+	const reviewer = await registry.createAgent({
+		name: "Reviewer",
+		description: "Reviews pull requests.",
+		provider: "anthropic",
+		model: "claude-sonnet-5-5",
+		instructions: { assetId: rules, version: 1 },
+	});
+	// React separates neighbouring text with comments; the text is what people read.
+	const page = async (path: string, cookie = ada.cookie) => {
+		const response = await agents.fetch(`${origin}${path}`, { headers: { cookie } });
+		expect(response.status).toBe(200);
+		return (await response.text()).replaceAll("<!-- -->", "");
+	};
+
+	const list = await page("/crew/agents");
+	expect(list).toContain("New agent");
+	expect(list).toContain(`/crew/agents/${reviewer.id}`);
+	expect(list).toContain(`/crew/agents/${coding}`);
+
+	const defined = await page(`/crew/agents/${reviewer.id}`);
+	expect(defined).toContain("Reviews pull requests.");
+	expect(defined).toContain('Anthropic · <span class="font-mono">claude-sonnet-5-5</span>');
+	expect(defined).toContain("Review every change.");
+	expect(defined).toContain(`/crew/assets/${rules}`);
+	expect(defined).toContain("The workspace has no Anthropic key, so this agent cannot run yet.");
+
+	const scanned = await page(`/crew/agents/${coding}`);
+	expect(scanned).toContain(`/crew/repositories/${shop}`);
+	expect(scanned).toContain("Reads · 1");
+
+	// A member who is not an admin sees agents and cannot define them; anyone else gets a 404.
+	const { userId: grace, headers: graceHeaders } = await signUp(agents, origin, "grace-agents");
+	await agents.db
+		.prepare(
+			"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, 'member', ?)",
+		)
+		.bind(crypto.randomUUID(), id, grace, Date.now())
+		.run();
+	expect(await page("/crew/agents", graceHeaders.cookie)).not.toContain("New agent");
+	expect(await page(`/crew/agents/${reviewer.id}`, graceHeaders.cookie)).toContain(
+		"An owner or admin can add one in Settings.",
+	);
+	const { headers: eve } = await signUp(agents, origin, "eve-agents");
+	const outsider = await agents.fetch(`${origin}/crew/agents/${reviewer.id}`, {
+		headers: { cookie: eve.cookie },
+	});
+	expect(outsider.status).toBe(404);
+	expect(await outsider.text()).not.toContain("Review every change.");
+});
+
 /** CLAUDE_ONLY with other text in its CLAUDE.md. */
 function claudeSays(text: string): ScanResult {
 	const [asset] = CLAUDE_ONLY.assets;

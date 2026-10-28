@@ -1,11 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 import {
 	type Agent,
+	type AgentDefinitionInput,
+	type AgentDetail,
+	type AgentSnapshot,
 	APPLICATION_STATES,
 	type ApplyOutcome,
 	type ApplyRefusal,
 	type AssetDetail,
 	type AssetVersion,
+	agentDefinitionInput,
 	type LibraryEditInput,
 	type LibraryEntry,
 	type LibraryTarget,
@@ -13,6 +17,7 @@ import {
 	libraryTarget,
 	MODEL_PROVIDER_NAMES,
 	MODEL_PROVIDERS,
+	type ModelProvider,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -20,6 +25,7 @@ import {
 	type ProjectPatch,
 	type ProviderKey,
 	type ProviderKeyInput,
+	type ProviderModel,
 	type ProviderRefusal,
 	projectInput,
 	projectPatch,
@@ -55,6 +61,7 @@ import {
 	saveApplication,
 } from "./apply";
 import * as schema from "./db/schema";
+import { agentSnapshot, createAgent, removeAgent, updateAgent } from "./definitions";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
@@ -67,6 +74,7 @@ import {
 	sealedKeyOf,
 } from "./providers";
 import {
+	getAgent,
 	getAsset,
 	getAssetVersion,
 	getProject,
@@ -154,6 +162,10 @@ export class RegistryDO extends DurableObject {
 
 	listAgents(): Agent[] {
 		return listAgents(this.#db);
+	}
+
+	getAgent(agentId: string): AgentDetail | null {
+		return getAgent(this.#db, id.parse(agentId));
 	}
 
 	getAsset(assetId: string, version?: number): AssetDetail | null {
@@ -294,6 +306,27 @@ export class RegistryDO extends DurableObject {
 		}
 	}
 
+	// Agents run by Gateweave, which owners and admins define.
+
+	createAgent(input: AgentDefinitionInput): Agent {
+		const data = agentDefinitionInput.parse(input);
+		return this.#write(() => createAgent(this.#db, data, Date.now()));
+	}
+
+	updateAgent(agentId: string, input: AgentDefinitionInput): Agent | null {
+		const data = agentDefinitionInput.parse(input);
+		return this.#write(() => updateAgent(this.#db, id.parse(agentId), data, Date.now()));
+	}
+
+	removeAgent(agentId: string): boolean {
+		return this.#write(() => removeAgent(this.#db, id.parse(agentId), Date.now()));
+	}
+
+	/** What the runtime reads at the start of a turn: the whole definition, in one read. */
+	agentSnapshot(agentId: string): AgentSnapshot | null {
+		return agentSnapshot(this.#db, id.parse(agentId));
+	}
+
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the
 	// pages see a hint, and only the runtime opens them.
 
@@ -323,25 +356,27 @@ export class RegistryDO extends DurableObject {
 	/** Tries the provider's key by listing its models, and records how that went. */
 	async checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal> {
 		const which = modelProvider.parse(provider);
-		const sealed = sealedKeyOf(this.#db, which);
-		const name = MODEL_PROVIDER_NAMES[which];
-		if (sealed === null) return { status: "refused", message: `There is no key for ${name}` };
-		const sealer = await this.#sealerOf();
-		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
-		let key: string;
-		try {
-			key = await sealer.open(keyPlace(which), sealed);
-		} catch {
-			return {
-				status: "refused",
-				message: `The key for ${name} cannot be opened on this server; add it again`,
-			};
-		}
-		const result = await listProviderModels(which, key);
+		const opened = await this.#openKey(which);
+		if ("status" in opened) return opened;
+		const result = await listProviderModels(which, opened.key);
 		const checked = this.#write(() =>
-			recordProviderCheck(this.#db, which, sealed, result, Date.now()),
+			recordProviderCheck(this.#db, which, opened.sealed, result, Date.now()),
 		);
-		return checked ?? { status: "refused", message: `There is no key for ${name}` };
+		return (
+			checked ?? {
+				status: "refused",
+				message: `There is no key for ${MODEL_PROVIDER_NAMES[which]}`,
+			}
+		);
+	}
+
+	/** The models the provider offers to the workspace's key, to choose an agent's model from. */
+	async listModels(provider: string): Promise<ProviderModel[] | ProviderRefusal> {
+		const which = modelProvider.parse(provider);
+		const opened = await this.#openKey(which);
+		if ("status" in opened) return opened;
+		const result = await listProviderModels(which, opened.key);
+		return result.ok ? result.models : { status: "refused", message: result.message };
 	}
 
 	// Repositories and scans, which the GitHub connection reports.
@@ -503,6 +538,25 @@ export class RegistryDO extends DurableObject {
 	async #scheduleScans(): Promise<void> {
 		const next = nextScanAt(this.#db);
 		if (next !== null) await this.ctx.storage.setAlarm(Math.max(next, Date.now()));
+	}
+
+	/** The workspace's key for the provider, opened, or why it cannot be. */
+	async #openKey(
+		provider: ModelProvider,
+	): Promise<{ key: string; sealed: string } | ProviderRefusal> {
+		const name = MODEL_PROVIDER_NAMES[provider];
+		const sealed = sealedKeyOf(this.#db, provider);
+		if (sealed === null) return { status: "refused", message: `There is no key for ${name}` };
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
+		try {
+			return { key: await sealer.open(keyPlace(provider), sealed), sealed };
+		} catch {
+			return {
+				status: "refused",
+				message: `The key for ${name} cannot be opened on this server; add it again`,
+			};
+		}
 	}
 
 	#sealerOf(): Promise<Sealer | { unavailable: string }> {

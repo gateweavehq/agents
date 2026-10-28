@@ -78,3 +78,6 @@ export const MODEL_PROVIDER_NAMES: Record<ModelProvider, string> = {
 	openai: "OpenAI",
 	google: "Google",
 };
+
+/** The kinds of library asset an agent run by Gateweave can take its instructions from. */
+export const INSTRUCTION_KINDS = ["instructions", "prompt"] as const satisfies readonly AssetKind[];

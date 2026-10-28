@@ -45,8 +45,8 @@ not synced to the browser yet (see "Decisions" in the spec).
   so webhooks that arrive out of order cannot roll a repository back. A failed scan is recorded
   without touching what earlier scans found.
 - **Room for the runtime.** Agents and assets may have no repository: those are agents defined
-  in the app and assets in the library (phases 2 and 3). Setups, teams and runs come as tables
-  of their own when those phases start.
+  in the app and assets in the library (phases 2 and 3). Teams and runs come as tables of their
+  own when that phase gets to them.
 
 ## GitHub
 
@@ -255,6 +255,23 @@ Models settings page.
   has to be added again.
   Sealed values carry a version, so a rotation scheme can be added beside this one.
 
+## Agents run by Gateweave
+
+Owners and admins define agents in the app (runtime `gateweave`). Each one is a row in `agents`,
+with no repository and its own id as its key, and a row in `agent_definitions` beside it
+(`packages/registry/src/definitions.ts`).
+
+- **The model** is a provider and the provider's id for it. The form lists the models the
+  workspace's key can use (`listModels`), and takes any id, so an agent can be defined before the
+  key is added.
+- **Instructions** are a library asset of kind instructions or prompt, pinned to a version as a
+  setup's assets are, and all text. The agent reads it through `agent_assets`, so the asset's
+  page lists the agent. A new version in the library changes nothing until someone moves the pin.
+- **A turn reads one snapshot** (`agentSnapshot`): the model and the pinned instructions' text, in
+  one synchronous read, so a turn never mixes two versions of an agent.
+- **Removing an agent** marks it removed, as scans do, so its id stays known to whatever names
+  it later, such as runs.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -286,7 +303,10 @@ workspace.
 - **Repositories** lists them with their scan status and drift; a repository's page shows its
   agents, the assets they read grouped by kind, the problems the last scan found, the setups
   merged into it with their drift, and the pull requests that applied them.
-- **Agents** lists every agent and subagent by runtime.
+- **Agents** lists every agent and subagent by runtime, and owners and admins define agents run
+  by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
+  or how an agent run by Gateweave works: its model, whether the workspace has a key for it, and
+  its pinned instructions with their text.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind.
 - **Setups** lists them with how many assets each pins and how many have updates, and below them
