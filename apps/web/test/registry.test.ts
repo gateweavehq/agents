@@ -226,3 +226,52 @@ it("shows a written library asset, its edited text and a way to compare its vers
 	// The first version is still there.
 	expect(await page(`/scriptorium/assets/${prompt}?version=1`)).toContain("Sort the inbox.");
 });
+
+it("shows members each setup, its pins and the files it writes", async () => {
+	const { headers: ada } = await signUp(agents, origin, "ada-setups");
+	const id = await createWorkspace(agents, origin, ada, "foundry");
+	const registry = await agents.registry(id);
+	const [old = "", fresh = ""] = await registry.syncRepositories([
+		repository("1", "legacy"),
+		repository("2", "modern"),
+	]);
+	await registry.applyScan(old, claudeSays("Be brief.\n"));
+	await registry.applyScan(fresh, claudeSays("Be briefer.\n"));
+	const assetOf = async (repositoryId: string) =>
+		(await registry.getRepository(repositoryId))?.assets[0]?.id ?? "";
+	const rules = await registry.addToLibrary(await assetOf(old), { name: "CLAUDE.md" });
+	const setup = await registry.createSetup({
+		name: "Terse agents",
+		description: "Short answers everywhere.",
+		runtimes: ["claude-code"],
+	});
+	await registry.setSetupAssets(setup.id, [{ assetId: rules, version: 1 }]);
+	// A newer version in the library is an update the setup does not take by itself.
+	await registry.addToLibrary(await assetOf(fresh), { libraryAssetId: rules });
+	const page = async (path: string) => {
+		const response = await agents.fetch(`${origin}${path}`, { headers: { cookie: ada.cookie } });
+		expect(response.status).toBe(200);
+		return response.text();
+	};
+
+	const list = await page("/foundry/setups");
+	expect(list).toContain("Terse agents");
+	expect(list).toContain(`/foundry/setups/${setup.id}`);
+	expect(list).toContain("1 update");
+
+	const detail = await page(`/foundry/setups/${setup.id}`);
+	expect(detail).toContain("Short answers everywhere.");
+	expect(detail).toContain("Claude Code");
+	expect(detail).toContain("CLAUDE.md");
+	expect(detail).toMatch(/v(<!-- -->)?2(<!-- -->)? is out/);
+	// The preview writes the pinned version, not the newer one.
+	expect(detail).toContain("Be brief.");
+	expect(detail).not.toContain("Be briefer.");
+
+	const { headers: eve } = await signUp(agents, origin, "eve-setups");
+	for (const path of ["/foundry/setups", `/foundry/setups/${setup.id}`]) {
+		const response = await agents.fetch(`${origin}${path}`, { headers: { cookie: eve.cookie } });
+		expect(response.status).toBe(404);
+		expect(await response.text()).not.toContain("Terse agents");
+	}
+});

@@ -20,7 +20,14 @@ import {
 	type RepositoryInput,
 	repositoryInput,
 	type ScanResult,
+	type Setup,
+	type SetupDetail,
+	type SetupEntry,
+	type SetupInput,
+	type SetupPins,
 	scanResult,
+	setupInput,
+	setupPins,
 	type WrittenAssetInput,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
@@ -37,10 +44,12 @@ import {
 	getAssetVersion,
 	getProject,
 	getRepository,
+	getSetup,
 	listAgents,
 	listLibrary,
 	listProjects,
 	listRepositories,
+	listSetups,
 	readOverview,
 } from "./queries";
 import { dueScans, finishScan, nextScanAt, requestScans, retryScan } from "./queue";
@@ -53,6 +62,7 @@ import {
 	type ScanOutcome,
 	syncRepositories,
 } from "./scans";
+import { createSetup, deleteSetup, setSetupAssets, updateSetup } from "./setups";
 import { type SourceEnv, sourceFor } from "./sources";
 import type { Db } from "./state";
 
@@ -68,7 +78,7 @@ const SCANS_PER_ALARM = 3;
 
 /**
  * One instance per workspace, named by the workspace id. Holds the registry: projects,
- * repositories, and the agents and assets found in them.
+ * repositories, the agents and assets found in them, the library and setups.
  *
  * The app worker calls it only after checking the caller's membership in D1, so it trusts that
  * the caller may see and change this workspace. It still validates what it is given.
@@ -169,6 +179,36 @@ export class RegistryDO extends DurableObject {
 
 	removeFromLibrary(assetId: string): boolean {
 		return this.#write(() => removeFromLibrary(this.#db, id.parse(assetId), Date.now()));
+	}
+
+	// Setups, which people manage.
+
+	listSetups(): SetupEntry[] {
+		return listSetups(this.#db);
+	}
+
+	getSetup(setupId: string): SetupDetail | null {
+		return getSetup(this.#db, id.parse(setupId));
+	}
+
+	createSetup(input: SetupInput): Setup {
+		const data = setupInput.parse(input);
+		return this.#write(() => createSetup(this.#db, data, Date.now()));
+	}
+
+	updateSetup(setupId: string, input: SetupInput): Setup | null {
+		const data = setupInput.parse(input);
+		return this.#write(() => updateSetup(this.#db, id.parse(setupId), data, Date.now()));
+	}
+
+	deleteSetup(setupId: string): boolean {
+		return this.#write(() => deleteSetup(this.#db, id.parse(setupId)));
+	}
+
+	setSetupAssets(setupId: string, pins: SetupPins): Setup | null {
+		const setup = id.parse(setupId);
+		const data = setupPins.parse(pins);
+		return this.#write(() => setSetupAssets(this.#db, setup, data, Date.now()));
 	}
 
 	// Repositories and scans, which the GitHub connection reports.

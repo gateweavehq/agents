@@ -10,6 +10,11 @@ import {
 	projectInput,
 	type Repository,
 	type RepositoryDetail,
+	type Setup,
+	type SetupDetail,
+	type SetupEntry,
+	setupInput,
+	setupPins,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
@@ -222,4 +227,52 @@ export const getVersionDiff = createServerFn({ method: "GET" })
 		// Imported here so the diff library stays out of the browser bundle.
 		const { diffFiles } = await import("#/lib/version-diff");
 		return diffFiles(from.files, to.files);
+	});
+
+/** Every setup, with how many assets it pins and how many have updates. */
+export const getSetups = createServerFn({ method: "GET" })
+	.validator(z.string().min(1))
+	.handler(async ({ data: slug }): Promise<SetupEntry[] | null> => {
+		const registry = await registryOf(slug);
+		return registry ? registry.listSetups() : null;
+	});
+
+export const getSetup = createServerFn({ method: "GET" })
+	.validator(z.object({ slug: z.string().min(1), setupId: id }))
+	.handler(async ({ data }): Promise<SetupDetail | null> => {
+		const registry = await registryOf(data.slug);
+		return registry ? registry.getSetup(data.setupId) : null;
+	});
+
+export const createSetup = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), setup: setupInput }))
+	.handler(async ({ data }): Promise<Setup> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.createSetup(data.setup);
+	});
+
+export const updateSetup = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), setupId: id, setup: setupInput }))
+	.handler(async ({ data }): Promise<Setup> => {
+		const registry = await managedRegistryOf(data.slug);
+		const setup = await registry.updateSetup(data.setupId, data.setup);
+		if (!setup) throw new Error("Setup not found");
+		return setup;
+	});
+
+export const deleteSetup = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), setupId: id }))
+	.handler(async ({ data }): Promise<void> => {
+		const registry = await managedRegistryOf(data.slug);
+		await registry.deleteSetup(data.setupId);
+	});
+
+/** Gives a setup exactly these library assets, each pinned to a version. */
+export const setSetupAssets = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), setupId: id, pins: setupPins }))
+	.handler(async ({ data }): Promise<Setup> => {
+		const registry = await managedRegistryOf(data.slug);
+		const setup = await registry.setSetupAssets(data.setupId, data.pins);
+		if (!setup) throw new Error("Setup not found");
+		return setup;
 	});

@@ -3,6 +3,7 @@ import m0001 from "./0001_repository_installation.sql";
 import m0002 from "./0002_scan_requests.sql";
 import m0003 from "./0003_scan_force.sql";
 import m0004 from "./0004_library_keys.sql";
+import m0005 from "./0005_setups.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -13,5 +14,6 @@ export default {
 		m0002,
 		m0003,
 		m0004,
+		m0005,
 	},
 };
