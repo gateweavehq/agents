@@ -1,24 +1,38 @@
 import type { SetupAsset, SetupDetail } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { Library, Pencil, Trash2 } from "lucide-react";
+import { GitPullRequest, Library, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { KindLabel, RuntimeBadge } from "#/components/registry/labels";
-import { SetupAssetsDialog, SetupDialog } from "#/components/registry/setup-dialogs";
+import { KindLabel, PullState, RuntimeBadge } from "#/components/registry/labels";
+import {
+	ApplySetupDialog,
+	SetupAssetsDialog,
+	SetupDialog,
+} from "#/components/registry/setup-dialogs";
 import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
-import { deleteSetup, getLibrary, getSetup, setSetupAssets, updateSetup } from "#/lib/registry";
+import { formatDateTime, formatRelative } from "#/lib/dates";
+import {
+	applySetup,
+	deleteSetup,
+	getLibrary,
+	getRepositories,
+	getSetup,
+	setSetupAssets,
+	updateSetup,
+} from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/setups/$setupId")({
 	loader: async ({ params }) => {
-		const [detail, library] = await Promise.all([
+		const [detail, library, repositories] = await Promise.all([
 			getSetup({ data: { slug: params.workspace, setupId: params.setupId } }),
 			getLibrary({ data: params.workspace }),
+			getRepositories({ data: params.workspace }),
 		]);
-		return detail && { ...detail, library: library ?? [] };
+		return detail && { ...detail, library: library ?? [], repositories: repositories ?? [] };
 	},
 	component: SetupPage,
 });
@@ -31,7 +45,7 @@ function SetupPage() {
 	if (!data) {
 		return <Notice title="Setup not found">It may have been deleted.</Notice>;
 	}
-	const { setup, assets, files, problems } = data;
+	const { setup, assets, files, problems, applications } = data;
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -69,6 +83,8 @@ function SetupPage() {
 					</ul>
 				)}
 			</section>
+
+			{applications.length > 0 && <Applications />}
 
 			{assets.length > 0 && <Preview files={files} problems={problems} />}
 		</div>
@@ -137,6 +153,57 @@ function PinRow({ pin, admin }: { pin: SetupAsset; admin: boolean }) {
 	);
 }
 
+/** The pull requests that applied this setup, and whether the pins have moved since. */
+function Applications() {
+	const { slug } = useWorkspace();
+	const data = Route.useLoaderData();
+	if (!data) return null;
+	const current = new Map(data.assets.map((pin) => [pin.asset.id, pin.version]));
+	const moved = (pins: { assetId: string; version: number }[]) =>
+		pins.length !== current.size || pins.some((pin) => current.get(pin.assetId) !== pin.version);
+
+	return (
+		<section aria-labelledby="applications-heading" className="space-y-3">
+			<h2 id="applications-heading" className="text-sm font-medium">
+				Pull requests · {data.applications.length}
+			</h2>
+			<ul className="divide-y rounded-lg border text-sm">
+				{data.applications.map(({ application, repository }) => (
+					<li key={application.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3">
+						<span className="min-w-0 flex-1 truncate">
+							<Link
+								to="/$workspace/repositories/$repositoryId"
+								params={{ workspace: slug, repositoryId: repository.id }}
+								className="hover:underline"
+							>
+								{repository.owner}/{repository.name}
+							</Link>{" "}
+							<a
+								href={application.pullUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="text-muted-foreground hover:underline"
+							>
+								#{application.pullNumber}
+							</a>
+						</span>
+						{application.state === "open" && moved(application.pins) && (
+							<span className="text-xs text-amber-600 dark:text-amber-500">Pins moved since</span>
+						)}
+						<PullState state={application.state} />
+						<span
+							className="text-xs text-muted-foreground"
+							title={formatDateTime(application.updatedAt)}
+						>
+							{formatRelative(application.updatedAt)}
+						</span>
+					</li>
+				))}
+			</ul>
+		</section>
+	);
+}
+
 /** The files the setup writes, as the writers produce them, and what they could not write. */
 function Preview({ files, problems }: Pick<SetupDetail, "files" | "problems">) {
 	return (
@@ -186,13 +253,28 @@ function SetupActions() {
 	const router = useRouter();
 	const navigate = useNavigate();
 	const data = Route.useLoaderData();
-	const [open, setOpen] = useState<"assets" | "edit" | "delete" | null>(null);
+	const [open, setOpen] = useState<"apply" | "assets" | "edit" | "delete" | null>(null);
 	if (!data) return null;
 	const { setup } = data;
 	const close = () => setOpen(null);
+	const connected = data.repositories.filter((repository) => repository.installationId !== null);
+	const openIn = new Set(
+		data.applications
+			.filter(({ application }) => application.state === "open")
+			.map(({ repository }) => repository.id),
+	);
 
 	return (
-		<div className="flex shrink-0 gap-2">
+		<div className="flex shrink-0 flex-wrap gap-2">
+			<Button
+				size="sm"
+				onClick={() => setOpen("apply")}
+				disabled={data.files.length === 0}
+				title={data.files.length === 0 ? "This setup writes no files yet" : undefined}
+			>
+				<GitPullRequest />
+				Apply
+			</Button>
 			<Button variant="outline" size="sm" onClick={() => setOpen("assets")}>
 				<Library />
 				Assets
@@ -206,6 +288,19 @@ function SetupActions() {
 				<span className="sr-only sm:not-sr-only">Delete</span>
 			</Button>
 
+			{open === "apply" && (
+				<ApplySetupDialog
+					setup={setup}
+					repositories={connected}
+					openIn={openIn}
+					onApply={async (repositoryId) => {
+						const outcome = await applySetup({ data: { slug, setupId: setup.id, repositoryId } });
+						await router.invalidate();
+						return outcome;
+					}}
+					onClose={close}
+				/>
+			)}
 			{open === "assets" && (
 				<SetupAssetsDialog
 					setup={setup}

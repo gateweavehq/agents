@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
+	ApplyOutcome,
+	ApplyRefusal,
 	AssetVersion,
 	LibraryEditInput,
 	LibraryTarget,
@@ -13,6 +15,7 @@ import type {
 	RepositoryInput,
 	ScanResult,
 	Setup,
+	SetupDetail,
 	SetupInput,
 	SetupPins,
 	WrittenAssetInput,
@@ -62,6 +65,13 @@ export interface RegistryStub {
 	editLibraryAsset(input: LibraryEditInput): Promise<number>;
 	createSetup(input: SetupInput): Promise<Setup>;
 	setSetupAssets(setupId: string, pins: SetupPins): Promise<Setup | null>;
+	getSetup(setupId: string): Promise<SetupDetail | null>;
+	deleteSetup(setupId: string): Promise<boolean>;
+	applySetup(
+		setupId: string,
+		repositoryId: string,
+		setupUrl?: string,
+	): Promise<ApplyOutcome | ApplyRefusal>;
 }
 
 /** The address Agents sends from in tests. */

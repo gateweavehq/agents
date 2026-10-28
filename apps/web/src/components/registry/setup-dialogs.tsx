@@ -1,8 +1,10 @@
 import {
+	type ApplyOutcome,
 	ASSET_KIND_NAMES,
 	ASSET_KINDS,
 	type LibraryEntry,
 	REPOSITORY_RUNTIMES,
+	type Repository,
 	type RepositoryRuntime,
 	RUNTIME_NAMES,
 	type Setup,
@@ -248,5 +250,147 @@ export function SetupAssetsDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+/**
+ * Applies a setup to one repository: a pull request that writes its files there, or a new
+ * commit on the one still open. What happened stays in the dialog, with any file left alone.
+ */
+export function ApplySetupDialog({
+	setup,
+	repositories,
+	openIn,
+	onApply,
+	onClose,
+}: {
+	setup: Setup;
+	/** Repositories the GitHub App reaches. */
+	repositories: Repository[];
+	/** Repositories with a pull request for this setup still open, by id. */
+	openIn: ReadonlySet<string>;
+	onApply: (repositoryId: string) => Promise<ApplyOutcome>;
+	onClose: () => void;
+}) {
+	const [repositoryId, setRepositoryId] = useState(repositories[0]?.id ?? "");
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [outcome, setOutcome] = useState<ApplyOutcome | null>(null);
+	const repository = repositories.find((candidate) => candidate.id === repositoryId);
+	const name = repository ? `${repository.owner}/${repository.name}` : "";
+
+	async function apply(event: FormEvent) {
+		event.preventDefault();
+		setPending(true);
+		setError(null);
+		try {
+			setOutcome(await onApply(repositoryId));
+		} catch (failure) {
+			setError(message(failure));
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+			<DialogContent className="max-w-md">
+				<form onSubmit={apply} className="space-y-4">
+					<DialogHeader>
+						<DialogTitle>Apply {setup.name}</DialogTitle>
+						<DialogDescription>
+							Opens a pull request that writes the setup's files. Nothing reaches the default branch
+							until someone merges it, and files the setup does not write stay as they are.
+						</DialogDescription>
+					</DialogHeader>
+					{repositories.length === 0 ? (
+						<p className="text-sm text-muted-foreground">
+							No repository is connected through the GitHub App yet.
+						</p>
+					) : (
+						<div className="space-y-2">
+							<Label htmlFor="apply-repository">Repository</Label>
+							<select
+								id="apply-repository"
+								value={repositoryId}
+								onChange={(event) => {
+									setRepositoryId(event.target.value);
+									setOutcome(null);
+									setError(null);
+								}}
+								disabled={pending}
+								className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
+							>
+								{repositories.map((candidate) => (
+									<option key={candidate.id} value={candidate.id}>
+										{candidate.owner}/{candidate.name}
+									</option>
+								))}
+							</select>
+						</div>
+					)}
+					{outcome && <ApplyResult outcome={outcome} repository={name} />}
+					{error && (
+						<p role="alert" className="text-sm text-destructive">
+							{error}
+						</p>
+					)}
+					<DialogFooter className="gap-2">
+						<Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+							{outcome ? "Done" : "Cancel"}
+						</Button>
+						{!outcome && (
+							<Button type="submit" disabled={pending || !repository}>
+								{openIn.has(repositoryId) ? "Update pull request" : "Open pull request"}
+							</Button>
+						)}
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function ApplyResult({ outcome, repository }: { outcome: ApplyOutcome; repository: string }) {
+	const { application, problems } = outcome;
+	return (
+		<div role="status" className="space-y-2 rounded-lg border bg-muted/40 p-3 text-sm">
+			<p>
+				{outcome.status === "unchanged" || !application ? (
+					`${repository} already has every file this setup writes.`
+				) : (
+					<>
+						{outcome.status === "opened" ? "Opened " : outcome.status === "updated" ? "Gave " : ""}
+						<a
+							href={application.pullUrl}
+							target="_blank"
+							rel="noreferrer"
+							className="font-medium underline underline-offset-2"
+						>
+							{outcome.status === "current" ? "Pull request" : "pull request"} #
+							{application.pullNumber}
+						</a>
+						{outcome.status === "opened"
+							? ` in ${repository}.`
+							: outcome.status === "updated"
+								? ` in ${repository} a new commit.`
+								: ` in ${repository} already writes these files.`}
+					</>
+				)}
+			</p>
+			{problems.length > 0 && (
+				<div className="space-y-1">
+					<p className="text-muted-foreground">Left alone:</p>
+					<ul className="space-y-1">
+						{problems.map((problem) => (
+							<li key={problem.path}>
+								<span className="font-mono text-xs">{problem.path}</span>
+								<span className="text-muted-foreground"> · {problem.message}</span>
+							</li>
+						))}
+					</ul>
+				</div>
+			)}
+		</div>
 	);
 }

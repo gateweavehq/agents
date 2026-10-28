@@ -2,12 +2,19 @@ import { createHash, createHmac, createVerify, generateKeyPairSync } from "node:
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	appJwt,
+	branchCommit,
 	branchHead,
+	createBranch,
+	createCommit,
 	GitHubApp,
 	importAppKey,
+	moveBranch,
+	openPullRequest,
 	pkcePair,
+	pullRequest,
 	readTexts,
 	readTree,
+	updatePullRequest,
 	verifyWebhook,
 } from "../src";
 
@@ -142,6 +149,134 @@ describe("repository contents", () => {
 			Response.json({ data: { repository: null }, errors: [{ message: "Could not resolve" }] }),
 		);
 		await expect(readTexts("ghs_x", repository, [sha("2")])).rejects.toThrow("Could not resolve");
+	});
+});
+
+describe("repository writes", () => {
+	const repository = { owner: "acme", name: "site" };
+	const sha = (char: string) => char.repeat(40);
+
+	/** Answers each request with the next answer, and records what was asked. */
+	function github(...answers: Response[]) {
+		const calls: { route: string; body: unknown }[] = [];
+		vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+			calls.push({
+				route: `${init?.method ?? "GET"} ${input.replace("https://api.github.com", "")}`,
+				body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
+			});
+			return answers.shift() ?? Response.json({ message: "Not Found" }, { status: 404 });
+		});
+		return calls;
+	}
+
+	it("commits files as content on top of the parent's tree, then nothing else", async () => {
+		const calls = github(
+			Response.json({ sha: sha("c"), truncated: false, tree: [] }, { status: 201 }),
+			Response.json({ sha: sha("d") }, { status: 201 }),
+		);
+		const commit = await createCommit("ghs_x", repository, {
+			parent: sha("a"),
+			tree: sha("b"),
+			files: [{ path: ".claude/skills/review/SKILL.md", content: "Review.\n" }],
+			message: "Apply the Reviewers setup",
+		});
+
+		expect(commit).toBe(sha("d"));
+		expect(calls).toEqual([
+			{
+				route: "POST /repos/acme/site/git/trees",
+				body: {
+					base_tree: sha("b"),
+					tree: [
+						{
+							path: ".claude/skills/review/SKILL.md",
+							mode: "100644",
+							type: "blob",
+							content: "Review.\n",
+						},
+					],
+				},
+			},
+			{
+				route: "POST /repos/acme/site/git/commits",
+				body: { message: "Apply the Reviewers setup", tree: sha("c"), parents: [sha("a")] },
+			},
+		]);
+	});
+
+	it("creates, reads and moves branches whose names hold slashes", async () => {
+		const calls = github(
+			Response.json({ ref: "refs/heads/gateweave/setup-x" }, { status: 201 }),
+			Response.json({ object: { sha: sha("d") } }),
+			Response.json({ object: { sha: sha("e") } }),
+		);
+		await createBranch("ghs_x", repository, "gateweave/setup-x", sha("d"));
+		expect(await branchCommit("ghs_x", repository, "gateweave/setup-x")).toBe(sha("d"));
+		await moveBranch("ghs_x", repository, "gateweave/setup-x", sha("e"), true);
+		expect(await branchCommit("ghs_x", repository, "gone")).toBeNull();
+
+		expect(calls.map((call) => call.route)).toEqual([
+			"POST /repos/acme/site/git/refs",
+			"GET /repos/acme/site/git/ref/heads/gateweave/setup-x",
+			"PATCH /repos/acme/site/git/refs/heads/gateweave/setup-x",
+			"GET /repos/acme/site/git/ref/heads/gone",
+		]);
+		expect(calls[0]?.body).toEqual({ ref: "refs/heads/gateweave/setup-x", sha: sha("d") });
+		expect(calls[2]?.body).toEqual({ sha: sha("e"), force: true });
+	});
+
+	it("opens, reads and updates pull requests, telling merged from closed", async () => {
+		const pull = (state: string, merged: boolean | undefined, mergedAt: string | null) =>
+			Response.json({
+				number: 7,
+				html_url: "https://github.com/acme/site/pull/7",
+				state,
+				...(merged === undefined ? {} : { merged }),
+				merged_at: mergedAt,
+				head: { ref: "gateweave/setup-x", sha: sha("d") },
+			});
+		const calls = github(
+			pull("open", false, null),
+			pull("closed", true, "2026-10-28T12:00:00Z"),
+			pull("closed", undefined, null),
+		);
+
+		const opened = await openPullRequest("ghs_x", repository, {
+			title: "Apply the Reviewers setup",
+			body: "Pins",
+			head: "gateweave/setup-x",
+			base: "main",
+		});
+		expect(opened).toEqual({
+			number: 7,
+			url: "https://github.com/acme/site/pull/7",
+			state: "open",
+			head: sha("d"),
+		});
+		expect((await pullRequest("ghs_x", repository, 7))?.state).toBe("merged");
+		const updated = await updatePullRequest("ghs_x", repository, 7, { title: "T", body: "B" });
+		expect(updated.state).toBe("closed");
+		expect(await pullRequest("ghs_x", repository, 8)).toBeNull();
+
+		expect(calls.map((call) => call.route)).toEqual([
+			"POST /repos/acme/site/pulls",
+			"GET /repos/acme/site/pulls/7",
+			"PATCH /repos/acme/site/pulls/7",
+			"GET /repos/acme/site/pulls/8",
+		]);
+		expect(calls[0]?.body).toEqual({
+			title: "Apply the Reviewers setup",
+			body: "Pins",
+			head: "gateweave/setup-x",
+			base: "main",
+		});
+	});
+
+	it("passes on GitHub's refusals with their status", async () => {
+		github(Response.json({ message: "Resource not accessible by integration" }, { status: 403 }));
+		await expect(createBranch("ghs_x", repository, "x", sha("d"))).rejects.toMatchObject({
+			status: 403,
+		});
 	});
 });
 

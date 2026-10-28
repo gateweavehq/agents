@@ -60,6 +60,8 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
   The installation id that GitHub's setup redirect carries is not trusted: the link is made only
   after a user token shows that this person can reach the installation on GitHub. The token is
   not kept.
+- **Writing.** Commits, branches and pull requests through the REST API
+  (`packages/github/src/writes.ts`), for applying setups.
 - **Staying in step.** Linking, and webhooks for installation and repository changes, list the
   installation's repositories and reconcile them into the registry: new ones appear, renamed ones
   keep their history (they are matched by GitHub's id), and ones the app no longer reaches are
@@ -168,6 +170,30 @@ configures (`packages/registry/src/setups.ts`). Owners and admins manage them.
   runs `writeAssets` from `packages/adapters` for the setup's coding agents, so the page shows
   exactly the files a setup writes, and what it cannot write and why.
 
+## Applying setups
+
+Applying a setup to a repository opens a pull request (`packages/registry/src/apply.ts`). Owners
+and admins apply them, and [github-app.md](github-app.md#applying-a-setup) has the user's view.
+
+- **The default branch is never written.** The registry reads its head, plans the files with
+  `planApply` from `packages/adapters`, commits them on top of that head with a tree based on the
+  head's (so no other file changes), and points a new `gateweave/<setup>-<id>` branch at the
+  commit. Files go into the tree as content, so a commit is two requests however many files it
+  changes. Shared configuration files are merged, not replaced, and their text comes from the
+  registry's blobs when the last scan kept it. Any other file is compared by Git blob id and never
+  downloaded.
+- **Each application is a row** in `setup_applications`: the repository, the setup, the pins, the
+  files it leaves the setup owning (by blob id, for drift), the branch and commit, and the pull
+  request with its state. Every GitHub outcome is written in a transaction of its own as soon as
+  it is known, never across an await.
+- **Applying again** with the pull request still open checks it on GitHub first. If it was merged
+  or closed without a webhook saying so, the row catches up and a new pull request is opened. If
+  someone else pushed to its branch, the registry refuses. Otherwise a new commit replaces the
+  branch's, and nothing happens when the open pull request already writes the same files.
+- **Refusals are answers.** `applySetup` returns `{ status: "refused", message }` instead of
+  throwing: an error loses its class on its way out of the Durable Object, and the message is meant
+  for the person who asked. One setup is applied to one repository at a time per instance.
+
 ## Pages
 
 The workspace's pages read the registry through server functions in `apps/web/src/lib/registry.ts`,
@@ -185,7 +211,8 @@ workspace.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind.
 - **Setups** lists them with how many assets each pins and how many have updates; a setup's page
-  shows its pins, moves one to the latest version, and previews the files it writes.
+  shows its pins, moves one to the latest version, previews the files it writes, applies it to a
+  repository, and lists its pull requests. A repository's page lists the setups applied to it.
 - **An asset's page** shows the text of each of its files and every earlier version. For a
   repository asset it also shows the agents that read it, the library assets it matches, and how
   many other assets have the same content; for a library asset, the repository assets that use it.
@@ -198,9 +225,8 @@ Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
-- **Applying setups** (phase 2 in `docs/spec.md`): a pull request that writes a setup into a
-  repository, merging into configuration files that hold more than the setup's part, then drift
-  shown in the app and the CLI.
+- **Drift** (phase 2 in `docs/spec.md`): after a setup is applied, compare the files it owns
+  with each scan and show where a repository is behind or changed, in the app and in the CLI.
 
 ## Deploys
 

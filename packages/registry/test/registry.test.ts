@@ -848,6 +848,39 @@ describe("setups", () => {
 		expect(await stub.deleteSetup(setup.id)).toBe(false);
 		expect((await stub.listSetups()).map((entry) => entry.setup.name)).toEqual(["Other"]);
 	});
+
+	it("are applied only with files to write, through a GitHub App", async () => {
+		const stub = registry();
+		const {
+			repositories: [repository = ""],
+			skills: [web = ""],
+		} = await withReviewSkills(stub, ["Review it.\n"]);
+		const setup = await stub.createSetup({
+			name: "Reviewers",
+			description: null,
+			runtimes: ["claude-code"],
+		});
+		const refused = (message: string) => ({ status: "refused", message });
+
+		expect(await stub.applySetup("no-such-setup", repository)).toEqual(
+			refused("That setup does not exist"),
+		);
+		expect(await stub.applySetup(setup.id, "no-such-repository")).toEqual(
+			refused("That repository does not exist"),
+		);
+		expect(await stub.applySetup(setup.id, repository)).toEqual(
+			refused("This setup writes no files yet"),
+		);
+		await stub.setSetupAssets(setup.id, [
+			{ assetId: await stub.addToLibrary(web, { name: "review" }), version: 1 },
+		]);
+		// The test worker has no GitHub App.
+		expect(await stub.applySetup(setup.id, repository, "https://agents.test/x")).toEqual(
+			refused("GitHub is not set up on this server"),
+		);
+		expect((await stub.getSetup(setup.id))?.applications).toEqual([]);
+		expect((await stub.getRepository(repository))?.applications).toEqual([]);
+	});
 });
 
 describe("destroy", () => {

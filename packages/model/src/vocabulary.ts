@@ -49,3 +49,7 @@ export const ASSET_KIND_NAMES: Record<AssetKind, string> = {
 /** Where repositories are hosted. GitHub first; the spec leaves room for others. */
 export const REPOSITORY_PROVIDERS = ["github"] as const;
 export type RepositoryProvider = (typeof REPOSITORY_PROVIDERS)[number];
+
+/** Where the pull request that applies a setup stands. */
+export const APPLICATION_STATES = ["open", "merged", "closed"] as const;
+export type ApplicationState = (typeof APPLICATION_STATES)[number];

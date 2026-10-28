@@ -1,6 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
 import {
 	type Agent,
+	APPLICATION_STATES,
+	type ApplyOutcome,
+	type ApplyRefusal,
 	type AssetDetail,
 	type AssetVersion,
 	type LibraryEditInput,
@@ -36,6 +39,13 @@ import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { z } from "zod";
 import migrations from "../drizzle/migrations";
+import {
+	ApplyError,
+	prepareApplication,
+	recordPullRequest,
+	runApplication,
+	saveApplication,
+} from "./apply";
 import * as schema from "./db/schema";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
@@ -63,8 +73,8 @@ import {
 	syncRepositories,
 } from "./scans";
 import { createSetup, deleteSetup, setSetupAssets, updateSetup } from "./setups";
-import { type SourceEnv, sourceFor } from "./sources";
-import type { Db } from "./state";
+import { type SourceEnv, sourceFor, writerFor } from "./sources";
+import { type Db, toApplication } from "./state";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
@@ -78,13 +88,16 @@ const SCANS_PER_ALARM = 3;
 
 /**
  * One instance per workspace, named by the workspace id. Holds the registry: projects,
- * repositories, the agents and assets found in them, the library and setups.
+ * repositories, the agents and assets found in them, the library, and setups with the pull
+ * requests that apply them.
  *
  * The app worker calls it only after checking the caller's membership in D1, so it trusts that
  * the caller may see and change this workspace. It still validates what it is given.
  */
 export class RegistryDO extends DurableObject {
 	readonly #db: Db;
+	/** Setups being applied, by repository and setup, so one is not applied twice at once. */
+	readonly #applying = new Set<string>();
 
 	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
 		super(ctx, env);
@@ -211,6 +224,41 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => setSetupAssets(this.#db, setup, data, Date.now()));
 	}
 
+	/**
+	 * Opens a pull request that writes the setup into the repository, or gives the one still open
+	 * a new commit. `setupUrl` links the pull request back to the setup's page.
+	 */
+	async applySetup(
+		setupId: string,
+		repositoryId: string,
+		setupUrl?: string,
+	): Promise<ApplyOutcome | ApplyRefusal> {
+		const setup = id.parse(setupId);
+		const repository = id.parse(repositoryId);
+		const link = z.url().max(2000).optional().parse(setupUrl) ?? null;
+		const key = `${repository}:${setup}`;
+		if (this.#applying.has(key)) {
+			return { status: "refused", message: "This setup is already being applied there" };
+		}
+		this.#applying.add(key);
+		try {
+			const prepared = prepareApplication(this.#db, setup, repository);
+			const writer = writerFor(this.env as SourceEnv, prepared.repository);
+			if ("unavailable" in writer) throw new ApplyError(writer.unavailable);
+			const ran = await runApplication(this.#db, writer, prepared, link, (saved) =>
+				this.#write(() => saveApplication(this.#db, saved, Date.now())),
+			);
+			return ran.application === null
+				? ran
+				: { ...ran, application: toApplication(ran.application) };
+		} catch (error) {
+			if (error instanceof ApplyError) return { status: "refused", message: error.message };
+			throw error;
+		} finally {
+			this.#applying.delete(key);
+		}
+	}
+
 	// Repositories and scans, which the GitHub connection reports.
 
 	syncRepositories(inputs: RepositoryInput[]): string[] {
@@ -257,19 +305,26 @@ export class RegistryDO extends DurableObject {
 	 * asks. False when the registry has no live repository by that id.
 	 */
 	async requestScanOf(provider: string, externalId: string): Promise<boolean> {
-		const repository = this.#db
-			.select({ id: schema.repositories.id })
-			.from(schema.repositories)
-			.where(
-				and(
-					eq(schema.repositories.provider, z.enum(["github"]).parse(provider)),
-					eq(schema.repositories.externalId, z.string().min(1).max(100).parse(externalId)),
-					isNull(schema.repositories.removedAt),
-				),
-			)
-			.get();
+		const repository = this.#liveRepositoryOf(provider, externalId);
 		if (!repository) return false;
-		return (await this.requestScans([repository.id])) > 0;
+		return (await this.requestScans([repository])) > 0;
+	}
+
+	/**
+	 * Follows the state of a pull request in the repository with this provider id, as a
+	 * `pull_request` webhook reports it. False when it is not one that applies a setup.
+	 */
+	recordPullRequest(
+		provider: string,
+		externalId: string,
+		pullNumber: number,
+		state: string,
+	): boolean {
+		const repository = this.#liveRepositoryOf(provider, externalId);
+		if (!repository) return false;
+		const number = z.number().int().positive().parse(pullNumber);
+		const to = z.enum(APPLICATION_STATES).parse(state);
+		return this.#write(() => recordPullRequest(this.#db, repository, number, to, Date.now()));
 	}
 
 	applyScan(repositoryId: string, scan: ScanResult): ScanOutcome {
@@ -338,6 +393,21 @@ export class RegistryDO extends DurableObject {
 				retryScan(this.#db, request, Date.now());
 			});
 		}
+	}
+
+	/** The id of the live repository with this provider id, if the registry has one. */
+	#liveRepositoryOf(provider: string, externalId: string): string | undefined {
+		return this.#db
+			.select({ id: schema.repositories.id })
+			.from(schema.repositories)
+			.where(
+				and(
+					eq(schema.repositories.provider, z.enum(["github"]).parse(provider)),
+					eq(schema.repositories.externalId, z.string().min(1).max(100).parse(externalId)),
+					isNull(schema.repositories.removedAt),
+				),
+			)
+			.get()?.id;
 	}
 
 	async #scheduleScans(): Promise<void> {

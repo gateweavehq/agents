@@ -1,6 +1,12 @@
 /** What the registry returns. Times are milliseconds since the epoch. */
 import type { Metadata, ScanProblem } from "./inputs";
-import type { AgentRuntime, AssetKind, RepositoryProvider, RepositoryRuntime } from "./vocabulary";
+import type {
+	AgentRuntime,
+	ApplicationState,
+	AssetKind,
+	RepositoryProvider,
+	RepositoryRuntime,
+} from "./vocabulary";
 
 /** A product or initiative. Groups repositories; a repository can be in several projects. */
 export interface Project {
@@ -96,6 +102,8 @@ export interface RepositoryDetail {
 	repository: Repository;
 	agents: Agent[];
 	assets: Asset[];
+	/** The setups applied to it, newest first. */
+	applications: { application: SetupApplication; setup: { id: string; name: string } }[];
 }
 
 /** A project with its repositories and the agents configured in them. */
@@ -176,6 +184,59 @@ export interface SetupDetail {
 	files: { path: string; content: string }[];
 	/** Assets, or parts of them, that cannot be written for these coding agents, and why. */
 	problems: { asset: string; message: string }[];
+	/** The repositories it was applied to, newest first. */
+	applications: {
+		application: SetupApplication;
+		repository: { id: string; owner: string; name: string };
+	}[];
+}
+
+/** A setup applied to a repository: the pull request that writes its files there. */
+export interface SetupApplication {
+	id: string;
+	setupId: string;
+	repositoryId: string;
+	/** The pins the pull request's files come from. */
+	pins: { assetId: string; version: number }[];
+	/** The files the setup owns in the repository once the pull request is merged, by blob id. */
+	files: { path: string; blob: string }[];
+	branch: string;
+	/** The commit the pull request's branch was left at. */
+	commit: string;
+	pullNumber: number;
+	pullUrl: string;
+	state: ApplicationState;
+	createdAt: number;
+	updatedAt: number;
+}
+
+/** A file a setup writes that applying it left alone, and why. */
+export interface ApplyProblem {
+	path: string;
+	message: string;
+}
+
+/**
+ * What applying a setup did: opened a pull request, or gave the open one a new commit. Or
+ * nothing: the open one already writes these files (`current`), or the repository already holds
+ * them (`unchanged`).
+ */
+export type ApplyOutcome =
+	| {
+			status: "opened" | "updated" | "current";
+			application: SetupApplication;
+			problems: ApplyProblem[];
+	  }
+	| { status: "unchanged"; application: null; problems: ApplyProblem[] };
+
+/**
+ * Why a setup was not applied, fit to show the person who asked. The registry returns it rather
+ * than throwing: it is an answer, and a thrown error loses its kind on its way out of the
+ * Durable Object.
+ */
+export interface ApplyRefusal {
+	status: "refused";
+	message: string;
 }
 
 export interface Overview {
