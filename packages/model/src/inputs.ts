@@ -65,7 +65,8 @@ export const scannedFile = z
 		/**
 		 * Relative to the asset's directory: the asset's `path` when it is a directory, such as a
 		 * skill, and that path's parent when it is a file. The same skill or `CLAUDE.md` in two
-		 * repositories then has the same files, wherever it sits.
+		 * repositories then has the same files, wherever it sits. A plugin at the repository root
+		 * is the exception; see `repositoryPathOf`.
 		 */
 		path: repositoryPath,
 		content: z.string().max(MAX_FILE_LENGTH).optional(),

@@ -7,7 +7,7 @@
  * - https://code.claude.com/docs/en/plugins-reference (.claude-plugin/plugin.json; the page now
  *   redirects to the manifest reference and the standard layout:
  *   https://code.claude.com/docs/en/plugins/manifest-reference)
- * - https://code.claude.com/docs/en/plugin-marketplaces (marketplace.json and relative plugin paths)
+ * - https://code.claude.com/docs/en/plugin-marketplaces (marketplace.json, relative plugin paths)
  *
  * Plugins: the manifest is the only file in `.claude-plugin/`; every component (skills/,
  * commands/, agents/, hooks/hooks.json, .mcp.json, .lsp.json, ...) sits in the plugin root beside
@@ -243,7 +243,10 @@ function pluginManifests(paths: readonly string[]): string[] {
 	);
 }
 
-/** Paths a manifest points at, inside the plugin. The plugin root itself and anything outside are ignored. */
+/**
+ * Paths a manifest points at, inside the plugin. The plugin root itself and anything outside it
+ * are ignored.
+ */
 function declaredComponentPaths(manifest: Record<string, unknown>): string[] {
 	const values: unknown[] = PLUGIN_PATH_KEYS.map((key) => manifest[key]);
 	const experimental = manifest.experimental;
@@ -289,7 +292,8 @@ function plugin(
 		return null;
 	}
 	// A repository-root plugin cannot be "" as a path, so it keeps the `.claude-plugin` key that
-	// the manifest's folder always had; its files are still relative to the plugin root.
+	// the manifest's folder always had; its files are still relative to the plugin root, the one
+	// exception `repositoryPathOf` in the model knows about.
 	const path = root === "" ? ".claude-plugin" : root;
 	// Another plugin's folder is not this plugin's, however deep it sits.
 	const others = roots.filter((other) => other !== root && (root === "" || isWithin(other, root)));

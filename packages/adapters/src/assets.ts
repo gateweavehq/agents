@@ -101,7 +101,8 @@ export function instructionsAsset(
 
 /**
  * Every file under a directory ("" is the repository root), in path order, or only those
- * `options.include` accepts. `problemPath` names the directory in a problem when it is "". Files without text are given by blob and size.
+ * `options.include` accepts. Files without text are given by blob and size. `problemPath` names
+ * the directory in a problem when it is "".
  */
 export function directoryFiles(
 	tree: RepositoryTree,
