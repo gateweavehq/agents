@@ -234,6 +234,16 @@ describe("scan requests", () => {
 		await stub.reconcileInstallation("100", []);
 		expect(await stub.requestScanOf("github", "1")).toBe(false);
 	});
+
+	it("show on the repository while they wait", async () => {
+		await inside(registry(), async (instance) => {
+			const [web = ""] = instance.syncRepositories([github("1", "web")]);
+			expect(instance.getRepository(web)?.repository.scanPending).toBe(false);
+			// One call, so the alarm cannot run in between.
+			expect(await instance.requestScans([web], true)).toBe(1);
+			expect(instance.listRepositories()[0]?.scanPending).toBe(true);
+		});
+	});
 });
 
 describe("applyScan", () => {
