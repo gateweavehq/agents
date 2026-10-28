@@ -69,3 +69,23 @@ export function readSetupFolder(files: ReadonlyMap<string, string>): SetupFolder
 	if (problems.length > 0) return { ok: false, problems };
 	return { ok: true, setup: { name, description, runtimes, assets } };
 }
+
+/**
+ * The ready-made setups as a bundler gives them (Vite's `import.meta.glob` of `setups/*\/**`), by
+ * folder name and then by path inside the folder, sorted by folder. The Worker and the CLI bundle
+ * the same folders, so they group them the same way. A file directly under `setups/` belongs to
+ * no setup.
+ */
+export function groupSetupFolders(
+	bundled: Readonly<Record<string, string>>,
+): Map<string, Map<string, string>> {
+	const folders = new Map<string, Map<string, string>>();
+	for (const [key, text] of Object.entries(bundled)) {
+		const match = /(?:^|\/)setups\/([^/]+)\/(.+)$/.exec(key);
+		if (!match?.[1] || !match[2]) continue;
+		const files = folders.get(match[1]) ?? new Map<string, string>();
+		files.set(match[2], text);
+		folders.set(match[1], files);
+	}
+	return new Map([...folders].sort(([a], [b]) => compare(a, b)));
+}

@@ -3,7 +3,7 @@
  * Worker as text so they need no storage of their own. Server only (see AGENTS.md); import it
  * dynamically from a server function.
  */
-import { readSetupFolder, type SetupFolder } from "@gateweave/agents-adapters";
+import { groupSetupFolders, readSetupFolder, type SetupFolder } from "@gateweave/agents-adapters";
 import type { SetupImportInput } from "@gateweave/agents-model";
 
 // Dotfiles are left out by the glob, and the tests keep folders free of them.
@@ -24,17 +24,10 @@ export type ReadyMadeResult =
 
 /** Every bundled folder, read: a broken one is reported rather than hidden. Sorted by slug. */
 export function readyMadeResults(): ReadyMadeResult[] {
-	const folders = new Map<string, Map<string, string>>();
-	for (const [path, text] of Object.entries(bundled)) {
-		const match = /\/setups\/([^/]+)\/(.+)$/.exec(path);
-		if (!match?.[1] || !match[2]) continue;
-		const files = folders.get(match[1]) ?? new Map<string, string>();
-		files.set(match[2], text);
-		folders.set(match[1], files);
-	}
-	return [...folders]
-		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-		.map(([slug, files]) => ({ slug, ...readSetupFolder(files) }));
+	return [...groupSetupFolders(bundled)].map(([slug, files]) => ({
+		slug,
+		...readSetupFolder(files),
+	}));
 }
 
 /** The folders that read; one that does not is logged and left out, so the others still show. */

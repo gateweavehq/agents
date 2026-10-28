@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readSetupFolder, writeAssets } from "../src";
+import { groupSetupFolders, readSetupFolder, writeAssets } from "../src";
 
 const SKILL = "---\nname: review\ndescription: Reviews a change\n---\nLook closely.\n";
 const SERVER = `${JSON.stringify({ type: "http", url: "https://mcp.acme.dev/mcp" }, null, 2)}\n`;
@@ -99,6 +99,22 @@ describe("setup folders", () => {
 		expect(repeated.ok ? [] : repeated.problems).toEqual([
 			"setup.json at assets.1.name: Another instructions is named AGENTS.md",
 		]);
+	});
+
+	it("group by folder as a bundler lists them, leaving out files outside any folder", () => {
+		const grouped = groupSetupFolders({
+			"../../setups/review/setup.json": "{}",
+			"../../setups/baseline/skills/review/SKILL.md": SKILL,
+			"../../setups/baseline/setup.json": "{}",
+			"../../setups/README.md": "Not a setup.\n",
+		});
+		expect([...grouped.keys()]).toEqual(["baseline", "review"]);
+		expect(grouped.get("baseline")).toEqual(
+			new Map([
+				["skills/review/SKILL.md", SKILL],
+				["setup.json", "{}"],
+			]),
+		);
 	});
 
 	it("say which asset has no files", () => {

@@ -232,7 +232,24 @@ needs no GitHub request.
   then in sync. Until a scan has read the merge it is **unscanned**, rather than every file
   looking missing. A repository's state in the lists is the most urgent of its setups'.
 - **Applying again** from either page opens a pull request, or updates the open one, through the
-  same dialog as **Apply**. The CLI (AGT-17) will run the same comparison against a checkout.
+  same dialog as **Apply**.
+
+## The CLI
+
+`@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
+that a working tree still holds it, for CI. It reads a setup folder with `readSetupFolder`, writes
+it with `writeAssets` and plans it with `planApply`, like the app, so a file the CLI writes is the
+file the pull request would.
+
+- **The working tree stands in for the repository's tree.** Only the paths the setup writes and
+  the folders above them are looked at, with `lstat`, so a symlink is never followed and a
+  symlink, file or folder in the way is left alone and reported, as a pull request would leave it.
+- **Text is compared in LF.** The CLI writes LF, and reads a checkout's CRLF as LF, so a Windows
+  checkout does not look changed.
+- **`check` fails on what `apply` would write**: exit code 1 lists each file as missing or
+  differing. Paths it would leave alone are warnings, not failures.
+- **One file, no dependencies.** Vite bundles the CLI, the workspace packages it uses and the
+  ready-made setups into `dist/main.js`, so a version always writes the same files.
 
 ## Pages
 
@@ -267,9 +284,10 @@ Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
-- **Ready-made setups and the CLI** (phase 2 in `docs/spec.md`): curated setups that ship as
-  plain files in this repository, and `@gateweave/agents` with `apply` and a `check` that fails CI
-  on drift, using the same writers and comparison as the app.
+- **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
+  check`. It is built and tested here, and stays private until then.
+- **The runtime** (phase 3 in `docs/spec.md`): agents and teams in the Gateweave runtime, AI
+  Gateway, the MCP and environment pages, Chat and Runs.
 
 ## Deploys
 
