@@ -11,6 +11,7 @@ import {
 	Library,
 	LogOut,
 	Menu,
+	MessagesSquare,
 	Settings,
 	UserPlus,
 } from "lucide-react";
@@ -123,6 +124,15 @@ function Sidebar() {
 				>
 					<Bot className="size-4" />
 					Agents
+				</Link>
+				<Link
+					to="/$workspace/chat"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<MessagesSquare className="size-4" />
+					Chat
 				</Link>
 				<Link
 					to="/$workspace/library"

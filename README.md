@@ -41,10 +41,16 @@ Sign up with any email and password, then create a workspace. To enable "Sign in
 uncomment and fill in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.dev.vars`. To connect
 workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes.
 
-Workspaces keep their model provider keys and environment secrets encrypted with the server's `SECRETS_KEY`, which
-`pnpm dev:setup` generates for local development. On a deployed Worker, set it once with
-`openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY` and keep it: if it changes,
-workspaces have to add their keys and secret values again.
+Workspaces keep their model provider keys and environment secrets encrypted with the server's
+`SECRETS_KEY`, which `pnpm dev:setup` generates for local development. On a deployed Worker, set
+it once with `openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY` and keep it: if it
+changes, workspaces have to add their keys and secret values again.
+
+Chat sends each agent's requests straight to its model provider. To send them through a
+[Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) instead, for its logs,
+caching and rate limits, set `AI_GATEWAY_URL` to
+`https://gateway.ai.cloudflare.com/v1/<account id>/<gateway>`, and `AI_GATEWAY_TOKEN` if the
+gateway is authenticated.
 
 ## Contributing
 

@@ -15,6 +15,7 @@ import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as WorkspaceIndexRouteImport } from './routes/$workspace/index'
+import { Route as WorkspaceChatRouteImport } from './routes/$workspace/chat'
 import { Route as WorkspaceEnvironmentRouteImport } from './routes/$workspace/environment'
 import { Route as WorkspaceLibraryRouteImport } from './routes/$workspace/library'
 import { Route as WorkspaceSettingsRouteImport } from './routes/$workspace/settings'
@@ -22,6 +23,8 @@ import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitat
 import { Route as WorkspaceAgentsIndexRouteImport } from './routes/$workspace/agents.index'
 import { Route as WorkspaceAgentsAgentIdRouteImport } from './routes/$workspace/agents.$agentId'
 import { Route as WorkspaceAssetsAssetIdRouteImport } from './routes/$workspace/assets.$assetId'
+import { Route as WorkspaceChatIndexRouteImport } from './routes/$workspace/chat.index'
+import { Route as WorkspaceChatConversationIdRouteImport } from './routes/$workspace/chat.$conversationId'
 import { Route as WorkspaceProjectsIndexRouteImport } from './routes/$workspace/projects.index'
 import { Route as WorkspaceProjectsProjectIdRouteImport } from './routes/$workspace/projects.$projectId'
 import { Route as WorkspaceRepositoriesIndexRouteImport } from './routes/$workspace/repositories.index'
@@ -68,6 +71,11 @@ const WorkspaceIndexRoute = WorkspaceIndexRouteImport.update({
   path: '/',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const WorkspaceChatRoute = WorkspaceChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
 const WorkspaceEnvironmentRoute = WorkspaceEnvironmentRouteImport.update({
   id: '/environment',
   path: '/environment',
@@ -103,6 +111,17 @@ const WorkspaceAssetsAssetIdRoute = WorkspaceAssetsAssetIdRouteImport.update({
   path: '/assets/$assetId',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const WorkspaceChatIndexRoute = WorkspaceChatIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => WorkspaceChatRoute,
+} as any)
+const WorkspaceChatConversationIdRoute =
+  WorkspaceChatConversationIdRouteImport.update({
+    id: '/$conversationId',
+    path: '/$conversationId',
+    getParentRoute: () => WorkspaceChatRoute,
+  } as any)
 const WorkspaceProjectsIndexRoute = WorkspaceProjectsIndexRouteImport.update({
   id: '/projects/',
   path: '/projects/',
@@ -189,6 +208,7 @@ export interface FileRoutesByFullPath {
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/$workspace/chat': typeof WorkspaceChatRouteWithChildren
   '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
@@ -196,6 +216,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/': typeof WorkspaceIndexRoute
   '/$workspace/agents/$agentId': typeof WorkspaceAgentsAgentIdRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
+  '/$workspace/chat/$conversationId': typeof WorkspaceChatConversationIdRoute
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
@@ -208,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/api/github/setup': typeof ApiGithubSetupRoute
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/$workspace/agents/': typeof WorkspaceAgentsIndexRoute
+  '/$workspace/chat/': typeof WorkspaceChatIndexRoute
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
@@ -224,6 +246,7 @@ export interface FileRoutesByTo {
   '/$workspace': typeof WorkspaceIndexRoute
   '/$workspace/agents/$agentId': typeof WorkspaceAgentsAgentIdRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
+  '/$workspace/chat/$conversationId': typeof WorkspaceChatConversationIdRoute
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
@@ -236,6 +259,7 @@ export interface FileRoutesByTo {
   '/api/github/setup': typeof ApiGithubSetupRoute
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/$workspace/agents': typeof WorkspaceAgentsIndexRoute
+  '/$workspace/chat': typeof WorkspaceChatIndexRoute
   '/$workspace/projects': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
@@ -248,6 +272,7 @@ export interface FileRoutesById {
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/$workspace/chat': typeof WorkspaceChatRouteWithChildren
   '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
@@ -255,6 +280,7 @@ export interface FileRoutesById {
   '/$workspace/': typeof WorkspaceIndexRoute
   '/$workspace/agents/$agentId': typeof WorkspaceAgentsAgentIdRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
+  '/$workspace/chat/$conversationId': typeof WorkspaceChatConversationIdRoute
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
@@ -267,6 +293,7 @@ export interface FileRoutesById {
   '/api/github/setup': typeof ApiGithubSetupRoute
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/$workspace/agents/': typeof WorkspaceAgentsIndexRoute
+  '/$workspace/chat/': typeof WorkspaceChatIndexRoute
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
   '/$workspace/repositories/': typeof WorkspaceRepositoriesIndexRoute
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
@@ -280,6 +307,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/login'
     | '/reset-password'
+    | '/$workspace/chat'
     | '/$workspace/environment'
     | '/$workspace/library'
     | '/$workspace/settings'
@@ -287,6 +315,7 @@ export interface FileRouteTypes {
     | '/$workspace/'
     | '/$workspace/agents/$agentId'
     | '/$workspace/assets/$assetId'
+    | '/$workspace/chat/$conversationId'
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
@@ -299,6 +328,7 @@ export interface FileRouteTypes {
     | '/api/github/setup'
     | '/api/github/webhooks'
     | '/$workspace/agents/'
+    | '/$workspace/chat/'
     | '/$workspace/projects/'
     | '/$workspace/repositories/'
     | '/$workspace/settings/'
@@ -315,6 +345,7 @@ export interface FileRouteTypes {
     | '/$workspace'
     | '/$workspace/agents/$agentId'
     | '/$workspace/assets/$assetId'
+    | '/$workspace/chat/$conversationId'
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
@@ -327,6 +358,7 @@ export interface FileRouteTypes {
     | '/api/github/setup'
     | '/api/github/webhooks'
     | '/$workspace/agents'
+    | '/$workspace/chat'
     | '/$workspace/projects'
     | '/$workspace/repositories'
     | '/$workspace/settings'
@@ -338,6 +370,7 @@ export interface FileRouteTypes {
     | '/forgot-password'
     | '/login'
     | '/reset-password'
+    | '/$workspace/chat'
     | '/$workspace/environment'
     | '/$workspace/library'
     | '/$workspace/settings'
@@ -345,6 +378,7 @@ export interface FileRouteTypes {
     | '/$workspace/'
     | '/$workspace/agents/$agentId'
     | '/$workspace/assets/$assetId'
+    | '/$workspace/chat/$conversationId'
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/settings/github'
@@ -357,6 +391,7 @@ export interface FileRouteTypes {
     | '/api/github/setup'
     | '/api/github/webhooks'
     | '/$workspace/agents/'
+    | '/$workspace/chat/'
     | '/$workspace/projects/'
     | '/$workspace/repositories/'
     | '/$workspace/settings/'
@@ -421,6 +456,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceIndexRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/$workspace/chat': {
+      id: '/$workspace/chat'
+      path: '/chat'
+      fullPath: '/$workspace/chat'
+      preLoaderRoute: typeof WorkspaceChatRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
     '/$workspace/environment': {
       id: '/$workspace/environment'
       path: '/environment'
@@ -469,6 +511,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/$workspace/assets/$assetId'
       preLoaderRoute: typeof WorkspaceAssetsAssetIdRouteImport
       parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/chat/': {
+      id: '/$workspace/chat/'
+      path: '/'
+      fullPath: '/$workspace/chat/'
+      preLoaderRoute: typeof WorkspaceChatIndexRouteImport
+      parentRoute: typeof WorkspaceChatRoute
+    }
+    '/$workspace/chat/$conversationId': {
+      id: '/$workspace/chat/$conversationId'
+      path: '/$conversationId'
+      fullPath: '/$workspace/chat/$conversationId'
+      preLoaderRoute: typeof WorkspaceChatConversationIdRouteImport
+      parentRoute: typeof WorkspaceChatRoute
     }
     '/$workspace/projects/': {
       id: '/$workspace/projects/'
@@ -578,6 +634,20 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface WorkspaceChatRouteChildren {
+  WorkspaceChatConversationIdRoute: typeof WorkspaceChatConversationIdRoute
+  WorkspaceChatIndexRoute: typeof WorkspaceChatIndexRoute
+}
+
+const WorkspaceChatRouteChildren: WorkspaceChatRouteChildren = {
+  WorkspaceChatConversationIdRoute: WorkspaceChatConversationIdRoute,
+  WorkspaceChatIndexRoute: WorkspaceChatIndexRoute,
+}
+
+const WorkspaceChatRouteWithChildren = WorkspaceChatRoute._addFileChildren(
+  WorkspaceChatRouteChildren,
+)
+
 interface WorkspaceSettingsRouteChildren {
   WorkspaceSettingsGithubRoute: typeof WorkspaceSettingsGithubRoute
   WorkspaceSettingsMembersRoute: typeof WorkspaceSettingsMembersRoute
@@ -596,6 +666,7 @@ const WorkspaceSettingsRouteWithChildren =
   WorkspaceSettingsRoute._addFileChildren(WorkspaceSettingsRouteChildren)
 
 interface WorkspaceRouteChildren {
+  WorkspaceChatRoute: typeof WorkspaceChatRouteWithChildren
   WorkspaceEnvironmentRoute: typeof WorkspaceEnvironmentRoute
   WorkspaceLibraryRoute: typeof WorkspaceLibraryRoute
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRouteWithChildren
@@ -612,6 +683,7 @@ interface WorkspaceRouteChildren {
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
+  WorkspaceChatRoute: WorkspaceChatRouteWithChildren,
   WorkspaceEnvironmentRoute: WorkspaceEnvironmentRoute,
   WorkspaceLibraryRoute: WorkspaceLibraryRoute,
   WorkspaceSettingsRoute: WorkspaceSettingsRouteWithChildren,

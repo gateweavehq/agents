@@ -7,6 +7,7 @@ import type {
 	ApplyOutcome,
 	ApplyRefusal,
 	AssetVersion,
+	Conversation,
 	EnvRefusal,
 	EnvSecret,
 	EnvSecretInput,
@@ -93,6 +94,8 @@ export interface RegistryStub {
 	listEnvSets(): Promise<EnvSetEntry[]>;
 	setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal>;
 	resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null>;
+	startConversation(agentId: string, startedBy: string): Promise<Conversation | null>;
+	getConversation(conversationId: string, startedBy: string): Promise<Conversation | null>;
 }
 
 /** The address Agents sends from in tests. */
@@ -188,6 +191,11 @@ export async function startAgents(
 					durableObjects: {
 						REGISTRY: { className: "RegistryDO", useSQLite: true, scriptName: names[0] },
 						RATE_LIMITER: { className: "RateLimiter", useSQLite: true, scriptName: names[0] },
+						CONVERSATIONS: {
+							className: "ConversationAgent",
+							useSQLite: true,
+							scriptName: names[0],
+						},
 					},
 					outboundService: (request: Request) => {
 						outbound.push(request.url);
@@ -255,6 +263,18 @@ export async function startAgents(
 		/** A `fetch` that reaches the Worker directly. Redirects are returned, not followed. */
 		fetch: (input: string | URL | Request, init?: RequestInit) => fetchIn(0, input, init),
 		fetchIn,
+		/**
+		 * Opens a WebSocket to the Worker. Its status is 101 and `socket` is open, accepted, when
+		 * the Worker took the upgrade.
+		 */
+		async connect(url: string, headers: Record<string, string>) {
+			const response = await mf.dispatchFetch(url, {
+				headers: { ...headers, Upgrade: "websocket" },
+			});
+			const socket = response.webSocket;
+			socket?.accept();
+			return { status: response.status, socket };
+		},
 		/** URLs the Worker tried to fetch from outside. */
 		outbound,
 		/** Everything the Worker has logged so far, oldest first. */

@@ -1,0 +1,20 @@
+// Worker used only by the test suite to host a conversation and its workspace's registry.
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "agents-runtime-test",
+	"main": "./worker.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+	// A key for the tests' sealed secrets only; it protects nothing.
+	"vars": { "SECRETS_KEY": "dGVzdC1vbmx5LXNlY3JldHMta2V5LXRlc3Qtb25seS0=" },
+	"durable_objects": {
+		"bindings": [
+			{ "name": "REGISTRY", "class_name": "RegistryDO" },
+			{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" }
+		]
+	},
+	"exports": {
+		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
+		"ConversationAgent": { "type": "durable-object", "storage": "sqlite" }
+	}
+}

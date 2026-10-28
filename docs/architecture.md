@@ -298,6 +298,42 @@ admins manage them on the Environment page (`packages/registry/src/environment.t
 - **Without `SECRETS_KEY`** the page says so and values cannot be set; sets with only variables
   work as they are.
 
+## Chat
+
+Members talk to agents run by Gateweave on the Chat page. Each conversation is a Durable Object
+of its own, `ConversationAgent` (`packages/runtime`), built on the Agents SDK's `AIChatAgent`: it
+keeps the messages in its SQLite, streams the reply over a WebSocket, and picks a stream back up
+after a reconnect.
+
+- **A conversation belongs to the member who started it.** The registry keeps the index
+  (`conversations`: the agent, who started it, the title and when), and nobody else lists, opens
+  or deletes it, admins included. The Durable Object is named `<workspace id>:<conversation id>`.
+- **No public route.** The browser connects to `/api/chat/<slug>/<conversation id>` and reads
+  `…/get-messages` first. The gateway (`apps/web/src/server/chat.ts`) takes only GET, requires
+  the app's own Origin on WebSockets, checks the session, the membership in D1 and the
+  conversation's owner, and passes the request on without its cookies. Anyone else gets the 404
+  a missing conversation gets.
+- **Each turn asks the registry** (`beginTurn`). It records the turn (the first message titles
+  the conversation) and returns the agent's snapshot with the workspace's key for its provider,
+  opened, or a sentence saying why the agent cannot answer: it was removed, or the workspace has
+  no key. The key stays in memory for that turn.
+- **The model** is called with the AI SDK (`streamText`) and the provider's own package, with the
+  agent's pinned instructions as the system prompt. Stopping a turn aborts the model's request. A
+  provider's refusal becomes a sentence of ours chosen by its status (`describeFailure` in
+  `packages/runtime/src/models.ts`); the provider's message, which can quote the key, is neither
+  shown nor logged.
+- **AI Gateway, when the deployment names one.** With `AI_GATEWAY_URL`
+  (`https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`), every model request goes through
+  that gateway with the workspace's key, and `cf-aig-metadata` names the workspace, agent and
+  conversation so its logs and analytics split by workspace. `AI_GATEWAY_TOKEN` is for an
+  authenticated gateway. The gateway is reached by URL rather than through an `ai` binding,
+  because the binding always calls Cloudflare: local development and the tests would need a
+  Cloudflare login. Without the setting, requests go straight to the provider.
+- **Deleting a conversation** removes its row, then destroys its Durable Object with the
+  messages.
+- **Not yet:** tools from MCP servers (AGT-26), running with the agent's environment set (AGT-24)
+  and Markdown in replies.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -333,6 +369,9 @@ workspace.
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, and
   its pinned instructions with their text.
+- **Chat** lists the caller's own conversations, the latest first, and starts one with any
+  agent run by Gateweave. A conversation's page streams the reply, can stop it, and says when the
+  agent cannot answer and why. An agent's page has a Chat button too.
 - **Environment** lists the environment sets with their variables, their secrets as set or
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
@@ -360,8 +399,8 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The runtime** (phase 3 in `docs/spec.md`): agents defined in Gateweave, Chat and Runs
-  through AI Gateway with the workspace's keys, environment sets, MCP servers and teams.
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): runs and their traces with the
+  agent's environment set, tools from MCP servers, and teams.
 
 ## Deploys
 
