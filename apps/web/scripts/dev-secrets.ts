@@ -15,6 +15,8 @@ export const OPTIONAL_SECRETS = [
 	"GITHUB_APP_PRIVATE_KEY",
 	"GITHUB_APP_WEBHOOK_SECRET",
 	"SECRETS_KEY",
+	"AI_GATEWAY_URL",
+	"AI_GATEWAY_TOKEN",
 ] as const;
 
 /** What local dev loads from .dev.vars: the required secrets, and the optional ones it sets. */

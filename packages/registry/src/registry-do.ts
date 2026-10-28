@@ -10,6 +10,7 @@ import {
 	type AssetDetail,
 	type AssetVersion,
 	agentDefinitionInput,
+	type Conversation,
 	type EnvRefusal,
 	type EnvSecret,
 	type EnvSecretInput,
@@ -71,6 +72,15 @@ import {
 	runApplication,
 	saveApplication,
 } from "./apply";
+import {
+	type ConversationTurn,
+	conversationAgentId,
+	getConversation,
+	listConversations,
+	noteTurn,
+	removeConversation,
+	startConversation,
+} from "./conversations";
 import * as schema from "./db/schema";
 import { agentSnapshot, createAgent, removeAgent, updateAgent } from "./definitions";
 import {
@@ -412,6 +422,62 @@ export class RegistryDO extends DurableObject {
 			}
 		}
 		return { values, missing };
+	}
+
+	// Conversations with agents run by Gateweave. Each is private to the member who started it,
+	// whose user id every call but the runtime's carries.
+
+	/** Null when there is no such agent to talk to. */
+	startConversation(agentId: string, startedBy: string): Conversation | null {
+		const agent = id.parse(agentId);
+		const member = id.parse(startedBy);
+		return this.#write(() => startConversation(this.#db, agent, member, Date.now()));
+	}
+
+	listConversations(startedBy: string, agentId?: string): Conversation[] {
+		return listConversations(this.#db, id.parse(startedBy), id.optional().parse(agentId));
+	}
+
+	getConversation(conversationId: string, startedBy: string): Conversation | null {
+		return getConversation(this.#db, id.parse(conversationId), id.parse(startedBy));
+	}
+
+	/** Forgets the conversation; the caller clears its messages from the runtime. */
+	removeConversation(conversationId: string, startedBy: string): boolean {
+		const conversation = id.parse(conversationId);
+		const member = id.parse(startedBy);
+		return this.#write(() => removeConversation(this.#db, conversation, member));
+	}
+
+	/**
+	 * Begins a turn of a conversation, for the runtime alone: it notes the turn, and hands over the
+	 * agent as it is now with the workspace's key for its provider, opened. The runtime keeps the
+	 * key in memory for the turn and sends it nowhere but the provider.
+	 */
+	async beginTurn(
+		conversationId: string,
+		text: string,
+	): Promise<ConversationTurn | ProviderRefusal> {
+		const conversation = id.parse(conversationId);
+		const message = z.string().max(100_000).parse(text);
+		const agentId = conversationAgentId(this.#db, conversation);
+		if (agentId === null) return { status: "refused", message: "This conversation was deleted" };
+		this.#write(() => noteTurn(this.#db, conversation, message, Date.now()));
+		const agent = agentSnapshot(this.#db, agentId);
+		if (!agent) {
+			return {
+				status: "refused",
+				message: "This agent was removed, so the conversation cannot go on",
+			};
+		}
+		if (sealedKeyOf(this.#db, agent.provider) === null) {
+			return {
+				status: "refused",
+				message: `The workspace has no ${MODEL_PROVIDER_NAMES[agent.provider]} key, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
+			};
+		}
+		const opened = await this.#openKey(agent.provider);
+		return "status" in opened ? opened : { agent, key: opened.key };
 	}
 
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the

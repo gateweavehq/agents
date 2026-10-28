@@ -22,6 +22,7 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 | `packages/adapters` | Turn a repository's files into a scan: one adapter per coding agent. Pure   |
 | `packages/registry` | `RegistryDO`: each workspace's projects, repositories, agents and assets    |
 | `packages/github`   | The GitHub App's client: JWT, installation tokens, OAuth, webhooks          |
+| `packages/runtime`  | `ConversationAgent`: each conversation with an agent run by Gateweave       |
 | `packages/cli`      | `@gateweave/agents`: applies and checks a setup in a working tree           |
 | `docs/`             | The product spec, the architecture and setting up the GitHub App            |
 | `scripts/`          | Repository tooling (`doctor`)                                               |
@@ -63,7 +64,9 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    Non-members get the same "not found" as a missing workspace.
 2. **The registry has no public route.** `RegistryDO` trusts its caller, so the Worker reaches
    it (`registryFor`) only after that membership check. It still validates every input against
-   the schemas in `packages/model`.
+   the schemas in `packages/model`. Conversations (`ConversationAgent`) have no public route
+   either: `apps/web/src/server/chat.ts` checks the session, the membership and that the
+   conversation is the caller's, then passes the request on without its cookies.
 3. **Registry writes stay synchronous.** Each runs inside `ctx.storage.transactionSync` with
    Drizzle's sync API (`.get()`, `.all()`, `.run()`), so it applies whole or not at all. Never
    `await` in the middle of a write. A scan awaits GitHub first and writes after, in a
@@ -80,9 +83,10 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    the person can reach it, as `apps/web/src/server/github/flow.ts` does, and act on webhooks
    only after their signature checks out.
 8. **Secrets stay local.** Never commit `.dev.vars` or print its contents. Secrets the app holds
-   for workspaces (model keys, environment-set secrets, later MCP credentials) are sealed with `packages/registry/src/secrets.ts`
-   before they are stored, opened only in the registry when a request needs them, and never sent
-   to the browser, to files or to prompts and logs. Members see a key's last four characters, and
+   for workspaces (model keys, environment-set secrets, later MCP credentials) are sealed with
+   `packages/registry/src/secrets.ts` before they are stored, opened only in the registry when a
+   request needs them (a chat turn gets its key from `beginTurn`, in memory), and never sent to
+   the browser, to files or to prompts and logs. Members see a key's last four characters, and
    which secrets of an environment set have a value, never the value.
 
 ## Code shared with Track
@@ -121,6 +125,9 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
   the test pool reports an exception thrown inside a Durable Object as unhandled. Alarms may run
   on their own before `runDurableObjectAlarm` does, so assert on what a scan left behind, not on
   whether the alarm was still waiting.
+- `packages/runtime` tests run inside workerd too, against a real `ConversationAgent` and
+  `RegistryDO` over a real WebSocket. The model's API is a spy on `fetch`, which works because
+  the Durable Object and the test share an isolate there.
 - `packages/model` and `packages/github` tests run in Node.
 - `packages/cli` tests run in Node and call `run` on folders in the system's temporary folder.
 - `packages/adapters` tests run in Node, on in-memory repositories. Every test that checks output
@@ -130,7 +137,9 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
   Worker's request to its own hostname does; see `test/agents-worker.ts`. Tests that connect
   GitHub pass a `FakeGitHub` (`test/fake-github.ts`), which answers for github.com and
   api.github.com and checks the app's JWT, PKCE and who can reach which installation. Give its
-  repositories `files` to test scans; it serves their branches, trees and blobs.
+  repositories `files` to test scans; it serves their branches, trees and blobs. Tests that use
+  model keys pass a `FakeModels` (`test/fake-models.ts`), which lists models for the keys it
+  knows and streams Anthropic's answers for chat.
 - Every bug fix gets a test that fails without the fix. Never weaken or skip a test to make a
   change pass.
 

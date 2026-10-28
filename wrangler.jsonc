@@ -17,23 +17,26 @@
 		}
 	],
 	// Each workspace's registry (projects, repositories, the agents and assets found in them) is
-	// one Durable Object. Rate limits on sign-in, password reset and email are counted in one per
-	// client address or recipient.
+	// one Durable Object, and so is each conversation with an agent. Rate limits on sign-in,
+	// password reset and email are counted in one per client address or recipient.
 	"durable_objects": {
 		"bindings": [
 			{ "name": "REGISTRY", "class_name": "RegistryDO" },
+			{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
 			{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
 		]
 	},
 	"exports": {
 		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
+		"ConversationAgent": { "type": "durable-object", "storage": "sqlite" },
 		"RateLimiter": { "type": "durable-object", "storage": "sqlite" }
 	},
 	// Email through Cloudflare Email Service. Nothing is sent until EMAIL_FROM names a sender on a
 	// domain onboarded to Email Sending; without it, Agents runs with email off.
 	"send_email": [{ "name": "EMAIL" }],
-	// Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, and the six
-	// GITHUB_APP_* settings of the GitHub App (see apps/web/src/server/env.d.ts).
+	// Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, the six
+	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, and AI_GATEWAY_URL with
+	// AI_GATEWAY_TOKEN (see apps/web/src/server/env.d.ts).
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
 	// The top level is production. Staging is a separate Worker with its own database and
 	// workspaces; bindings are not inherited, so they are repeated here.
@@ -50,6 +53,7 @@
 			"durable_objects": {
 				"bindings": [
 					{ "name": "REGISTRY", "class_name": "RegistryDO" },
+					{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
 					{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
 				]
 			},

@@ -23,6 +23,12 @@ BETTER_AUTH_SECRET=
 # in a random one. Never change it once keys are saved: they cannot be opened without it.
 # SECRETS_KEY=
 
+# Optional: sends agents' model calls through Cloudflare AI Gateway, for its logs, caching and
+# rate limits: https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>. Without it, calls
+# go straight to the providers. The token is only for an authenticated gateway.
+# AI_GATEWAY_URL=
+# AI_GATEWAY_TOKEN=
+
 # Optional: pins the app's URL. Leave it out to accept any host, for example from your phone.
 # BETTER_AUTH_URL=
 

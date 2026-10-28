@@ -27,5 +27,13 @@ declare namespace Cloudflare {
 		 * change it once keys are saved: they cannot be opened without it.
 		 */
 		SECRETS_KEY?: string;
+		/**
+		 * The AI Gateway that agents' model calls go through, as
+		 * `https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>`. Calls go straight to the
+		 * providers when unset. Each call still carries the workspace's own key.
+		 */
+		AI_GATEWAY_URL?: string;
+		/** The gateway's token, when it is an authenticated gateway. */
+		AI_GATEWAY_TOKEN?: string;
 	}
 }

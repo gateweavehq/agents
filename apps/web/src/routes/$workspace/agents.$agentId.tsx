@@ -5,7 +5,7 @@ import {
 	type PinnedAsset,
 } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { Pencil, Trash2 } from "lucide-react";
+import { MessagesSquare, Pencil, Trash2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { AgentDialog } from "#/components/registry/agent-dialogs";
@@ -14,6 +14,7 @@ import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
+import { startChat } from "#/lib/chat";
 import { getProviderKeys } from "#/lib/providers";
 import { getAgent, getLibrary, removeAgent, updateAgent } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
@@ -58,10 +59,43 @@ function AgentPage() {
 						<RuntimeBadge runtime={agent.runtime} />
 					</p>
 				</div>
-				{admin && definition && <AgentActions definition={definition} />}
+				{definition && (
+					<div className="flex flex-wrap gap-2">
+						<ChatButton agentId={agent.id} />
+						{admin && <AgentActions definition={definition} />}
+					</div>
+				)}
 			</header>
 			{definition ? <Definition definition={definition} admin={admin} /> : <Configured />}
 		</div>
+	);
+}
+
+/** Starts a conversation with the agent, and opens it. */
+function ChatButton({ agentId }: { agentId: string }) {
+	const { slug } = useWorkspace();
+	const navigate = useNavigate();
+	const [pending, setPending] = useState(false);
+
+	async function start() {
+		setPending(true);
+		try {
+			const conversation = await startChat({ data: { slug, agentId } });
+			await navigate({
+				to: "/$workspace/chat/$conversationId",
+				params: { workspace: slug, conversationId: conversation.id },
+			});
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : "Something went wrong");
+			setPending(false);
+		}
+	}
+
+	return (
+		<Button size="sm" onClick={start} disabled={pending}>
+			<MessagesSquare />
+			Chat
+		</Button>
 	);
 }
 

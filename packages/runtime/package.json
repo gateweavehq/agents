@@ -1,0 +1,33 @@
+{
+	"name": "@gateweave/agents-runtime",
+	"version": "0.0.0",
+	"private": true,
+	"license": "AGPL-3.0-only",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typegen": "wrangler types --config test/wrangler.jsonc",
+		"typecheck": "wrangler types --config test/wrangler.jsonc && tsc",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@ai-sdk/anthropic": "4.0.89",
+		"@ai-sdk/google": "4.0.106",
+		"@ai-sdk/openai": "4.0.103",
+		"@ai-sdk/provider": "catalog:",
+		"@cloudflare/ai-chat": "catalog:",
+		"@gateweave/agents-model": "workspace:*",
+		"@gateweave/agents-registry": "workspace:*",
+		"agents": "catalog:",
+		"ai": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-plugin": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:",
+		"wrangler": "catalog:"
+	}
+}

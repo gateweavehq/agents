@@ -395,3 +395,20 @@ export interface ResolvedEnvironment {
 	values: Record<string, string>;
 	missing: string[];
 }
+
+/**
+ * A conversation with an agent run by Gateweave. Only the member who started it can open it. Its
+ * messages live in its own Durable Object; the registry keeps this index of them.
+ */
+export interface Conversation {
+	id: string;
+	agentId: string;
+	agentName: string;
+	/** The agent was removed, so the conversation can be read but not continued. */
+	agentRemoved: boolean;
+	/** The start of its first message; null until one is sent. */
+	title: string | null;
+	createdAt: number;
+	/** When the last turn started. */
+	updatedAt: number;
+}

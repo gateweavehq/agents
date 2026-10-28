@@ -112,8 +112,9 @@ The same shape as Track: one Worker per product and one Durable Object per works
 - **Runtime.** Each running agent is a Cloudflare Agents SDK agent (a Durable Object with its own
   state, storage and scheduling). Team messages are RPC calls between those objects, checked
   against the team graph. Long, multi-step jobs run as Workflows, so they survive restarts.
-- **Models** go through Cloudflare AI Gateway: OpenAI, Anthropic, Google and Workers AI behind one
-  endpoint, with caching, rate limits, fallbacks and logs.
+- **Models** go through Cloudflare AI Gateway when the deployment names one: OpenAI, Anthropic
+  and Google behind one endpoint, with caching, rate limits, fallbacks and logs. Without it,
+  requests go to the provider directly.
 - **Tools.** MCP servers through the Agents SDK's MCP client; scripts and code in Cloudflare
   Sandboxes; secrets sealed in the workspace's registry and never copied into prompts (see
   "Decisions").
@@ -172,8 +173,8 @@ runtime is designed alongside it, so the data model fits both.
   each other, need no extra infrastructure, and survive restarts. Blob texts come through GraphQL,
   fifty per request, and texts already stored are not downloaded again, which keeps a scan within
   the free plan's 50 subrequests per invocation.
-- **Models and their keys** (AGT-21, 2026-10-28). Every model request goes through one AI
-  Gateway per deployment, with the workspace's own provider key sent per request. A gateway per
+- **Models and their keys** (AGT-21, 2026-10-28). A deployment has at most one AI Gateway,
+  and model requests carry the workspace's own provider key. A gateway per
   workspace with keys stored in it would not scale: an account has at most 20 gateways, and
   stored keys belong to a gateway. So keys stay with the workspace, sealed in its registry with
   AES-256-GCM under a key derived from the deployment's `SECRETS_KEY` and the workspace's id.
@@ -186,6 +187,15 @@ runtime is designed alongside it, so the data model fits both.
   in a table of its own. Instructions come from the library, pinned to a version, rather than as
   text typed into the agent: they are versioned, shared between agents and setups, and shown
   wherever the library asset is.
+- **Conversations** (AGT-23, 2026-10-28). Each conversation is an Agents SDK `AIChatAgent`
+  Durable Object of its own, rather than one per agent or per workspace: storing messages,
+  streaming and resuming come with it, one conversation's load never slows another, and deleting
+  one is destroying its object. A conversation is private to the member who started it, like a
+  direct message, because it can hold anything; shared work comes with runs and teams. The
+  registry keeps the index and opens the key for each turn, so keys rest only there. AI Gateway
+  is reached by URL (`AI_GATEWAY_URL`) instead of the `ai` binding, which always calls
+  Cloudflare: local development, the tests and self-hosted servers work without a Cloudflare
+  login, and a deployment turns the gateway on with one setting.
 - **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
   asset when its hash equals one of the library asset's versions; no link is stored. There is
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the

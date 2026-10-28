@@ -340,6 +340,29 @@ export const envSecrets = sqliteTable(
 	(table) => [primaryKey({ columns: [table.assetId, table.name] })],
 );
 
+/**
+ * Conversations with agents run by Gateweave, each private to the member who started it. The
+ * messages live in the conversation's own Durable Object; this is the index pages list them from.
+ */
+export const conversations = sqliteTable(
+	"conversations",
+	{
+		id: text("id").primaryKey(),
+		agentId: text("agent_id")
+			.notNull()
+			.references(() => agents.id),
+		/** The user id of the member who started it. */
+		startedBy: text("started_by").notNull(),
+		title: text("title"),
+		createdAt: integer("created_at").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(table) => [
+		index("conversations_started_by_idx").on(table.startedBy, table.updatedAt),
+		index("conversations_agent_idx").on(table.agentId),
+	],
+);
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
