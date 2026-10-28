@@ -84,11 +84,11 @@ function teamModel(
 const toolNames = (request: ModelRequest | undefined) =>
 	((request?.body.tools as { name: string }[] | undefined) ?? []).map((tool) => tool.name);
 
-/** The runs of the workspace, the person's first and the nested ones after it. */
+/** The run of the person's message, and the runs it called; none of these tests go deeper. */
 async function runs(registry: ReturnType<typeof env.REGISTRY.getByName>) {
-	const all = await registry.listRuns();
-	const root = all.find((run) => run.parentRunId === null);
-	return { root, nested: all.filter((run) => run.parentRunId !== null), all };
+	const [root] = await registry.listRuns();
+	const nested = root ? await registry.listNestedRuns(root.id) : [];
+	return { root, nested, all: root ? [root, ...nested] : [] };
 }
 
 async function traceOf(workspaceId: string, run: Run | undefined) {

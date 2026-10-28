@@ -308,3 +308,89 @@ describe("nested turns", () => {
 		});
 	});
 });
+
+describe("a team's runs", () => {
+	const finish = (stub: Stub, runId: string, cost: number | null) =>
+		stub.finishRun(runId, {
+			status: "succeeded",
+			error: null,
+			steps: 1,
+			inputTokens: 1_000,
+			outputTokens: 100,
+			cachedInputTokens: 0,
+			cost,
+			endedAt: Date.now() + 1_000,
+		});
+
+	it("list each person's message once, with the total of the runs it led to", async () => {
+		const { stub, coder, qa, builders } = await workspace();
+		const { turn: root } = await message(stub, builders);
+		const coderTurn = await begin(
+			stub,
+			"nested-coder",
+			"Write the form",
+			via(root.runId, "delegate", builders, coder),
+		);
+		const testerTurn = await begin(
+			stub,
+			"nested-tester",
+			"Test the form",
+			via(coderTurn.runId, "delegate", builders, qa),
+		);
+		const asked = await begin(stub, "nested-ask", "Tested?", via(root.runId, "ask", builders, qa));
+		await finish(stub, root.runId, 2_000);
+		await finish(stub, coderTurn.runId, null);
+		await finish(stub, asked.runId, 500);
+
+		const listed = await stub.listRuns();
+		expect(listed.map((run) => run.id)).toEqual([root.runId]);
+		expect(listed[0]?.total).toEqual({
+			runs: 4,
+			running: 1,
+			inputTokens: 3_000,
+			outputTokens: 300,
+			cost: 2_500,
+			unpriced: 1,
+		});
+		// A nested run's total is its own and those under it.
+		expect((await stub.getRun(coderTurn.runId))?.total).toMatchObject({ runs: 2, running: 1 });
+		expect((await stub.getRun(asked.runId))?.total).toMatchObject({ runs: 1, running: 0 });
+
+		const called = await stub.listNestedRuns(root.runId);
+		expect(called.map((run) => [run.agentName, run.edge, run.total.runs])).toEqual([
+			["Coder", "delegate", 2],
+			["Tester", "ask", 1],
+		]);
+		expect((await stub.listNestedRuns(coderTurn.runId)).map((run) => run.id)).toEqual([
+			testerTurn.runId,
+		]);
+	});
+
+	it("show who is at work in a conversation, to the member who had it", async () => {
+		const { stub, coder, builders } = await workspace();
+		const { conversation, turn: root } = await message(stub, builders);
+		const coderTurn = await begin(
+			stub,
+			"nested-coder",
+			"Write the form",
+			via(root.runId, "delegate", builders, coder),
+		);
+		const working = async () =>
+			(await stub.activeRuns(conversation, ADA))?.map((run) => [run.agentName, run.teamPath]);
+		expect(await working()).toEqual([
+			["Planner", [builders]],
+			["Coder", [builders]],
+		]);
+
+		// A nested run is listed while it goes, even once the turn that called it ended, as a
+		// report's does.
+		await finish(stub, root.runId, 0);
+		expect(await working()).toEqual([["Coder", [builders]]]);
+		await finish(stub, coderTurn.runId, 0);
+		expect(await working()).toEqual([]);
+
+		expect(await stub.activeRuns(conversation, "user-grace")).toBeNull();
+		expect(await stub.activeRuns("nested-coder", ADA)).toBeNull();
+		expect(await stub.activeRuns("missing", ADA)).toBeNull();
+	});
+});

@@ -10,10 +10,26 @@ import {
 	type Run,
 	type RunCursor,
 	type RunFinish,
+	type RunTotal,
 	type RunUsage,
 	type TeamEdgeKind,
+	type TotaledRun,
 } from "@gateweave/agents-model";
-import { and, count, desc, eq, gte, isNotNull, isNull, lt, or, sql, sum } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	gte,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	or,
+	sql,
+	sum,
+} from "drizzle-orm";
 import { agents, runs } from "./db/schema";
 import type { Db } from "./state";
 
@@ -120,16 +136,18 @@ export function finishRun(db: Db, id: string, finish: Required<RunFinish>): bool
 }
 
 /**
- * Runs, the latest first, a page at a time: everyone's, or one member's with `startedBy`. `before`
- * is the last run of the page before.
+ * The runs people's messages started, the latest first, a page at a time, each with the total of
+ * the runs nested under it: everyone's, or one member's with `startedBy`. `before` is the last run
+ * of the page before.
  */
 export function listRuns(
 	db: Db,
 	{ startedBy, before }: { startedBy?: string; before?: RunCursor },
-): Run[] {
-	return selectRuns(db)
+): TotaledRun[] {
+	const page = selectRuns(db)
 		.where(
 			and(
+				isNull(runs.parentRunId),
 				startedBy === undefined ? undefined : eq(runs.startedBy, startedBy),
 				before === undefined
 					? undefined
@@ -143,11 +161,91 @@ export function listRuns(
 		.limit(RUNS_PER_PAGE)
 		.all()
 		.map(toRun);
+	return withTotals(db, page);
 }
 
-export function getRun(db: Db, id: string): Run | null {
+export function getRun(db: Db, id: string): TotaledRun | null {
 	const row = selectRuns(db).where(eq(runs.id, id)).get();
-	return row ? toRun(row) : null;
+	return row ? (withTotals(db, [toRun(row)])[0] ?? null) : null;
+}
+
+/** The runs one run called over its team's edges, in the order it called them. */
+export function listNestedRuns(db: Db, parentRunId: string): TotaledRun[] {
+	const nested = selectRuns(db)
+		.where(eq(runs.parentRunId, parentRunId))
+		.orderBy(asc(runs.startedAt), asc(runs.id))
+		.all()
+		.map(toRun);
+	return withTotals(db, nested);
+}
+
+/**
+ * The runs of a conversation still going: the turn answering the person's message, and those it
+ * led to over the team's edges, which may go on after it, as a report does.
+ */
+export function activeRuns(db: Db, conversationId: string): Run[] {
+	const turns = db
+		.select({ id: runs.id })
+		.from(runs)
+		.where(and(eq(runs.conversationId, conversationId), isNull(runs.parentRunId)));
+	return selectRuns(db)
+		.where(
+			and(
+				eq(runs.status, "running"),
+				or(eq(runs.conversationId, conversationId), inArray(runs.rootRunId, turns)),
+			),
+		)
+		.orderBy(asc(runs.startedAt), asc(runs.id))
+		.all()
+		.map(toRun);
+}
+
+/**
+ * Each run with what it and the runs nested under it used. The runs one message led to are few
+ * (`TEAM_TURN_LIMITS.perMessage`), so they are read whole and added up here.
+ */
+function withTotals(db: Db, list: Run[]): TotaledRun[] {
+	if (list.length === 0) return [];
+	const tops = [...new Set(list.map((run) => run.rootRunId ?? run.id))];
+	const family = db
+		.select({
+			id: runs.id,
+			parentRunId: runs.parentRunId,
+			status: runs.status,
+			inputTokens: runs.inputTokens,
+			outputTokens: runs.outputTokens,
+			cost: runs.cost,
+		})
+		.from(runs)
+		.where(inArray(runs.rootRunId, tops))
+		.all();
+	const called = new Map<string, typeof family>();
+	for (const run of family) {
+		if (run.parentRunId === null) continue;
+		called.set(run.parentRunId, [...(called.get(run.parentRunId) ?? []), run]);
+	}
+	return list.map((run) => {
+		const total: RunTotal = {
+			runs: 0,
+			running: 0,
+			inputTokens: 0,
+			outputTokens: 0,
+			cost: 0,
+			unpriced: 0,
+		};
+		const add = (one: Pick<Run, "id" | "status" | "inputTokens" | "outputTokens" | "cost">) => {
+			total.runs++;
+			total.inputTokens += one.inputTokens;
+			total.outputTokens += one.outputTokens;
+			// A run still going has no cost yet, which says nothing of its prices.
+			if (one.status === "running") total.running++;
+			else if (one.cost === null) total.unpriced++;
+			if (one.cost !== null) total.cost += one.cost;
+			for (const next of called.get(one.id) ?? []) add(next);
+		};
+		add(run);
+		return { ...run, total };
+	});
 }
 
 /** What the workspace's runs used since `since`. */

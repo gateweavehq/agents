@@ -1,6 +1,6 @@
-import type { Run, RunStatus } from "@gateweave/agents-model";
+import type { Run, RunStatus, RunTotal } from "@gateweave/agents-model";
 import { LoaderCircle } from "lucide-react";
-import { formatDuration, formatTokens } from "#/lib/usage";
+import { formatCost, formatDuration, formatTokens } from "#/lib/usage";
 import { cn } from "#/lib/utils";
 
 const STATUSES: Record<RunStatus, { label: string; className: string }> = {
@@ -45,4 +45,27 @@ export function tokensUsed({
 	outputTokens,
 }: Pick<Run, "inputTokens" | "outputTokens">) {
 	return `${formatTokens(inputTokens)} in · ${formatTokens(outputTokens)} out`;
+}
+
+/**
+ * What a run and the runs nested under it cost, by the providers' list prices. Runs still going
+ * have no cost yet, and runs of models without prices are left out, as it says.
+ */
+export function TotalCost({ total }: { total: RunTotal }) {
+	const priced = total.runs - total.running - total.unpriced;
+	if (priced === 0) {
+		return (
+			<span className="text-xs text-muted-foreground">
+				{total.unpriced > 0 ? "Not priced" : "Pending"}
+			</span>
+		);
+	}
+	return (
+		<>
+			{formatCost(total.cost)}
+			{total.unpriced > 0 && (
+				<span className="block text-xs text-muted-foreground">{total.unpriced} not priced</span>
+			)}
+		</>
+	);
 }

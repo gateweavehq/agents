@@ -1,15 +1,17 @@
 import { MODEL_PROVIDER_NAMES } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { ArrowLeft, Trash2 } from "lucide-react";
-import { Suspense, useEffect, useState } from "react";
+import { ArrowLeft, Trash2, Users } from "lucide-react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ConversationView } from "#/components/chat/conversation-view";
+import { TeamPanel } from "#/components/chat/team-panel";
 import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { getChat, removeChat } from "#/lib/chat";
 import { useDocumentTitle } from "#/lib/title";
+import { cn } from "#/lib/utils";
 
 export const Route = createFileRoute("/$workspace/chat/$conversationId")({
 	loader: ({ params }) =>
@@ -25,18 +27,35 @@ function ChatPage() {
 	// The conversation talks over a WebSocket, which exists only in the browser.
 	const [mounted, setMounted] = useState(false);
 	useEffect(() => setMounted(true), []);
+	// Whether a turn runs, for the team beside the conversation to watch who is at work.
+	const [busy, setBusy] = useState(false);
+	// Narrower screens show the team over the conversation, when asked.
+	const [showTeam, setShowTeam] = useState(false);
+	const team = data?.team ?? null;
+	const withTeam = data ? data.conversation.teamId !== null : false;
+	// The names edge calls are shown by; a deleted team's calls keep the names the tools have.
+	const members = useMemo(
+		() => (withTeam ? (team?.members.map((member) => member.name) ?? []) : null),
+		[withTeam, team],
+	);
 	useDocumentTitle(data?.conversation.title ?? "Chat");
 
 	if (!data) {
 		return <Notice title="Conversation not found">It may have been deleted.</Notice>;
 	}
 	const { conversation, agent } = data;
+	const teamName = team?.team.name ?? conversation.teamName ?? "A deleted team";
 	const provider = agent && MODEL_PROVIDER_NAMES[agent.provider];
-	const blocked = !agent
-		? "This agent was removed, so the conversation cannot go on."
-		: !agent.keyed
-			? `The workspace has no ${provider} key, so ${agent.name} cannot answer yet.${admin ? "" : " An owner or admin can add one in Settings."}`
-			: null;
+	const blocked =
+		withTeam && !team
+			? "This team was deleted, so the conversation cannot go on."
+			: withTeam && !agent
+				? `The lead of ${teamName} was removed, so the team cannot answer. ${admin ? "Choose another lead on the team's page." : "An owner or admin can choose another on the team's page."}`
+				: !agent
+					? "This agent was removed, so the conversation cannot go on."
+					: !agent.keyed
+						? `The workspace has no ${provider} key, so ${agent.name} cannot answer yet.${admin ? "" : " An owner or admin can add one in Settings."}`
+						: null;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -49,7 +68,35 @@ function ChatPage() {
 				<div className="min-w-0 flex-1">
 					<p className="truncate text-sm font-medium">{conversation.title ?? "New conversation"}</p>
 					<p className="truncate text-xs text-muted-foreground">
-						{agent ? (
+						{withTeam ? (
+							team ? (
+								<>
+									<Link
+										to="/$workspace/teams/$teamId"
+										params={{ workspace: slug, teamId: team.team.id }}
+										className="hover:underline"
+									>
+										{team.team.name}
+									</Link>
+									{agent && (
+										<>
+											{" "}
+											· led by{" "}
+											<Link
+												to="/$workspace/agents/$agentId"
+												params={{ workspace: slug, agentId: agent.id }}
+												className="hover:underline"
+											>
+												{agent.name}
+											</Link>{" "}
+											· <span className="font-mono">{agent.model}</span>
+										</>
+									)}
+								</>
+							) : (
+								teamName
+							)
+						) : agent ? (
 							<>
 								<Link
 									to="/$workspace/agents/$agentId"
@@ -65,6 +112,19 @@ function ChatPage() {
 						)}
 					</p>
 				</div>
+				{team && (
+					<Button
+						variant="ghost"
+						size="sm"
+						className="2xl:hidden"
+						onClick={() => setShowTeam((shown) => !shown)}
+						aria-expanded={showTeam}
+						aria-controls="team-panel"
+					>
+						<Users />
+						<span className="sr-only sm:not-sr-only">Team</span>
+					</Button>
+				)}
 				<RemoveButton conversationId={conversation.id} />
 			</header>
 			{blocked && (
@@ -84,21 +144,39 @@ function ChatPage() {
 					)}
 				</p>
 			)}
-			{mounted ? (
-				<Suspense fallback={<Loading />}>
-					<ConversationView
-						key={conversation.id}
-						slug={slug}
-						conversationId={conversation.id}
-						agentName={agent?.name ?? conversation.agentName}
-						disabled={blocked !== null}
-						// The list shows the title the first message gave it, and the latest first.
-						onTurnEnd={() => router.invalidate()}
-					/>
-				</Suspense>
-			) : (
-				<Loading />
-			)}
+			<div className="relative flex min-h-0 flex-1">
+				<div className="flex min-w-0 flex-1 flex-col">
+					{mounted ? (
+						<Suspense fallback={<Loading />}>
+							<ConversationView
+								key={conversation.id}
+								slug={slug}
+								conversationId={conversation.id}
+								agentName={withTeam ? teamName : (agent?.name ?? conversation.agentName)}
+								members={members}
+								disabled={blocked !== null}
+								// The list shows the title the first message gave it, and the latest first.
+								onTurnEnd={() => router.invalidate()}
+								onBusyChange={setBusy}
+							/>
+						</Suspense>
+					) : (
+						<Loading />
+					)}
+				</div>
+				{team && (
+					<aside
+						id="team-panel"
+						aria-label="The team"
+						className={cn(
+							"overflow-y-auto border-l bg-background 2xl:static 2xl:block 2xl:w-[30rem] 2xl:shrink-0",
+							showTeam ? "absolute inset-0 z-10 block sm:left-auto sm:w-[30rem]" : "hidden",
+						)}
+					>
+						<TeamPanel slug={slug} conversationId={conversation.id} detail={team} busy={busy} />
+					</aside>
+				)}
+			</div>
 		</div>
 	);
 }

@@ -1,8 +1,8 @@
 import { MODEL_PROVIDER_NAMES, type RunSpan, type TeamEdgeKind } from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { MessagesSquare } from "lucide-react";
-import type { ReactNode } from "react";
-import { RunStatusBadge, runDuration } from "#/components/runs/run-labels";
+import { ChevronRight, MessagesSquare } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
+import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
@@ -22,10 +22,11 @@ function RunPage() {
 	const { slug } = useWorkspace();
 	const data = Route.useLoaderData();
 	useDocumentTitle(data ? `Run of ${data.run.agentName}` : "Run");
-	useRefreshWhile(data?.run.status === "running");
+	// Runs it led to may go on after it, as a report's does.
+	useRefreshWhile(data?.run.status === "running" || (data?.run.total.running ?? 0) > 0);
 
 	if (!data) return <Notice title="Run not found" />;
-	const { run, trace, conversation } = data;
+	const { run, trace, nested, conversation } = data;
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -70,17 +71,18 @@ function RunPage() {
 				</p>
 			)}
 			<Summary run={run} />
+			{run.total.runs > 1 && (
+				<p className="text-sm text-muted-foreground">
+					With the {run.total.runs === 2 ? "run" : `${run.total.runs - 1} runs`} it led to over its
+					team's edges: {tokensUsed(run.total)} ·{" "}
+					<span className="text-foreground">
+						<TotalCost total={run.total} />
+					</span>
+				</p>
+			)}
 			<section className="space-y-3">
 				<h2 className="text-sm font-medium">Trace</h2>
-				{trace === null ? (
-					<p className="text-sm text-muted-foreground">
-						The conversation this run belonged to was deleted, and its trace with it.
-					</p>
-				) : trace.length === 0 ? (
-					<p className="text-sm text-muted-foreground">The run ended before it called the model.</p>
-				) : (
-					<Timeline run={run} trace={trace} />
-				)}
+				<Trace run={run} trace={trace} nested={nested} />
 			</section>
 		</div>
 	);
@@ -162,12 +164,36 @@ const SPAN_COLORS: Record<RunSpan["status"], string> = {
 	error: "bg-destructive",
 };
 
+function Trace({
+	run,
+	trace,
+	nested,
+}: {
+	run: RunEntry;
+	trace: RunSpan[] | null;
+	nested: RunEntry[];
+}) {
+	if (trace === null) {
+		return (
+			<p className="text-sm text-muted-foreground">
+				The conversation this run belonged to was deleted, and its trace with it.
+			</p>
+		);
+	}
+	if (trace.length === 0) {
+		return (
+			<p className="text-sm text-muted-foreground">The run ended before it called the model.</p>
+		);
+	}
+	return <Timeline run={run} trace={trace} nested={nested} />;
+}
+
 /**
  * Each span on one time axis, from the start of the run to its end: connecting to the agent's MCP
  * servers, each model request, and the tools each request called and the edges it took, under it.
+ * Each edge it took shows the run it started, which opens to that run's own trace.
  */
-function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
-	const { slug } = useWorkspace();
+function Timeline({ run, trace, nested }: { run: RunEntry; trace: RunSpan[]; nested: RunEntry[] }) {
 	const end = Math.max(
 		run.endedAt ?? (run.status === "running" ? Date.now() : run.startedAt),
 		...trace.map((span) => span.endedAt ?? span.startedAt),
@@ -179,7 +205,7 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 		<ol className="divide-y rounded-lg border">
 			{trace.map((span) => {
 				const spanEnd = span.endedAt ?? end;
-				const { title, meta, details } = describeSpan(span, spanEnd, slug);
+				const { title, meta, details } = describeSpan(span, spanEnd);
 				return (
 					<li
 						key={span.id}
@@ -210,6 +236,12 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 							</p>
 						)}
 						{span.error && <p className="text-xs text-destructive">{span.error}</p>}
+						{span.kind === "edge" && span.childRunId && (
+							<NestedRun
+								id={span.childRunId}
+								run={nested.find((each) => each.id === span.childRunId) ?? null}
+							/>
+						)}
 					</li>
 				);
 			})}
@@ -221,7 +253,6 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 function describeSpan(
 	span: RunSpan,
 	spanEnd: number,
-	slug: string,
 ): { title: ReactNode; meta: string; details: ReactNode[] } {
 	const duration = formatDuration(spanEnd - span.startedAt);
 	switch (span.kind) {
@@ -233,18 +264,8 @@ function describeSpan(
 					</>
 				),
 				meta: duration,
-				details: span.childRunId
-					? [
-							<Link
-								key="run"
-								to="/$workspace/runs/$runId"
-								params={{ workspace: slug, runId: span.childRunId }}
-								className="underline underline-offset-4 hover:text-foreground"
-							>
-								Open its run
-							</Link>,
-						]
-					: [],
+				// The run it started shows below, with its link.
+				details: [],
 			};
 		case "connect":
 			return {
@@ -307,4 +328,81 @@ function describeSpan(
 				].filter(Boolean),
 			};
 	}
+}
+
+/**
+ * A run an edge started, inside its caller's trace: what it did and used, all the runs under it
+ * counted, and its own trace when opened, fetched then. A refresh of the page while it goes keeps
+ * the open trace in step.
+ */
+function NestedRun({ id, run }: { id: string; run: RunEntry | null }) {
+	const { slug } = useWorkspace();
+	const [open, setOpen] = useState(false);
+	const [detail, setDetail] = useState<Awaited<ReturnType<typeof getRun>>>(null);
+	const [failed, setFailed] = useState(false);
+	const status = run?.status;
+	const running = run?.total.running;
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fetches again as the run goes on.
+	useEffect(() => {
+		if (!open) return;
+		let live = true;
+		getRun({ data: { slug, runId: id } })
+			.then((fetched) => {
+				if (!live) return;
+				setDetail(fetched);
+				setFailed(fetched === null);
+			})
+			.catch(() => {
+				if (live) setFailed(true);
+			});
+		return () => {
+			live = false;
+		};
+	}, [open, slug, id, status, running]);
+
+	const link = (
+		<Link
+			to="/$workspace/runs/$runId"
+			params={{ workspace: slug, runId: id }}
+			className="underline underline-offset-4 hover:text-foreground"
+		>
+			Open its run
+		</Link>
+	);
+	if (!run) return <p className="text-xs text-muted-foreground">{link}</p>;
+
+	return (
+		<div className="space-y-3 rounded-md border bg-muted/20 p-2">
+			<div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+				<Button
+					variant="ghost"
+					size="sm"
+					className="h-7 px-1.5"
+					onClick={() => setOpen((shown) => !shown)}
+					aria-expanded={open}
+				>
+					<ChevronRight className={cn("transition-transform", open && "rotate-90")} />
+					<span className="font-medium">{run.agentName}</span>
+				</Button>
+				<RunStatusBadge status={run.status} />
+				<span className="text-muted-foreground tabular-nums">
+					{runDuration(run)} · {tokensUsed(run.total)}
+					{run.total.runs > 1 && ` · with ${run.total.runs - 1} under it`}
+				</span>
+				<span className="tabular-nums">
+					<TotalCost total={run.total} />
+				</span>
+				<span className="text-muted-foreground">{link}</span>
+			</div>
+			{open &&
+				(detail ? (
+					<Trace run={detail.run} trace={detail.trace} nested={detail.nested} />
+				) : (
+					<p className="px-1.5 text-xs text-muted-foreground">
+						{failed ? "Its trace could not be read." : "Loading its trace…"}
+					</p>
+				))}
+		</div>
+	);
 }

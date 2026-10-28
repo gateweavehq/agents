@@ -52,7 +52,7 @@ export interface NestedTurnPlan {
  */
 export function nestedTurnPlan(db: Db, via: TurnVia): NestedTurnPlan | TurnRefused {
 	const caller = callingRun(db, via.parentRunId);
-	if (!caller || caller.status !== "running") {
+	if (caller?.status !== "running") {
 		return { refused: "The turn that took this edge has ended" };
 	}
 	if (caller.teamPath === null || caller.conversationId === null) {

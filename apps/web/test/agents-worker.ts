@@ -32,7 +32,6 @@ import type {
 	RepositoryDetail,
 	RepositoryInput,
 	ResolvedEnvironment,
-	Run,
 	RunCursor,
 	RunFinish,
 	RunUsage,
@@ -43,6 +42,7 @@ import type {
 	SetupPins,
 	Team,
 	TeamGraphInput,
+	TotaledRun,
 	TurnMcpServer,
 	WrittenAssetInput,
 } from "@gateweave/agents-model";
@@ -120,8 +120,9 @@ export interface RegistryStub {
 	removeConversation(conversationId: string, startedBy: string): Promise<string[]>;
 	beginTurn(conversationId: string, text: string): Promise<{ runId: string } | ProviderRefusal>;
 	finishRun(runId: string, finish: RunFinish): Promise<boolean>;
-	listRuns(options?: { startedBy?: string; before?: RunCursor }): Promise<Run[]>;
-	getRun(runId: string): Promise<Run | null>;
+	listRuns(options?: { startedBy?: string; before?: RunCursor }): Promise<TotaledRun[]>;
+	getRun(runId: string): Promise<TotaledRun | null>;
+	listNestedRuns(runId: string): Promise<TotaledRun[]>;
 	runUsage(since: number): Promise<RunUsage>;
 }
 

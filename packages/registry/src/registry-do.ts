@@ -79,6 +79,7 @@ import {
 	type TeamEntry,
 	type TeamGraphInput,
 	type TeamInput,
+	type TotaledRun,
 	type TurnMcpServer,
 	type TurnVia,
 	teamGraphInput,
@@ -158,7 +159,17 @@ import {
 	readOverview,
 } from "./queries";
 import { dueScans, finishScan, nextScanAt, requestScans, retryScan } from "./queue";
-import { beginRun, detachRuns, expireRuns, finishRun, getRun, listRuns, runUsage } from "./runs";
+import {
+	activeRuns,
+	beginRun,
+	detachRuns,
+	expireRuns,
+	finishRun,
+	getRun,
+	listNestedRuns,
+	listRuns,
+	runUsage,
+} from "./runs";
 import { scanRepository } from "./scanner";
 import {
 	applyScan,
@@ -719,18 +730,41 @@ export class RegistryDO extends DurableObject {
 
 	// Runs, for the Runs page and the Overview. Runs cut short and never reported are closed first.
 
-	/** The latest runs, a page at a time; one member's with `startedBy`. */
-	listRuns(options: { startedBy?: string; before?: RunCursor } = {}): Run[] {
+	/**
+	 * The latest runs people's messages started, a page at a time, with the runs nested under each
+	 * in its total; one member's with `startedBy`.
+	 */
+	listRuns(options: { startedBy?: string; before?: RunCursor } = {}): TotaledRun[] {
 		const startedBy = id.optional().parse(options.startedBy);
 		const before = runCursor.optional().parse(options.before);
 		this.#write(() => expireRuns(this.#db, Date.now()));
 		return listRuns(this.#db, { startedBy, before });
 	}
 
-	getRun(runId: string): Run | null {
+	getRun(runId: string): TotaledRun | null {
 		const run = id.parse(runId);
 		this.#write(() => expireRuns(this.#db, Date.now()));
 		return getRun(this.#db, run);
+	}
+
+	/** The runs one run called over its team's edges, in the order it called them. */
+	listNestedRuns(runId: string): TotaledRun[] {
+		const run = id.parse(runId);
+		this.#write(() => expireRuns(this.#db, Date.now()));
+		return listNestedRuns(this.#db, run);
+	}
+
+	/**
+	 * The runs still going in one of the member's conversations, nested ones included, for the chat
+	 * to show who is at work. Null when the conversation is not theirs, or not one a person had.
+	 */
+	activeRuns(conversationId: string, startedBy: string): Run[] | null {
+		const conversation = id.parse(conversationId);
+		const member = id.parse(startedBy);
+		const parties = conversationParties(this.#db, conversation);
+		if (!parties || parties.startedBy !== member || parties.rootId !== null) return null;
+		this.#write(() => expireRuns(this.#db, Date.now()));
+		return activeRuns(this.#db, conversation);
 	}
 
 	/** What runs used since `since`, a time. */
