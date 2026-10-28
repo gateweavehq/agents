@@ -16,7 +16,10 @@ import type {
 	EnvSetInput,
 	LibraryEditInput,
 	LibraryTarget,
+	McpCheck,
+	McpCheckResult,
 	McpServerEditInput,
+	McpServerEntry,
 	McpServerInput,
 	Overview,
 	Project,
@@ -37,6 +40,7 @@ import type {
 	SetupDetail,
 	SetupInput,
 	SetupPins,
+	TurnMcpServer,
 	WrittenAssetInput,
 } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
@@ -97,6 +101,9 @@ export interface RegistryStub {
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
 	createMcpServer(input: McpServerInput): Promise<string>;
 	editMcpServer(input: McpServerEditInput): Promise<number>;
+	listMcpServers(): Promise<McpServerEntry[]>;
+	mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null>;
+	recordMcpCheck(assetId: string, result: McpCheckResult): Promise<McpCheck | null>;
 	createEnvSet(input: EnvSetInput): Promise<string>;
 	editEnvSet(input: EnvSetEditInput): Promise<number>;
 	listEnvSets(): Promise<EnvSetEntry[]>;

@@ -532,3 +532,34 @@ export interface ConnectSpan extends SpanBase {
 export type TurnMcpServer =
 	| { name: string; transport: "http" | "sse"; url: string; headers: Record<string, string> }
 	| { name: string; problem: string };
+
+/** A tool an MCP server offers, as a check listed it. */
+export interface McpTool {
+	name: string;
+	description: string;
+}
+
+/** The last check of an MCP server in the library. */
+export interface McpCheck {
+	/** The server's version when it was checked. */
+	version: number;
+	checkedAt: number;
+	ok: boolean;
+	/** The tools it offered; empty when the check failed. */
+	tools: McpTool[];
+	/** Why the check failed, in the app's words. Null when it worked. */
+	error: string | null;
+}
+
+/** An MCP server in the library as the MCP page shows it. */
+export interface McpServerEntry {
+	/** `asset.version` is the current version. */
+	asset: Asset;
+	/** Where an agent reaches it, or why it cannot. */
+	connection: { transport: "http" | "sse"; url: string } | { problem: string };
+	/** The variables its headers name, sorted. */
+	variables: string[];
+	/** The live agents run by Gateweave that pin it, and the version each pins. */
+	agents: { id: string; name: string; version: number }[];
+	check: McpCheck | null;
+}

@@ -13,6 +13,7 @@ import {
 	LogOut,
 	Menu,
 	MessagesSquare,
+	Plug,
 	Settings,
 	UserPlus,
 } from "lucide-react";
@@ -152,6 +153,15 @@ function Sidebar() {
 				>
 					<Library className="size-4" />
 					Library
+				</Link>
+				<Link
+					to="/$workspace/mcp"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<Plug className="size-4" />
+					MCP
 				</Link>
 				<Link
 					to="/$workspace/environment"

@@ -9,6 +9,7 @@ import {
 	AGENT_RUNTIMES,
 	APPLICATION_STATES,
 	ASSET_KINDS,
+	type McpTool,
 	type Metadata,
 	MODEL_PROVIDERS,
 	REPOSITORY_PROVIDERS,
@@ -244,6 +245,22 @@ export const agentMcpServers = sqliteTable(
 		index("agent_mcp_servers_asset_idx").on(table.assetId),
 	],
 );
+
+/**
+ * The last check of each MCP server in the library: when, against which version, whether it
+ * worked, the tools it listed and why not, in the app's words. Never a header value or anything
+ * the server said.
+ */
+export const mcpChecks = sqliteTable("mcp_checks", {
+	assetId: text("asset_id")
+		.primaryKey()
+		.references(() => assets.id),
+	version: integer("version").notNull(),
+	checkedAt: integer("checked_at").notNull(),
+	ok: integer("ok", { mode: "boolean" }).notNull(),
+	tools: text("tools", { mode: "json" }).$type<McpTool[]>().notNull(),
+	error: text("error"),
+});
 
 export const setups = sqliteTable("setups", {
 	id: text("id").primaryKey(),

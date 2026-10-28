@@ -18,6 +18,7 @@ import { Route as WorkspaceIndexRouteImport } from './routes/$workspace/index'
 import { Route as WorkspaceChatRouteImport } from './routes/$workspace/chat'
 import { Route as WorkspaceEnvironmentRouteImport } from './routes/$workspace/environment'
 import { Route as WorkspaceLibraryRouteImport } from './routes/$workspace/library'
+import { Route as WorkspaceMcpRouteImport } from './routes/$workspace/mcp'
 import { Route as WorkspaceSettingsRouteImport } from './routes/$workspace/settings'
 import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitationId'
 import { Route as WorkspaceAgentsIndexRouteImport } from './routes/$workspace/agents.index'
@@ -86,6 +87,11 @@ const WorkspaceEnvironmentRoute = WorkspaceEnvironmentRouteImport.update({
 const WorkspaceLibraryRoute = WorkspaceLibraryRouteImport.update({
   id: '/library',
   path: '/library',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
+const WorkspaceMcpRoute = WorkspaceMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => WorkspaceRoute,
 } as any)
 const WorkspaceSettingsRoute = WorkspaceSettingsRouteImport.update({
@@ -223,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/chat': typeof WorkspaceChatRouteWithChildren
   '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
+  '/$workspace/mcp': typeof WorkspaceMcpRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
@@ -256,6 +263,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
+  '/$workspace/mcp': typeof WorkspaceMcpRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace': typeof WorkspaceIndexRoute
   '/$workspace/agents/$agentId': typeof WorkspaceAgentsAgentIdRoute
@@ -291,6 +299,7 @@ export interface FileRoutesById {
   '/$workspace/chat': typeof WorkspaceChatRouteWithChildren
   '/$workspace/environment': typeof WorkspaceEnvironmentRoute
   '/$workspace/library': typeof WorkspaceLibraryRoute
+  '/$workspace/mcp': typeof WorkspaceMcpRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
   '/$workspace/': typeof WorkspaceIndexRoute
@@ -328,6 +337,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat'
     | '/$workspace/environment'
     | '/$workspace/library'
+    | '/$workspace/mcp'
     | '/$workspace/settings'
     | '/invite/$invitationId'
     | '/$workspace/'
@@ -361,6 +371,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/$workspace/environment'
     | '/$workspace/library'
+    | '/$workspace/mcp'
     | '/invite/$invitationId'
     | '/$workspace'
     | '/$workspace/agents/$agentId'
@@ -395,6 +406,7 @@ export interface FileRouteTypes {
     | '/$workspace/chat'
     | '/$workspace/environment'
     | '/$workspace/library'
+    | '/$workspace/mcp'
     | '/$workspace/settings'
     | '/invite/$invitationId'
     | '/$workspace/'
@@ -499,6 +511,13 @@ declare module '@tanstack/react-router' {
       path: '/library'
       fullPath: '/$workspace/library'
       preLoaderRoute: typeof WorkspaceLibraryRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/$workspace/mcp': {
+      id: '/$workspace/mcp'
+      path: '/mcp'
+      fullPath: '/$workspace/mcp'
+      preLoaderRoute: typeof WorkspaceMcpRouteImport
       parentRoute: typeof WorkspaceRoute
     }
     '/$workspace/settings': {
@@ -707,6 +726,7 @@ interface WorkspaceRouteChildren {
   WorkspaceChatRoute: typeof WorkspaceChatRouteWithChildren
   WorkspaceEnvironmentRoute: typeof WorkspaceEnvironmentRoute
   WorkspaceLibraryRoute: typeof WorkspaceLibraryRoute
+  WorkspaceMcpRoute: typeof WorkspaceMcpRoute
   WorkspaceSettingsRoute: typeof WorkspaceSettingsRouteWithChildren
   WorkspaceIndexRoute: typeof WorkspaceIndexRoute
   WorkspaceAgentsAgentIdRoute: typeof WorkspaceAgentsAgentIdRoute
@@ -726,6 +746,7 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceChatRoute: WorkspaceChatRouteWithChildren,
   WorkspaceEnvironmentRoute: WorkspaceEnvironmentRoute,
   WorkspaceLibraryRoute: WorkspaceLibraryRoute,
+  WorkspaceMcpRoute: WorkspaceMcpRoute,
   WorkspaceSettingsRoute: WorkspaceSettingsRouteWithChildren,
   WorkspaceIndexRoute: WorkspaceIndexRoute,
   WorkspaceAgentsAgentIdRoute: WorkspaceAgentsAgentIdRoute,

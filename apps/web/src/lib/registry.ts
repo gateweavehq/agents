@@ -8,6 +8,8 @@ import {
 	type LibraryEntry,
 	libraryEditInput,
 	libraryTarget,
+	type McpCheck,
+	type McpServerEntry,
 	type McpServerInput,
 	MODEL_PROVIDERS,
 	mcpServerEditInput,
@@ -433,4 +435,29 @@ export const setSetupAssets = createServerFn({ method: "POST" })
 		const setup = await registry.setSetupAssets(data.setupId, data.pins);
 		if (!setup) throw new Error("Setup not found");
 		return setup;
+	});
+
+/** The library's MCP servers, with their last check and the agents that pin each. */
+export const getMcpServers = createServerFn({ method: "GET" })
+	.validator(z.string().min(1))
+	.handler(async ({ data: slug }): Promise<McpServerEntry[] | null> => {
+		const registry = await registryOf(slug);
+		return registry ? registry.listMcpServers() : null;
+	});
+
+/**
+ * Connects to an MCP server with the environment set of an agent that pins it, lists its tools
+ * and keeps the result as its last check. The headers exist in this request's memory alone: only
+ * the recorded check, which holds no header value, goes back to the browser.
+ */
+export const checkMcpServer = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), assetId: id }))
+	.handler(async ({ data }): Promise<McpCheck> => {
+		const registry = await managedRegistryOf(data.slug);
+		const target = await registry.mcpCheckTarget(data.assetId);
+		if (!target) throw new Error("That MCP server is not in the library");
+		const { checkMcpServer: check } = await import("@gateweave/agents-runtime");
+		const recorded = await registry.recordMcpCheck(data.assetId, await check(target));
+		if (!recorded) throw new Error("That MCP server is not in the library");
+		return recorded;
 	});
