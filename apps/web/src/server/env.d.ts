@@ -21,5 +21,11 @@ declare namespace Cloudflare {
 		GITHUB_APP_CLIENT_SECRET?: string;
 		GITHUB_APP_PRIVATE_KEY?: string;
 		GITHUB_APP_WEBHOOK_SECRET?: string;
+		/**
+		 * Encrypts what workspaces entrust to the server, such as model provider keys: at least 32
+		 * random bytes, base64 (`openssl rand -base64 32`). Model keys are off when unset. Never
+		 * change it once keys are saved: they cannot be opened without it.
+		 */
+		SECRETS_KEY?: string;
 	}
 }

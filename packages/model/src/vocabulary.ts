@@ -65,3 +65,16 @@ export type DriftState = (typeof DRIFT_STATES)[number];
 /** Why one file differs from what its setup writes. */
 export const DRIFT_FILE_STATES = ["missing", "changed", "behind"] as const;
 export type DriftFileState = (typeof DRIFT_FILE_STATES)[number];
+
+/**
+ * Model providers a workspace brings its own key for. The runtime calls their models through AI
+ * Gateway with that key, so usage is billed to the workspace's own account with the provider.
+ */
+export const MODEL_PROVIDERS = ["anthropic", "openai", "google"] as const;
+export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
+
+export const MODEL_PROVIDER_NAMES: Record<ModelProvider, string> = {
+	anthropic: "Anthropic",
+	openai: "OpenAI",
+	google: "Google",
+};

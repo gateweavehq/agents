@@ -64,6 +64,13 @@
       "when": 1793204474994,
       "tag": "0008_rescan_for_drift",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793206520338,
+      "tag": "0009_provider_keys",
+      "breakpoints": true
     }
   ]
 }

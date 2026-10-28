@@ -115,7 +115,8 @@ The same shape as Track: one Worker per product and one Durable Object per works
 - **Models** go through Cloudflare AI Gateway: OpenAI, Anthropic, Google and Workers AI behind one
   endpoint, with caching, rate limits, fallbacks and logs.
 - **Tools.** MCP servers through the Agents SDK's MCP client; scripts and code in Cloudflare
-  Sandboxes; secrets in Secrets Store, referenced by name and never copied into prompts.
+  Sandboxes; secrets sealed in the workspace's registry and never copied into prompts (see
+  "Decisions").
 - **Traces.** Every run records its events in its Durable Object. Cost and usage roll up into
   Analytics Engine, and traces export over OpenTelemetry.
 - **GitHub app.** Reads repositories to find agent configuration, and opens pull requests to apply
@@ -171,6 +172,15 @@ runtime is designed alongside it, so the data model fits both.
   each other, need no extra infrastructure, and survive restarts. Blob texts come through GraphQL,
   fifty per request, and texts already stored are not downloaded again, which keeps a scan within
   the free plan's 50 subrequests per invocation.
+- **Models and their keys** (AGT-21, 2026-10-28). Every model request goes through one AI
+  Gateway per deployment, with the workspace's own provider key sent per request. A gateway per
+  workspace with keys stored in it would not scale: an account has at most 20 gateways, and
+  stored keys belong to a gateway. So keys stay with the workspace, sealed in its registry with
+  AES-256-GCM under a key derived from the deployment's `SECRETS_KEY` and the workspace's id.
+  Secrets Store was set aside: it is in beta, and its secrets are bindings fixed at deploy time,
+  not values each workspace adds. Workers AI and AI Gateway's Unified Billing stay off unless a
+  deployment turns them on, so a self-hosted server never spends its owner's money on someone
+  else's workspace.
 - **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
   asset when its hash equals one of the library asset's versions; no link is stored. There is
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the

@@ -4,7 +4,12 @@
  * gateway with a bug cannot store something the pages would choke on.
  */
 import { z } from "zod";
-import { ASSET_KINDS, REPOSITORY_PROVIDERS, REPOSITORY_RUNTIMES } from "./vocabulary";
+import {
+	ASSET_KINDS,
+	MODEL_PROVIDERS,
+	REPOSITORY_PROVIDERS,
+	REPOSITORY_RUNTIMES,
+} from "./vocabulary";
 
 /** A path inside a repository: relative, with forward slashes and no `.` or `..` segments. */
 export const repositoryPath = z
@@ -376,3 +381,18 @@ export const setupImportInput = setupInput
 		}
 	});
 export type SetupImportInput = z.input<typeof setupImportInput>;
+
+/**
+ * A model provider's key, as an owner or admin pastes it. Keys are printable ASCII with no
+ * spaces; trimming forgives the newline a copy often brings along.
+ */
+export const providerKeyInput = z.object({
+	provider: z.enum(MODEL_PROVIDERS),
+	key: z
+		.string()
+		.trim()
+		.min(8, "That is too short to be a key")
+		.max(1000, "That is too long to be a key")
+		.regex(/^[\x21-\x7e]+$/, "A key has no spaces or special characters"),
+});
+export type ProviderKeyInput = z.input<typeof providerKeyInput>;

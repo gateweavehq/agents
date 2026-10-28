@@ -7,6 +7,7 @@ export const Route = createFileRoute("/$workspace/settings")({
 const TABS = [
 	{ to: "/$workspace/settings/members", label: "Members" },
 	{ to: "/$workspace/settings/github", label: "GitHub" },
+	{ to: "/$workspace/settings/models", label: "Models" },
 ] as const;
 
 function SettingsLayout() {
