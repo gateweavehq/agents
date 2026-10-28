@@ -1,0 +1,23 @@
+{
+	"name": "@gateweave/agents-adapters",
+	"version": "0.0.0",
+	"private": true,
+	"license": "AGPL-3.0-only",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@gateweave/agents-model": "workspace:*",
+		"smol-toml": "1.9.0",
+		"yaml": "2.9.1"
+	},
+	"devDependencies": {
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

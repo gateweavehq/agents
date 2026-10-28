@@ -67,12 +67,27 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
   verified with the app's secret; deliveries for installations no workspace linked are
   acknowledged and dropped.
 
+## Format adapters
+
+`packages/adapters` turns a repository's files into the agents and assets of a scan. It is pure
+TypeScript with no I/O, so it runs in the Worker. The scanner lists the repository's tree, asks
+`wantsFile` which paths it needs, downloads those, and calls `detect`.
+
+- **One adapter per coding agent** (Claude Code, Codex, Gemini CLI, Cursor), each knowing only its
+  own files, so a repository with just `AGENTS.md` has a Codex agent and nothing else. The
+  vendor's documentation is linked at the top of each adapter.
+- **Shared files are shared assets.** `detect` merges what the adapters find by asset key, so
+  `AGENTS.md` or a `.agents/skills` folder is one asset that several agents read.
+- **Secrets stay in the adapters.** Settings and MCP configuration are stored as canonical JSON
+  (or TOML) with every value under `env` or `headers`, and anything that looks like a credential,
+  replaced by `<redacted>`. Metadata carries the names of variables and headers, never values.
+- **Problems, not exceptions.** A file that is missing its text or does not parse becomes a
+  `ScanProblem` and is skipped; the rest of the scan goes on.
+
 ## What comes next
 
 - **Scans.** Pushes to a default branch, and linking, queue a scan of the repository. The
   registry reads the files the format adapters ask for and applies what they detect.
-- **Format adapters**: small, pure modules that turn the files of one agent (Claude Code, Codex,
-  Gemini CLI, Cursor) into a scan, each tested against real examples.
 
 ## Deploys
 

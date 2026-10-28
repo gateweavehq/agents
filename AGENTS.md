@@ -19,6 +19,7 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 | ------------------- | --------------------------------------------------------------------------- |
 | `apps/web`          | The Worker: TanStack Start UI, Better Auth, D1, the gateway to the registry |
 | `packages/model`    | The registry's vocabulary, entities and input schemas (zod). No server code |
+| `packages/adapters` | Turn a repository's files into a scan: one adapter per coding agent. Pure   |
 | `packages/registry` | `RegistryDO`: each workspace's projects, repositories, agents and assets    |
 | `packages/github`   | The GitHub App's client: JWT, installation tokens, OAuth, webhooks          |
 | `docs/`             | The product spec, the architecture and setting up the GitHub App            |
@@ -114,6 +115,8 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
   `RegistryDO`. Call it over RPC; for a call expected to throw, use `runInDurableObject`, because
   the test pool reports an exception thrown inside a Durable Object as unhandled.
 - `packages/model` and `packages/github` tests run in Node.
+- `packages/adapters` tests run in Node, on in-memory repositories. Every test that checks output
+  also checks that `scanResult` accepts it.
 - `apps/web` has unit tests in `src/` and Worker tests in `test/`. The Worker tests build the app
   and run it in workerd through Miniflare, with every outbound request failing as a deployed
   Worker's request to its own hostname does; see `test/agents-worker.ts`. Tests that connect
@@ -141,5 +144,6 @@ so any agent can follow them:
 | Skill               | Use it to                                                  |
 | ------------------- | ---------------------------------------------------------- |
 | `schema-change`     | Change the D1 schema with a migration                      |
+| `add-adapter`       | Teach the scanner a new agent or file format               |
 | `run-locally`       | Start the app and check a change in a real browser         |
 | `open-pull-request` | Take a change from a branch to a merged-ready pull request |
