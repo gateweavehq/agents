@@ -230,6 +230,34 @@ describe("skills", () => {
 		expect(result.problems).toHaveLength(1);
 		expect(write([other, review], "claude-code")).toEqual(result);
 	});
+
+	it("names the folder after SKILL.md, whatever the library calls the skill", () => {
+		const named = { ...review, name: "Code review" };
+		expect(Object.keys(fileMap(write([named], "claude-code")))).toEqual([
+			".claude/skills/review/SKILL.md",
+			".claude/skills/review/scripts/run.sh",
+		]);
+
+		const unnamed = asset("skill", "Code review", { "SKILL.md": "Look.\n" });
+		expect(write([unnamed], "claude-code")).toEqual({
+			files: [],
+			problems: [{ asset: "Code review", message: expect.stringContaining("folder name") }],
+		});
+		const fallback = asset("skill", "review", { "SKILL.md": "Look.\n" });
+		expect(Object.keys(fileMap(write([fallback], "claude-code")))).toEqual([
+			".claude/skills/review/SKILL.md",
+		]);
+	});
+
+	it("reports two skills that want one folder", () => {
+		const other = asset("skill", "Other review", {
+			"SKILL.md": "---\nname: review\n---\nDifferent.\n",
+		});
+		const result = write([review, other], "claude-code");
+		expect(result.problems).toHaveLength(1);
+		expect(result.files).toHaveLength(1);
+		expect(write([other, review], "claude-code")).toEqual(result);
+	});
 });
 
 describe("MCP servers", () => {

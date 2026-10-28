@@ -10,10 +10,15 @@
  * A skill is a folder, the same for every agent. Claude Code gets `.claude/skills`; Codex, Gemini
  * CLI and Cursor all read `.agents/skills`, so that one copy serves them (Cursor would read
  * `.claude/skills` too, but a second copy for it alone would only drift).
+ *
+ * The folder is named after the `name` in SKILL.md's front matter, which the Agent Skills format
+ * (https://agentskills.io/specification) requires to match it. The asset's own name is only the
+ * fallback: a library may call the skill anything.
  */
 import type { RepositoryRuntime } from "@gateweave/agents-model";
+import { parseFrontMatter } from "./frontmatter";
 import { canonicalJson } from "./redaction";
-import { compare, isEnvFile } from "./util";
+import { compare, isEnvFile, str } from "./util";
 import type { AssetToWrite } from "./write";
 import { isSafePath, type Output } from "./write-output";
 
@@ -37,26 +42,35 @@ export function writeSkills(
 	for (const asset of assets) {
 		const files = readable(asset, output);
 		if (!files) continue;
+		const folder = folderOf(asset, files);
+		if (folder === null) {
+			output.problem(asset.name, "Neither SKILL.md's name nor the asset's can be a folder name");
+			continue;
+		}
 		const identity = canonicalJson(files);
-		const known = written.get(asset.name);
+		const known = written.get(folder);
 		if (known !== undefined) {
 			if (known !== identity) output.problem(asset.name, "Another skill has the same name");
 			continue;
 		}
-		written.set(asset.name, identity);
+		written.set(folder, identity);
 		for (const root of roots) {
 			for (const file of files)
-				output.add(`${root}/${asset.name}/${file.path}`, file.content, asset.name);
+				output.add(`${root}/${folder}/${file.path}`, file.content, asset.name);
 		}
 	}
 }
 
+function folderOf(asset: AssetToWrite, files: { path: string; content: string }[]): string | null {
+	const skill = files.find((file) => file.path === "SKILL.md");
+	const front = skill ? parseFrontMatter(skill.content) : null;
+	const declared = front?.ok ? str(front.data.name) : null;
+	if (declared !== null && SKILL_NAME.test(declared)) return declared;
+	return SKILL_NAME.test(asset.name) ? asset.name : null;
+}
+
 /** Every file with its text, or null with a problem: a skill is written whole or not at all. */
 function readable(asset: AssetToWrite, output: Output): { path: string; content: string }[] | null {
-	if (!SKILL_NAME.test(asset.name)) {
-		output.problem(asset.name, "The name cannot be a folder name");
-		return null;
-	}
 	const files: { path: string; content: string }[] = [];
 	for (const file of [...asset.files].sort((a, b) => compare(a.path, b.path))) {
 		if (file.content === null) {

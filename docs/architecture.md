@@ -92,25 +92,24 @@ TypeScript with no I/O, so it runs in the Worker. The scanner lists the reposito
   `ScanProblem` and is skipped; the rest of the scan goes on.
 - **Writers are the reverse of `detect`.** `writeAssets(assets, runtimes)` turns library assets
   into the files to put in a repository, in each agent's own format. It is pure and
-  byte-stable: sorted keys, `
-` newlines, one trailing newline, files sorted by path, and the
+  byte-stable: sorted keys, `\n` newlines, one trailing newline, files sorted by path, and the
   same output whatever order the input came in, so drift detection can compare Git blob ids with
   a later scan. It returns `{ files, problems }`; an asset it cannot write whole is reported and
   skipped, never written in part.
-  - *Instructions* go back to the path in their name. Per folder, the shared text is combined in
+  - _Instructions_ go back to the path in their name. Per folder, the shared text is combined in
     name order into `AGENTS.md` (Codex, Cursor). `CLAUDE.md` and `GEMINI.md` import it
     (`@AGENTS.md`, `@./AGENTS.md`) when another agent reads `AGENTS.md` too, and hold the text
     themselves otherwise. Cursor rules (`alwaysApply` in the metadata) become `.cursor/rules/*.mdc`
     and `.claude/rules` files stay Claude Code's; other runtimes ignore both.
-  - *Skills* go to `.claude/skills` for Claude Code and `.agents/skills` for Codex, Gemini CLI and
-    Cursor.
-  - *MCP servers* go to `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json` and
+  - _Skills_ go to `.claude/skills` for Claude Code and `.agents/skills` for Codex, Gemini CLI and
+    Cursor, in a folder named after the `name` in `SKILL.md`, so a library can call a skill anything.
+  - _MCP servers_ go to `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json` and
     `.cursor/mcp.json`. A stored server is converted between formats. The registry keeps
     `<redacted>` where a secret was, so the writer writes a reference to an environment variable
     instead (`${NAME}`, `${env:NAME}`, Codex's `env_vars` and `env_http_headers`), named after the
     `env` entry or header. A `<redacted>` anywhere else has no name to point at, so that server is
     reported and left out. No file ever contains `<redacted>`.
-  - *Not written* (reported as problems): `settings`, `prompt`, `script`, `env-set` and `plugin`.
+  - _Not written_ (reported as problems): `settings`, `prompt`, `script`, `env-set` and `plugin`.
 
 ## Scans
 
