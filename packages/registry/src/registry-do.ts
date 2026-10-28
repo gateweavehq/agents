@@ -1,4 +1,4 @@
-﻿import { DurableObject } from "cloudflare:workers";
+import { DurableObject } from "cloudflare:workers";
 import {
 	type Agent,
 	type AgentDefinitionInput,

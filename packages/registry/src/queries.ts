@@ -1,4 +1,4 @@
-﻿// Durable Object SQLite binds at most 100 parameters per query, so lists of ids are joined or
+// Durable Object SQLite binds at most 100 parameters per query, so lists of ids are joined or
 // looked up one by one rather than passed to IN (...).
 
 import { type AssetToWrite, writeAssets } from "@gateweave/agents-adapters";
@@ -236,7 +236,10 @@ export function getRepository(db: Db, id: string): RepositoryDetail | null {
 /** Every live agent, in any live repository or defined in the app. */
 export const listAgents = (db: Db): Agent[] => agentsWhere(db, liveIn(agents));
 
-/** The live agents Gateweave runs that have a definition, in the order \listAgents\ gives. One join, for the chat list. */
+/**
+ * The live agents Gateweave runs that have a definition, in the order `listAgents` gives them, in
+ * one join for the chat list.
+ */
 export function listRunnableAgents(db: Db): RunnableAgent[] {
 	return db
 		.select({
@@ -253,6 +256,7 @@ export function listRunnableAgents(db: Db): RunnableAgent[] {
 		.orderBy(asc(agents.name), asc(agents.key))
 		.all();
 }
+
 /** A live agent with its repository, what it reads and, if Gateweave runs it, its definition. */
 export function getAgent(db: Db, id: string): AgentDetail | null {
 	const agent = agentsWhere(db, and(eq(agents.id, id), liveIn(agents)))[0];

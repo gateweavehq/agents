@@ -1,4 +1,4 @@
-﻿/** What the registry returns. Times are milliseconds since the epoch. */
+/** What the registry returns. Times are milliseconds since the epoch. */
 import type { Metadata, ScanProblem } from "./inputs";
 import type {
 	AgentRuntime,
