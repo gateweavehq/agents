@@ -420,6 +420,30 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
 - **Runs outlive their conversations.** Deleting a conversation clears the run's link to it in
   the same write, so the workspace's usage stays counted.
 
+## Teams
+
+A team is a directed graph of agents run by Gateweave (`packages/registry/src/teams.ts`). It
+lives in the registry: `teams`, `team_members` and `team_edges`.
+
+- **Members** are agents run by Gateweave or other teams, by id; ids are UUIDs, so an agent's
+  never clashes with a team's. One of the agents is the lead, the one a chat with the team will
+  talk to (AGT-34). In edges, a team stands for its lead.
+- **Edges** go from one member to another: `delegate` hands over a task and waits for the result,
+  `ask` asks one question that is answered without tools, and `report` sends a message without
+  waiting.
+- **The whole graph is saved at once.** `setTeamGraph` takes the members, the edges and the lead
+  and checks them together in one write, so a page never saves half a change and nothing can
+  slip between two checks.
+- **Two rules keep every turn finite**, checked in the team and in every team it is part of,
+  since a change deep down changes what the teams above it do:
+  - a team never contains itself, directly or through the teams in it;
+  - `delegate` and `ask` edges, the ones that wait for an answer, never go in a circle once each
+    team in the graph stands for its lead. A refusal names the circle, agent by agent. Reports
+    may go back up, since nobody waits on them; how far they go is a limit of the runtime.
+- **A removed agent stays where it was**, marked, until someone takes it out, so removing an
+  agent never changes a graph by itself. It cannot join a team anew or start leading one. A team
+  that is in another team cannot be deleted until it is taken out of there.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -455,6 +479,12 @@ workspace.
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its
   pinned instructions with their text, its environment set and its MCP servers.
+- **Teams** lists the teams with their leads. A team's page draws its graph top-down from the
+  lead (`apps/web/src/lib/team-layout.ts`, inline SVG, no graph library): each member one row
+  below the nearest member that reaches it, every kind of edge in its own color and dashes. Below
+  the drawing, its members and its edges are lists, which is what a screen reader reads. Owners
+  and admins create teams, add and take out members, choose the lead and add and remove edges;
+  members see them.
 - **Chat** lists the caller's own conversations, the latest first, and starts one with any
   agent run by Gateweave. A conversation's page streams the reply, can stop it, and says when the
   agent cannot answer and why. An agent's page has a Chat button too.
@@ -497,8 +527,9 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): teams (AGT-27), and cloud runners for
-  servers that run as local commands (AGT-9).
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): chatting with a team, its edges as
+  tools and nested runs (AGT-34), teams in Chat and Runs (AGT-35), and cloud runners for servers
+  that run as local commands (AGT-9).
 
 ## Deploys
 

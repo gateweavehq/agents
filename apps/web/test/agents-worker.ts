@@ -21,6 +21,7 @@ import type {
 	McpServerEditInput,
 	McpServerEntry,
 	McpServerInput,
+	NewTeamInput,
 	Overview,
 	Project,
 	ProjectInput,
@@ -40,6 +41,8 @@ import type {
 	SetupDetail,
 	SetupInput,
 	SetupPins,
+	Team,
+	TeamGraphInput,
 	TurnMcpServer,
 	WrittenAssetInput,
 } from "@gateweave/agents-model";
@@ -91,6 +94,8 @@ export interface RegistryStub {
 	setSetupAssets(setupId: string, pins: SetupPins): Promise<Setup | null>;
 	getSetup(setupId: string): Promise<SetupDetail | null>;
 	deleteSetup(setupId: string): Promise<boolean>;
+	createTeam(input: NewTeamInput): Promise<Team>;
+	setTeamGraph(teamId: string, graph: TeamGraphInput): Promise<Team | null>;
 	applySetup(
 		setupId: string,
 		repositoryId: string,

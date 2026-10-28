@@ -13,6 +13,7 @@ import {
 	LogOut,
 	Menu,
 	MessagesSquare,
+	Network,
 	Plug,
 	Settings,
 	UserPlus,
@@ -126,6 +127,15 @@ function Sidebar() {
 				>
 					<Bot className="size-4" />
 					Agents
+				</Link>
+				<Link
+					to="/$workspace/teams"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<Network className="size-4" />
+					Teams
 				</Link>
 				<Link
 					to="/$workspace/chat"

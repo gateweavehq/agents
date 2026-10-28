@@ -14,6 +14,7 @@ import {
 	MODEL_PROVIDERS,
 	mcpServerEditInput,
 	mcpServerInput,
+	newTeamInput,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -22,12 +23,18 @@ import {
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryRuntime,
+	type RunnableAgent,
 	type RunUsage,
 	type Setup,
 	type SetupDetail,
 	type SetupEntry,
 	setupInput,
 	setupPins,
+	type Team,
+	type TeamDetail,
+	type TeamEntry,
+	teamGraphInput,
+	teamInput,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
@@ -137,6 +144,72 @@ export const removeAgent = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<void> => {
 		const registry = await managedRegistryOf(data.slug);
 		await registry.removeAgent(data.agentId);
+	});
+
+/** Every team, with the agents that can lead a new one. */
+export const getTeams = createServerFn({ method: "GET" })
+	.validator(z.string().min(1))
+	.handler(
+		async ({ data: slug }): Promise<{ teams: TeamEntry[]; agents: RunnableAgent[] } | null> => {
+			const registry = await registryOf(slug);
+			if (!registry) return null;
+			const [teams, agents] = await Promise.all([
+				registry.listTeams(),
+				registry.listRunnableAgents(),
+			]);
+			return { teams, agents };
+		},
+	);
+
+/** A team, with the agents and teams that could join it. */
+export const getTeam = createServerFn({ method: "GET" })
+	.validator(z.object({ slug: z.string().min(1), teamId: id }))
+	.handler(
+		async ({
+			data,
+		}): Promise<{ detail: TeamDetail; agents: RunnableAgent[]; teams: TeamEntry[] } | null> => {
+			const registry = await registryOf(data.slug);
+			if (!registry) return null;
+			const [detail, agents, teams] = await Promise.all([
+				registry.getTeam(data.teamId),
+				registry.listRunnableAgents(),
+				registry.listTeams(),
+			]);
+			return detail && { detail, agents, teams };
+		},
+	);
+
+export const createTeam = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), team: newTeamInput }))
+	.handler(async ({ data }): Promise<Team> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.createTeam(data.team);
+	});
+
+export const updateTeam = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), teamId: id, team: teamInput }))
+	.handler(async ({ data }): Promise<Team> => {
+		const registry = await managedRegistryOf(data.slug);
+		const team = await registry.updateTeam(data.teamId, data.team);
+		if (!team) throw new Error("Team not found");
+		return team;
+	});
+
+export const deleteTeam = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), teamId: id }))
+	.handler(async ({ data }): Promise<void> => {
+		const registry = await managedRegistryOf(data.slug);
+		await registry.deleteTeam(data.teamId);
+	});
+
+/** Gives a team exactly these members, edges and lead. */
+export const setTeamGraph = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), teamId: id, graph: teamGraphInput }))
+	.handler(async ({ data }): Promise<Team> => {
+		const registry = await managedRegistryOf(data.slug);
+		const team = await registry.setTeamGraph(data.teamId, data.graph);
+		if (!team) throw new Error("Team not found");
+		return team;
 	});
 
 /** The models the workspace's key for `provider` can use, to choose an agent's model from. */
