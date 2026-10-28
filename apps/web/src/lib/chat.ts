@@ -97,22 +97,29 @@ export const startChat = createServerFn({ method: "POST" })
 		return conversation;
 	});
 
-/** Deletes one of the caller's conversations with its messages. */
+/**
+ * Deletes one of the caller's conversations with its messages, and the conversations its team's
+ * nested turns ran in.
+ */
 export const removeChat = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), conversationId: id }))
 	.handler(async ({ data }): Promise<void> => {
 		const member = await memberOf(data.slug);
 		if (!member) throw new Error("Workspace not found");
 		const removed = await member.registry.removeConversation(data.conversationId, member.userId);
-		if (!removed) throw new Error("Conversation not found");
+		if (removed.length === 0) throw new Error("Conversation not found");
 		const [{ env }, { getAgentByName }, { conversationName }] = await Promise.all([
 			import("cloudflare:workers"),
 			import("agents"),
 			import("@gateweave/agents-runtime"),
 		]);
-		const conversation = await getAgentByName(
-			env.CONVERSATIONS,
-			conversationName(member.workspaceId, data.conversationId),
+		await Promise.all(
+			removed.map(async (conversationId) => {
+				const conversation = await getAgentByName(
+					env.CONVERSATIONS,
+					conversationName(member.workspaceId, conversationId),
+				);
+				await conversation.destroy();
+			}),
 		);
-		await conversation.destroy();
 	});

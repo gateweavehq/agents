@@ -11,6 +11,7 @@ import {
 	type RunCursor,
 	type RunFinish,
 	type RunUsage,
+	type TeamEdgeKind,
 } from "@gateweave/agents-model";
 import { and, count, desc, eq, gte, isNotNull, isNull, lt, or, sql, sum } from "drizzle-orm";
 import { agents, runs } from "./db/schema";
@@ -19,13 +20,30 @@ import type { Db } from "./state";
 /** A run still going after this long was cut short and will not report back. */
 export const RUN_TIMEOUT = 60 * 60 * 1000;
 
+/** Where a nested run sits: the run that called it over an edge, and the run at the top. */
+export interface RunParent {
+	parentRunId: string;
+	parentSpanId: string;
+	rootRunId: string;
+	edge: TeamEdgeKind;
+	depth: number;
+}
+
 export function beginRun(
 	db: Db,
 	{
 		agent,
 		conversationId,
 		startedBy,
-	}: { agent: AgentSnapshot; conversationId: string; startedBy: string },
+		teamPath = null,
+		parent = null,
+	}: {
+		agent: AgentSnapshot;
+		conversationId: string;
+		startedBy: string;
+		teamPath?: string[] | null;
+		parent?: RunParent | null;
+	},
 	now: number,
 ): string {
 	const id = crypto.randomUUID();
@@ -39,9 +57,47 @@ export function beginRun(
 			model: agent.model,
 			status: "running",
 			startedAt: now,
+			teamPath,
+			...parent,
 		})
 		.run();
 	return id;
+}
+
+/** A run that may call others over a team's edges, as a nested turn needs it; null if none. */
+export function callingRun(db: Db, id: string) {
+	return (
+		db
+			.select({
+				id: runs.id,
+				agentId: runs.agentId,
+				conversationId: runs.conversationId,
+				startedBy: runs.startedBy,
+				status: runs.status,
+				rootRunId: runs.rootRunId,
+				edge: runs.edge,
+				depth: runs.depth,
+				teamPath: runs.teamPath,
+			})
+			.from(runs)
+			.where(eq(runs.id, id))
+			.get() ?? null
+	);
+}
+
+/** How many runs one run has called, and how many the run at the top has led to in all. */
+export function nestedRuns(
+	db: Db,
+	parentRunId: string,
+	rootRunId: string,
+): { byTurn: number; byMessage: number } {
+	const byTurn = db
+		.select({ n: count() })
+		.from(runs)
+		.where(eq(runs.parentRunId, parentRunId))
+		.get();
+	const byMessage = db.select({ n: count() }).from(runs).where(eq(runs.rootRunId, rootRunId)).get();
+	return { byTurn: byTurn?.n ?? 0, byMessage: byMessage?.n ?? 0 };
 }
 
 /**

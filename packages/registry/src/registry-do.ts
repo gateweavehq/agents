@@ -80,8 +80,10 @@ import {
 	type TeamGraphInput,
 	type TeamInput,
 	type TurnMcpServer,
+	type TurnVia,
 	teamGraphInput,
 	teamInput,
+	turnVia,
 	type WrittenAssetInput,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
@@ -105,6 +107,8 @@ import {
 	noteTurn,
 	removeConversation,
 	startConversation,
+	startNestedConversation,
+	startTeamConversation,
 } from "./conversations";
 import * as schema from "./db/schema";
 import { agentSnapshot, createAgent, removeAgent, updateAgent } from "./definitions";
@@ -168,7 +172,17 @@ import { type Sealer, type SecretsEnv, sealerFor } from "./secrets";
 import { createSetup, deleteSetup, importSetup, setSetupAssets, updateSetup } from "./setups";
 import { type SourceEnv, sourceFor, writerFor } from "./sources";
 import { type Db, toApplication } from "./state";
-import { createTeam, deleteTeam, getTeam, listTeams, setTeamGraph, updateTeam } from "./teams";
+import { nestedTurnPlan, teamTurnPlan } from "./team-turns";
+import {
+	createTeam,
+	deleteTeam,
+	getTeam,
+	listTeams,
+	setTeamGraph,
+	type TeamPosition,
+	turnEdges,
+	updateTeam,
+} from "./teams";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
@@ -546,6 +560,13 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => startConversation(this.#db, agent, member, Date.now()));
 	}
 
+	/** Null when there is no such team, or its lead was removed. */
+	startTeamConversation(teamId: string, startedBy: string): Conversation | null {
+		const team = id.parse(teamId);
+		const member = id.parse(startedBy);
+		return this.#write(() => startTeamConversation(this.#db, team, member, Date.now()));
+	}
+
 	listConversations(startedBy: string, agentId?: string): Conversation[] {
 		return listConversations(this.#db, id.parse(startedBy), id.optional().parse(agentId));
 	}
@@ -555,15 +576,16 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * Forgets the conversation; the caller clears its messages and traces from the runtime. Its
-	 * runs stay, without it, so the workspace's usage stays counted.
+	 * Forgets the conversation and the ones its nested turns ran in, and returns all their ids; the
+	 * caller clears their messages and traces from the runtime. Their runs stay, without them, so
+	 * the workspace's usage stays counted.
 	 */
-	removeConversation(conversationId: string, startedBy: string): boolean {
+	removeConversation(conversationId: string, startedBy: string): string[] {
 		const conversation = id.parse(conversationId);
 		const member = id.parse(startedBy);
 		return this.#write(() => {
 			const removed = removeConversation(this.#db, conversation, member);
-			if (removed) detachRuns(this.#db, conversation);
+			for (const gone of removed) detachRuns(this.#db, gone);
 			return removed;
 		});
 	}
@@ -573,45 +595,119 @@ export class RegistryDO extends DurableObject {
 	 * and hands over the agent as it is now with the workspace's key for its provider, opened. The
 	 * runtime keeps the key in memory for the turn and sends it nowhere but the provider, and
 	 * reports how the run ended with `finishRun`.
+	 *
+	 * In a conversation with a team, the team's lead answers. With `via`, the turn is a nested one
+	 * that another turn of a team asked for by taking an edge, in a new conversation with this id
+	 * (`./team-turns.ts`).
 	 */
 	async beginTurn(
 		conversationId: string,
 		text: string,
+		via?: TurnVia,
 	): Promise<ConversationTurn | ProviderRefusal> {
 		const conversation = id.parse(conversationId);
 		const message = z.string().max(100_000).parse(text);
+		if (via !== undefined) return this.#beginNestedTurn(conversation, message, turnVia.parse(via));
 		const parties = conversationParties(this.#db, conversation);
-		if (!parties) return { status: "refused", message: "This conversation was deleted" };
-		this.#write(() => noteTurn(this.#db, conversation, message, Date.now()));
-		const agent = agentSnapshot(this.#db, parties.agentId);
-		if (!agent) {
-			return {
-				status: "refused",
-				message: "This agent was removed, so the conversation cannot go on",
-			};
+		if (!parties) return refused("This conversation was deleted");
+		if (parties.rootId !== null) {
+			return refused("This conversation was a turn of a team's agent, so it cannot go on");
 		}
+		this.#write(() => noteTurn(this.#db, conversation, message, Date.now()));
+		const plan =
+			parties.teamId === null
+				? { agent: agentSnapshot(this.#db, parties.agentId), position: null }
+				: teamTurnPlan(this.#db, parties.teamId);
+		if ("refused" in plan) return refused(plan.refused);
+		const { agent, position } = plan;
+		if (!agent) return refused("This agent was removed, so the conversation cannot go on");
+		const prepared = await this.#prepareTurn(agent, position, true);
+		if ("status" in prepared) return prepared;
+		const runId = this.#write(() =>
+			beginRun(
+				this.#db,
+				{
+					agent,
+					conversationId: conversation,
+					startedBy: parties.startedBy,
+					teamPath: position?.path ?? null,
+				},
+				Date.now(),
+			),
+		);
+		return { ...prepared, runId };
+	}
+
+	async #beginNestedTurn(
+		conversation: string,
+		text: string,
+		via: TurnVia,
+	): Promise<ConversationTurn | ProviderRefusal> {
+		const plan = nestedTurnPlan(this.#db, via);
+		if ("refused" in plan) return refused(plan.refused);
+		// An ask is one model request without tools.
+		const prepared = await this.#prepareTurn(plan.agent, plan.position, via.kind !== "ask");
+		if ("status" in prepared) return prepared;
+		// The graphs and the limits decide as the run begins, since they may have changed while the
+		// key was opened, and other nested turns may have begun.
+		return this.#write(() => {
+			const now = nestedTurnPlan(this.#db, via);
+			if ("refused" in now) return refused(now.refused);
+			if (now.agent.agentId !== plan.agent.agentId) {
+				return refused("The team changed as this turn began");
+			}
+			const at = Date.now();
+			const started = startNestedConversation(
+				this.#db,
+				{
+					id: conversation,
+					agentId: now.agent.agentId,
+					startedBy: now.startedBy,
+					rootId: now.rootConversationId,
+					text,
+				},
+				at,
+			);
+			if (!started) return refused("That conversation has had its turn already");
+			const runId = beginRun(
+				this.#db,
+				{
+					agent: plan.agent,
+					conversationId: conversation,
+					startedBy: now.startedBy,
+					teamPath: now.position.path,
+					parent: now.parent,
+				},
+				at,
+			);
+			return { ...prepared, runId };
+		});
+	}
+
+	/**
+	 * What a turn of `agent` needs besides its run: the key, opened, and with `tools`, its MCP
+	 * servers and the edges it can take where it stands in a team.
+	 */
+	async #prepareTurn(
+		agent: AgentSnapshot,
+		position: TeamPosition | null,
+		tools: boolean,
+	): Promise<Omit<ConversationTurn, "runId"> | ProviderRefusal> {
 		if (sealedKeyOf(this.#db, agent.provider) === null) {
-			return {
-				status: "refused",
-				message: `The workspace has no ${MODEL_PROVIDER_NAMES[agent.provider]} key, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
-			};
+			return refused(
+				`The workspace has no ${MODEL_PROVIDER_NAMES[agent.provider]} key, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
+			);
 		}
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
-		const servers = agentServers(this.#db, agent.agentId);
+		const servers = tools ? agentServers(this.#db, agent.agentId) : [];
+		const edges = tools && position ? turnEdges(this.#db, position) : [];
 		const [opened, environment] = await Promise.all([
 			this.#openKey(agent.provider),
 			servers.length > 0 ? this.resolveEnvironment(agent.agentId) : null,
 		]);
 		if ("status" in opened) return opened;
 		const mcpServers = servers.map((server) => turnServer(server, environment));
-		const runId = this.#write(() =>
-			beginRun(
-				this.#db,
-				{ agent, conversationId: conversation, startedBy: parties.startedBy },
-				Date.now(),
-			),
-		);
-		return { agent, key: opened.key, mcpServers, runId };
+		return { agent, key: opened.key, mcpServers, edges };
 	}
 
 	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */
@@ -886,4 +982,8 @@ export class RegistryDO extends DurableObject {
 	#write<T>(fn: () => T): T {
 		return this.ctx.storage.transactionSync(fn);
 	}
+}
+
+function refused(message: string): ProviderRefusal {
+	return { status: "refused", message };
 }

@@ -681,6 +681,26 @@ export const runCursor = z.object({
 });
 export type RunCursor = z.infer<typeof runCursor>;
 
+/**
+ * How far one message to a team can go: how deep turns nest below the turn the message started,
+ * how many turns one turn may start, and how many the message leads to in all. They keep a team
+ * from running away with the workspace's keys, since reports may go in a circle.
+ */
+export const TEAM_TURN_LIMITS = { depth: 4, perTurn: 8, perMessage: 32 };
+
+/** The edge a nested turn comes through, as the turn that takes it asks for it. */
+export const turnVia = z.object({
+	parentRunId: z.string().min(1).max(64),
+	/** The caller's span for the call, which the nested run points back to. */
+	parentSpanId: z.string().min(1).max(64),
+	kind: z.enum(TEAM_EDGE_KINDS),
+	/** The team whose graph has the edge. */
+	team: memberId,
+	/** The member it goes to: an agent, or a team reached through its lead. */
+	to: memberId,
+});
+export type TurnVia = z.input<typeof turnVia>;
+
 /** Most tools, and the longest name and description, a check of an MCP server keeps. */
 export const MCP_CHECK_LIMITS = { tools: 200, name: 200, description: 500 };
 

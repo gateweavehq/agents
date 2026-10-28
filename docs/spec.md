@@ -217,6 +217,16 @@ runtime is designed alongside it, so the data model fits both.
   or a secret applies from the next message. Connecting costs a round trip or two per turn. A
   tool call's span keeps the sizes of its input and output, not the content, for the same reason
   a trace keeps no message text.
+- **A team's edges are tools, and each call is a turn of its own** (AGT-34, 2026-10-28). A
+  conversation with a team is answered by its lead. Each turn gets one tool per edge its agent
+  can take, and taking one runs a turn of the other agent in a new conversation, reached by
+  Durable Object RPC. It is a run under the caller's run, with the caller's span pointing at it.
+  The registry checks each nested turn against the graphs and the limits as the turn begins, from
+  where it stored the calling run. The runtime only says which edge it takes, so a bug there
+  cannot reach an agent the graph does not allow. The Agents SDK's own agent tools
+  (`runAgentTool`) would put each called agent in a facet of the caller, with its messages and
+  trace in the caller's storage. A conversation of its own keeps every run's trace where the
+  Runs page already reads it, and needs no facets.
 - **Teams as graphs in the registry** (AGT-33, 2026-10-28). A team's members are agents run by
   Gateweave or other teams, and its edges are `delegate`, `ask` or `report`; a team stands for its
   lead. The registry saves a graph whole and refuses one where a team would contain itself, or

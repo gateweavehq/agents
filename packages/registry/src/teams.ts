@@ -17,6 +17,8 @@ import type {
 	TeamEntry,
 	TeamMember,
 	TeamMemberKind,
+	TurnEdge,
+	TurnVia,
 	teamGraphInput,
 	teamInput,
 } from "@gateweave/agents-model";
@@ -39,6 +41,23 @@ interface StoredGraph {
 
 /** Edges that wait for an answer, which must never go in a circle. */
 const WAITING: ReadonlySet<TeamEdgeKind> = new Set(["delegate", "ask"]);
+
+/**
+ * Where an agent stands in a team's turn: the teams from the one the person talks to down to the
+ * one the agent acts in, each a member of the one before, and the agent, a member of the last.
+ */
+export interface TeamPosition {
+	path: string[];
+	agentId: string;
+}
+
+/** An edge an agent can take, and where the agent that answers it stands. */
+interface Outgoing {
+	kind: TeamEdgeKind;
+	team: string;
+	to: { kind: TeamMemberKind; id: string };
+	target: TeamPosition;
+}
 
 export function createTeam(db: Db, input: z.output<typeof newTeamInput>, now: number): Team {
 	const lead = gateweaveAgents(db).get(input.lead);
@@ -224,6 +243,98 @@ export function getTeam(db: Db, id: string): TeamDetail | null {
 	return { team, members, edges, partOf: partOf(db, id) };
 }
 
+/**
+ * The edges an agent can take from where it stands, as tools for its turn: to agents that are not
+ * removed, and to teams, whose leads answer. The graphs are read as they are now. Sorted by name,
+ * so a turn's tools come in the same order each time.
+ */
+export function turnEdges(db: Db, position: TeamPosition): TurnEdge[] {
+	const agentsById = gateweaveAgents(db);
+	const teamsById = new Map(
+		db
+			.select({ id: teams.id, name: teams.name, description: teams.description })
+			.from(teams)
+			.all()
+			.map((team) => [team.id, team]),
+	);
+	return outgoing(storedGraphs(db), position)
+		.flatMap(({ kind, team, to, target }) => {
+			const answers = agentsById.get(target.agentId);
+			if (!answers || answers.removed) return [];
+			const member = to.kind === "agent" ? answers : teamsById.get(to.id);
+			if (!member) return [];
+			const lead = to.kind === "team" ? answers.name : null;
+			return [{ kind, team, to: to.id, name: member.name, description: member.description, lead }];
+		})
+		.sort((a, b) => a.name.localeCompare(b.name) || a.kind.localeCompare(b.kind));
+}
+
+/**
+ * Where the agent that answers an edge stands, if the agent at `position` can take that edge in
+ * the graphs as they are now. Null when it cannot.
+ */
+export function followEdge(
+	db: Db,
+	position: TeamPosition,
+	{ kind, team, to }: Pick<TurnVia, "kind" | "team" | "to">,
+): TeamPosition | null {
+	const edge = outgoing(storedGraphs(db), position).find(
+		(candidate) => candidate.kind === kind && candidate.team === team && candidate.to.id === to,
+	);
+	return edge?.target ?? null;
+}
+
+/** A team's name and the agent that leads it; null when there is no such team. */
+export function teamLead(db: Db, id: string): { name: string; leadAgentId: string } | null {
+	return (
+		db
+			.select({ name: teams.name, leadAgentId: teams.leadAgentId })
+			.from(teams)
+			.where(eq(teams.id, id))
+			.get() ?? null
+	);
+}
+
+/**
+ * The edges an agent can take from where it stands: its own in the team it acts in and, when it
+ * leads that team, the team's own in the team above, since a team stands for its lead. None once
+ * the teams along the way no longer contain each other or the agent.
+ */
+function outgoing(graphs: Map<string, StoredGraph>, { path, agentId }: TeamPosition): Outgoing[] {
+	const inner = path.at(-1);
+	const graph = inner === undefined ? undefined : graphs.get(inner);
+	if (inner === undefined || !graph || !holds(graphs, path)) return [];
+	if (!graph.members.some((member) => member.kind === "agent" && member.id === agentId)) return [];
+	const from = (teamId: string, base: string[], memberId: string): Outgoing[] => {
+		const team = graphs.get(teamId);
+		if (!team) return [];
+		return team.edges.flatMap((edge) => {
+			const to = team.members.find((member) => member.id === edge.to);
+			if (edge.from !== memberId || !to) return [];
+			const lead = to.kind === "agent" ? to.id : graphs.get(to.id)?.lead;
+			if (lead === undefined) return [];
+			const target = { path: to.kind === "agent" ? base : [...base, to.id], agentId: lead };
+			return [{ kind: edge.kind, team: teamId, to, target }];
+		});
+	};
+	const outer = path.at(-2);
+	return [
+		...from(inner, path, agentId),
+		...(outer !== undefined && graph.lead === agentId ? from(outer, path.slice(0, -1), inner) : []),
+	];
+}
+
+/** Whether each team along a path still has the next one as a member. */
+function holds(graphs: Map<string, StoredGraph>, path: string[]): boolean {
+	return path.every((id, at) => {
+		const above = at === 0 ? undefined : path[at - 1];
+		if (above === undefined) return graphs.has(id);
+		return !!graphs
+			.get(above)
+			?.members.some((member) => member.kind === "team" && member.id === id);
+	});
+}
+
 /** The teams `id` is a member of, by name. */
 function partOf(db: Db, id: string): { id: string; name: string }[] {
 	return db
@@ -236,13 +347,22 @@ function partOf(db: Db, id: string): { id: string; name: string }[] {
 }
 
 /** Every agent run by Gateweave, removed ones too, by id. */
-function gateweaveAgents(db: Db): Map<string, { name: string; removed: boolean }> {
+function gateweaveAgents(
+	db: Db,
+): Map<string, { name: string; description: string | null; removed: boolean }> {
 	const rows = db
-		.select({ id: agents.id, name: agents.name, removedAt: agents.removedAt })
+		.select({
+			id: agents.id,
+			name: agents.name,
+			description: agents.description,
+			removedAt: agents.removedAt,
+		})
 		.from(agents)
 		.innerJoin(agentDefinitions, eq(agentDefinitions.agentId, agents.id))
 		.all();
-	return new Map(rows.map((row) => [row.id, { name: row.name, removed: row.removedAt !== null }]));
+	return new Map(
+		rows.map(({ id, removedAt, ...agent }) => [id, { ...agent, removed: removedAt !== null }]),
+	);
 }
 
 function teamNames(db: Db): Map<string, string> {

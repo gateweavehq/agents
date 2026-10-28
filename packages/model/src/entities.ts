@@ -472,8 +472,13 @@ export interface ResolvedEnvironment {
  */
 export interface Conversation {
 	id: string;
+	/** The agent that answers; in a conversation with a team, its lead when the conversation began. */
 	agentId: string;
 	agentName: string;
+	/** The team it is with, whose lead answers; null when it is with one agent. */
+	teamId: string | null;
+	/** Null when it is with one agent, and once the team is deleted. */
+	teamName: string | null;
 	/** The agent was removed, so the conversation can be read but not continued. */
 	agentRemoved: boolean;
 	/** The start of its first message; null until one is sent. */
@@ -511,6 +516,22 @@ export interface Run {
 	cost: number | null;
 	startedAt: number;
 	endedAt: number | null;
+	/**
+	 * In a team's turn: the run that called this one over an edge, its span for the call, and the
+	 * run of the person's message, at the top. Null for a run a person's message started.
+	 */
+	parentRunId: string | null;
+	parentSpanId: string | null;
+	rootRunId: string | null;
+	/** The edge it came through; null for a run a person's message started. */
+	edge: TeamEdgeKind | null;
+	/** How many edges lie between it and the run of the person's message. */
+	depth: number;
+	/**
+	 * In a team's turn, the teams from the one the person talks to down to the one the agent acts
+	 * in. Null outside a team.
+	 */
+	teamPath: string[] | null;
 }
 
 /** What runs used over a period. */
@@ -524,8 +545,11 @@ export interface RunUsage {
 	unpriced: number;
 }
 
-/** A span of a run's trace: a model request, a call to a tool, or connecting to an MCP server. */
-export type RunSpan = ModelSpan | ToolSpan | ConnectSpan;
+/**
+ * A span of a run's trace: a model request, a call to a tool, connecting to an MCP server, or a
+ * call over one of a team's edges.
+ */
+export type RunSpan = ModelSpan | ToolSpan | ConnectSpan | EdgeSpan;
 
 interface SpanBase {
 	id: string;
@@ -573,6 +597,33 @@ export interface ConnectSpan extends SpanBase {
 	server: string;
 	/** How many tools it offers; null until it connects, and when it could not. */
 	tools: number | null;
+}
+
+/** A call over one of a team's edges, which runs a turn of another agent. Its words are not kept. */
+export interface EdgeSpan extends SpanBase {
+	kind: "edge";
+	edge: TeamEdgeKind;
+	/** The member it went to: an agent, or a team. */
+	to: string;
+	/** The run it started; null when the registry refused it. */
+	childRunId: string | null;
+}
+
+/**
+ * An edge a turn can take, as a tool: to an agent, or to a team, whose lead answers. For the
+ * runtime, which passes `team`, `to` and `kind` back when it takes the edge.
+ */
+export interface TurnEdge {
+	kind: TeamEdgeKind;
+	/** The team whose graph has the edge. */
+	team: string;
+	/** The member it goes to, by id. */
+	to: string;
+	/** The member's name: the agent's, or the team's. */
+	name: string;
+	description: string | null;
+	/** When the edge goes to a team, the name of the lead that answers for it. */
+	lead: string | null;
 }
 
 /**
