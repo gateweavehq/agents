@@ -22,6 +22,8 @@ export interface AuthConfig {
 	runInBackground?: ((work: Promise<unknown>) => void) | undefined;
 	/** Where rate limits are counted. This isolate's memory without it. */
 	rateLimitStorage?: BetterAuthRateLimitOptions["customStorage"];
+	/** Called after a workspace is deleted, to delete what it held outside D1. */
+	onWorkspaceDeleted?: ((workspaceId: string) => Promise<void>) | undefined;
 }
 
 /**
@@ -163,6 +165,9 @@ export function createAuth(config: AuthConfig) {
 					},
 					beforeUpdateOrganization: async ({ organization }) => {
 						if (organization.slug) assertSlug(organization.slug);
+					},
+					afterDeleteOrganization: async ({ organization }) => {
+						await config.onWorkspaceDeleted?.(organization.id);
 					},
 				},
 			}),
