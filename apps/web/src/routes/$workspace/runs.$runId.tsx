@@ -1,0 +1,195 @@
+import { MODEL_PROVIDER_NAMES, type RunSpan } from "@gateweave/agents-model";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { MessagesSquare } from "lucide-react";
+import type { ReactNode } from "react";
+import { RunStatusBadge, runDuration } from "#/components/runs/run-labels";
+import { Button } from "#/components/ui/button";
+import { useWorkspace } from "#/components/workspace/context";
+import { Notice } from "#/components/workspace/notice";
+import { formatDateTime } from "#/lib/dates";
+import { useRefreshWhile } from "#/lib/refresh";
+import { getRun, type RunEntry } from "#/lib/runs";
+import { useDocumentTitle } from "#/lib/title";
+import { formatCost, formatDuration, formatTokens } from "#/lib/usage";
+import { cn } from "#/lib/utils";
+
+export const Route = createFileRoute("/$workspace/runs/$runId")({
+	loader: ({ params }) => getRun({ data: { slug: params.workspace, runId: params.runId } }),
+	component: RunPage,
+});
+
+function RunPage() {
+	const { slug } = useWorkspace();
+	const data = Route.useLoaderData();
+	useDocumentTitle(data ? `Run of ${data.run.agentName}` : "Run");
+	useRefreshWhile(data?.run.status === "running");
+
+	if (!data) return <Notice title="Run not found" />;
+	const { run, trace, conversation } = data;
+
+	return (
+		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
+			<header className="flex flex-wrap items-start justify-between gap-4">
+				<div className="min-w-0 space-y-2">
+					<div className="flex flex-wrap items-center gap-2">
+						<h1 className="text-xl font-semibold tracking-tight">{run.agentName}</h1>
+						<RunStatusBadge status={run.status} />
+					</div>
+					<p className="text-sm text-muted-foreground">
+						Started by {run.startedByName} on {formatDateTime(run.startedAt)}
+					</p>
+				</div>
+				{conversation && (
+					<Button asChild size="sm" variant="outline">
+						<Link
+							to="/$workspace/chat/$conversationId"
+							params={{ workspace: slug, conversationId: conversation }}
+						>
+							<MessagesSquare />
+							Open the conversation
+						</Link>
+					</Button>
+				)}
+			</header>
+			{run.error && (
+				<p className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+					{run.error}
+				</p>
+			)}
+			<Summary run={run} />
+			<section className="space-y-3">
+				<h2 className="text-sm font-medium">Trace</h2>
+				{trace === null ? (
+					<p className="text-sm text-muted-foreground">
+						The conversation this run belonged to was deleted, and its trace with it.
+					</p>
+				) : trace.length === 0 ? (
+					<p className="text-sm text-muted-foreground">The run ended before it called the model.</p>
+				) : (
+					<Timeline run={run} trace={trace} />
+				)}
+			</section>
+		</div>
+	);
+}
+
+function Summary({ run }: { run: RunEntry }) {
+	const items: { label: string; value: ReactNode }[] = [
+		{ label: "Duration", value: runDuration(run) },
+		{ label: "Model requests", value: run.steps },
+		{
+			label: "Input tokens",
+			value: (
+				<>
+					{formatTokens(run.inputTokens)}
+					{run.cachedInputTokens > 0 && (
+						<span className="ml-1.5 text-xs font-normal text-muted-foreground">
+							{formatTokens(run.cachedInputTokens)} cached
+						</span>
+					)}
+				</>
+			),
+		},
+		{ label: "Output tokens", value: formatTokens(run.outputTokens) },
+		{
+			label: "Estimated cost",
+			value:
+				run.cost === null ? (
+					<span className="text-sm font-normal text-muted-foreground">
+						No prices for this model
+					</span>
+				) : (
+					formatCost(run.cost)
+				),
+		},
+		{
+			label: MODEL_PROVIDER_NAMES[run.provider],
+			value: <span className="font-mono text-sm font-normal">{run.model}</span>,
+		},
+	];
+	return (
+		<dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+			{items.map(({ label, value }) => (
+				<div key={label} className="min-w-0 rounded-lg border p-4">
+					<dt className="text-xs text-muted-foreground">{label}</dt>
+					<dd className="mt-1 truncate text-lg font-semibold tabular-nums">{value}</dd>
+				</div>
+			))}
+		</dl>
+	);
+}
+
+/** Why a model request ended, in words. */
+const FINISH_REASONS: Record<string, string> = {
+	stop: "Answered",
+	"tool-calls": "Called tools",
+	length: "Reached its output limit",
+	"content-filter": "Stopped by the provider's filter",
+	error: "Failed",
+	other: "Stopped",
+};
+
+const SPAN_COLORS: Record<RunSpan["status"], string> = {
+	running: "bg-sky-500",
+	ok: "bg-emerald-500",
+	error: "bg-destructive",
+};
+
+/** Each model request on one time axis, from the start of the run to its end. */
+function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
+	const end = Math.max(
+		run.endedAt ?? (run.status === "running" ? Date.now() : run.startedAt),
+		...trace.map((span) => span.endedAt ?? span.startedAt),
+	);
+	const total = Math.max(1, end - run.startedAt);
+	const percent = (time: number) => ((time - run.startedAt) / total) * 100;
+
+	return (
+		<ol className="divide-y rounded-lg border">
+			{trace.map((span) => {
+				const spanEnd = span.endedAt ?? end;
+				const details = [
+					span.firstTokenMs !== null && `First token after ${formatDuration(span.firstTokenMs)}`,
+					span.finishReason && (FINISH_REASONS[span.finishReason] ?? span.finishReason),
+				].filter(Boolean);
+				return (
+					<li key={span.id} className="space-y-2 p-3">
+						<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+							<span className="min-w-0 text-sm">
+								Model request {span.step + 1}
+								<span className="ml-2 font-mono text-xs text-muted-foreground">{span.model}</span>
+							</span>
+							<span className="text-xs text-muted-foreground tabular-nums">
+								{formatDuration(spanEnd - span.startedAt)} · {formatTokens(span.inputTokens)} in ·{" "}
+								{formatTokens(span.outputTokens)} out
+								{span.cost !== null && ` · ${formatCost(span.cost)}`}
+							</span>
+						</div>
+						<div className="relative h-2 overflow-hidden rounded-full bg-muted">
+							<div
+								className={cn("absolute inset-y-0 rounded-full", SPAN_COLORS[span.status])}
+								style={{
+									left: `${percent(span.startedAt)}%`,
+									width: `${Math.max(0.5, percent(spanEnd) - percent(span.startedAt))}%`,
+								}}
+							/>
+						</div>
+						{(details.length > 0 || span.gatewayLogId) && (
+							<p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+								{details.map((detail) => (
+									<span key={String(detail)}>{detail}</span>
+								))}
+								{span.gatewayLogId && (
+									<span>
+										AI Gateway log <span className="font-mono">{span.gatewayLogId}</span>
+									</span>
+								)}
+							</p>
+						)}
+						{span.error && <p className="text-xs text-destructive">{span.error}</p>}
+					</li>
+				);
+			})}
+		</ol>
+	);
+}

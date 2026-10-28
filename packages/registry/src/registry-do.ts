@@ -45,8 +45,14 @@ import {
 	type RepositoryDetail,
 	type RepositoryInput,
 	type ResolvedEnvironment,
+	type Run,
+	type RunCursor,
+	type RunFinish,
 	type RunnableAgent,
+	type RunUsage,
 	repositoryInput,
+	runCursor,
+	runFinish,
 	type ScanResult,
 	type Setup,
 	type SetupDetail,
@@ -75,7 +81,7 @@ import {
 } from "./apply";
 import {
 	type ConversationTurn,
-	conversationAgentId,
+	conversationParties,
 	getConversation,
 	listConversations,
 	noteTurn,
@@ -121,6 +127,7 @@ import {
 	readOverview,
 } from "./queries";
 import { dueScans, finishScan, nextScanAt, requestScans, retryScan } from "./queue";
+import { beginRun, detachRuns, expireRuns, finishRun, getRun, listRuns, runUsage } from "./runs";
 import { scanRepository } from "./scanner";
 import {
 	applyScan,
@@ -449,17 +456,25 @@ export class RegistryDO extends DurableObject {
 		return getConversation(this.#db, id.parse(conversationId), id.parse(startedBy));
 	}
 
-	/** Forgets the conversation; the caller clears its messages from the runtime. */
+	/**
+	 * Forgets the conversation; the caller clears its messages and traces from the runtime. Its
+	 * runs stay, without it, so the workspace's usage stays counted.
+	 */
 	removeConversation(conversationId: string, startedBy: string): boolean {
 		const conversation = id.parse(conversationId);
 		const member = id.parse(startedBy);
-		return this.#write(() => removeConversation(this.#db, conversation, member));
+		return this.#write(() => {
+			const removed = removeConversation(this.#db, conversation, member);
+			if (removed) detachRuns(this.#db, conversation);
+			return removed;
+		});
 	}
 
 	/**
-	 * Begins a turn of a conversation, for the runtime alone: it notes the turn, and hands over the
-	 * agent as it is now with the workspace's key for its provider, opened. The runtime keeps the
-	 * key in memory for the turn and sends it nowhere but the provider.
+	 * Begins a turn of a conversation, for the runtime alone: it notes the turn, opens a run for it,
+	 * and hands over the agent as it is now with the workspace's key for its provider, opened. The
+	 * runtime keeps the key in memory for the turn and sends it nowhere but the provider, and
+	 * reports how the run ended with `finishRun`.
 	 */
 	async beginTurn(
 		conversationId: string,
@@ -467,10 +482,10 @@ export class RegistryDO extends DurableObject {
 	): Promise<ConversationTurn | ProviderRefusal> {
 		const conversation = id.parse(conversationId);
 		const message = z.string().max(100_000).parse(text);
-		const agentId = conversationAgentId(this.#db, conversation);
-		if (agentId === null) return { status: "refused", message: "This conversation was deleted" };
+		const parties = conversationParties(this.#db, conversation);
+		if (!parties) return { status: "refused", message: "This conversation was deleted" };
 		this.#write(() => noteTurn(this.#db, conversation, message, Date.now()));
-		const agent = agentSnapshot(this.#db, agentId);
+		const agent = agentSnapshot(this.#db, parties.agentId);
 		if (!agent) {
 			return {
 				status: "refused",
@@ -484,7 +499,45 @@ export class RegistryDO extends DurableObject {
 			};
 		}
 		const opened = await this.#openKey(agent.provider);
-		return "status" in opened ? opened : { agent, key: opened.key };
+		if ("status" in opened) return opened;
+		const runId = this.#write(() =>
+			beginRun(
+				this.#db,
+				{ agent, conversationId: conversation, startedBy: parties.startedBy },
+				Date.now(),
+			),
+		);
+		return { agent, key: opened.key, runId };
+	}
+
+	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */
+	finishRun(runId: string, finish: RunFinish): boolean {
+		const run = id.parse(runId);
+		const data = runFinish.parse(finish);
+		return this.#write(() => finishRun(this.#db, run, data));
+	}
+
+	// Runs, for the Runs page and the Overview. Runs cut short and never reported are closed first.
+
+	/** The latest runs, a page at a time; one member's with `startedBy`. */
+	listRuns(options: { startedBy?: string; before?: RunCursor } = {}): Run[] {
+		const startedBy = id.optional().parse(options.startedBy);
+		const before = runCursor.optional().parse(options.before);
+		this.#write(() => expireRuns(this.#db, Date.now()));
+		return listRuns(this.#db, { startedBy, before });
+	}
+
+	getRun(runId: string): Run | null {
+		const run = id.parse(runId);
+		this.#write(() => expireRuns(this.#db, Date.now()));
+		return getRun(this.#db, run);
+	}
+
+	/** What runs used since `since`, a time. */
+	runUsage(since: number): RunUsage {
+		const from = z.number().int().min(0).parse(since);
+		this.#write(() => expireRuns(this.#db, Date.now()));
+		return runUsage(this.#db, from);
 	}
 
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the

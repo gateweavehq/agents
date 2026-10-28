@@ -45,8 +45,8 @@ not synced to the browser yet (see "Decisions" in the spec).
   so webhooks that arrive out of order cannot roll a repository back. A failed scan is recorded
   without touching what earlier scans found.
 - **Room for the runtime.** Agents and assets may have no repository: those are agents defined
-  in the app and assets in the library (phases 2 and 3). Teams and runs come as tables of their
-  own when that phase gets to them.
+  in the app and assets in the library (phases 2 and 3). Runs have a table of their own (see
+  "Runs"), and teams will too.
 
 ## GitHub
 
@@ -329,10 +329,44 @@ after a reconnect.
   authenticated gateway. The gateway is reached by URL rather than through an `ai` binding,
   because the binding always calls Cloudflare: local development and the tests would need a
   Cloudflare login. Without the setting, requests go straight to the provider.
+- **Replies are Markdown**, rendered with `react-markdown` and GitHub's extensions. An image in
+  a reply shows as a link instead, so a reply cannot make the browser fetch an address it chose
+  (which could carry the conversation away in its query).
 - **Deleting a conversation** removes its row, then destroys its Durable Object with the
-  messages.
-- **Not yet:** tools from MCP servers (AGT-26), running with the agent's environment set (AGT-24)
-  and Markdown in replies.
+  messages and traces. Its runs stay (see "Runs").
+- **Not yet:** tools from MCP servers, and running with the agent's environment set, which those
+  tools use (AGT-26).
+
+## Runs
+
+Every turn that reaches the model is a run. The registry keeps a summary of each, and the
+conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
+
+- **The registry opens the run.** `beginTurn` adds a `runs` row (`running`, the agent, model,
+  conversation and member) in the write that opens the key, and returns its id. A turn the
+  registry refuses (no key, the agent removed) is not a run.
+- **The trace stays with the conversation**: a span per model request in the conversation's own
+  SQLite (`trace_runs`, `trace_spans`), written as each step starts and ends, with its timing,
+  tokens, cache reads, estimated cost, finish reason, time to the first token and AI Gateway's
+  log id (`cf-aig-log-id`). A trace holds no message text, so it is private to the conversation
+  without being secret: it goes when the conversation is deleted, and admins can read it while it
+  lasts.
+- **The runtime closes the run** once, from whichever of the AI SDK's `onEnd`, `onAbort` and
+  `onError` comes first: `succeeded`, `failed` (with our sentence, never the provider's),
+  or `stopped`. It sums the spans and reports them with `finishRun`, which changes only a run
+  still `running`, so a late or repeated report changes nothing.
+- **A restart can cut a run short.** When a conversation wakes, it closes the runs it finds still
+  open as `interrupted`, at the last moment its trace saw them move, and reports them. A
+  conversation nobody opens again never wakes, so the registry marks runs older than an hour
+  `interrupted` itself, with no end, before it lists or sums them. If the conversation does wake
+  later, its report still fills in what the run used, once.
+- **Cost is an estimate**, in millionths of a dollar: each request at the list prices of the day
+  it ran (`packages/model/src/prices.ts`), with cache reads and writes at their own rates and the
+  long-context rates when a request crosses its model's threshold. A model the table does not
+  list gets no estimate, and neither does a run that used one; the Overview says how many runs it
+  left out. The provider's bill and AI Gateway's logs stay the record.
+- **Runs outlive their conversations.** Deleting a conversation clears the run's link to it in
+  the same write, so the workspace's usage stays counted.
 
 ## The CLI
 
@@ -372,6 +406,10 @@ workspace.
 - **Chat** lists the caller's own conversations, the latest first, and starts one with any
   agent run by Gateweave. A conversation's page streams the reply, can stop it, and says when the
   agent cannot answer and why. An agent's page has a Chat button too.
+- **Runs** lists runs, the latest first, fifty at a time (`apps/web/src/lib/runs.ts`): owners
+  and admins see everyone's, since they answer for what runs spend, and members see their own. A
+  run's page shows its summary and its trace as a timeline of model requests, and links the
+  conversation only for the member who started it. The Overview sums the last 30 days of runs.
 - **Environment** lists the environment sets with their variables, their secrets as set or
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
@@ -399,8 +437,8 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): runs and their traces with the
-  agent's environment set, tools from MCP servers, and teams.
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): tools from MCP servers, which run
+  with the agent's environment set and add tool spans to the trace (AGT-26), and teams (AGT-27).
 
 ## Deploys
 

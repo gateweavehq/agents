@@ -13,6 +13,7 @@ import {
 	MODEL_PROVIDERS,
 	REPOSITORY_PROVIDERS,
 	type RepositoryRuntime,
+	RUN_STATUSES,
 	type ScanProblem,
 } from "@gateweave/agents-model";
 import { sql } from "drizzle-orm";
@@ -360,6 +361,40 @@ export const conversations = sqliteTable(
 	(table) => [
 		index("conversations_started_by_idx").on(table.startedBy, table.updatedAt),
 		index("conversations_agent_idx").on(table.agentId),
+	],
+);
+
+/**
+ * Each turn of a conversation, summed up for the Runs page and the Overview. A run outlives its
+ * conversation (`conversation_id` is cleared), so usage stays counted; its trace does not.
+ */
+export const runs = sqliteTable(
+	"runs",
+	{
+		id: text("id").primaryKey(),
+		agentId: text("agent_id")
+			.notNull()
+			.references(() => agents.id),
+		conversationId: text("conversation_id"),
+		/** The user id of the member whose message started it. */
+		startedBy: text("started_by").notNull(),
+		provider: text("provider", { enum: MODEL_PROVIDERS }).notNull(),
+		model: text("model").notNull(),
+		status: text("status", { enum: RUN_STATUSES }).notNull(),
+		error: text("error"),
+		steps: integer("steps").notNull().default(0),
+		inputTokens: integer("input_tokens").notNull().default(0),
+		outputTokens: integer("output_tokens").notNull().default(0),
+		cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
+		/** Estimated cost in millionths of a dollar; null when the model has no prices. */
+		cost: integer("cost"),
+		startedAt: integer("started_at").notNull(),
+		endedAt: integer("ended_at"),
+	},
+	(table) => [
+		index("runs_started_at_idx").on(table.startedAt),
+		index("runs_started_by_idx").on(table.startedBy, table.startedAt),
+		index("runs_conversation_idx").on(table.conversationId),
 	],
 );
 

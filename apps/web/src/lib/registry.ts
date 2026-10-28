@@ -17,6 +17,7 @@ import {
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryRuntime,
+	type RunUsage,
 	type Setup,
 	type SetupDetail,
 	type SetupEntry,
@@ -49,18 +50,27 @@ async function managedRegistryOf(slug: string) {
 	return registryFor(member.membership.workspaceId);
 }
 
-/** How much the registry holds, and which runtimes each repository uses. */
+/** The span of time the Overview sums the workspace's runs over. */
+const USAGE_PERIOD = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * How much the registry holds, which runtimes each repository uses, and what the agents run by
+ * Gateweave used lately.
+ */
 export const getOverview = createServerFn({ method: "GET" })
 	.validator(z.string().min(1))
 	.handler(
-		async ({ data: slug }): Promise<{ counts: Overview; repositories: Repository[] } | null> => {
+		async ({
+			data: slug,
+		}): Promise<{ counts: Overview; repositories: Repository[]; usage: RunUsage } | null> => {
 			const registry = await registryOf(slug);
 			if (!registry) return null;
-			const [{ projects, repositories, agents, assets }, list] = await Promise.all([
+			const [{ projects, repositories, agents, assets }, list, usage] = await Promise.all([
 				registry.overview(),
 				registry.listRepositories(),
+				registry.runUsage(Date.now() - USAGE_PERIOD),
 			]);
-			return { counts: { projects, repositories, agents, assets }, repositories: list };
+			return { counts: { projects, repositories, agents, assets }, repositories: list, usage };
 		},
 	);
 

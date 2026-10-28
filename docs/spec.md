@@ -196,6 +196,14 @@ runtime is designed alongside it, so the data model fits both.
   is reached by URL (`AI_GATEWAY_URL`) instead of the `ai` binding, which always calls
   Cloudflare: local development, the tests and self-hosted servers work without a Cloudflare
   login, and a deployment turns the gateway on with one setting.
+- **Runs and traces** (AGT-24, 2026-10-28). A run's summary lives in the registry and its trace
+  in the conversation's Durable Object. The summaries are what the Runs page and the Overview
+  list and sum across the workspace, and they outlive conversations so usage stays counted; the
+  trace is written step by step where the turn runs, without a call to the registry per step,
+  and goes with the conversation. Cost is estimated from a dated table of list prices rather
+  than read from AI Gateway, which a deployment may not use, and a model the table does not list
+  gets no estimate rather than a guess. Runs cut short by a restart are closed when their
+  conversation wakes, and after an hour by the registry for those that never wake.
 - **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
   asset when its hash equals one of the library asset's versions; no link is stored. There is
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the

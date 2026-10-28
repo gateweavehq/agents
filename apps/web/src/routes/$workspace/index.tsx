@@ -1,4 +1,4 @@
-import type { Overview } from "@gateweave/agents-model";
+import type { Overview, RunUsage } from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { RuntimeMatrix } from "#/components/registry/runtime-matrix";
 import { Button } from "#/components/ui/button";
@@ -6,6 +6,7 @@ import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context
 import { useRefreshWhile } from "#/lib/refresh";
 import { getOverview } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
+import { formatCost, formatTokens } from "#/lib/usage";
 
 export const Route = createFileRoute("/$workspace/")({
 	loader: ({ params }) => getOverview({ data: params.workspace }),
@@ -47,8 +48,49 @@ function OverviewPage() {
 					</div>
 				))}
 			</dl>
+			{data && data.usage.runs > 0 && <Usage usage={data.usage} />}
 			{repositories.length === 0 ? <GetStarted /> : <RuntimeMatrix repositories={repositories} />}
 		</div>
+	);
+}
+
+/** What the agents run by Gateweave used in the last 30 days. */
+function Usage({ usage }: { usage: RunUsage }) {
+	const { slug } = useWorkspace();
+	const items = [
+		{ label: "Runs", value: usage.runs.toLocaleString() },
+		{ label: "Input tokens", value: formatTokens(usage.inputTokens) },
+		{ label: "Output tokens", value: formatTokens(usage.outputTokens) },
+		{ label: "Estimated cost", value: formatCost(usage.cost) },
+	];
+
+	return (
+		<section className="space-y-3">
+			<div className="flex items-baseline justify-between gap-4">
+				<h2 className="text-sm font-medium">Last 30 days</h2>
+				<Link
+					to="/$workspace/runs"
+					params={{ workspace: slug }}
+					className="text-xs text-muted-foreground hover:text-foreground"
+				>
+					See runs
+				</Link>
+			</div>
+			<dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+				{items.map(({ label, value }) => (
+					<div key={label} className="rounded-lg border p-4">
+						<dt className="text-xs text-muted-foreground">{label}</dt>
+						<dd className="mt-1 text-2xl font-semibold tabular-nums">{value}</dd>
+					</div>
+				))}
+			</dl>
+			{usage.unpriced > 0 && (
+				<p className="text-xs text-muted-foreground">
+					{usage.unpriced === 1 ? "1 run used" : `${usage.unpriced} runs used`} a model without
+					listed prices, so the estimate leaves {usage.unpriced === 1 ? "it" : "them"} out.
+				</p>
+			)}
+		</section>
 	);
 }
 

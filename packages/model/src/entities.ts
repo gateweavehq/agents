@@ -9,6 +9,7 @@ import type {
 	ModelProvider,
 	RepositoryProvider,
 	RepositoryRuntime,
+	RunStatus,
 } from "./vocabulary";
 
 /** A product or initiative. Groups repositories; a repository can be in several projects. */
@@ -420,4 +421,72 @@ export interface Conversation {
 	createdAt: number;
 	/** When the last turn started. */
 	updatedAt: number;
+}
+
+/**
+ * A run: one turn of a conversation with an agent run by Gateweave, from the person's message to
+ * the end of the agent's answer, as the registry sums it up. Its trace (`RunSpan`) stays with the
+ * conversation.
+ */
+export interface Run {
+	id: string;
+	agentId: string;
+	agentName: string;
+	/** The conversation it answered; null once that was deleted, with the run's trace. */
+	conversationId: string | null;
+	/** The user id of the member whose message started it. */
+	startedBy: string;
+	provider: ModelProvider;
+	model: string;
+	status: RunStatus;
+	/** Why it failed, in the app's words. */
+	error: string | null;
+	/** Model requests it made. */
+	steps: number;
+	inputTokens: number;
+	outputTokens: number;
+	/** Input read from the provider's cache, counted in `inputTokens` too. */
+	cachedInputTokens: number;
+	/** Estimated cost in millionths of a dollar; null when a model it used has no prices. */
+	cost: number | null;
+	startedAt: number;
+	endedAt: number | null;
+}
+
+/** What runs used over a period. */
+export interface RunUsage {
+	runs: number;
+	inputTokens: number;
+	outputTokens: number;
+	/** Estimated cost of the runs that have an estimate, in millionths of a dollar. */
+	cost: number;
+	/** Runs without an estimate, whose cost `cost` leaves out. */
+	unpriced: number;
+}
+
+/**
+ * One model request of a run, as the trace shows it. Tool calls join the trace as spans of their
+ * own when agents get tools.
+ */
+export interface RunSpan {
+	id: string;
+	kind: "model";
+	/** The request's number in the run, from 0. */
+	step: number;
+	status: "running" | "ok" | "error";
+	startedAt: number;
+	endedAt: number | null;
+	/** The model that answered, as the provider named it. */
+	model: string;
+	inputTokens: number;
+	outputTokens: number;
+	cachedInputTokens: number;
+	cost: number | null;
+	/** Why the model stopped, as the AI SDK puts it: `stop`, `length`, `tool-calls`, `error`... */
+	finishReason: string | null;
+	/** How long the first token took to arrive, in milliseconds. */
+	firstTokenMs: number | null;
+	/** AI Gateway's id for the request's log entry, when it went through one. */
+	gatewayLogId: string | null;
+	error: string | null;
 }

@@ -101,6 +101,7 @@ describe("conversations", () => {
 				updatedAt: agent.updatedAt,
 			},
 			key: "sk-ant-api03-abcdefgh",
+			runId: expect.any(String),
 		});
 
 		// A removed agent's conversations stay readable, and cannot go on.

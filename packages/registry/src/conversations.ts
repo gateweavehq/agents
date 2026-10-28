@@ -9,10 +9,14 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { agentDefinitions, agents, conversations } from "./db/schema";
 import type { Db } from "./state";
 
-/** What a turn needs: the agent as it is now, and the workspace's key for its provider, opened. */
+/**
+ * What a turn needs: the agent as it is now, the workspace's key for its provider, opened, and
+ * the run the registry opened for it.
+ */
 export interface ConversationTurn {
 	agent: AgentSnapshot;
 	key: string;
+	runId: string;
 }
 
 /** A conversation's title is the start of its first message, up to this many characters. */
@@ -68,14 +72,18 @@ export function getConversation(db: Db, id: string, startedBy: string): Conversa
 	return found ? toConversation(found.conversation, found.agentName, found.agentRemovedAt) : null;
 }
 
-/** The agent a conversation talks to, whoever started it; null when there is no conversation. */
-export function conversationAgentId(db: Db, id: string): string | null {
-	const row = db
-		.select({ agentId: conversations.agentId })
-		.from(conversations)
-		.where(eq(conversations.id, id))
-		.get();
-	return row?.agentId ?? null;
+/** Whom a conversation belongs to and which agent it talks to; null when there is none. */
+export function conversationParties(
+	db: Db,
+	id: string,
+): { agentId: string; startedBy: string } | null {
+	return (
+		db
+			.select({ agentId: conversations.agentId, startedBy: conversations.startedBy })
+			.from(conversations)
+			.where(eq(conversations.id, id))
+			.get() ?? null
+	);
 }
 
 /** Only the member who started it can delete it. */
