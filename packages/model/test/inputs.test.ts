@@ -1,5 +1,13 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: "${VAR}" references are what is under test
 import { describe, expect, it } from "vitest";
-import { type DetectedAgent, type DetectedAsset, repositoryPath, scanResult } from "../src";
+import {
+	agentDefinitionInput,
+	type DetectedAgent,
+	type DetectedAsset,
+	mcpServerInput,
+	repositoryPath,
+	scanResult,
+} from "../src";
 
 const COMMIT = "a".repeat(40);
 
@@ -110,5 +118,86 @@ describe("scanResult", () => {
 		expect(read([file, { ...file, content: undefined }]).success).toBe(false);
 		expect(read([{ ...file, blob: undefined }]).success).toBe(false);
 		expect(read([{ ...file, path: "../AGENTS.md" }]).success).toBe(false);
+	});
+});
+
+describe("mcpServerInput", () => {
+	const server = (fields: Record<string, unknown>) =>
+		mcpServerInput.safeParse({
+			name: "acme",
+			transport: "http",
+			url: "https://mcp.acme.dev/mcp",
+			...fields,
+		});
+	const refusal = (fields: Record<string, unknown>) => {
+		const parsed = server(fields);
+		return parsed.success ? null : parsed.error.issues[0]?.message;
+	};
+
+	it("takes an https address, or a plain one on the machine itself", () => {
+		expect(server({ url: " https://MCP.acme.dev/mcp " }).data?.url).toBe(
+			"https://mcp.acme.dev/mcp",
+		);
+		expect(server({ url: "http://localhost:8787/mcp" }).success).toBe(true);
+		expect(server({ url: "http://127.0.0.1/mcp" }).success).toBe(true);
+		expect(refusal({ url: "http://mcp.acme.dev/mcp" })).toBe("The URL must start with https://");
+		expect(refusal({ url: "http://localhost.acme.dev/mcp" })).toBe(
+			"The URL must start with https://",
+		);
+		expect(refusal({ url: "ftp://mcp.acme.dev" })).toBe(
+			"Enter the server's full URL, starting with https://",
+		);
+		expect(refusal({ url: "mcp.acme.dev" })).toBe(
+			"Enter the server's full URL, starting with https://",
+		);
+	});
+
+	it("keeps credentials and settings out of the address", () => {
+		const message = "Send credentials and settings as headers, not in the URL";
+		expect(refusal({ url: "https://mcp.acme.dev/mcp?token=abc" })).toBe(message);
+		expect(refusal({ url: "https://ada:secret@mcp.acme.dev/mcp" })).toBe(message);
+		expect(refusal({ url: "https://mcp.acme.dev/mcp#key" })).toBe(message);
+	});
+
+	it("takes headers that name a variable, never a value", () => {
+		expect(
+			server({ headers: [{ name: "Authorization", value: "Bearer ${ACME_TOKEN}" }] }).success,
+		).toBe(true);
+		const named = "A header's value names a variable, as in Bearer ${API_TOKEN}";
+		expect(refusal({ headers: [{ name: "Authorization", value: "Bearer sk-live-123" }] })).toBe(
+			named,
+		);
+		expect(refusal({ headers: [{ name: "X-Team", value: "${team}" }] })).toBe(named);
+		expect(refusal({ headers: [{ name: "X-Team", value: "${A}${B}" }] })).toBe(named);
+		expect(
+			refusal({
+				headers: [
+					{ name: "x-team", value: "${A}" },
+					{ name: "X-Team", value: "${B}" },
+				],
+			}),
+		).toBe("A header is set twice");
+		expect(refusal({ headers: [{ name: "X Team", value: "${A}" }] })).toBe(
+			"A header's name has no spaces or symbols",
+		);
+	});
+});
+
+describe("agentDefinitionInput", () => {
+	it("pins each MCP server once", () => {
+		const parsed = agentDefinitionInput.safeParse({
+			name: "Reviewer",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			mcpServers: [
+				{ assetId: "a", version: 1 },
+				{ assetId: "a", version: 2 },
+			],
+		});
+		expect(parsed.success ? null : parsed.error.issues[0]?.message).toBe(
+			"An MCP server is chosen twice",
+		);
 	});
 });

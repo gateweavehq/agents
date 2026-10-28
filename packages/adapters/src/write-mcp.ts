@@ -72,6 +72,47 @@ function fail(message: string): never {
 	throw new Unwritable(message);
 }
 
+/** How the runtime reaches a stored MCP server. */
+export type McpConnection =
+	| { transport: "stdio"; command: string }
+	| { transport: "http" | "sse"; url: string; headers: McpHeader[] };
+
+/** A request header: text, or a variable whose value goes after `prefix`. */
+export interface McpHeader {
+	name: string;
+	value: string | { variable: string; prefix: string };
+}
+
+/**
+ * Reads a stored MCP server as `writeMcpServers` does, for the runtime and the MCP page: a
+ * redacted header becomes the variable named after the header, and a reference stays one. Says
+ * why when the server cannot be read.
+ */
+export function readMcpConnection(
+	files: AssetToWrite["files"],
+): { ok: true; connection: McpConnection } | { ok: false; message: string } {
+	let server: Server;
+	try {
+		server = readServer(files);
+	} catch (error) {
+		if (error instanceof Unwritable) return { ok: false, message: error.message };
+		throw error;
+	}
+	const { transport } = server;
+	if (transport.kind === "stdio") {
+		return { ok: true, connection: { transport: "stdio", command: transport.command } };
+	}
+	const headers = [...server.headers]
+		.sort(([a], [b]) => compare(a, b))
+		.map(
+			([name, value]): McpHeader => ({
+				name,
+				value: typeof value === "string" ? value : { variable: value.ref, prefix: value.prefix },
+			}),
+		);
+	return { ok: true, connection: { transport: transport.kind, url: transport.url, headers } };
+}
+
 export function writeMcpServers(
 	assets: readonly AssetToWrite[],
 	targets: ReadonlySet<RepositoryRuntime>,
@@ -81,7 +122,7 @@ export function writeMcpServers(
 	for (const asset of assets) {
 		let server: Server;
 		try {
-			server = readServer(asset);
+			server = readServer(asset.files);
 		} catch (error) {
 			if (!(error instanceof Unwritable)) throw error;
 			output.problem(asset.name, error.message);
@@ -118,8 +159,8 @@ export function writeMcpServers(
 	}
 }
 
-function readServer(asset: AssetToWrite): Server {
-	const [file, ...rest] = asset.files;
+function readServer(files: AssetToWrite["files"]): Server {
+	const [file, ...rest] = files;
 	if (!file || rest.length > 0) fail("Expected exactly one file");
 	if (file.content === null) fail("The registry did not keep this asset's text");
 	const parsed = file.path.endsWith(".toml")

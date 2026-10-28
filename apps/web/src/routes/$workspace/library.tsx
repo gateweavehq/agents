@@ -1,11 +1,12 @@
 import { ASSET_KIND_NAMES, ASSET_KINDS, type LibraryEntry } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import { Plug, Plus } from "lucide-react";
 import { useState } from "react";
 import { NewLibraryAssetDialog } from "#/components/registry/library-dialogs";
+import { McpServerDialog } from "#/components/registry/mcp-dialogs";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
-import { getLibrary } from "#/lib/registry";
+import { createMcpServer, getLibrary } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/library")({
@@ -19,7 +20,12 @@ function LibraryPage() {
 	const navigate = useNavigate();
 	const admin = isAdmin(useMyRole());
 	const [writing, setWriting] = useState(false);
+	const [addingServer, setAddingServer] = useState(false);
 	useDocumentTitle("Library");
+
+	async function open(assetId: string) {
+		await navigate({ to: "/$workspace/assets/$assetId", params: { workspace: slug, assetId } });
+	}
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -32,30 +38,32 @@ function LibraryPage() {
 					</p>
 				</div>
 				{admin && (
-					<Button variant="outline" size="sm" onClick={() => setWriting(true)}>
-						<Plus />
-						New
-					</Button>
+					<div className="flex flex-wrap gap-2">
+						<Button variant="outline" size="sm" onClick={() => setAddingServer(true)}>
+							<Plug />
+							New MCP server
+						</Button>
+						<Button variant="outline" size="sm" onClick={() => setWriting(true)}>
+							<Plus />
+							New
+						</Button>
+					</div>
 				)}
 			</header>
-			{writing && (
-				<NewLibraryAssetDialog
-					onCreated={async (assetId) => {
-						await navigate({
-							to: "/$workspace/assets/$assetId",
-							params: { workspace: slug, assetId },
-						});
-					}}
-					onClose={() => setWriting(false)}
+			{writing && <NewLibraryAssetDialog onCreated={open} onClose={() => setWriting(false)} />}
+			{addingServer && (
+				<McpServerDialog
+					onSave={async (server) => open(await createMcpServer({ data: { slug, server } }))}
+					onClose={() => setAddingServer(false)}
 				/>
 			)}
 			{library.length === 0 && (
 				<div className="space-y-1 rounded-lg border p-6 text-center">
 					<h2 className="text-base font-medium">The library is empty</h2>
 					<p className="text-sm text-muted-foreground">
-						Write a skill, a prompt or instructions here, or open an asset in a repository and
-						choose "Add to library". The library keeps its versions and shows every repository that
-						carries one of them.
+						Write a skill, a prompt or instructions here, add an MCP server, or open an asset in a
+						repository and choose "Add to library". The library keeps its versions and shows every
+						repository that carries one of them.
 					</p>
 				</div>
 			)}

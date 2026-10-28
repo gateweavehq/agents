@@ -12,6 +12,7 @@ import m0010 from "./0010_agent_definitions.sql";
 import m0011 from "./0011_environment_sets.sql";
 import m0012 from "./0012_conversations.sql";
 import m0013 from "./0013_runs.sql";
+import m0014 from "./0014_agent_mcp_servers.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -31,5 +32,6 @@ export default {
 		m0011,
 		m0012,
 		m0013,
+		m0014,
 	},
 };

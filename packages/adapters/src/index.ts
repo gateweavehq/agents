@@ -11,3 +11,5 @@ export { groupSetupFolders, readSetupFolder } from "./setup-folder";
 export type { Detection, RepositoryTree, TreeFile } from "./types";
 export type { AssetToWrite, WriteProblem, WriteResult, WrittenFile } from "./write";
 export { writeAssets } from "./write";
+export type { McpConnection, McpHeader } from "./write-mcp";
+export { readMcpConnection } from "./write-mcp";

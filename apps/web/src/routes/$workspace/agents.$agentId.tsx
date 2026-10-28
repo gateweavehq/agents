@@ -1,6 +1,8 @@
 import {
+	type Agent,
 	type AgentDefinition,
 	type AgentDetail,
+	type AgentMcpServer,
 	MODEL_PROVIDER_NAMES,
 	type PinnedAsset,
 } from "@gateweave/agents-model";
@@ -189,8 +191,82 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 					</p>
 				)}
 			</section>
+
+			<section aria-labelledby="mcp-heading" className="space-y-3">
+				<h2 id="mcp-heading" className="text-sm font-medium">
+					{definition.mcpServers.length === 0
+						? "MCP servers"
+						: `MCP servers · ${definition.mcpServers.length}`}
+				</h2>
+				{definition.mcpServers.length > 0 ? (
+					<ul className="divide-y rounded-lg border text-sm">
+						{definition.mcpServers.map((server) => (
+							<PinRow key={server.asset.id} field="mcp-server" pin={server} admin={admin}>
+								<McpServerState server={server} />
+							</PinRow>
+						))}
+					</ul>
+				) : (
+					<p className="rounded-lg border p-6 text-sm text-muted-foreground">
+						No MCP servers: the agent has no tools.
+						{admin ? " Choose servers from the library with Edit." : ""}
+					</p>
+				)}
+			</section>
 		</>
 	);
+}
+
+/** Where the agent reaches a server, and the variables its headers need. */
+function McpServerState({ server }: { server: AgentMcpServer }) {
+	const { slug } = useWorkspace();
+	const { connection, variables } = server;
+	const missing = variables.filter((variable) => variable.state === "missing");
+
+	return (
+		<div className="w-full space-y-1 text-xs text-muted-foreground">
+			{"problem" in connection ? (
+				<p className="text-destructive">{connection.problem}</p>
+			) : (
+				<p className="truncate">
+					{connection.transport === "sse" ? "SSE" : "Streamable HTTP"} ·{" "}
+					<span className="font-mono">{connection.url}</span>
+				</p>
+			)}
+			{variables.length > 0 && (
+				<p>
+					Its headers use <Names names={variables.map((variable) => variable.name)} />.
+					{missing.length > 0 && (
+						<>
+							{" "}
+							<span className="text-amber-600 dark:text-amber-500">
+								<Names names={missing.map((variable) => variable.name)} />{" "}
+								{missing.length === 1 ? "has" : "have"} no value in the agent's environment set
+							</span>
+							; set {missing.length === 1 ? "it" : "them"} on the{" "}
+							<Link
+								to="/$workspace/environment"
+								params={{ workspace: slug }}
+								className="underline underline-offset-2"
+							>
+								Environment page
+							</Link>
+							.
+						</>
+					)}
+				</p>
+			)}
+		</div>
+	);
+}
+
+function Names({ names }: { names: string[] }) {
+	return names.map((name, index) => (
+		<span key={name}>
+			{index > 0 && ", "}
+			<code>{name}</code>
+		</span>
+	));
 }
 
 /** A pinned library asset, and its newer version if the library has one. */
@@ -198,10 +274,12 @@ function PinRow({
 	field,
 	pin,
 	admin,
+	children,
 }: {
-	field: "instructions" | "environment";
+	field: "instructions" | "environment" | "mcp-server";
 	pin: PinnedAsset;
 	admin: boolean;
+	children?: ReactNode;
 }) {
 	const { slug } = useWorkspace();
 	const router = useRouter();
@@ -215,27 +293,17 @@ function PinRow({
 		setPending(true);
 		try {
 			const { agent, definition } = data;
-			await updateAgent({
-				data: {
-					slug,
-					agentId: agent.id,
-					agent: {
-						name: agent.name,
-						description: agent.description,
-						provider: definition.provider,
-						model: definition.model,
-						// Only the pin of this row moves; the other stays where it is.
-						instructions:
-							field === "instructions"
-								? { assetId: asset.id, version: asset.version }
-								: keep(definition.instructions),
-						environment:
-							field === "environment"
-								? { assetId: asset.id, version: asset.version }
-								: keep(definition.environment),
-					},
-				},
-			});
+			// Only the pin of this row moves; the others stay where they are.
+			const input = inputOf(agent, definition);
+			const latest = { assetId: asset.id, version: asset.version };
+			if (field === "mcp-server") {
+				input.mcpServers = input.mcpServers.map((server) =>
+					server.assetId === asset.id ? latest : server,
+				);
+			} else {
+				input[field] = latest;
+			}
+			await updateAgent({ data: { slug, agentId: agent.id, agent: input } });
 			toast.success(`${agent.name} reads v${asset.version} of ${asset.name}`);
 			await router.invalidate();
 		} catch (error) {
@@ -276,8 +344,25 @@ function PinRow({
 					Use v{asset.version}
 				</Button>
 			)}
+			{children}
 		</li>
 	);
+}
+
+/** The update that leaves an agent as it is, with every pin where it is. */
+function inputOf(agent: Agent, definition: AgentDefinition) {
+	return {
+		name: agent.name,
+		description: agent.description,
+		provider: definition.provider,
+		model: definition.model,
+		instructions: keep(definition.instructions),
+		environment: keep(definition.environment),
+		mcpServers: definition.mcpServers.map((server) => ({
+			assetId: server.asset.id,
+			version: server.version,
+		})),
+	};
 }
 
 /** What an agent update sends for a pin it keeps. */

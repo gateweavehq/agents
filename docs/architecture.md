@@ -298,6 +298,28 @@ admins manage them on the Environment page (`packages/registry/src/environment.t
 - **Without `SECRETS_KEY`** the page says so and values cannot be set; sets with only variables
   work as they are.
 
+## MCP servers
+
+An agent run by Gateweave gets its tools from remote MCP servers in the library
+(`packages/registry/src/mcp-servers.ts`).
+
+- **A server is a library asset** of kind `mcp-server` with one file, `.mcp.json`, holding one
+  server in the shape Claude Code reads: `{ "headers": {…}, "type": "http" | "sse", "url": "…" }`,
+  written with sorted keys so the same settings are the same bytes. Owners and admins add one in
+  the library or copy one a scan found. Its settings are edited in a form, not as text, so the
+  rules below always hold, and saving the same settings makes no version.
+- **No secret in the file.** The URL is https (plain http only for the machine itself), with no
+  user, query or fragment, which is where tokens hide. Each header's value names a variable of
+  the agent's environment set, as in `Bearer ${API_TOKEN}`, with only text before it. A scan
+  keeps no header values at all, so a copied server's headers read as variables named after
+  them, and Codex's `bearer_token_env_var` as an `Authorization: Bearer` header
+  (`readMcpConnection` in `packages/adapters`).
+- **An agent pins up to ten servers**, each to a version like its instructions
+  (`agent_mcp_servers`, and `agent_assets` for the asset's page). Pinning refuses a server the
+  runtime could not reach: one that runs as a local command, or whose URL breaks the rules above.
+  The agent's page shows each server's transport and URL, or why it cannot be reached, and the
+  variables its headers use, each marked set or missing in the agent's environment set.
+
 ## Chat
 
 Members talk to agents run by Gateweave on the Chat page. Each conversation is a Durable Object
@@ -334,8 +356,8 @@ after a reconnect.
   (which could carry the conversation away in its query).
 - **Deleting a conversation** removes its row, then destroys its Durable Object with the
   messages and traces. Its runs stay (see "Runs").
-- **Not yet:** tools from MCP servers, and running with the agent's environment set, which those
-  tools use (AGT-26).
+- **Not yet:** tools from the agent's MCP servers, and running with its environment set, which
+  their headers use (AGT-31).
 
 ## Runs
 
@@ -401,8 +423,8 @@ workspace.
   merged into it with their drift, and the pull requests that applied them.
 - **Agents** lists every agent and subagent by runtime, and owners and admins define agents run
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
-  or how an agent run by Gateweave works: its model, whether the workspace has a key for it, and
-  its pinned instructions with their text.
+  or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its
+  pinned instructions with their text, its environment set and its MCP servers.
 - **Chat** lists the caller's own conversations, the latest first, and starts one with any
   agent run by Gateweave. A conversation's page streams the reply, can stop it, and says when the
   agent cannot answer and why. An agent's page has a Chat button too.
@@ -415,14 +437,17 @@ workspace.
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
   and remove values.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
-  their versions and how many of those are behind.
+  their versions and how many of those are behind. Owners and admins write instructions, prompts
+  and skills there, and add MCP servers.
 - **Setups** lists them with how many assets each pins and how many have updates, and below them
   the ready-made setups, which an owner or admin adds to the workspace in one click; a setup's page
   shows its pins, moves one to the latest version, previews the files it writes, applies it to a
   repository, shows the drift of each repository it was merged into, and lists its pull requests.
 - **An asset's page** shows the text of each of its files and every earlier version. For a
   repository asset it also shows the agents that read it, the library assets it matches, and how
-  many other assets have the same content; for a library asset, the repository assets that use it.
+  many other assets have the same content; for a library asset, the agents that pin it and the
+  repository assets that use it. A library MCP server has "Edit settings" instead of editing its
+  text.
   An asset with two versions or more offers "Compare versions": any two, as a line diff per file
   (added, removed and changed files). The server function computes it with `diffLines` from the
   `diff` package, imported inside the handler so it stays out of the browser bundle. A file whose
@@ -437,8 +462,9 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): tools from MCP servers, which run
-  with the agent's environment set and add tool spans to the trace (AGT-26), and teams (AGT-27).
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): calling the agent's MCP servers each
+  turn, with its environment set, and adding tool spans to the trace (AGT-31); the MCP page
+  (AGT-32); and teams (AGT-27).
 
 ## Deploys
 

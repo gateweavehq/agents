@@ -8,7 +8,10 @@ import {
 	type LibraryEntry,
 	libraryEditInput,
 	libraryTarget,
+	type McpServerInput,
 	MODEL_PROVIDERS,
+	mcpServerEditInput,
+	mcpServerInput,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -262,6 +265,48 @@ export const editLibraryAsset = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<number> => {
 		const registry = await managedRegistryOf(data.slug);
 		return registry.editLibraryAsset(data.edit);
+	});
+
+/** Adds a remote MCP server to the library from its settings. Returns its id. */
+export const createMcpServer = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), server: mcpServerInput }))
+	.handler(async ({ data }): Promise<string> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.createMcpServer(data.server);
+	});
+
+/** Saves a library MCP server's settings as its next version. Returns the version it is at now. */
+export const editMcpServer = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), server: mcpServerEditInput }))
+	.handler(async ({ data }): Promise<number> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.editMcpServer(data.server);
+	});
+
+/**
+ * The settings of a library MCP server's current version, for its form: each header's variable
+ * written as a reference again. Null for one the form cannot hold, such as a local command.
+ */
+export const getMcpSettings = createServerFn({ method: "GET" })
+	.validator(z.object({ slug: z.string().min(1), assetId: id }))
+	.handler(async ({ data }): Promise<Omit<McpServerInput, "name"> | null> => {
+		const registry = await registryOf(data.slug);
+		const detail = await registry?.getAsset(data.assetId);
+		if (detail?.asset.kind !== "mcp-server" || detail.asset.repositoryId !== null) {
+			return null;
+		}
+		const { readMcpConnection } = await import("@gateweave/agents-adapters");
+		const reading = readMcpConnection(detail.version.files);
+		if (!reading.ok || reading.connection.transport === "stdio") return null;
+		const { transport, url, headers } = reading.connection;
+		return {
+			transport,
+			url,
+			headers: headers.map(({ name, value }) => ({
+				name,
+				value: typeof value === "string" ? value : `${value.prefix}\${${value.variable}}`,
+			})),
+		};
 	});
 
 /** The files that differ between two versions of an asset, as line diffs. */

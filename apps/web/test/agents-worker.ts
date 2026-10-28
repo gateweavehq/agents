@@ -16,6 +16,8 @@ import type {
 	EnvSetInput,
 	LibraryEditInput,
 	LibraryTarget,
+	McpServerEditInput,
+	McpServerInput,
 	Overview,
 	Project,
 	ProjectInput,
@@ -93,6 +95,8 @@ export interface RegistryStub {
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
+	createMcpServer(input: McpServerInput): Promise<string>;
+	editMcpServer(input: McpServerEditInput): Promise<number>;
 	createEnvSet(input: EnvSetInput): Promise<string>;
 	editEnvSet(input: EnvSetEditInput): Promise<number>;
 	listEnvSets(): Promise<EnvSetEntry[]>;

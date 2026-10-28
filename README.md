@@ -16,9 +16,9 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click,
 > and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI. Workspaces
 > keep their own model provider keys and environment sets (variables, and secrets whose values
-> are stored encrypted), and define agents that Gateweave will run with a model, instructions
-> from the library and an environment set; running them comes next. See [docs/spec.md](docs/spec.md) for
-> the plan.
+> are stored encrypted), and define agents that Gateweave runs with a model, instructions from
+> the library, an environment set and MCP servers. Members chat with them, and every answer is a
+> run with its trace and estimated cost. See [docs/spec.md](docs/spec.md) for the plan.
 
 ## Tech stack
 

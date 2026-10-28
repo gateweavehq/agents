@@ -4,6 +4,8 @@ import {
 	type AgentDefinitionInput,
 	INSTRUCTION_KINDS,
 	type LibraryEntry,
+	MAX_AGENT_MCP_SERVERS,
+	type Metadata,
 	MODEL_PROVIDER_NAMES,
 	MODEL_PROVIDERS,
 	type ModelProvider,
@@ -13,6 +15,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
 import { Button } from "#/components/ui/button";
+import { Checkbox } from "#/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -35,8 +38,8 @@ const SELECT = "h-9 w-full rounded-md border bg-transparent px-2 text-sm";
 
 /**
  * Defines a new agent run by Gateweave, or changes `agent`. Models are listed with the
- * workspace's key for the provider; any model id can be typed. Instructions already pinned keep
- * their version, and a newly chosen asset is pinned to its latest.
+ * workspace's key for the provider; any model id can be typed. Assets already pinned keep their
+ * version, and a newly chosen asset is pinned to its latest.
  */
 export function AgentDialog({
 	agent,
@@ -55,6 +58,7 @@ export function AgentDialog({
 	const { slug } = useWorkspace();
 	const pinned = agent?.definition.instructions ?? null;
 	const pinnedEnv = agent?.definition.environment ?? null;
+	const pinnedServers = agent?.definition.mcpServers ?? [];
 	const [name, setName] = useState(agent?.agent.name ?? "");
 	const [description, setDescription] = useState(agent?.agent.description ?? "");
 	const [provider, setProvider] = useState<ModelProvider>(
@@ -63,6 +67,9 @@ export function AgentDialog({
 	const [model, setModel] = useState(agent?.definition.model ?? "");
 	const [instructions, setInstructions] = useState(pinned?.asset.id ?? "");
 	const [environment, setEnvironment] = useState(pinnedEnv?.asset.id ?? "");
+	const [servers, setServers] = useState(
+		() => new Set(pinnedServers.map((server) => server.asset.id)),
+	);
 	const [models, setModels] = useState<ProviderModel[] | string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -86,6 +93,21 @@ export function AgentDialog({
 
 	const sets = library.filter(({ asset }) => asset.kind === "env-set");
 
+	// Pinned servers first, so one that left the library can still be unpinned.
+	const serverChoices = [
+		...pinnedServers.map((pin) => pin.asset),
+		...library.map(({ asset }) => asset).filter((asset) => asset.kind === "mcp-server"),
+	].filter((asset, index, all) => all.findIndex(({ id }) => id === asset.id) === index);
+
+	function toggleServer(assetId: string, on: boolean) {
+		setServers((current) => {
+			const next = new Set(current);
+			if (on) next.add(assetId);
+			else next.delete(assetId);
+			return next;
+		});
+	}
+
 	async function onSubmit(event: FormEvent) {
 		event.preventDefault();
 		setPending(true);
@@ -100,6 +122,12 @@ export function AgentDialog({
 				model: model.trim(),
 				instructions: pin,
 				environment: environmentPin,
+				mcpServers: serverChoices
+					.filter((asset) => servers.has(asset.id))
+					.map((asset) => {
+						const kept = pinnedServers.find((server) => server.asset.id === asset.id);
+						return { assetId: asset.id, version: kept?.version ?? asset.version };
+					}),
 			});
 			onClose();
 		} catch (failure) {
@@ -111,7 +139,7 @@ export function AgentDialog({
 
 	return (
 		<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-			<DialogContent className="max-w-md">
+			<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto">
 				<form onSubmit={onSubmit} className="space-y-4">
 					<DialogHeader>
 						<DialogTitle>{agent ? "Edit agent" : "New agent"}</DialogTitle>
@@ -237,6 +265,45 @@ export function AgentDialog({
 								: "The variables and secrets the agent runs with."}
 						</p>
 					</div>
+					<fieldset className="space-y-2">
+						<legend className="text-sm font-medium">MCP servers</legend>
+						{serverChoices.length === 0 ? (
+							<p className="text-xs text-muted-foreground">
+								Add an MCP server in the library to give the agent its tools.
+							</p>
+						) : (
+							<ul className="max-h-48 divide-y overflow-y-auto rounded-lg border">
+								{serverChoices.map((asset) => {
+									const kept = pinnedServers.find((server) => server.asset.id === asset.id);
+									const local = !kept && runsLocally(asset.metadata);
+									const full = !servers.has(asset.id) && servers.size >= MAX_AGENT_MCP_SERVERS;
+									return (
+										<li key={asset.id}>
+											<Label className="flex cursor-pointer items-center gap-3 p-2.5 font-normal hover:bg-accent/50 has-disabled:cursor-not-allowed has-disabled:opacity-60">
+												<Checkbox
+													checked={servers.has(asset.id)}
+													disabled={local || full}
+													onCheckedChange={(checked) => toggleServer(asset.id, checked === true)}
+												/>
+												<span className="min-w-0 flex-1 truncate">{asset.name}</span>
+												<span className="shrink-0 text-xs text-muted-foreground">
+													{kept
+														? `v${kept.version}${kept.removed ? ", left the library" : ""}`
+														: local
+															? "runs locally"
+															: `v${asset.version}`}
+												</span>
+											</Label>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+						<p className="text-xs text-muted-foreground">
+							Their tools become the agent's. A server that runs as a local command cannot be
+							reached by Gateweave yet.
+						</p>
+					</fieldset>
 					{error && (
 						<p role="alert" className="text-sm text-destructive">
 							{error}
@@ -254,6 +321,11 @@ export function AgentDialog({
 			</DialogContent>
 		</Dialog>
 	);
+}
+
+/** Whether a server, as its metadata describes it, is a command rather than a URL. */
+function runsLocally(metadata: Metadata): boolean {
+	return metadata.type === "stdio" || typeof metadata.command === "string";
 }
 
 /** What to pin for a select's choice: the version already pinned, or the latest of a new asset. */

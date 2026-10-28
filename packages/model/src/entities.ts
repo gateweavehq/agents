@@ -323,6 +323,16 @@ export interface AgentDefinition {
 	instructions: PinnedAsset | null;
 	/** The environment set it runs with; null when it has none. */
 	environment: PinnedAsset | null;
+	/** The MCP servers whose tools it uses, by name. */
+	mcpServers: AgentMcpServer[];
+}
+
+/** An MCP server an agent run by Gateweave uses. */
+export interface AgentMcpServer extends PinnedAsset {
+	/** Where the agent reaches it, or why it cannot. */
+	connection: { transport: "http" | "sse"; url: string } | { problem: string };
+	/** The variables its headers name, each with whether the agent's environment set has it. */
+	variables: { name: string; state: "set" | "missing" }[];
 }
 
 /** An agent with where it is configured and what it reads. */
