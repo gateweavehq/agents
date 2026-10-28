@@ -24,6 +24,13 @@ describe("Markdown", () => {
 		expect(html).toContain("click");
 	});
 
+	it("shows an image as a link instead of loading it", () => {
+		const html = render("![the diff](https://evil.example/pixel.png?q=secret)");
+		expect(html).not.toContain("<img");
+		expect(html).toContain('href="https://evil.example/pixel.png?q=secret"');
+		expect(html).toContain("the diff");
+	});
+
 	it("opens links in a new tab without leaking the opener", () => {
 		const html = render("[docs](https://example.com/a)");
 		expect(html).toContain('href="https://example.com/a"');

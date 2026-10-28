@@ -18,7 +18,10 @@ import { cn } from "#/lib/utils";
  * The text comes from a model, so it is untrusted. react-markdown turns Markdown into React
  * elements and shows any raw HTML as text; do not add `rehype-raw`, which would let the model
  * inject elements. Keep the default `urlTransform` too: it drops `javascript:` and other unsafe
- * URLs from links and images.
+ * URLs from links.
+ *
+ * Images become links instead of loading. A model can be talked into writing an image whose URL
+ * carries what it read, and the browser would send it off the moment the reply showed.
  */
 export const Markdown = memo(function Markdown({ children }: { children: string }) {
 	return (
@@ -39,6 +42,19 @@ const components: Components = {
 			className={cn("font-medium underline underline-offset-2 hover:opacity-80", className)}
 		/>
 	),
+	img: ({ src, alt }) =>
+		typeof src === "string" && src ? (
+			<a
+				href={src}
+				target="_blank"
+				rel="noopener noreferrer nofollow"
+				className="font-medium underline underline-offset-2 hover:opacity-80"
+			>
+				{alt || "Image"}
+			</a>
+		) : (
+			<span>{alt}</span>
+		),
 	h1: ({ node: _node, ...props }) => <h1 className="mt-5 text-lg font-semibold" {...props} />,
 	h2: ({ node: _node, ...props }) => <h2 className="mt-5 text-base font-semibold" {...props} />,
 	h3: ({ node: _node, ...props }) => <h3 className="mt-4 text-sm font-semibold" {...props} />,
