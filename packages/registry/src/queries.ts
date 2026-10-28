@@ -2,16 +2,32 @@
 // looked up one by one rather than passed to IN (...).
 import type {
 	Agent,
+	Asset,
 	AssetDetail,
 	AssetFile,
 	AssetVersion,
+	LibraryEntry,
+	LibraryUse,
 	Overview,
 	Project,
 	ProjectDetail,
 	Repository,
 	RepositoryDetail,
 } from "@gateweave/agents-model";
-import { and, asc, count, desc, eq, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	inArray,
+	isNotNull,
+	isNull,
+	ne,
+	or,
+	type SQL,
+} from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import {
 	agentAssets,
 	agents,
@@ -236,9 +252,10 @@ export function getAsset(db: Db, assetId: string, version?: number): AssetDetail
 	const sameContent = db
 		.select({ n: count() })
 		.from(assets)
-		.leftJoin(repositories, eq(assets.repositoryId, repositories.id))
+		.innerJoin(repositories, eq(assets.repositoryId, repositories.id))
 		.where(and(eq(assets.hash, row.hash), ne(assets.id, assetId), liveIn(assets)))
 		.get();
+	const inRepository = row.repositoryId !== null;
 	return {
 		asset: toAsset(row),
 		repository: row.repositoryId
@@ -258,5 +275,107 @@ export function getAsset(db: Db, assetId: string, version?: number): AssetDetail
 			.orderBy(desc(assetVersions.version))
 			.all(),
 		sameContent: sameContent?.n ?? 0,
+		uses: inRepository ? [] : libraryUses(db, assetId),
+		library: inRepository ? libraryMatches(db, row.hash) : [],
 	};
+}
+
+const inLibrary = and(isNull(assets.repositoryId), isNull(assets.removedAt));
+
+/**
+ * Each content of a library asset by its version. A content it had twice counts as the later
+ * version, since that is the one a repository would be compared with.
+ */
+function versionsByHash(db: Db, libraryAssetId: string): Map<string, number> {
+	const versions = new Map<string, number>();
+	for (const { hash, version } of db
+		.select({ hash: assetVersions.hash, version: assetVersions.version })
+		.from(assetVersions)
+		.where(eq(assetVersions.assetId, libraryAssetId))
+		.all()) {
+		versions.set(hash, Math.max(versions.get(hash) ?? 0, version));
+	}
+	return versions;
+}
+
+/** The repository assets whose content is one of a library asset's versions. */
+function libraryUses(db: Db, libraryAssetId: string): LibraryUse[] {
+	const hashes = db
+		.select({ hash: assetVersions.hash })
+		.from(assetVersions)
+		.where(eq(assetVersions.assetId, libraryAssetId));
+	const rows = db
+		.select({ asset: assets })
+		.from(assets)
+		.innerJoin(repositories, eq(assets.repositoryId, repositories.id))
+		.where(and(isNull(assets.removedAt), liveRepository, inArray(assets.hash, hashes)))
+		.orderBy(asc(repositories.owner), asc(repositories.name), asc(assets.key))
+		.all();
+	const holders = db
+		.select({ id: assets.repositoryId })
+		.from(assets)
+		.where(and(isNotNull(assets.repositoryId), inArray(assets.hash, hashes)));
+	const byId = new Map(
+		repositoriesWhere(db, inArray(repositories.id, holders)).map((repository) => [
+			repository.id,
+			repository,
+		]),
+	);
+	const versions = versionsByHash(db, libraryAssetId);
+	return rows.flatMap(({ asset }) => {
+		const repository = asset.repositoryId ? byId.get(asset.repositoryId) : undefined;
+		const version = versions.get(asset.hash);
+		return repository && version ? [{ asset: toAsset(asset), repository, version }] : [];
+	});
+}
+
+/** The library assets that have, as one of their versions, the content with this hash. */
+function libraryMatches(db: Db, hash: string): { asset: Asset; version: number }[] {
+	const matches = new Map<string, { asset: Asset; version: number }>();
+	for (const { asset, version } of db
+		.select({ asset: assets, version: assetVersions.version })
+		.from(assetVersions)
+		.innerJoin(assets, eq(assetVersions.assetId, assets.id))
+		.where(and(inLibrary, eq(assetVersions.hash, hash)))
+		.orderBy(asc(assets.name))
+		.all()) {
+		const known = matches.get(asset.id);
+		if (!known || known.version < version)
+			matches.set(asset.id, { asset: toAsset(asset), version });
+	}
+	return [...matches.values()];
+}
+
+/** Every library asset, by kind and name, with how many repository assets carry it. */
+export function listLibrary(db: Db): LibraryEntry[] {
+	const rows = db
+		.select()
+		.from(assets)
+		.where(inLibrary)
+		.orderBy(asc(assets.kind), asc(assets.name))
+		.all();
+	const used = alias(assets, "used");
+	// One row per library version and repository asset with its content.
+	const links = db
+		.select({ libraryId: assets.id, version: assetVersions.version, useId: used.id })
+		.from(assetVersions)
+		.innerJoin(assets, eq(assetVersions.assetId, assets.id))
+		.innerJoin(used, eq(used.hash, assetVersions.hash))
+		.innerJoin(repositories, eq(used.repositoryId, repositories.id))
+		.where(and(inLibrary, isNull(used.removedAt), liveRepository))
+		.all();
+	const uses = new Map<string, Map<string, number>>();
+	for (const { libraryId, version, useId } of links) {
+		const byUse = uses.get(libraryId) ?? new Map<string, number>();
+		byUse.set(useId, Math.max(byUse.get(useId) ?? 0, version));
+		uses.set(libraryId, byUse);
+	}
+	return rows.map((row) => {
+		const versions = [...(uses.get(row.id)?.values() ?? [])];
+		return {
+			asset: toAsset(row),
+			uses: versions.length,
+			behind: versions.filter((version) => version < row.version).length,
+		};
+	});
 }

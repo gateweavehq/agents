@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `assets_library_key_idx` ON `assets` (`key`) WHERE repository_id is null and removed_at is null;

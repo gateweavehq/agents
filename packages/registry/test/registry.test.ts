@@ -490,6 +490,114 @@ describe("applyScan", () => {
 	});
 });
 
+describe("library", () => {
+	const REVIEW = ".claude/skills/review";
+
+	/** Scans each repository with one review skill whose SKILL.md says `text`. */
+	async function withReviewSkills(stub: ReturnType<typeof registry>, texts: string[]) {
+		const ids = await stub.syncRepositories(texts.map((_, at) => github(String(at + 1))));
+		const skills: string[] = [];
+		for (const [at, text] of texts.entries()) {
+			const id = ids[at] ?? "";
+			await stub.applyScan(
+				id,
+				scan({
+					agents: [claude(["CLAUDE.md", REVIEW])],
+					assets: [
+						instructions("CLAUDE.md", "hello\n"),
+						skill(REVIEW, [{ path: "SKILL.md", content: text }]),
+					],
+				}),
+			);
+			const asset = (await stub.getRepository(id))?.assets.find((a) => a.key === REVIEW);
+			skills.push(asset?.id ?? "");
+		}
+		return { repositories: ids, skills };
+	}
+
+	it("keeps a repository's asset as versions, and shows where each one is used", async () => {
+		const stub = registry();
+		const {
+			skills: [web = "", api = "", docs = ""],
+		} = await withReviewSkills(stub, ["Review it.\n", "Review it.\n", "Review it well.\n"]);
+
+		const review = await stub.addToLibrary(web, { name: "review" });
+		const detail = await stub.getAsset(review);
+		expect(detail).toMatchObject({
+			asset: { repositoryId: null, kind: "skill", name: "review", path: null, version: 1 },
+			repository: null,
+		});
+		expect(detail?.version.files.map((file) => file.content)).toEqual(["Review it.\n"]);
+		expect(detail?.uses.map((use) => [use.asset.id, use.version]).sort()).toEqual(
+			[
+				[web, 1],
+				[api, 1],
+			].sort(),
+		);
+		expect((await stub.getAsset(web))?.library).toEqual([
+			{ asset: expect.objectContaining({ id: review }), version: 1 },
+		]);
+		expect((await stub.getAsset(docs))?.library).toEqual([]);
+		// The library's copy is not another repository with the same content.
+		expect((await stub.getAsset(web))?.sameContent).toBe(1);
+
+		// The other repository's text becomes version 2, so the first two are behind.
+		expect(await stub.addToLibrary(docs, { libraryAssetId: review })).toBe(review);
+		expect(await stub.listLibrary()).toEqual([
+			{ asset: expect.objectContaining({ id: review, version: 2 }), uses: 3, behind: 2 },
+		]);
+		expect((await stub.getAsset(docs))?.library).toEqual([
+			{ asset: expect.objectContaining({ id: review }), version: 2 },
+		]);
+
+		// Copying content the library asset already has adds nothing.
+		await stub.addToLibrary(docs, { libraryAssetId: review });
+		expect((await stub.getAsset(review))?.versions.map((v) => v.version)).toEqual([2, 1]);
+	});
+
+	it("refuses a taken name, another kind and assets that are not in a repository", async () => {
+		const stub = registry();
+		const {
+			repositories: [repository = ""],
+			skills: [web = ""],
+		} = await withReviewSkills(stub, ["Review it.\n"]);
+		const claudeMd =
+			(await stub.getRepository(repository))?.assets.find((a) => a.key === "CLAUDE.md")?.id ?? "";
+		const review = await stub.addToLibrary(web, { name: "review" });
+
+		await inside(stub, (instance) => {
+			expect(() => instance.addToLibrary(web, { name: "review" })).toThrow(/already has/);
+			expect(() => instance.addToLibrary(claudeMd, { libraryAssetId: review })).toThrow(
+				/cannot become a version/,
+			);
+			expect(() => instance.addToLibrary(review, { name: "copy" })).toThrow(/not in a repository/);
+			expect(() => instance.addToLibrary(web, { libraryAssetId: "no-such-asset" })).toThrow(
+				/does not exist/,
+			);
+		});
+		// The same name is free for another kind.
+		expect(await stub.addToLibrary(claudeMd, { name: "review" })).not.toBe(review);
+	});
+
+	it("frees a name when its asset leaves the library", async () => {
+		const stub = registry();
+		const {
+			skills: [web = ""],
+		} = await withReviewSkills(stub, ["Review it.\n"]);
+		const review = await stub.addToLibrary(web, { name: "review" });
+
+		expect(await stub.removeFromLibrary(review)).toBe(true);
+		expect(await stub.removeFromLibrary(review)).toBe(false);
+		expect(await stub.getAsset(review)).toBeNull();
+		expect(await stub.listLibrary()).toEqual([]);
+		expect((await stub.getAsset(web))?.library).toEqual([]);
+		// Repository assets cannot be removed this way.
+		expect(await stub.removeFromLibrary(web)).toBe(false);
+
+		expect(await stub.addToLibrary(web, { name: "review" })).not.toBe(review);
+	});
+});
+
 describe("destroy", () => {
 	it("describes an asset: its repository, its readers, its versions and its twins", async () => {
 		const stub = registry();

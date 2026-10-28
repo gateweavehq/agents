@@ -9,7 +9,9 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > **Status: early development.** Accounts, workspaces, members and invitations work. Workspaces
 > connect to GitHub, and the agents configured in each repository (Claude Code, Codex, Gemini
 > CLI, Cursor) and what they read are found and kept up to date on every push, and can be browsed
-> by project, by repository, by agent and by asset. See [docs/spec.md](docs/spec.md) for the plan.
+> by project, by repository, by agent and by asset. A workspace library keeps versions of the
+> assets worth sharing and shows which repositories carry each one and which are behind. See
+> [docs/spec.md](docs/spec.md) for the plan.
 
 ## Tech stack
 

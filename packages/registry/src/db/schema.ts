@@ -127,6 +127,10 @@ export const assets = sqliteTable(
 	},
 	(table) => [
 		uniqueIndex("assets_repository_key_idx").on(table.repositoryId, table.key),
+		// The index above treats every NULL repository as different, so the library needs its own.
+		uniqueIndex("assets_library_key_idx")
+			.on(table.key)
+			.where(sql`repository_id is null and removed_at is null`),
 		index("assets_hash_idx").on(table.hash),
 	],
 );

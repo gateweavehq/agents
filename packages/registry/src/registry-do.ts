@@ -3,6 +3,9 @@ import {
 	type Agent,
 	type AssetDetail,
 	type AssetVersion,
+	type LibraryEntry,
+	type LibraryTarget,
+	libraryTarget,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -23,6 +26,7 @@ import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { z } from "zod";
 import migrations from "../drizzle/migrations";
 import * as schema from "./db/schema";
+import { addToLibrary, removeFromLibrary } from "./library";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	getAsset,
@@ -30,6 +34,7 @@ import {
 	getProject,
 	getRepository,
 	listAgents,
+	listLibrary,
 	listProjects,
 	listRepositories,
 	readOverview,
@@ -131,6 +136,23 @@ export class RegistryDO extends DurableObject {
 		const project = id.parse(projectId);
 		const repositories = ids.parse(repositoryIds);
 		return this.#write(() => setProjectRepositories(this.#db, project, repositories, Date.now()));
+	}
+
+	// The library, which people manage.
+
+	listLibrary(): LibraryEntry[] {
+		return listLibrary(this.#db);
+	}
+
+	/** Copies a repository asset into the library. Returns the library asset's id. */
+	addToLibrary(sourceAssetId: string, target: LibraryTarget): string {
+		const source = id.parse(sourceAssetId);
+		const into = libraryTarget.parse(target);
+		return this.#write(() => addToLibrary(this.#db, source, into, Date.now()));
+	}
+
+	removeFromLibrary(assetId: string): boolean {
+		return this.#write(() => removeFromLibrary(this.#db, id.parse(assetId), Date.now()));
 	}
 
 	// Repositories and scans, which the GitHub connection reports.

@@ -6,6 +6,7 @@ import {
 	ChevronDown,
 	FolderGit2,
 	LayoutDashboard,
+	Library,
 	LogOut,
 	Menu,
 	Settings,
@@ -120,6 +121,15 @@ function Sidebar() {
 				>
 					<Bot className="size-4" />
 					Agents
+				</Link>
+				<Link
+					to="/$workspace/library"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<Library className="size-4" />
+					Library
 				</Link>
 				<Link
 					to="/$workspace/settings"

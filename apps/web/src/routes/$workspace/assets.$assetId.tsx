@@ -1,16 +1,24 @@
 import {
+	type Asset,
 	type AssetFile,
+	type LibraryUse,
 	type Metadata,
 	type Repository,
 	repositoryPathOf,
 } from "@gateweave/agents-model";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Library, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 import { z } from "zod";
 import { fileUrl, KindLabel, RuntimeBadge } from "#/components/registry/labels";
-import { useWorkspace } from "#/components/workspace/context";
+import { AddToLibraryDialog } from "#/components/registry/library-dialogs";
+import { Button } from "#/components/ui/button";
+import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
+import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
-import { getAsset } from "#/lib/registry";
+import { getAsset, removeFromLibrary } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/assets/$assetId")({
@@ -39,14 +47,24 @@ function AssetPage() {
 			</Notice>
 		);
 	}
-	const { asset, repository, agents, version, versions, sameContent } = detail;
+	const { asset, repository, agents, version, versions, sameContent, uses, library } = detail;
 	const current = version.version === asset.version;
+	const inLibrary = asset.repositoryId === null;
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
 			<header className="space-y-2">
 				<div className="flex flex-wrap items-center gap-2">
 					<KindLabel kind={asset.kind} />
+					{inLibrary && (
+						<Link
+							to="/$workspace/library"
+							params={{ workspace: slug }}
+							className="text-xs hover:underline"
+						>
+							Library
+						</Link>
+					)}
 					{repository && (
 						<Link
 							to="/$workspace/repositories/$repositoryId"
@@ -58,7 +76,10 @@ function AssetPage() {
 						</Link>
 					)}
 				</div>
-				<h1 className="text-xl font-semibold tracking-tight">{asset.name}</h1>
+				<div className="flex flex-wrap items-start justify-between gap-3">
+					<h1 className="text-xl font-semibold tracking-tight">{asset.name}</h1>
+					<LibraryActions asset={asset} />
+				</div>
 				{asset.path && asset.path !== asset.name && (
 					<p className="font-mono text-xs text-muted-foreground">{asset.path}</p>
 				)}
@@ -78,30 +99,52 @@ function AssetPage() {
 				</p>
 			)}
 
-			<dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">
-				<dt className="text-muted-foreground">Read by</dt>
-				<dd className="flex flex-wrap gap-1.5">
-					{agents.length === 0 ? (
-						<span className="text-muted-foreground">No agent</span>
-					) : (
-						agents.map((agent) => (
-							<span key={agent.id} className="inline-flex items-center gap-1.5">
-								<RuntimeBadge runtime={agent.runtime} />
-								{agent.key !== "main" && <span>{agent.name}</span>}
-							</span>
-						))
+			{(!inLibrary || Object.keys(asset.metadata).length > 0) && (
+				<dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">
+					{!inLibrary && (
+						<>
+							<dt className="text-muted-foreground">Read by</dt>
+							<dd className="flex flex-wrap gap-1.5">
+								{agents.length === 0 ? (
+									<span className="text-muted-foreground">No agent</span>
+								) : (
+									agents.map((agent) => (
+										<span key={agent.id} className="inline-flex items-center gap-1.5">
+											<RuntimeBadge runtime={agent.runtime} />
+											{agent.key !== "main" && <span>{agent.name}</span>}
+										</span>
+									))
+								)}
+							</dd>
+							<dt className="text-muted-foreground">In the library</dt>
+							<dd className="flex flex-wrap gap-x-3 gap-y-1">
+								{library.length === 0 ? (
+									<span className="text-muted-foreground">No</span>
+								) : (
+									library.map((match) => (
+										<LibraryMatch
+											key={match.asset.id}
+											asset={match.asset}
+											version={match.version}
+										/>
+									))
+								)}
+							</dd>
+							<dt className="text-muted-foreground">Same content</dt>
+							<dd>
+								{sameContent === 0
+									? "Nowhere else in this workspace"
+									: sameContent === 1
+										? "In 1 other place in this workspace"
+										: `In ${sameContent} other places in this workspace`}
+							</dd>
+						</>
 					)}
-				</dd>
-				<dt className="text-muted-foreground">Same content</dt>
-				<dd>
-					{sameContent === 0
-						? "Nowhere else in this workspace"
-						: sameContent === 1
-							? "In 1 other place in this workspace"
-							: `In ${sameContent} other places in this workspace`}
-				</dd>
-				<MetadataRows metadata={asset.metadata} />
-			</dl>
+					<MetadataRows metadata={asset.metadata} />
+				</dl>
+			)}
+
+			{inLibrary && <Uses uses={uses} current={asset.version} />}
 
 			<section aria-labelledby="files-heading" className="space-y-3">
 				<h2 id="files-heading" className="text-sm font-medium">
@@ -156,6 +199,138 @@ function AssetPage() {
 				</section>
 			)}
 		</div>
+	);
+}
+
+/** A library asset this repository asset matches, and whether it is behind. */
+function LibraryMatch({ asset, version }: { asset: Asset; version: number }) {
+	const { slug } = useWorkspace();
+	return (
+		<span>
+			<Link
+				to="/$workspace/assets/$assetId"
+				params={{ workspace: slug, assetId: asset.id }}
+				className="underline"
+			>
+				{asset.name}
+			</Link>{" "}
+			{version === asset.version ? (
+				<span className="text-muted-foreground">v{version}, the latest</span>
+			) : (
+				<span className="text-amber-600 dark:text-amber-500">
+					v{version}, behind v{asset.version}
+				</span>
+			)}
+		</span>
+	);
+}
+
+/** The repository assets that carry one of a library asset's versions. */
+function Uses({ uses, current }: { uses: LibraryUse[]; current: number }) {
+	const { slug } = useWorkspace();
+	return (
+		<section aria-labelledby="uses-heading" className="space-y-3">
+			<h2 id="uses-heading" className="text-sm font-medium">
+				{uses.length === 0 ? "Used in" : `Used in · ${uses.length}`}
+			</h2>
+			{uses.length === 0 ? (
+				<p className="text-sm text-muted-foreground">
+					No repository has any version of it right now.
+				</p>
+			) : (
+				<ul className="divide-y rounded-lg border text-sm">
+					{uses.map(({ asset, repository, version }) => (
+						<li key={asset.id}>
+							<Link
+								to="/$workspace/assets/$assetId"
+								params={{ workspace: slug, assetId: asset.id }}
+								className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3 hover:bg-accent/50"
+							>
+								<span className="min-w-0 flex-1 truncate">
+									<span className="text-muted-foreground">{repository.owner}/</span>
+									{repository.name}
+									{asset.path && (
+										<span className="ml-2 font-mono text-xs text-muted-foreground">
+											{asset.path}
+										</span>
+									)}
+								</span>
+								{version === current ? (
+									<span className="text-xs text-muted-foreground">v{version}, the latest</span>
+								) : (
+									<span className="text-xs text-amber-600 dark:text-amber-500">
+										v{version}, behind
+									</span>
+								)}
+							</Link>
+						</li>
+					))}
+				</ul>
+			)}
+		</section>
+	);
+}
+
+/** "Add to library" for a repository asset, "Remove from library" for a library one. Admins only. */
+function LibraryActions({ asset }: { asset: Asset }) {
+	const { slug } = useWorkspace();
+	const navigate = useNavigate();
+	const admin = isAdmin(useMyRole());
+	const [open, setOpen] = useState(false);
+	if (!admin) return null;
+
+	if (asset.repositoryId !== null) {
+		return (
+			<>
+				<Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+					<Library />
+					Add to library
+				</Button>
+				{open && (
+					<AddToLibraryDialog
+						asset={asset}
+						onAdded={async (libraryAssetId) => {
+							toast.success("Added to the library");
+							await navigate({
+								to: "/$workspace/assets/$assetId",
+								params: { workspace: slug, assetId: libraryAssetId },
+							});
+						}}
+						onClose={() => setOpen(false)}
+					/>
+				)}
+			</>
+		);
+	}
+
+	return (
+		<>
+			<Button variant="ghost" size="sm" onClick={() => setOpen(true)}>
+				<Trash2 />
+				Remove from library
+			</Button>
+			{open && (
+				<ConfirmDialog
+					title={`Remove ${asset.name} from the library?`}
+					confirmLabel="Remove"
+					onConfirm={async () => {
+						try {
+							await removeFromLibrary({ data: { slug, assetId: asset.id } });
+						} catch (error) {
+							toast.error("Could not remove it", {
+								description: error instanceof Error ? error.message : undefined,
+							});
+							return;
+						}
+						toast.success(`${asset.name} left the library`);
+						await navigate({ to: "/$workspace/library", params: { workspace: slug } });
+					}}
+					onClose={() => setOpen(false)}
+				>
+					Repositories that carry one of its versions keep their files.
+				</ConfirmDialog>
+			)}
+		</>
 	);
 }
 
