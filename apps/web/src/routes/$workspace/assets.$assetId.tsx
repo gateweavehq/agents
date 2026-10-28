@@ -1,4 +1,9 @@
-import type { AssetFile, Metadata, Repository } from "@gateweave/agents-model";
+import {
+	type AssetFile,
+	type Metadata,
+	type Repository,
+	repositoryPathOf,
+} from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 import { fileUrl, KindLabel, RuntimeBadge } from "#/components/registry/labels";
@@ -108,8 +113,11 @@ function AssetPage() {
 						file={file}
 						repository={repository}
 						commit={version.commit}
-						base={asset.path}
-						single={version.files.length === 1}
+						path={
+							asset.path === null
+								? null
+								: repositoryPathOf({ path: asset.path }, version.files, file)
+						}
 					/>
 				))}
 			</section>
@@ -176,19 +184,15 @@ function FileView({
 	file,
 	repository,
 	commit,
-	base,
-	single,
+	path,
 }: {
 	file: AssetFile;
 	repository: Repository | null;
 	commit: string | null;
-	base: string | null;
-	single: boolean;
+	/** Where the file sits in the repository, if the asset is in one. */
+	path: string | null;
 }) {
-	// A single-file asset's path is the file's own; a folder's files sit under it.
-	const path =
-		base === null ? file.path : single && base.endsWith(file.path) ? base : `${base}/${file.path}`;
-	const onGitHub = repository && commit ? fileUrl(repository, commit, path) : null;
+	const onGitHub = repository && commit && path ? fileUrl(repository, commit, path) : null;
 
 	return (
 		<figure className="overflow-hidden rounded-lg border">
@@ -203,8 +207,9 @@ function FileView({
 			</figcaption>
 			{file.content === null ? (
 				<p className="p-3 text-sm text-muted-foreground">
-					Binary, or too large to keep. Its blob id is{" "}
-					<span className="font-mono text-xs">{file.blob.slice(0, 12)}</span>.
+					Its text is not kept, only its size and Git blob id,{" "}
+					<span className="font-mono text-xs">{file.blob.slice(0, 12)}</span>, which show when it
+					changes.
 				</p>
 			) : (
 				<pre className="max-h-[32rem] overflow-auto p-3 text-xs leading-relaxed">
