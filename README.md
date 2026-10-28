@@ -13,7 +13,8 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > assets worth sharing and shows which repositories carry each one and which are behind, and
 > setups pin them for a set of coding agents, preview the files they write, apply them to a
 > repository by pull request and show where a repository has drifted from them since. Ready-made
-> setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click. See
+> setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click,
+> and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI. See
 > [docs/spec.md](docs/spec.md) for the plan.
 
 ## Tech stack

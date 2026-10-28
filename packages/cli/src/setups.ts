@@ -4,7 +4,11 @@
  */
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readSetupFolder, type SetupFolderResult } from "@gateweave/agents-adapters";
+import {
+	groupSetupFolders,
+	readSetupFolder,
+	type SetupFolderResult,
+} from "@gateweave/agents-adapters";
 
 /** Most files a setup folder may hold. Ready-made setups have a handful. */
 const MAX_FOLDER_FILES = 2000;
@@ -17,22 +21,15 @@ const BUNDLED = import.meta.glob<string>("../../../setups/*/**", {
 	eager: true,
 });
 
-/** The ready-made setups' files, by setup folder name and then by path inside it. */
-export const READY_MADE: ReadonlyMap<string, ReadonlyMap<string, string>> = group(BUNDLED);
+/**
+ * The ready-made setups' files, by setup folder name and then by path inside it. `.gitattributes`
+ * checks them out with LF everywhere, so they need no line ending fix.
+ */
+export const READY_MADE: ReadonlyMap<string, ReadonlyMap<string, string>> = groupSetupFolders(
+	BUNDLED,
+);
 
-function group(files: Record<string, string>): Map<string, Map<string, string>> {
-	const setups = new Map<string, Map<string, string>>();
-	for (const [key, content] of Object.entries(files)) {
-		const [name, ...rest] = key.slice(key.indexOf("setups/") + "setups/".length).split("/");
-		if (name === undefined || rest.length === 0) continue;
-		const folder = setups.get(name) ?? new Map<string, string>();
-		folder.set(rest.join("/"), lf(content));
-		setups.set(name, folder);
-	}
-	return new Map([...setups].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-}
-
-/** A checkout may have CRLF; a setup writes LF, as the working tree is compared in LF. */
+/** A folder on disk may have CRLF; a setup writes LF, as the working tree is compared in LF. */
 function lf(text: string): string {
 	return text.replaceAll("\r\n", "\n");
 }

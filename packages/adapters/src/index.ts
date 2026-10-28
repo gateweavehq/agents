@@ -7,7 +7,7 @@ export { MERGED_FILES, planApply } from "./apply";
 export { detect, wantsFile } from "./detect";
 export { parseFrontMatter } from "./frontmatter";
 export type { SetupFolder, SetupFolderResult } from "./setup-folder";
-export { readSetupFolder } from "./setup-folder";
+export { groupSetupFolders, readSetupFolder } from "./setup-folder";
 export type { Detection, RepositoryTree, TreeFile } from "./types";
 export type { AssetToWrite, WriteProblem, WriteResult, WrittenFile } from "./write";
 export { writeAssets } from "./write";

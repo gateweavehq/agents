@@ -284,9 +284,10 @@ Pages refresh themselves while a scan of what they show is waiting or running.
 
 ## What comes next
 
-- **Ready-made setups and the CLI** (phase 2 in `docs/spec.md`): curated setups that ship as
-  plain files in this repository, and `@gateweave/agents` with `apply` and a `check` that fails CI
-  on drift, using the same writers and comparison as the app.
+- **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
+  check`. It is built and tested here, and stays private until then.
+- **The runtime** (phase 3 in `docs/spec.md`): agents and teams in the Gateweave runtime, AI
+  Gateway, the MCP and environment pages, Chat and Runs.
 
 ## Deploys
 
