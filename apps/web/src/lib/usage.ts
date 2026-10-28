@@ -29,3 +29,10 @@ export function formatDuration(ms: number): string {
 	const seconds = Math.floor(ms / 1000);
 	return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
+
+/** "512 B", "3.4 kB", "1.2 MB": the size of what a tool took and gave back. */
+export function formatBytes(bytes: number): string {
+	if (bytes < 1000) return `${bytes} B`;
+	if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} kB`;
+	return `${(bytes / 1_000_000).toFixed(1)} MB`;
+}

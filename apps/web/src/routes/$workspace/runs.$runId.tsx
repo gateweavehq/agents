@@ -10,7 +10,7 @@ import { formatDateTime } from "#/lib/dates";
 import { useRefreshWhile } from "#/lib/refresh";
 import { getRun, type RunEntry } from "#/lib/runs";
 import { useDocumentTitle } from "#/lib/title";
-import { formatCost, formatDuration, formatTokens } from "#/lib/usage";
+import { formatBytes, formatCost, formatDuration, formatTokens } from "#/lib/usage";
 import { cn } from "#/lib/utils";
 
 export const Route = createFileRoute("/$workspace/runs/$runId")({
@@ -135,7 +135,10 @@ const SPAN_COLORS: Record<RunSpan["status"], string> = {
 	error: "bg-destructive",
 };
 
-/** Each model request on one time axis, from the start of the run to its end. */
+/**
+ * Each span on one time axis, from the start of the run to its end: connecting to the agent's MCP
+ * servers, each model request, and the tools each request called, under it.
+ */
 function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 	const end = Math.max(
 		run.endedAt ?? (run.status === "running" ? Date.now() : run.startedAt),
@@ -148,22 +151,12 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 		<ol className="divide-y rounded-lg border">
 			{trace.map((span) => {
 				const spanEnd = span.endedAt ?? end;
-				const details = [
-					span.firstTokenMs !== null && `First token after ${formatDuration(span.firstTokenMs)}`,
-					span.finishReason && (FINISH_REASONS[span.finishReason] ?? span.finishReason),
-				].filter(Boolean);
+				const { title, meta, details } = describeSpan(span, spanEnd);
 				return (
-					<li key={span.id} className="space-y-2 p-3">
+					<li key={span.id} className={cn("space-y-2 p-3", span.kind === "tool" && "pl-8")}>
 						<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-							<span className="min-w-0 text-sm">
-								Model request {span.step + 1}
-								<span className="ml-2 font-mono text-xs text-muted-foreground">{span.model}</span>
-							</span>
-							<span className="text-xs text-muted-foreground tabular-nums">
-								{formatDuration(spanEnd - span.startedAt)} · {formatTokens(span.inputTokens)} in ·{" "}
-								{formatTokens(span.outputTokens)} out
-								{span.cost !== null && ` · ${formatCost(span.cost)}`}
-							</span>
+							<span className="min-w-0 text-sm">{title}</span>
+							<span className="text-xs text-muted-foreground tabular-nums">{meta}</span>
 						</div>
 						<div className="relative h-2 overflow-hidden rounded-full bg-muted">
 							<div
@@ -174,16 +167,12 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 								}}
 							/>
 						</div>
-						{(details.length > 0 || span.gatewayLogId) && (
+						{details.length > 0 && (
 							<p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-								{details.map((detail) => (
-									<span key={String(detail)}>{detail}</span>
+								{details.map((detail, index) => (
+									// biome-ignore lint/suspicious/noArrayIndexKey: a fixed list of facts, in order
+									<span key={index}>{detail}</span>
 								))}
-								{span.gatewayLogId && (
-									<span>
-										AI Gateway log <span className="font-mono">{span.gatewayLogId}</span>
-									</span>
-								)}
 							</p>
 						)}
 						{span.error && <p className="text-xs text-destructive">{span.error}</p>}
@@ -192,4 +181,74 @@ function Timeline({ run, trace }: { run: RunEntry; trace: RunSpan[] }) {
 			})}
 		</ol>
 	);
+}
+
+/** What a span's row says: its title, a line of numbers, and any facts below the bar. */
+function describeSpan(
+	span: RunSpan,
+	spanEnd: number,
+): { title: ReactNode; meta: string; details: ReactNode[] } {
+	const duration = formatDuration(spanEnd - span.startedAt);
+	switch (span.kind) {
+		case "connect":
+			return {
+				title: (
+					<>
+						Connect to <span className="font-medium">{span.server}</span>
+					</>
+				),
+				// A server left out for a missing variable was never asked, so it took no time.
+				meta:
+					span.status === "error" && span.endedAt === span.startedAt
+						? "Left out"
+						: span.tools === null
+							? duration
+							: `${duration} · ${span.tools === 1 ? "1 tool" : `${span.tools} tools`}`,
+				details: [],
+			};
+		case "tool":
+			return {
+				title: (
+					<>
+						{span.server}
+						<span className="mx-1 text-muted-foreground">·</span>
+						<span className="font-mono text-xs">{span.tool}</span>
+					</>
+				),
+				meta: [
+					duration,
+					`${formatBytes(span.inputBytes)} in`,
+					span.outputBytes !== null && `${formatBytes(span.outputBytes)} out`,
+				]
+					.filter(Boolean)
+					.join(" · "),
+				details: [],
+			};
+		case "model":
+			return {
+				title: (
+					<>
+						Model request {span.step + 1}
+						<span className="ml-2 font-mono text-xs text-muted-foreground">{span.model}</span>
+					</>
+				),
+				meta: [
+					duration,
+					`${formatTokens(span.inputTokens)} in`,
+					`${formatTokens(span.outputTokens)} out`,
+					span.cost !== null && formatCost(span.cost),
+				]
+					.filter(Boolean)
+					.join(" · "),
+				details: [
+					span.firstTokenMs !== null && `First token after ${formatDuration(span.firstTokenMs)}`,
+					span.finishReason && (FINISH_REASONS[span.finishReason] ?? span.finishReason),
+					span.gatewayLogId && (
+						<>
+							AI Gateway log <span className="font-mono">{span.gatewayLogId}</span>
+						</>
+					),
+				].filter(Boolean),
+			};
+	}
 }

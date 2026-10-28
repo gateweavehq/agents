@@ -319,6 +319,23 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   runtime could not reach: one that runs as a local command, or whose URL breaks the rules above.
   The agent's page shows each server's transport and URL, or why it cannot be reached, and the
   variables its headers use, each marked set or missing in the agent's environment set.
+- **Each turn connects anew** (`packages/runtime/src/tools.ts`). `beginTurn` reads the agent's
+  servers with the agent, before anything awaits, and returns each with its headers' values filled
+  in from the opened environment set, in memory for that turn like the key. A server whose
+  variables are not all there is left out, with which ones. The runtime connects to the rest at
+  once with `@ai-sdk/mcp`, ten seconds each to connect and list their tools, and closes every
+  connection when the turn ends. It does not use the Agents SDK's `addMcpServer`, which would
+  keep the headers, secrets included, in the conversation's SQLite.
+- **No redirects.** The MCP client refuses them with `redirect: "error"`, which Workers do not
+  take, so the runtime gives it a `fetch` with `redirect: "manual"`: a 3xx is a failure, and the
+  agent's headers never reach the address it names.
+- **Tools are named `<server>__<tool>`**, with the characters providers refuse replaced by `_`,
+  so two servers cannot clash. A turn makes at most ten model requests (`MAX_STEPS`): the first,
+  and one after each round of tool calls. Tool calls a stopped turn left without a result are
+  dropped from the next turn's history, which providers would refuse.
+- **A server that cannot be reached** is a failed span in the trace, with why in our words (its
+  credentials refused, nothing at its URL, a redirect, no answer in time), never what it said.
+  The turn goes on without it.
 
 ## Chat
 
@@ -356,8 +373,9 @@ after a reconnect.
   (which could carry the conversation away in its query).
 - **Deleting a conversation** removes its row, then destroys its Durable Object with the
   messages and traces. Its runs stay (see "Runs").
-- **Not yet:** tools from the agent's MCP servers, and running with its environment set, which
-  their headers use (AGT-31).
+- **Tools** come from the agent's MCP servers (see "MCP servers"). The conversation shows each
+  call as its server and tool, running, done or failed; what went in and came back is in the
+  messages, for the model, and not shown.
 
 ## Runs
 
@@ -370,12 +388,14 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
 - **The trace stays with the conversation**: a span per model request in the conversation's own
   SQLite (`trace_runs`, `trace_spans`), written as each step starts and ends, with its timing,
   tokens, cache reads, estimated cost, finish reason, time to the first token and AI Gateway's
-  log id (`cf-aig-log-id`). A trace holds no message text, so it is private to the conversation
-  without being secret: it goes when the conversation is deleted, and admins can read it while it
-  lasts.
+  log id (`cf-aig-log-id`). Connecting to each MCP server is a span too, with how many tools it
+  offers, and so is each tool call, under the model request that made it, with the sizes of its
+  input and output. A trace holds no message text and no tool input or output, so it is private
+  to the conversation without being secret: it goes when the conversation is deleted, and admins
+  can read it while it lasts.
 - **The runtime closes the run** once, from whichever of the AI SDK's `onEnd`, `onAbort` and
   `onError` comes first: `succeeded`, `failed` (with our sentence, never the provider's),
-  or `stopped`. It sums the spans and reports them with `finishRun`, which changes only a run
+  or `stopped`. It sums the model spans and reports them with `finishRun`, which changes only a run
   still `running`, so a late or repeated report changes nothing.
 - **A restart can cut a run short.** When a conversation wakes, it closes the runs it finds still
   open as `interrupted`, at the last moment its trace saw them move, and reports them. A
@@ -430,8 +450,9 @@ workspace.
   agent cannot answer and why. An agent's page has a Chat button too.
 - **Runs** lists runs, the latest first, fifty at a time (`apps/web/src/lib/runs.ts`): owners
   and admins see everyone's, since they answer for what runs spend, and members see their own. A
-  run's page shows its summary and its trace as a timeline of model requests, and links the
-  conversation only for the member who started it. The Overview sums the last 30 days of runs.
+  run's page shows its summary and its trace as a timeline of connections, model requests and
+  tool calls, and links the conversation only for the member who started it. The Overview sums
+  the last 30 days of runs.
 - **Environment** lists the environment sets with their variables, their secrets as set or
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
@@ -462,9 +483,8 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): calling the agent's MCP servers each
-  turn, with its environment set, and adding tool spans to the trace (AGT-31); the MCP page
-  (AGT-32); and teams (AGT-27).
+- **The rest of the runtime** (phase 3 in `docs/spec.md`): the MCP page, with each server's
+  tools and health (AGT-32), and teams (AGT-27).
 
 ## Deploys
 

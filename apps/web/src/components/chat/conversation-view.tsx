@@ -1,10 +1,11 @@
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { useAgent } from "agents/react";
-import type { UIMessage } from "ai";
-import { ArrowUp, Square } from "lucide-react";
+import type { DynamicToolUIPart, UIMessage } from "ai";
+import { ArrowUp, CircleAlert, LoaderCircle, Square, Wrench } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
+import { describeToolCall } from "#/lib/tool-calls";
 import { cn } from "#/lib/utils";
 import { Markdown } from "./markdown";
 
@@ -129,7 +130,9 @@ function Message({ message, agentName }: { message: UIMessage; agentName: string
 	const text = message.parts
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join("\n\n");
-	if (!text) return null;
+	// The agent's MCP tools are known only when the turn runs, so the AI SDK calls them dynamic.
+	const tools = message.parts.filter((part) => part.type === "dynamic-tool");
+	if (!text && tools.length === 0) return null;
 	return (
 		<div className={cn("flex", mine && "justify-end")}>
 			<div
@@ -139,8 +142,43 @@ function Message({ message, agentName }: { message: UIMessage; agentName: string
 				)}
 			>
 				{!mine && <p className="mb-1 text-xs font-medium text-muted-foreground">{agentName}</p>}
-				{mine ? text : <Markdown>{text}</Markdown>}
+				{tools.length > 0 && (
+					<ul aria-label="Tools used" className="mb-2 flex flex-wrap gap-1.5">
+						{tools.map((part) => (
+							<ToolCall key={part.toolCallId} part={part} />
+						))}
+					</ul>
+				)}
+				{mine ? text : text && <Markdown>{text}</Markdown>}
 			</div>
 		</div>
+	);
+}
+
+/** A tool the agent called. What it took and gave back stays out of view. */
+function ToolCall({ part }: { part: DynamicToolUIPart }) {
+	const { server, tool, state } = describeToolCall(part);
+	const Icon = { running: LoaderCircle, done: Wrench, failed: CircleAlert }[state];
+
+	return (
+		<li
+			className={cn(
+				"inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs text-muted-foreground",
+				state === "failed" && "border-destructive/40 text-destructive",
+			)}
+		>
+			<Icon
+				aria-hidden="true"
+				className={cn("size-3 shrink-0", state === "running" && "animate-spin")}
+			/>
+			{server && (
+				<>
+					<span className="truncate">{server}</span>
+					<span aria-hidden="true">·</span>
+				</>
+			)}
+			<span className="truncate font-mono">{tool}</span>
+			{state === "failed" && <span className="sr-only">(failed)</span>}
+		</li>
 	);
 }

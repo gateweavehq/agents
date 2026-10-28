@@ -105,7 +105,7 @@ import {
 	storeEnvSecret,
 } from "./environment";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
-import { createMcpServer, editMcpServer } from "./mcp-servers";
+import { agentServers, createMcpServer, editMcpServer, turnServer } from "./mcp-servers";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	keyPlace,
@@ -518,8 +518,14 @@ export class RegistryDO extends DurableObject {
 				message: `The workspace has no ${MODEL_PROVIDER_NAMES[agent.provider]} key, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
 			};
 		}
-		const opened = await this.#openKey(agent.provider);
+		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
+		const servers = agentServers(this.#db, agent.agentId);
+		const [opened, environment] = await Promise.all([
+			this.#openKey(agent.provider),
+			servers.length > 0 ? this.resolveEnvironment(agent.agentId) : null,
+		]);
 		if ("status" in opened) return opened;
+		const mcpServers = servers.map((server) => turnServer(server, environment));
 		const runId = this.#write(() =>
 			beginRun(
 				this.#db,
@@ -527,7 +533,7 @@ export class RegistryDO extends DurableObject {
 				Date.now(),
 			),
 		);
-		return { agent, key: opened.key, runId };
+		return { agent, key: opened.key, mcpServers, runId };
 	}
 
 	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */

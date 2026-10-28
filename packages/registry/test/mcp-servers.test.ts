@@ -172,6 +172,57 @@ describe("MCP servers", () => {
 		expect((await stub.getAgent(agent.id))?.agent.assetIds).toEqual([prod]);
 	});
 
+	it("reach each turn with their headers' values from the agent's environment set", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const acme = await stub.createMcpServer(ACME);
+		const docs = await stub.createMcpServer({
+			name: "docs",
+			transport: "sse",
+			url: "https://docs.acme.dev/sse",
+			headers: [{ name: "Authorization", value: "${DOCS_TOKEN}" }],
+		});
+		const prod = await stub.createEnvSet({
+			name: "prod",
+			variables: { ACME_TEAM: "platform" },
+			secrets: ["ACME_TOKEN", "DOCS_TOKEN"],
+		});
+		await stub.setEnvSecret({ assetId: prod, name: "ACME_TOKEN", value: "acme-secret" }, "Ada");
+		const servers = [
+			{ assetId: acme, version: 1 },
+			{ assetId: docs, version: 1 },
+		];
+		const agent = await stub.createAgent({
+			...reviewer(servers),
+			environment: { assetId: prod, version: 1 },
+		});
+		const conversation = await stub.startConversation(agent.id, "user-ada");
+		expect(await stub.beginTurn(conversation?.id ?? "", "Hello")).toMatchObject({
+			mcpServers: [
+				{
+					name: "acme",
+					transport: "http",
+					url: "https://mcp.acme.dev/mcp",
+					headers: { Authorization: "Bearer acme-secret", "X-Team": "platform" },
+				},
+				{ name: "docs", problem: "DOCS_TOKEN has no value in the agent's environment set" },
+			],
+		});
+
+		// Without a set, every variable is missing.
+		const bare = await stub.createAgent({ ...reviewer(servers), name: "Bare" });
+		const started = await stub.startConversation(bare.id, "user-ada");
+		expect(await stub.beginTurn(started?.id ?? "", "Hello")).toMatchObject({
+			mcpServers: [
+				{
+					name: "acme",
+					problem: "ACME_TEAM, ACME_TOKEN have no value in the agent's environment set",
+				},
+				{ name: "docs", problem: "DOCS_TOKEN has no value in the agent's environment set" },
+			],
+		});
+	});
+
 	it("cannot be pinned when an agent could not reach them", async () => {
 		const stub = registry();
 		const local = await scannedServer(stub, "local", { command: "npx", args: ["-y", "@acme/mcp"] });
