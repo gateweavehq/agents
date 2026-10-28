@@ -295,7 +295,7 @@ function assetFields({ kind, name, description, path, metadata }: DetectedAsset)
 }
 
 /** Stores a file's content once per blob and returns its entry in a version. */
-function storeFile(db: Db, file: ScannedFile): FileEntry {
+export function storeFile(db: Db, file: ScannedFile): FileEntry {
 	if (file.content === undefined) {
 		// The schema requires both when the content is left out.
 		const blob = file.blob ?? "";

@@ -598,6 +598,147 @@ describe("library", () => {
 	});
 });
 
+describe("library, written in the app", () => {
+	const REVIEW = ".claude/skills/review";
+	const SKILL_MD = "---\nname: review\ndescription: Reviews a change\n---\nReview it.\n";
+
+	it("creates a typed asset whose hash is what a scan of the same file produces", async () => {
+		const stub = registry();
+		const [web = ""] = await stub.syncRepositories([github("1")]);
+		await stub.applyScan(
+			web,
+			scan({
+				agents: [claude(["CLAUDE.md", REVIEW])],
+				assets: [
+					instructions("CLAUDE.md", "hello\n"),
+					skill(REVIEW, [{ path: "SKILL.md", content: SKILL_MD }]),
+				],
+			}),
+		);
+
+		const review = await stub.createLibraryAsset({ kind: "skill", name: "review", text: SKILL_MD });
+		const detail = await stub.getAsset(review);
+		expect(detail).toMatchObject({
+			asset: {
+				repositoryId: null,
+				kind: "skill",
+				name: "review",
+				description: "Reviews a change",
+				version: 1,
+			},
+		});
+		expect(detail?.version.files.map((f) => [f.path, f.content])).toEqual([["SKILL.md", SKILL_MD]]);
+		// The repository's skill has the same file, so the library counts it as a use.
+		expect(detail?.uses).toHaveLength(1);
+
+		const rules = await stub.createLibraryAsset({
+			kind: "instructions",
+			name: "House rules",
+			text: "hello\n",
+		});
+		expect((await stub.getAsset(rules))?.version.files.map((f) => f.path)).toEqual(["AGENTS.md"]);
+		// Named after an agent's own file, it is that file, so the repository's CLAUDE.md is a use.
+		const claudeMd = await stub.createLibraryAsset({
+			kind: "instructions",
+			name: "CLAUDE.md",
+			text: "hello\n",
+		});
+		const claudeDetail = await stub.getAsset(claudeMd);
+		expect(claudeDetail?.version.files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
+		expect(claudeDetail?.uses).toHaveLength(1);
+		const prompt = await stub.createLibraryAsset({
+			kind: "prompt",
+			name: "Fix It",
+			text: "Fix.\n",
+		});
+		expect((await stub.getAsset(prompt))?.version.files.map((f) => f.path)).toEqual(["fix-it.md"]);
+	});
+
+	it("refuses a taken name for a kind and text that is too large", async () => {
+		const stub = registry();
+		await stub.createLibraryAsset({ kind: "prompt", name: "fix", text: "a\n" });
+		await inside(stub, (instance) => {
+			expect(() =>
+				instance.createLibraryAsset({ kind: "prompt", name: "fix", text: "b\n" }),
+			).toThrow(/already has a prompt named fix/);
+			expect(() =>
+				instance.createLibraryAsset({
+					kind: "prompt",
+					name: "big",
+					// Fewer characters than the limit, more bytes.
+					text: "é".repeat(MAX_KEPT_FILE_BYTES / 2 + 1),
+				}),
+			).toThrow(/too large/);
+		});
+		// The same name is free for another kind.
+		await stub.createLibraryAsset({ kind: "instructions", name: "fix", text: "a\n" });
+	});
+
+	it("adds a version only when the text changes, and keeps the description in step", async () => {
+		const stub = registry();
+		const review = await stub.createLibraryAsset({ kind: "skill", name: "review", text: SKILL_MD });
+		const edit = (content: string) =>
+			stub.editLibraryAsset({ libraryAssetId: review, files: [{ path: "SKILL.md", content }] });
+
+		expect(await edit(SKILL_MD)).toBe(1);
+		expect((await stub.getAsset(review))?.versions).toHaveLength(1);
+
+		const next = SKILL_MD.replace("Reviews a change", "Reviews a diff");
+		expect(await edit(next)).toBe(2);
+		const detail = await stub.getAsset(review);
+		expect(detail?.asset).toMatchObject({ version: 2, description: "Reviews a diff" });
+		expect(detail?.versions.map((v) => v.version)).toEqual([2, 1]);
+		expect((await stub.getAsset(review, 1))?.version.files[0]?.content).toBe(SKILL_MD);
+
+		// A repository that carries the edited text is counted; one with the old text is behind.
+		const [web = "", api = ""] = await stub.syncRepositories([github("1"), github("2")]);
+		for (const [id, text] of [
+			[web, next],
+			[api, SKILL_MD],
+		] as const) {
+			await stub.applyScan(
+				id,
+				scan({
+					agents: [claude([REVIEW])],
+					assets: [skill(REVIEW, [{ path: "SKILL.md", content: text }])],
+				}),
+			);
+		}
+		expect(await stub.listLibrary()).toEqual([
+			{ asset: expect.objectContaining({ id: review, version: 2 }), uses: 2, behind: 1 },
+		]);
+	});
+
+	it("refuses to edit a repository asset, a missing file or a removed asset", async () => {
+		const stub = registry();
+		const [web = ""] = await stub.syncRepositories([github("1")]);
+		await stub.applyScan(
+			web,
+			scan({ agents: [claude(["CLAUDE.md"])], assets: [instructions("CLAUDE.md", "hello\n")] }),
+		);
+		const repositoryAsset = (await stub.getRepository(web))?.assets[0]?.id ?? "";
+		const rules = await stub.createLibraryAsset({
+			kind: "instructions",
+			name: "rules",
+			text: "a\n",
+		});
+		const edit = (libraryAssetId: string, path: string) => ({
+			libraryAssetId,
+			files: [{ path, content: "x\n" }],
+		});
+		await inside(stub, (instance) => {
+			expect(() => instance.editLibraryAsset(edit(repositoryAsset, "CLAUDE.md"))).toThrow(
+				/only library assets/i,
+			);
+			expect(() => instance.editLibraryAsset(edit(rules, "nope.md"))).toThrow(/no file/i);
+		});
+		await stub.removeFromLibrary(rules);
+		await inside(stub, (instance) => {
+			expect(() => instance.editLibraryAsset(edit(rules, "AGENTS.md"))).toThrow(/does not exist/);
+		});
+	});
+});
+
 describe("destroy", () => {
 	it("describes an asset: its repository, its readers, its versions and its twins", async () => {
 		const stub = registry();

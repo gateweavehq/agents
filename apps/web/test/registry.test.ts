@@ -195,3 +195,34 @@ it("shows the library, where each version is used, and which repositories are be
 	expect(response.status).toBe(404);
 	expect(await response.text()).not.toContain("House rules");
 });
+
+it("shows a written library asset, its edited text and a way to compare its versions", async () => {
+	const { headers: ada } = await signUp(agents, origin, "ada-written");
+	const id = await createWorkspace(agents, origin, ada, "scriptorium");
+	const registry = await agents.registry(id);
+	// Server functions cannot be called from here (their ids are build-time hashes), so the
+	// admin-only checks of writing and editing are covered by the registry's own tests.
+	const prompt = await registry.createLibraryAsset({
+		kind: "prompt",
+		name: "Triage",
+		text: "Sort the inbox.\n",
+	});
+	const page = async (path: string) => {
+		const response = await agents.fetch(`${origin}${path}`, { headers: { cookie: ada.cookie } });
+		expect(response.status).toBe(200);
+		return response.text();
+	};
+
+	expect(await page(`/scriptorium/assets/${prompt}`)).not.toContain("Compare versions");
+
+	await registry.editLibraryAsset({
+		libraryAssetId: prompt,
+		files: [{ path: "triage.md", content: "Sort the inbox by urgency.\n" }],
+	});
+	const html = await page(`/scriptorium/assets/${prompt}`);
+	expect(html).toContain("Sort the inbox by urgency.");
+	expect(html).toContain("Compare versions");
+	expect(await page("/scriptorium/library")).toContain("Triage");
+	// The first version is still there.
+	expect(await page(`/scriptorium/assets/${prompt}?version=1`)).toContain("Sort the inbox.");
+});

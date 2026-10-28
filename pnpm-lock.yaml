@@ -271,6 +271,9 @@ importers:
       clsx:
         specifier: 2.1.1
         version: 2.1.1
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.4(kysely@0.29.7)

@@ -7,12 +7,14 @@ import {
 	repositoryPathOf,
 } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Library, Trash2 } from "lucide-react";
+import { Library, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { EditFiles } from "#/components/registry/edit-files";
 import { fileUrl, KindLabel, RuntimeBadge } from "#/components/registry/labels";
 import { AddToLibraryDialog } from "#/components/registry/library-dialogs";
+import { CompareVersions } from "#/components/registry/version-diff";
 import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
@@ -38,6 +40,8 @@ const sizes = new Intl.NumberFormat(undefined, {
 function AssetPage() {
 	const { slug } = useWorkspace();
 	const detail = Route.useLoaderData();
+	const admin = isAdmin(useMyRole());
+	const [editing, setEditing] = useState(false);
 	useDocumentTitle(detail ? detail.asset.name : "Asset");
 
 	if (!detail) {
@@ -50,6 +54,8 @@ function AssetPage() {
 	const { asset, repository, agents, version, versions, sameContent, uses, library } = detail;
 	const current = version.version === asset.version;
 	const inLibrary = asset.repositoryId === null;
+	// Only the current version is edited: a save always makes the next one.
+	const canEdit = admin && inLibrary && current && version.files.some((f) => f.content !== null);
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -78,7 +84,15 @@ function AssetPage() {
 				</div>
 				<div className="flex flex-wrap items-start justify-between gap-3">
 					<h1 className="text-xl font-semibold tracking-tight">{asset.name}</h1>
-					<LibraryActions asset={asset} />
+					<div className="flex gap-2">
+						{canEdit && !editing && (
+							<Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+								<Pencil />
+								Edit
+							</Button>
+						)}
+						<LibraryActions asset={asset} />
+					</div>
 				</div>
 				{asset.path && asset.path !== asset.name && (
 					<p className="font-mono text-xs text-muted-foreground">{asset.path}</p>
@@ -150,19 +164,28 @@ function AssetPage() {
 				<h2 id="files-heading" className="text-sm font-medium">
 					{version.files.length === 1 ? "File" : `Files · ${version.files.length}`}
 				</h2>
-				{version.files.map((file) => (
-					<FileView
-						key={file.path}
-						file={file}
-						repository={repository}
-						commit={version.commit}
-						path={
-							asset.path === null
-								? null
-								: repositoryPathOf({ kind: asset.kind, path: asset.path }, version.files, file)
-						}
+				{editing && canEdit ? (
+					<EditFiles
+						assetId={asset.id}
+						version={asset.version}
+						files={version.files}
+						onClose={() => setEditing(false)}
 					/>
-				))}
+				) : (
+					version.files.map((file) => (
+						<FileView
+							key={file.path}
+							file={file}
+							repository={repository}
+							commit={version.commit}
+							path={
+								asset.path === null
+									? null
+									: repositoryPathOf({ kind: asset.kind, path: asset.path }, version.files, file)
+							}
+						/>
+					))
+				)}
 			</section>
 
 			{versions.length > 1 && (
@@ -197,6 +220,10 @@ function AssetPage() {
 						))}
 					</ol>
 				</section>
+			)}
+
+			{versions.length > 1 && (
+				<CompareVersions assetId={asset.id} versions={versions} shown={version.version} />
 			)}
 		</div>
 	);

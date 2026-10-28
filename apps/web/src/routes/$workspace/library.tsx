@@ -1,7 +1,10 @@
 import { ASSET_KIND_NAMES, ASSET_KINDS, type LibraryEntry } from "@gateweave/agents-model";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useWorkspace } from "#/components/workspace/context";
-import { Notice } from "#/components/workspace/notice";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { Plus } from "lucide-react";
+import { useState } from "react";
+import { NewLibraryAssetDialog } from "#/components/registry/library-dialogs";
+import { Button } from "#/components/ui/button";
+import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { getLibrary } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
@@ -12,26 +15,50 @@ export const Route = createFileRoute("/$workspace/library")({
 
 function LibraryPage() {
 	const library = Route.useLoaderData() ?? [];
+	const { slug } = useWorkspace();
+	const navigate = useNavigate();
+	const admin = isAdmin(useMyRole());
+	const [writing, setWriting] = useState(false);
 	useDocumentTitle("Library");
-
-	if (library.length === 0) {
-		return (
-			<Notice title="The library is empty">
-				Open a skill, a prompt or any other asset in a repository and choose "Add to library". The
-				library keeps its versions and shows every repository that carries one of them.
-			</Notice>
-		);
-	}
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
-			<header className="space-y-1">
-				<h1 className="text-xl font-semibold tracking-tight">Library</h1>
-				<p className="text-sm text-muted-foreground">
-					The workspace's own versions of its skills, prompts and configuration, and where each is
-					used.
-				</p>
+			<header className="flex flex-wrap items-start justify-between gap-3">
+				<div className="space-y-1">
+					<h1 className="text-xl font-semibold tracking-tight">Library</h1>
+					<p className="text-sm text-muted-foreground">
+						The workspace's own versions of its skills, prompts and configuration, and where each is
+						used.
+					</p>
+				</div>
+				{admin && (
+					<Button variant="outline" size="sm" onClick={() => setWriting(true)}>
+						<Plus />
+						New
+					</Button>
+				)}
 			</header>
+			{writing && (
+				<NewLibraryAssetDialog
+					onCreated={async (assetId) => {
+						await navigate({
+							to: "/$workspace/assets/$assetId",
+							params: { workspace: slug, assetId },
+						});
+					}}
+					onClose={() => setWriting(false)}
+				/>
+			)}
+			{library.length === 0 && (
+				<div className="space-y-1 rounded-lg border p-6 text-center">
+					<h2 className="text-base font-medium">The library is empty</h2>
+					<p className="text-sm text-muted-foreground">
+						Write a skill, a prompt or instructions here, or open an asset in a repository and
+						choose "Add to library". The library keeps its versions and shows every repository that
+						carries one of them.
+					</p>
+				</div>
+			)}
 			{ASSET_KINDS.map((kind) => {
 				const ofKind = library.filter((entry) => entry.asset.kind === kind);
 				if (ofKind.length === 0) return null;
