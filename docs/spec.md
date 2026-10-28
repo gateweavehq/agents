@@ -115,9 +115,9 @@ The same shape as Track: one Worker per product and one Durable Object per works
 - **Models** go through Cloudflare AI Gateway when the deployment names one: OpenAI, Anthropic
   and Google behind one endpoint, with caching, rate limits, fallbacks and logs. Without it,
   requests go to the provider directly.
-- **Tools.** MCP servers through the Agents SDK's MCP client; scripts and code in Cloudflare
-  Sandboxes; secrets sealed in the workspace's registry and never copied into prompts (see
-  "Decisions").
+- **Tools.** Remote MCP servers from the library, reached by a client opened for each turn;
+  scripts and code in Cloudflare Sandboxes; secrets sealed in the workspace's registry and never
+  copied into prompts (see "Decisions").
 - **Traces.** Every run records its events in its Durable Object. Cost and usage roll up into
   Analytics Engine, and traces export over OpenTelemetry.
 - **GitHub app.** Reads repositories to find agent configuration, and opens pull requests to apply
@@ -204,6 +204,14 @@ runtime is designed alongside it, so the data model fits both.
   than read from AI Gateway, which a deployment may not use, and a model the table does not list
   gets no estimate rather than a guess. Runs cut short by a restart are closed when their
   conversation wakes, and after an hour by the registry for those that never wake.
+- **MCP servers** (AGT-30, 2026-10-28). A server is a library asset in Claude Code's `.mcp.json`
+  shape, so the same asset is a setup's MCP server for coding agents and an agent's tools in
+  Gateweave, versioned and pinned like the rest. Its headers only name variables of the agent's
+  environment set: the file holds no secret, so it can be shown, diffed and written into
+  repositories, and a token is stored once, sealed. The runtime will open a client per turn with
+  `@ai-sdk/mcp` rather than the Agents SDK's `addMcpServer`, which saves a connection's options,
+  headers included, in the Durable Object's SQLite; opened secrets stay in memory for the turn.
+  Only remote servers for now: a local command needs a sandbox to run in.
 - **The library matches by content** (AGT-12, 2026-10-28). A repository asset uses a library
   asset when its hash equals one of the library asset's versions; no link is stored. There is
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the

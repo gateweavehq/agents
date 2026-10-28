@@ -2,11 +2,12 @@ import {
 	type Asset,
 	type AssetFile,
 	type LibraryUse,
+	type McpServerInput,
 	type Metadata,
 	type Repository,
 	repositoryPathOf,
 } from "@gateweave/agents-model";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { Library, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -14,13 +15,14 @@ import { z } from "zod";
 import { EditFiles } from "#/components/registry/edit-files";
 import { fileUrl, KindLabel, RuntimeBadge } from "#/components/registry/labels";
 import { AddToLibraryDialog } from "#/components/registry/library-dialogs";
+import { McpServerDialog } from "#/components/registry/mcp-dialogs";
 import { CompareVersions } from "#/components/registry/version-diff";
 import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
-import { getAsset, removeFromLibrary } from "#/lib/registry";
+import { editMcpServer, getAsset, getMcpSettings, removeFromLibrary } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/assets/$assetId")({
@@ -55,13 +57,16 @@ function AssetPage() {
 	const current = version.version === asset.version;
 	const inLibrary = asset.repositoryId === null;
 	// Only the current version is edited: a save always makes the next one.
-	// Environment sets are edited on their own page, which keeps secrets out of the file.
+	// Environment sets are edited on their own page, and MCP servers with their settings, which
+	// keeps secrets out of the file.
 	const canEdit =
 		admin &&
 		inLibrary &&
 		current &&
 		asset.kind !== "env-set" &&
+		asset.kind !== "mcp-server" &&
 		version.files.some((f) => f.content !== null);
+	const canEditSettings = admin && inLibrary && current && asset.kind === "mcp-server";
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -97,6 +102,7 @@ function AssetPage() {
 								Edit
 							</Button>
 						)}
+						{canEditSettings && <McpSettingsButton asset={asset} />}
 						<LibraryActions asset={asset} />
 					</div>
 				</div>
@@ -119,7 +125,7 @@ function AssetPage() {
 				</p>
 			)}
 
-			{(!inLibrary || Object.keys(asset.metadata).length > 0) && (
+			{(!inLibrary || agents.length > 0 || Object.keys(asset.metadata).length > 0) && (
 				<dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[max-content_1fr]">
 					{!inLibrary && (
 						<>
@@ -157,6 +163,23 @@ function AssetPage() {
 									: sameContent === 1
 										? "In 1 other place in this workspace"
 										: `In ${sameContent} other places in this workspace`}
+							</dd>
+						</>
+					)}
+					{inLibrary && agents.length > 0 && (
+						<>
+							<dt className="text-muted-foreground">Agents</dt>
+							<dd className="flex flex-wrap gap-x-3 gap-y-1">
+								{agents.map((agent) => (
+									<Link
+										key={agent.id}
+										to="/$workspace/agents/$agentId"
+										params={{ workspace: slug, agentId: agent.id }}
+										className="hover:underline"
+									>
+										{agent.name}
+									</Link>
+								))}
 							</dd>
 						</>
 					)}
@@ -305,6 +328,51 @@ function Uses({ uses, current }: { uses: LibraryUse[]; current: number }) {
 }
 
 /** "Add to library" for a repository asset, "Remove from library" for a library one. Admins only. */
+/** Opens a library MCP server's settings; saving new ones makes its next version. */
+function McpSettingsButton({ asset }: { asset: Asset }) {
+	const { slug } = useWorkspace();
+	const router = useRouter();
+	const [settings, setSettings] = useState<Omit<McpServerInput, "name"> | null>(null);
+	const [pending, setPending] = useState(false);
+
+	async function open() {
+		setPending(true);
+		try {
+			const found = await getMcpSettings({ data: { slug, assetId: asset.id } });
+			if (found) setSettings(found);
+			else toast.error("This server runs as a local command, which has no settings to edit here");
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : "Something went wrong");
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<>
+			<Button variant="outline" size="sm" onClick={open} disabled={pending}>
+				<Pencil />
+				Edit settings
+			</Button>
+			{settings && (
+				<McpServerDialog
+					server={{ name: asset.name, settings }}
+					onSave={async ({ transport, url, headers }) => {
+						const saved = await editMcpServer({
+							data: { slug, server: { assetId: asset.id, transport, url, headers } },
+						});
+						toast.success(
+							saved === asset.version ? "Nothing changed" : `Saved as version ${saved}`,
+						);
+						await router.invalidate();
+					}}
+					onClose={() => setSettings(null)}
+				/>
+			)}
+		</>
+	);
+}
+
 function LibraryActions({ asset }: { asset: Asset }) {
 	const { slug } = useWorkspace();
 	const navigate = useNavigate();

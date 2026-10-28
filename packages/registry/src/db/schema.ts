@@ -224,6 +224,27 @@ export const agentDefinitions = sqliteTable(
 	],
 );
 
+/**
+ * The MCP servers (`mcp-server` library assets) an agent run by Gateweave uses, each pinned to a
+ * version like its instructions. The agent reads them through `agent_assets` too.
+ */
+export const agentMcpServers = sqliteTable(
+	"agent_mcp_servers",
+	{
+		agentId: text("agent_id")
+			.notNull()
+			.references(() => agents.id),
+		assetId: text("asset_id")
+			.notNull()
+			.references(() => assets.id),
+		version: integer("version").notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.agentId, table.assetId] }),
+		index("agent_mcp_servers_asset_idx").on(table.assetId),
+	],
+);
+
 export const setups = sqliteTable("setups", {
 	id: text("id").primaryKey(),
 	name: text("name").notNull(),

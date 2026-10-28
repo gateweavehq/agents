@@ -6,6 +6,7 @@ import type {
 	Agent,
 	AgentDefinition,
 	AgentDetail,
+	AgentMcpServer,
 	Asset,
 	AssetDetail,
 	AssetFile,
@@ -39,6 +40,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import {
 	agentAssets,
 	agentDefinitions,
+	agentMcpServers,
 	agents,
 	assets,
 	assetVersions,
@@ -53,6 +55,8 @@ import {
 	setups,
 } from "./db/schema";
 import { type DriftEntry, mostUrgent, readDrift } from "./drift";
+import { pinnedEnvironment } from "./environment";
+import { agentMcpServer } from "./mcp-servers";
 import {
 	type Db,
 	groupBy,
@@ -286,11 +290,35 @@ export function getAgent(db: Db, id: string): AgentDetail | null {
 		model: row.model,
 		instructions: pinned,
 		environment: pinnedAsset(db, row.envSetAssetId, row.envSetVersion),
+		mcpServers: pinnedServers(db, id),
 	};
 	const instructions = pinned
 		? (getAssetVersion(db, pinned.asset.id, pinned.version)?.files ?? [])
 		: [];
 	return { agent, repository, assets: read, definition, instructions };
+}
+
+/** The MCP servers an agent run by Gateweave pins, by name, with what each needs from its set. */
+function pinnedServers(db: Db, agentId: string): AgentMcpServer[] {
+	const environment = pinnedEnvironment(db, agentId);
+	const available = new Set([
+		...Object.keys(environment?.variables ?? {}),
+		...(environment?.secrets ?? []).filter((secret) => secret.sealed !== null).map((s) => s.name),
+	]);
+	return db
+		.select({ asset: assets, version: agentMcpServers.version })
+		.from(agentMcpServers)
+		.innerJoin(assets, eq(assets.id, agentMcpServers.assetId))
+		.where(eq(agentMcpServers.agentId, agentId))
+		.orderBy(asc(assets.name), asc(assets.id))
+		.all()
+		.map(({ asset, version }) =>
+			agentMcpServer(
+				{ asset: toAsset(asset), version, removed: asset.removedAt !== null },
+				getAssetVersion(db, asset.id, version)?.files ?? [],
+				available,
+			),
+		);
 }
 
 /** A library asset an agent has pinned, or null when it pins none. */

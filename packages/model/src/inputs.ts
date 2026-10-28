@@ -398,6 +398,9 @@ export const providerKeyInput = z.object({
 });
 export type ProviderKeyInput = z.input<typeof providerKeyInput>;
 
+/** Most MCP servers one agent run by Gateweave uses. */
+export const MAX_AGENT_MCP_SERVERS = 10;
+
 /**
  * An agent defined in the app and run by Gateweave: the model it calls with the workspace's key
  * for that provider, and what it always reads, a library asset pinned to a version (one of
@@ -420,8 +423,94 @@ export const agentDefinitionInput = projectInput.extend({
 		.object({ assetId: z.string().min(1).max(64), version: z.number().int().positive() })
 		.nullable()
 		.default(null),
+	/** MCP servers (`mcp-server` library assets) whose tools it uses, each pinned to a version. */
+	mcpServers: z
+		.array(z.object({ assetId: z.string().min(1).max(64), version: z.number().int().positive() }))
+		.max(MAX_AGENT_MCP_SERVERS, `An agent can use up to ${MAX_AGENT_MCP_SERVERS} MCP servers`)
+		.refine(
+			(pins) => new Set(pins.map((pin) => pin.assetId)).size === pins.length,
+			"An MCP server is chosen twice",
+		)
+		.default([]),
 });
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
+
+/** The one file of an MCP server written in the app, in the format Claude Code reads. */
+export const MCP_SERVER_FILE = ".mcp.json";
+
+/**
+ * A header value that names a variable of the agent's environment set, with any text before it:
+ * `Bearer ${API_TOKEN}`. A header never holds a secret itself, so none lands in a file.
+ */
+export const MCP_HEADER_VALUE = /^[^$]*\$\{[A-Z_][A-Z0-9_]*\}$/;
+
+/** A plain-HTTP address on the machine itself, for local development. */
+const LOOPBACK = /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/;
+
+/**
+ * A remote MCP server's address: https, or http on the machine itself. Credentials and settings
+ * go in headers, so it has no user, query or fragment.
+ */
+export const mcpServerUrl = z
+	.string()
+	.trim()
+	.max(2000)
+	.pipe(
+		z.url({
+			protocol: /^https?$/,
+			normalize: true,
+			error: "Enter the server's full URL, starting with https://",
+		}),
+	)
+	.refine(
+		(url) => url.startsWith("https://") || LOOPBACK.test(url),
+		"The URL must start with https://",
+	)
+	.refine(
+		(url) => !/^[a-z]+:\/\/[^/]*@/i.test(url) && !/[?#]/.test(url),
+		"Send credentials and settings as headers, not in the URL",
+	);
+
+/** An MCP server written in the app: reached over the network, so an agent run by Gateweave can use it. */
+export const mcpServerInput = z.object({
+	name: z.string().trim().min(1).max(200),
+	transport: z.enum(["http", "sse"]),
+	url: mcpServerUrl,
+	headers: z
+		.array(
+			z.object({
+				name: z
+					.string()
+					.trim()
+					.min(1)
+					.max(100)
+					.regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "A header's name has no spaces or symbols"),
+				value: z
+					.string()
+					.trim()
+					.max(1000)
+					// biome-ignore lint/suspicious/noTemplateCurlyInString: the reference people write
+					.regex(MCP_HEADER_VALUE, "A header's value names a variable, as in Bearer ${API_TOKEN}"),
+			}),
+		)
+		.max(20)
+		.refine(
+			(headers) =>
+				new Set(headers.map((header) => header.name.toLowerCase())).size === headers.length,
+			"A header is set twice",
+		)
+		.default([]),
+});
+export type McpServerInput = z.input<typeof mcpServerInput>;
+
+/**
+ * New settings for an MCP server in the library; saved as its next version if they differ. Its
+ * name stays: the name is how setups write it and how its tools are named.
+ */
+export const mcpServerEditInput = mcpServerInput
+	.omit({ name: true })
+	.extend({ assetId: z.string().min(1).max(64) });
+export type McpServerEditInput = z.input<typeof mcpServerEditInput>;
 
 /** The one file of an environment set, as the library stores it. */
 export const ENV_FILE = "environment.json";

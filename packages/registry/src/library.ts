@@ -29,6 +29,10 @@ export const libraryKey = (kind: string, name: string) => `${kind}:${name}`;
 /** Environment sets hold secrets by name, so they are written only through `environment.ts`. */
 const ENVIRONMENT_ONLY = "Environment sets are managed on the Environment page";
 
+/** A server's headers name variables and never hold their values, which only its form checks. */
+const MCP_FORM_ONLY =
+	"MCP servers are edited with their settings, which keep secrets out of the file";
+
 /**
  * Copies a repository asset's current content into the library, as a new library asset or a new
  * version of one. Returns the library asset's id. A copy whose content the library asset already
@@ -240,6 +244,7 @@ export function editLibraryAsset(
 		.get();
 	if (!asset) throw new LibraryError("That library asset does not exist");
 	if (asset.kind === "env-set") throw new LibraryError(ENVIRONMENT_ONLY);
+	if (asset.kind === "mcp-server") throw new LibraryError(MCP_FORM_ONLY);
 	if (asset.repositoryId !== null) {
 		throw new LibraryError("Only library assets can be edited here; a repository's files are read");
 	}

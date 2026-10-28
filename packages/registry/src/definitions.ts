@@ -1,8 +1,8 @@
 /**
  * Agents defined in the app and run by Gateweave. Each is a row in `agents` (the `gateweave`
- * runtime, no repository) with its definition beside it in `agent_definitions`, and reads its
- * instructions and environment set through `agent_assets` like any agent, so the library asset's
- * page lists it.
+ * runtime, no repository) with its definition beside it in `agent_definitions` and its MCP
+ * servers in `agent_mcp_servers`, and reads its instructions, environment set and servers through
+ * `agent_assets` like any agent, so the library asset's page lists it.
  * Removing one marks it removed, as scans do, so its id stays known.
  */
 import {
@@ -13,7 +13,8 @@ import {
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
-import { agentAssets, agentDefinitions, agents, assets } from "./db/schema";
+import { agentAssets, agentDefinitions, agentMcpServers, agents, assets } from "./db/schema";
+import { remoteServer } from "./mcp-servers";
 import { getAssetVersion } from "./queries";
 import { type Db, toAgent } from "./state";
 
@@ -25,6 +26,7 @@ type Definition = z.output<typeof agentDefinitionInput>;
 export function createAgent(db: Db, input: Definition, now: number): Agent {
 	checkInstructions(db, input.instructions, null);
 	checkEnvironment(db, input.environment, null);
+	checkMcpServers(db, input.mcpServers, new Set());
 	const id = crypto.randomUUID();
 	const row = {
 		id,
@@ -51,6 +53,7 @@ export function updateAgent(db: Db, id: string, input: Definition, now: number):
 	if (!current) return null;
 	checkInstructions(db, input.instructions, current.instructionsAssetId);
 	checkEnvironment(db, input.environment, current.envSetAssetId);
+	checkMcpServers(db, input.mcpServers, pinnedServers(db, id));
 	const row = db
 		.update(agents)
 		.set({
@@ -127,12 +130,22 @@ function definitionRow(agentId: string, input: Definition) {
 	};
 }
 
-/** Makes the agent read exactly its instructions and environment set. Returns their asset ids. */
+/**
+ * Makes the agent read exactly its instructions, environment set and MCP servers, and pins the
+ * servers. Returns their asset ids.
+ */
 function linkInstructions(db: Db, agentId: string, input: Definition): string[] {
 	db.delete(agentAssets).where(eq(agentAssets.agentId, agentId)).run();
-	const assetIds = [input.instructions?.assetId, input.environment?.assetId].filter(
-		(assetId): assetId is string => assetId !== undefined,
-	);
+	db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, agentId)).run();
+	for (const pin of input.mcpServers)
+		db.insert(agentMcpServers)
+			.values({ agentId, ...pin })
+			.run();
+	const assetIds = [
+		input.instructions?.assetId,
+		input.environment?.assetId,
+		...input.mcpServers.map((pin) => pin.assetId),
+	].filter((assetId): assetId is string => assetId !== undefined);
 	for (const assetId of assetIds) db.insert(agentAssets).values({ agentId, assetId }).run();
 	return assetIds;
 }
@@ -168,6 +181,32 @@ function checkEnvironment(
 	checkPin(db, pin, pinnedAssetId, (name, kind) =>
 		kind === "env-set" ? null : `${name} is not an environment set`,
 	);
+}
+
+/** The servers the agent pins now, which may stay pinned after they leave the library. */
+function pinnedServers(db: Db, agentId: string): Set<string> {
+	return new Set(
+		db
+			.select({ assetId: agentMcpServers.assetId })
+			.from(agentMcpServers)
+			.where(eq(agentMcpServers.agentId, agentId))
+			.all()
+			.map((row) => row.assetId),
+	);
+}
+
+/**
+ * Each MCP server must be a version of a library asset of kind `mcp-server` that an agent can
+ * reach (see `remoteServer`); the same leave rule.
+ */
+function checkMcpServers(db: Db, pins: Definition["mcpServers"], pinned: Set<string>): void {
+	for (const pin of pins) {
+		const asset = checkPin(db, pin, pinned.has(pin.assetId) ? pin.assetId : null, (name, kind) =>
+			kind === "mcp-server" ? null : `${name} is not an MCP server`,
+		);
+		const reading = remoteServer(getAssetVersion(db, pin.assetId, pin.version)?.files ?? []);
+		if ("problem" in reading) throw new AgentError(`${asset.name}: ${reading.problem}`);
+	}
 }
 
 /** The library asset a pin names, once it is known to be pinnable: of the right kind, there, with the version. */

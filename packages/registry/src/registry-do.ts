@@ -26,9 +26,13 @@ import {
 	type LibraryTarget,
 	libraryEditInput,
 	libraryTarget,
+	type McpServerEditInput,
+	type McpServerInput,
 	MODEL_PROVIDER_NAMES,
 	MODEL_PROVIDERS,
 	type ModelProvider,
+	mcpServerEditInput,
+	mcpServerInput,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -101,6 +105,7 @@ import {
 	storeEnvSecret,
 } from "./environment";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
+import { createMcpServer, editMcpServer } from "./mcp-servers";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	keyPlace,
@@ -389,6 +394,21 @@ export class RegistryDO extends DurableObject {
 	editEnvSet(input: EnvSetEditInput): number {
 		const data = envSetEditInput.parse(input);
 		return this.#write(() => editEnvSet(this.#db, data, Date.now()));
+	}
+
+	// MCP servers in the library, written through their settings so that headers only name
+	// variables of an environment set.
+
+	/** Adds a remote MCP server to the library. Returns its id. */
+	createMcpServer(input: McpServerInput): string {
+		const data = mcpServerInput.parse(input);
+		return this.#write(() => createMcpServer(this.#db, data, Date.now()));
+	}
+
+	/** Saves a library MCP server's settings as its next version. Returns its current version. */
+	editMcpServer(input: McpServerEditInput): number {
+		const data = mcpServerEditInput.parse(input);
+		return this.#write(() => editMcpServer(this.#db, data, Date.now()));
 	}
 
 	/** Stores a secret's value, sealed, in place of the earlier one. */
