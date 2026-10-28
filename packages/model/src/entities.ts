@@ -337,6 +337,15 @@ export interface AgentDetail {
 	instructions: AssetFile[];
 }
 
+/** An agent run by Gateweave that a person can chat with, as the chat list shows it. */
+export interface RunnableAgent {
+	id: string;
+	name: string;
+	description: string | null;
+	provider: ModelProvider;
+	model: string;
+}
+
 /**
  * What the runtime reads at the start of a turn, in one read, so a turn never mixes two versions
  * of an agent.
