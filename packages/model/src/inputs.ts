@@ -280,3 +280,43 @@ export const setupPins = z
 		"An asset can be pinned once",
 	);
 export type SetupPins = z.input<typeof setupPins>;
+
+/**
+ * A setup kept as plain files: this is its `setup.json`, next to the files of its assets.
+ * Ready-made setups ship this way, and the CLI reads one from disk.
+ */
+export const setupManifest = setupInput
+	.extend({
+		description: z.string().trim().max(2000).nullable().default(null),
+		assets: z
+			.array(
+				z.object({
+					kind: z.enum(ASSET_KINDS),
+					name: z.string().trim().min(1).max(200),
+					description: z.string().trim().max(2000).nullable().default(null),
+					/**
+					 * A file or a folder, relative to `setup.json`. A folder's files keep their paths
+					 * below it, as a skill's do; a file stands alone under its own name.
+					 */
+					path: repositoryPath,
+					metadata: metadata.default({}),
+				}),
+			)
+			.min(1)
+			.max(200),
+	})
+	.superRefine((manifest, ctx) => {
+		const seen = new Set<string>();
+		for (const [index, asset] of manifest.assets.entries()) {
+			const key = `${asset.kind}\0${asset.name}`;
+			if (seen.has(key)) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["assets", index, "name"],
+					message: `Another ${asset.kind} is named ${asset.name}`,
+				});
+			}
+			seen.add(key);
+		}
+	});
+export type SetupManifest = z.infer<typeof setupManifest>;
