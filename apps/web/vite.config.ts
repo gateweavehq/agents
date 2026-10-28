@@ -7,18 +7,7 @@ import { devtools } from "@tanstack/devtools-vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
-
-/**
- * Settings Agents runs without (see src/server/env.d.ts). `secrets.required` in wrangler.jsonc
- * stops a deploy that lacks BETTER_AUTH_SECRET, but in local dev it also drops every other key
- * from .dev.vars. So in dev, these are added to the list when .dev.vars sets them.
- */
-const OPTIONAL_SECRETS = [
-	"BETTER_AUTH_URL",
-	"GITHUB_CLIENT_ID",
-	"GITHUB_CLIENT_SECRET",
-	"EMAIL_FROM",
-];
+import { devSecrets } from "./scripts/dev-secrets";
 
 export default defineConfig(({ command }) => ({
 	resolve: { tsconfigPaths: true },
@@ -28,11 +17,10 @@ export default defineConfig(({ command }) => ({
 			// At the repository root, for the "Deploy to Cloudflare" button (see wrangler.jsonc).
 			configPath: "../../wrangler.jsonc",
 			viteEnvironment: { name: "ssr" },
+			// In dev only: `secrets.required` would drop the optional settings in .dev.vars.
 			config: (config) => {
 				if (command !== "serve") return;
-				const set = devVarsKeys();
-				const optional = OPTIONAL_SECRETS.filter((key) => set.has(key));
-				return { secrets: { required: [...(config.secrets?.required ?? []), ...optional] } };
+				return { secrets: { required: devSecrets(config.secrets?.required ?? [], devVarsKeys()) } };
 			},
 		}),
 		tailwindcss(),
