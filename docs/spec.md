@@ -1,7 +1,7 @@
 # Gateweave Agents: product spec
 
-> **Status: agreed.** Phases 1 and 2 (the registry, the library and setups) are built; phase 3
-> (the runtime) is next. Decisions are recorded at the end.
+> **Status: agreed.** Phases 1 to 3 (the registry, the library and setups, and the runtime) are
+> built; phase 4 (agents in Gateweave products) is next. Decisions are recorded at the end.
 
 ## The problem
 

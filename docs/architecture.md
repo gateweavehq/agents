@@ -581,8 +581,12 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **The rest of the runtime** (phase 3 in `docs/spec.md`): cloud runners for servers that run
-  as local commands (AGT-9).
+- **Agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8): agents as workspace
+  members acting in Track, starting with issue triage.
+- **Workers AI** as a model provider (AGT-36), once it is settled who pays for its runs on
+  Gateweave Cloud.
+- **Cloud runners** (phase 5, AGT-9): coding agents in Sandboxes, which also run the MCP servers
+  that are local commands.
 
 ## Deploys
 
