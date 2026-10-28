@@ -6,7 +6,7 @@
 import type { Setup, setupInput, setupPins } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
-import { assets, assetVersions, setupAssets, setups } from "./db/schema";
+import { assets, assetVersions, setupApplications, setupAssets, setups } from "./db/schema";
 import { type Db, toSetup } from "./state";
 
 /** A change to a setup that is refused, with a message fit to show the person who asked. */
@@ -33,8 +33,10 @@ export function updateSetup(
 	return row ? toSetup(row) : null;
 }
 
+/** Its pull requests stay on GitHub; the registry forgets them with the setup. */
 export function deleteSetup(db: Db, id: string): boolean {
 	db.delete(setupAssets).where(eq(setupAssets.setupId, id)).run();
+	db.delete(setupApplications).where(eq(setupApplications.setupId, id)).run();
 	return (
 		db.delete(setups).where(eq(setups.id, id)).returning({ id: setups.id }).get() !== undefined
 	);

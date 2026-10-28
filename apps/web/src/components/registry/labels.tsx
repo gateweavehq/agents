@@ -1,5 +1,6 @@
 import {
 	type AgentRuntime,
+	type ApplicationState,
 	ASSET_KIND_NAMES,
 	type AssetKind,
 	type Repository,
@@ -42,6 +43,22 @@ export function KindLabel({ kind }: { kind: AssetKind }) {
 	return (
 		<span className="rounded bg-muted px-1.5 py-0.5 text-xs whitespace-nowrap text-muted-foreground">
 			{ASSET_KIND_NAMES[kind]}
+		</span>
+	);
+}
+
+const PULL_STATES: Record<ApplicationState, { label: string; className: string }> = {
+	open: { label: "Open", className: "text-emerald-700 dark:text-emerald-400" },
+	merged: { label: "Merged", className: "text-violet-700 dark:text-violet-400" },
+	closed: { label: "Closed", className: "text-muted-foreground" },
+};
+
+/** Where a pull request that applies a setup stands. */
+export function PullState({ state }: { state: ApplicationState }) {
+	const { label, className } = PULL_STATES[state];
+	return (
+		<span className={cn("rounded-md border px-1.5 py-0.5 text-xs whitespace-nowrap", className)}>
+			{label}
 		</span>
 	);
 }

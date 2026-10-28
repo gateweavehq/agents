@@ -41,11 +41,22 @@ import {
 	projectRepositories,
 	projects,
 	repositories,
+	type SetupRow,
 	scanRequests,
+	setupApplications,
 	setupAssets,
 	setups,
 } from "./db/schema";
-import { type Db, groupBy, toAgent, toAsset, toProject, toRepository, toSetup } from "./state";
+import {
+	type Db,
+	groupBy,
+	toAgent,
+	toApplication,
+	toAsset,
+	toProject,
+	toRepository,
+	toSetup,
+} from "./state";
 
 const liveRepository = isNull(repositories.removedAt);
 
@@ -182,6 +193,17 @@ export function getRepository(db: Db, id: string): RepositoryDetail | null {
 			.orderBy(asc(assets.kind), asc(assets.key))
 			.all()
 			.map(toAsset),
+		applications: db
+			.select({
+				application: setupApplications,
+				setup: { id: setups.id, name: setups.name },
+			})
+			.from(setupApplications)
+			.innerJoin(setups, eq(setupApplications.setupId, setups.id))
+			.where(eq(setupApplications.repositoryId, id))
+			.orderBy(desc(setupApplications.createdAt))
+			.all()
+			.map(({ application, setup }) => ({ application: toApplication(application), setup })),
 	};
 }
 
@@ -384,11 +406,40 @@ export function listSetups(db: Db): SetupEntry[] {
 export function getSetup(db: Db, id: string): SetupDetail | null {
 	const row = db.select().from(setups).where(eq(setups.id, id)).get();
 	if (!row) return null;
+	const { pinned, written } = writeSetup(db, row);
+	return {
+		setup: toSetup(row),
+		assets: pinned.map(({ asset, version }) => ({
+			asset: toAsset(asset),
+			version,
+			removed: asset.removedAt !== null,
+		})),
+		files: written.files,
+		problems: written.problems,
+		applications: db
+			.select({
+				application: setupApplications,
+				repository: { id: repositories.id, owner: repositories.owner, name: repositories.name },
+			})
+			.from(setupApplications)
+			.innerJoin(repositories, eq(setupApplications.repositoryId, repositories.id))
+			.where(eq(setupApplications.setupId, id))
+			.orderBy(desc(setupApplications.createdAt))
+			.all()
+			.map(({ application, repository }) => ({
+				application: toApplication(application),
+				repository,
+			})),
+	};
+}
+
+/** A setup's pins, and the files its pinned versions write. */
+export function writeSetup(db: Db, setup: SetupRow) {
 	const pinned = db
 		.select({ asset: assets, version: setupAssets.version })
 		.from(setupAssets)
 		.innerJoin(assets, eq(setupAssets.assetId, assets.id))
-		.where(eq(setupAssets.setupId, id))
+		.where(eq(setupAssets.setupId, setup.id))
 		.orderBy(asc(assets.kind), asc(assets.name))
 		.all();
 	const toWrite = pinned.flatMap(({ asset, version }): AssetToWrite[] => {
@@ -398,17 +449,7 @@ export function getSetup(db: Db, id: string): SetupDetail | null {
 		const { kind, name, description, metadata } = asset;
 		return [{ kind, name, description, metadata, files }];
 	});
-	const { files, problems } = writeAssets(toWrite, row.runtimes);
-	return {
-		setup: toSetup(row),
-		assets: pinned.map(({ asset, version }) => ({
-			asset: toAsset(asset),
-			version,
-			removed: asset.removedAt !== null,
-		})),
-		files,
-		problems,
-	};
+	return { pinned, written: writeAssets(toWrite, setup.runtimes) };
 }
 
 /** Every library asset, by kind and name, with how many repository assets carry it. */

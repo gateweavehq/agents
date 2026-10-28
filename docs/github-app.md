@@ -1,20 +1,30 @@
 # Connecting GitHub
 
-Gateweave Agents reads the agent configuration in each repository through a GitHub App. Every
+Gateweave Agents reads the agent configuration in each repository, and applies setups by pull
+request, through a GitHub App. Every
 server (Gateweave Cloud, staging, your own deployment, your laptop) needs an app of its own,
 because the app's URLs point at one server. Without one, everything else works and the
 workspace's GitHub settings say that GitHub is not set up.
 
 ## What the app asks for
 
-| Permission            | Access | Why                                                        |
-| --------------------- | ------ | ---------------------------------------------------------- |
-| Repository → Metadata | Read   | Required by GitHub. Lists the repositories the app reaches |
-| Repository → Contents | Read   | Reads the files that configure agents                      |
+| Permission                 | Access         | Why                                                                  |
+| -------------------------- | -------------- | -------------------------------------------------------------------- |
+| Repository → Metadata      | Read           | Required by GitHub. Lists the repositories the app reaches           |
+| Repository → Contents      | Read and write | Reads the files that configure agents; commits a setup's to a branch |
+| Repository → Pull requests | Read and write | Opens the pull request that applies a setup, and follows its state   |
 
-Nothing else: no write access and no account permissions. It subscribes to two events, **Push**
-(to read a default branch again when it changes) and **Repository** (renames and default branch
-changes). GitHub sends installation events to every app without a subscription.
+No account permissions. Writing is only ever a new branch named `gateweave/…` and a pull request
+from it: the app never writes to a default branch, and a commit changes only the files the setup
+writes (see [Applying a setup](#applying-a-setup)). It subscribes to three events, **Push** (to
+read a default branch again when it changes), **Repository** (renames and default branch changes)
+and **Pull request** (to know when one that applies a setup is merged or closed). GitHub sends
+installation events to every app without a subscription.
+
+An app created before setups could be applied has only read access. Add the two write
+permissions and the **Pull request** event on its settings page; each account that installed it
+then accepts the new permissions on GitHub before setups can be applied there. Reading goes on
+working in the meantime.
 
 ## Create the app
 
@@ -33,9 +43,11 @@ https://github.com/organizations/ORGANIZATION/settings/apps/new?name=Gateweave%2
   &webhook_url=https://HOST/api/github/webhooks
   &public=false
   &metadata=read
-  &contents=read
+  &contents=write
+  &pull_requests=write
   &events[]=push
   &events[]=repository
+  &events[]=pull_request
 ```
 
 The line breaks are for reading; remove them before you open it. GitHub fills in the form from
@@ -108,6 +120,24 @@ GitHub. Choose the repositories on GitHub with that in mind.
 
 After that, a push to a repository's default branch has the workspace read its agent files
 again; only the files the push changed are downloaded.
+
+## Applying a setup
+
+An owner or admin chooses **Apply** on a setup's page and picks a repository. The workspace reads
+the repository's default branch at its head and commits the setup's files on top of it, in a
+branch of their own, then opens a pull request. Nothing reaches the default branch until someone
+merges it.
+
+- **Files the setup does not write are not touched.** A file the setup writes is replaced, except
+  the shared MCP configuration (`.mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`,
+  `.codex/config.toml`): there only the setup's servers are merged in, and the rest of the file
+  stays as it is. A symbolic link or folder where the setup would write a file is left alone, and
+  the pull request says so.
+- **Applying again** while the pull request is open gives it a new commit, unless someone else
+  pushed to its branch: then it is left alone until it is merged or closed.
+- **A pull request's state** (open, merged or closed) comes from the **Pull request** webhook, and
+  is checked again on GitHub whenever the setup is applied there, so a missed delivery is caught
+  up.
 
 An installation belongs to one workspace at a time. **Disconnect** forgets it and its
 repositories; the app stays installed on GitHub until you uninstall it there, which also

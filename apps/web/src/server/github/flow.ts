@@ -9,8 +9,9 @@
  *    checks that the installation is among the ones this person can reach, and only then links
  *    it to the workspace and lists its repositories. The token is not kept.
  *
- * Webhooks then report installs, uninstalls and changes to the repositories the app reaches,
- * and pushes, which queue a scan of the repository when they reach its default branch.
+ * Webhooks then report installs, uninstalls and changes to the repositories the app reaches;
+ * pushes, which queue a scan of the repository when they reach its default branch; and pull
+ * requests, so the registry knows when one that applies a setup is merged or closed.
  */
 import { env } from "cloudflare:workers";
 import {
@@ -216,6 +217,21 @@ async function handleEvent(
 			}
 			await registryFor(linked.workspaceId).requestScanOf("github", repository.id);
 			return new Response(null, { status: 204 });
+		case "pull_request": {
+			// Only whether it is open matters, so the other actions are not worth a registry call.
+			const pull = payload.pull_request;
+			if (!repository || !pull || (action !== "closed" && action !== "reopened")) {
+				return new Response(null, { status: 202 });
+			}
+			const state = pull.state === "open" ? "open" : pull.merged ? "merged" : "closed";
+			const known = await registryFor(linked.workspaceId).recordPullRequest(
+				"github",
+				repository.id,
+				pull.number,
+				state,
+			);
+			return new Response(null, { status: known ? 204 : 202 });
+		}
 		default:
 			return new Response(null, { status: 202 });
 	}

@@ -85,6 +85,44 @@ async function deliver(event: string, payload: unknown, signature?: string) {
 	});
 }
 
+/** Waits until the workspace's only repository has been scanned at `commit`. */
+async function scannedAt(workspaceId: string, commit: string) {
+	const registry = await agents.registry(workspaceId);
+	let found: Repository | undefined;
+	await vi.waitFor(
+		async () => {
+			[found] = await registry.listRepositories();
+			expect(found?.scannedCommit).toBe(commit);
+		},
+		{ timeout: 10_000, interval: 50 },
+	);
+	if (!found) throw new Error("No repository");
+	return (await registry.getRepository(found.id)) ?? undefined;
+}
+
+async function connected(installationId: string, repository: FakeRepository) {
+	github.installations.set(installationId, {
+		account: { login: repository.owner, type: "User" },
+		repositories: [repository],
+	});
+	github.people.set(`${repository.owner}-gh`, new Set([installationId]));
+	const { headers } = await signUp(agents, origin, repository.owner);
+	const workspaceId = await createWorkspace(agents, origin, headers, repository.owner);
+	expect(
+		await connect(headers.cookie, repository.owner, installationId, `${repository.owner}-gh`),
+	).toContain("github=connected");
+	return { workspaceId, cookie: headers.cookie };
+}
+
+function push(installationId: string, repository: FakeRepository, branch = "main") {
+	return deliver("push", {
+		ref: `refs/heads/${branch}`,
+		after: headOf(repository),
+		repository: { id: repository.id, default_branch: repository.defaultBranch ?? "main" },
+		installation: { id: Number(installationId) },
+	});
+}
+
 describe("connecting GitHub", () => {
 	it("links an installation its admin can reach, and lists its repositories", async () => {
 		github.installations.set("501", {
@@ -232,44 +270,6 @@ describe("GitHub webhooks", () => {
 });
 
 describe("scanning", () => {
-	/** Waits until the workspace's only repository has been scanned at `commit`. */
-	async function scannedAt(workspaceId: string, commit: string) {
-		const registry = await agents.registry(workspaceId);
-		let found: Repository | undefined;
-		await vi.waitFor(
-			async () => {
-				[found] = await registry.listRepositories();
-				expect(found?.scannedCommit).toBe(commit);
-			},
-			{ timeout: 10_000, interval: 50 },
-		);
-		if (!found) throw new Error("No repository");
-		return (await registry.getRepository(found.id)) ?? undefined;
-	}
-
-	async function connected(installationId: string, repository: FakeRepository) {
-		github.installations.set(installationId, {
-			account: { login: repository.owner, type: "User" },
-			repositories: [repository],
-		});
-		github.people.set(`${repository.owner}-gh`, new Set([installationId]));
-		const { headers } = await signUp(agents, origin, repository.owner);
-		const workspaceId = await createWorkspace(agents, origin, headers, repository.owner);
-		expect(
-			await connect(headers.cookie, repository.owner, installationId, `${repository.owner}-gh`),
-		).toContain("github=connected");
-		return { workspaceId, cookie: headers.cookie };
-	}
-
-	function push(installationId: string, repository: FakeRepository, branch = "main") {
-		return deliver("push", {
-			ref: `refs/heads/${branch}`,
-			after: headOf(repository),
-			repository: { id: repository.id, default_branch: repository.defaultBranch ?? "main" },
-			installation: { id: Number(installationId) },
-		});
-	}
-
 	it("finds the agents of a connected repository, and reads again what a push changes", async () => {
 		const skill = "---\nname: review\ndescription: Reviews a change.\n---\nReview it.\n";
 		const repository: FakeRepository = {
@@ -389,6 +389,185 @@ describe("scanning", () => {
 			},
 			{ timeout: 10_000, interval: 50 },
 		);
+	});
+});
+
+describe("applying setups", () => {
+	/** A setup for Claude Code and Codex: written `AGENTS.md` text and the repository's server. */
+	async function reviewersSetup(workspaceId: string, repository: FakeRepository) {
+		const registry = await agents.registry(workspaceId);
+		const detail = await scannedAt(workspaceId, headOf(repository));
+		const server = detail?.assets.find((asset) => asset.kind === "mcp-server");
+		const rules = await registry.createLibraryAsset({
+			kind: "instructions",
+			name: "AGENTS.md",
+			text: "Be brief.\n",
+		});
+		const search = await registry.addToLibrary(server?.id ?? "", { name: "search" });
+		const setup = await registry.createSetup({
+			name: "Reviewers",
+			description: null,
+			runtimes: ["claude-code", "codex"],
+		});
+		await registry.setSetupAssets(setup.id, [
+			{ assetId: rules, version: 1 },
+			{ assetId: search, version: 1 },
+		]);
+		const pin = async (text: string) => {
+			const version = await registry.editLibraryAsset({
+				libraryAssetId: rules,
+				files: [{ path: "AGENTS.md", content: text }],
+			});
+			await registry.setSetupAssets(setup.id, [
+				{ assetId: rules, version },
+				{ assetId: search, version: 1 },
+			]);
+		};
+		return { registry, setup, repositoryId: detail?.repository.id ?? "", pin };
+	}
+
+	it("opens a pull request, keeps it current, and follows it to the end", async () => {
+		const mcp = `${JSON.stringify({ mcpServers: { search: { command: "search-mcp", args: ["--fast"] } } }, null, 2)}\n`;
+		const codex = '# Codex settings\nmodel = "o3"\n';
+		const repository: FakeRepository = {
+			id: 81,
+			owner: "babbage",
+			name: "mill",
+			files: {
+				"AGENTS.md": "Old rules.\n",
+				"CLAUDE.md": { symlink: "AGENTS.md" },
+				".mcp.json": mcp,
+				".codex/config.toml": codex,
+				"src/main.ts": "export {};\n",
+			},
+		};
+		const { workspaceId, cookie } = await connected("801", repository);
+		const { registry, setup, repositoryId, pin } = await reviewersSetup(workspaceId, repository);
+		const setupUrl = `${origin}/babbage/setups/${setup.id}`;
+		const before = { ...repository.files };
+
+		const opened = await registry.applySetup(setup.id, repositoryId, setupUrl);
+		if (opened.status !== "opened") throw new Error(`Not opened: ${JSON.stringify(opened)}`);
+		expect(opened.problems).toEqual([
+			{ path: "CLAUDE.md", message: "Is a symbolic link in the repository" },
+		]);
+		const branch = opened.application.branch;
+		expect(branch).toMatch(/^gateweave\/reviewers-[0-9a-f]{8}$/);
+		// The default branch is untouched; the branch has the setup's files and every other file.
+		expect(repository.files).toEqual(before);
+		const files = github.filesAt(repository, branch) ?? {};
+		expect(files["AGENTS.md"]).toBe("Be brief.\n");
+		expect(files["CLAUDE.md"]).toEqual({ symlink: "AGENTS.md" });
+		expect(files[".mcp.json"]).toBe(mcp);
+		expect(files[".codex/config.toml"]).toMatch(
+			/^# Codex settings\nmodel = "o3"\n\n\[mcp_servers\.search\]\n/,
+		);
+		expect(files["src/main.ts"]).toBe("export {};\n");
+		expect(opened.application.files.map((file) => file.path)).toEqual([
+			".codex/config.toml",
+			".mcp.json",
+			"AGENTS.md",
+		]);
+		const [pull] = github.pullsOf(repository);
+		expect(pull).toMatchObject({ number: 1, head: branch, base: "main", state: "open" });
+		expect(pull?.title).toBe("chore(agents): apply the Reviewers setup");
+		expect(pull?.body).toContain(`[the setup](${setupUrl})`);
+		expect(pull?.body).toContain("- `CLAUDE.md`: Is a symbolic link in the repository");
+
+		// Nothing new to write, so no new commit.
+		const current = await registry.applySetup(setup.id, repositoryId, setupUrl);
+		expect(current).toMatchObject({
+			status: "current",
+			application: { commit: opened.application.commit },
+		});
+
+		// A moved pin gives the open pull request a new commit.
+		await pin("Be briefer.\n");
+		const updated = await registry.applySetup(setup.id, repositoryId, setupUrl);
+		expect(updated.status).toBe("updated");
+		expect(github.filesAt(repository, branch)?.["AGENTS.md"]).toBe("Be briefer.\n");
+		expect(github.pullsOf(repository)).toHaveLength(1);
+		expect(github.pullsOf(repository)[0]?.body).toContain("| AGENTS.md | Instructions | v2 |");
+
+		// Work someone else pushed to the branch is never replaced.
+		github.pushTo(repository, branch);
+		await pin("Be briefest.\n");
+		expect(await registry.applySetup(setup.id, repositoryId, setupUrl)).toEqual({
+			status: "refused",
+			message: `Someone else pushed to ${branch}, so pull request #1 was left as it is. Merge or close it, then apply again.`,
+		});
+
+		// GitHub reports the merge.
+		github.merge(repository, 1);
+		const merged = await deliver("pull_request", {
+			action: "closed",
+			pull_request: { number: 1, state: "closed", merged: true },
+			repository: { id: repository.id },
+			installation: { id: 801 },
+		});
+		expect(merged.status).toBe(204);
+		const unknown = await deliver("pull_request", {
+			action: "closed",
+			pull_request: { number: 99, state: "closed", merged: false },
+			repository: { id: repository.id },
+			installation: { id: 801 },
+		});
+		expect(unknown.status).toBe(202);
+		const states = async () =>
+			(await registry.getSetup(setup.id))?.applications.map(
+				({ application }) => `#${application.pullNumber} ${application.state}`,
+			);
+		expect(await states()).toEqual(["#1 merged"]);
+
+		// The merged pull request wrote "Be briefer."; the pin has moved on since.
+		expect(await registry.applySetup(setup.id, repositoryId, setupUrl)).toMatchObject({
+			status: "opened",
+			application: { pullNumber: 2 },
+		});
+
+		// Closed on GitHub without a webhook: the next application finds out and starts over.
+		github.close(repository, 2);
+		await pin("Be done.\n");
+		const again = await registry.applySetup(setup.id, repositoryId, setupUrl);
+		expect(again.status).toBe("opened");
+		expect(await states()).toEqual(["#3 open", "#2 closed", "#1 merged"]);
+		// Merged without a webhook too: the repository already has every file.
+		github.merge(repository, 3);
+		expect((await registry.applySetup(setup.id, repositoryId, setupUrl)).status).toBe("unchanged");
+		expect(await states()).toEqual(["#3 merged", "#2 closed", "#1 merged"]);
+
+		const setupPage = await (
+			await agents.fetch(`${origin}/babbage/setups/${setup.id}`, { headers: { cookie } })
+		).text();
+		expect(setupPage).toContain("https://github.com/babbage/mill/pull/3");
+		expect(setupPage).toContain("Merged");
+		const repositoryPage = await (
+			await agents.fetch(`${origin}/babbage/repositories/${repositoryId}`, { headers: { cookie } })
+		).text();
+		expect(repositoryPage).toContain(`/babbage/setups/${setup.id}`);
+
+		// The pull requests stay on GitHub; the registry forgets them with the setup.
+		await registry.deleteSetup(setup.id);
+		expect((await registry.getRepository(repositoryId))?.applications).toEqual([]);
+	});
+
+	it("says what to do when the GitHub App may not write", async () => {
+		const repository: FakeRepository = {
+			id: 82,
+			owner: "lamarr",
+			name: "radio",
+			files: { ".mcp.json": '{"mcpServers":{"search":{"command":"search-mcp"}}}\n' },
+		};
+		const { workspaceId } = await connected("802", repository);
+		const { registry, setup, repositoryId } = await reviewersSetup(workspaceId, repository);
+		github.readOnly.add("802");
+
+		expect(await registry.applySetup(setup.id, repositoryId)).toMatchObject({
+			status: "refused",
+			message: expect.stringContaining("The GitHub App may not write to lamarr/radio."),
+		});
+		expect(github.branches.get("lamarr/radio")?.size ?? 0).toBe(0);
+		expect((await registry.getSetup(setup.id))?.applications).toEqual([]);
 	});
 });
 

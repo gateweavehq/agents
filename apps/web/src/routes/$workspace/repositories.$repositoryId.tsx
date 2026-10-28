@@ -3,10 +3,11 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { ExternalLink, Lock, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { RuntimeBadge, repositoryUrl, ScanStatus } from "#/components/registry/labels";
+import { PullState, RuntimeBadge, repositoryUrl, ScanStatus } from "#/components/registry/labels";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
+import { formatDateTime, formatRelative } from "#/lib/dates";
 import { useRefreshWhile } from "#/lib/refresh";
 import { getRepository, scanRepository } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
@@ -29,7 +30,7 @@ function RepositoryPage() {
 			</Notice>
 		);
 	}
-	const { repository, agents, assets } = detail;
+	const { repository, agents, assets, applications } = detail;
 	const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
 
 	return (
@@ -153,6 +154,8 @@ function RepositoryPage() {
 				</section>
 			)}
 
+			{applications.length > 0 && <Applications />}
+
 			{repository.problems.length > 0 && (
 				<section aria-labelledby="problems-heading" className="space-y-3">
 					<h2 id="problems-heading" className="text-sm font-medium">
@@ -169,6 +172,50 @@ function RepositoryPage() {
 				</section>
 			)}
 		</div>
+	);
+}
+
+/** The setups applied to this repository, by their pull requests. */
+function Applications() {
+	const { slug } = useWorkspace();
+	const detail = Route.useLoaderData();
+	if (!detail) return null;
+	return (
+		<section aria-labelledby="applications-heading" className="space-y-3">
+			<h2 id="applications-heading" className="text-sm font-medium">
+				Setups
+			</h2>
+			<ul className="divide-y rounded-lg border text-sm">
+				{detail.applications.map(({ application, setup }) => (
+					<li key={application.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3">
+						<span className="min-w-0 flex-1 truncate">
+							<Link
+								to="/$workspace/setups/$setupId"
+								params={{ workspace: slug, setupId: setup.id }}
+								className="hover:underline"
+							>
+								{setup.name}
+							</Link>{" "}
+							<a
+								href={application.pullUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="text-muted-foreground hover:underline"
+							>
+								#{application.pullNumber}
+							</a>
+						</span>
+						<PullState state={application.state} />
+						<span
+							className="text-xs text-muted-foreground"
+							title={formatDateTime(application.updatedAt)}
+						>
+							{formatRelative(application.updatedAt)}
+						</span>
+					</li>
+				))}
+			</ul>
+		</section>
 	);
 }
 

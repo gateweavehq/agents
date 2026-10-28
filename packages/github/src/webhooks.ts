@@ -36,5 +36,12 @@ export const webhookPayload = z.object({
 			default_branch: z.string().optional(),
 		})
 		.optional(),
+	pull_request: z
+		.object({
+			number: z.number().int().positive(),
+			state: z.string(),
+			merged: z.boolean().optional(),
+		})
+		.optional(),
 });
 export type WebhookPayload = z.infer<typeof webhookPayload>;

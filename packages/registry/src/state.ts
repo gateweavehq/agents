@@ -6,6 +6,7 @@ import {
 	type Project,
 	type Repository,
 	type Setup,
+	type SetupApplication,
 } from "@gateweave/agents-model";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import type * as schema from "./db/schema";
@@ -40,6 +41,8 @@ export const toAgent = ({ removedAt: _, ...row }: schema.AgentRow, assetIds: str
 export const toAsset = ({ removedAt: _, ...row }: schema.AssetRow): Asset => row;
 
 export const toSetup = (row: schema.SetupRow): Setup => row;
+
+export const toApplication = (row: schema.SetupApplicationRow): SetupApplication => row;
 
 /** Groups `[key, value]` pairs into lists by key. */
 export function groupBy<K, V>(pairs: Iterable<readonly [K, V]>): Map<K, V[]> {

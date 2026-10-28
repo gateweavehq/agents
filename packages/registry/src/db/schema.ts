@@ -7,6 +7,7 @@
  */
 import {
 	AGENT_RUNTIMES,
+	APPLICATION_STATES,
 	ASSET_KINDS,
 	type Metadata,
 	REPOSITORY_PROVIDERS,
@@ -209,6 +210,36 @@ export const setupAssets = sqliteTable(
 );
 
 /**
+ * Each pull request that applies a setup to a repository. Its state follows GitHub's
+ * `pull_request` webhooks, and is checked again whenever the setup is applied there.
+ */
+export const setupApplications = sqliteTable(
+	"setup_applications",
+	{
+		id: text("id").primaryKey(),
+		setupId: text("setup_id")
+			.notNull()
+			.references(() => setups.id),
+		repositoryId: text("repository_id")
+			.notNull()
+			.references(() => repositories.id),
+		pins: text("pins", { mode: "json" }).$type<{ assetId: string; version: number }[]>().notNull(),
+		files: text("files", { mode: "json" }).$type<{ path: string; blob: string }[]>().notNull(),
+		branch: text("branch").notNull(),
+		commit: text("commit").notNull(),
+		pullNumber: integer("pull_number").notNull(),
+		pullUrl: text("pull_url").notNull(),
+		state: text("state", { enum: APPLICATION_STATES }).notNull(),
+		createdAt: integer("created_at").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(table) => [
+		index("setup_applications_setup_idx").on(table.setupId),
+		index("setup_applications_pull_idx").on(table.repositoryId, table.pullNumber),
+	],
+);
+
+/**
  * Repositories waiting for a scan, which the Durable Object's alarm works through. A repository
  * has one request at most; asking again while it waits moves it to the front.
  */
@@ -235,3 +266,4 @@ export type AgentRow = typeof agents.$inferSelect;
 export type AssetRow = typeof assets.$inferSelect;
 export type ScanRequestRow = typeof scanRequests.$inferSelect;
 export type SetupRow = typeof setups.$inferSelect;
+export type SetupApplicationRow = typeof setupApplications.$inferSelect;

@@ -1,5 +1,6 @@
 import {
 	type Agent,
+	type ApplyOutcome,
 	type AssetDetail,
 	type LibraryEntry,
 	libraryEditInput,
@@ -265,6 +266,25 @@ export const deleteSetup = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<void> => {
 		const registry = await managedRegistryOf(data.slug);
 		await registry.deleteSetup(data.setupId);
+	});
+
+/**
+ * Opens a pull request that writes the setup into a repository, or gives the open one a new
+ * commit. The pull request links back to the setup's page.
+ */
+export const applySetup = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), setupId: id, repositoryId: id }))
+	.handler(async ({ data }): Promise<ApplyOutcome> => {
+		const registry = await managedRegistryOf(data.slug);
+		const { appOrigin } = await import("#/server/origin");
+		const path = `/${encodeURIComponent(data.slug)}/setups/${encodeURIComponent(data.setupId)}`;
+		const outcome = await registry.applySetup(
+			data.setupId,
+			data.repositoryId,
+			`${appOrigin()}${path}`,
+		);
+		if (outcome.status === "refused") throw new Error(outcome.message);
+		return outcome;
 	});
 
 /** Gives a setup exactly these library assets, each pinned to a version. */

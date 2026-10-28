@@ -66,8 +66,8 @@ function GitHubPage() {
 					GitHub
 				</h2>
 				<p className="text-sm text-muted-foreground">
-					The Gateweave Agents app reads the agent configuration in the repositories you choose. It
-					asks only to read their contents.
+					The Gateweave Agents app reads the agent configuration in the repositories you choose.
+					Applying a setup opens a pull request there; it never writes to a default branch.
 				</p>
 			</div>
 			{message && (
