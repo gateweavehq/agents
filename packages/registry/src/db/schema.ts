@@ -224,10 +224,13 @@ export const agentDefinitions = sqliteTable(
 		envSetVersion: integer("env_set_version"),
 		/** Whether its turns have a sandbox to run commands and edit files in. */
 		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
+		/** The repository its sandbox checks out; only an agent with a sandbox has one. */
+		repositoryId: text("repository_id").references(() => repositories.id),
 	},
 	(table) => [
 		index("agent_definitions_instructions_idx").on(table.instructionsAssetId),
 		index("agent_definitions_env_set_idx").on(table.envSetAssetId),
+		index("agent_definitions_repository_idx").on(table.repositoryId),
 	],
 );
 

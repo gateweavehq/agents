@@ -11,24 +11,47 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-/** A conversation with an agent that has a sandbox, or not. */
-async function conversation({ sandbox }: { sandbox: boolean }) {
+const SITE = {
+	provider: "github" as const,
+	externalId: "7",
+	installationId: "99",
+	owner: "acme",
+	name: "site",
+	defaultBranch: "main",
+	private: true,
+};
+
+/** A conversation with an agent that has a sandbox, or not, and a repository in it, or not. */
+async function conversation({
+	sandbox,
+	repository = false,
+}: {
+	sandbox: boolean;
+	repository?: boolean;
+}) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
 	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+	const [repositoryId = null] = repository ? await registry.syncRepositories([SITE]) : [];
 	const agent = await registry.createAgent({
 		name: "Builder",
 		description: null,
 		provider: "anthropic",
 		model: "claude-sonnet-5-5",
-		instructions: null,
+		instructions: { assetId: await rules(registry), version: 1 },
 		sandbox,
+		repositoryId,
 	});
-	const started = await registry.startConversation(agent.id, "user-ada");
-	const name = conversationName(workspaceId, started?.id ?? "");
+	const conversationId = (await registry.startConversation(agent.id, "user-ada"))?.id ?? "";
+	const name = conversationName(workspaceId, conversationId);
 	const stub = await getAgentByName(env.CONVERSATIONS, name);
 	const machine = (env.SANDBOX as unknown as DurableObjectNamespace<FakeSandbox>).getByName(name);
-	return { registry, stub, machine };
+	return { registry, stub, machine, conversationId };
+}
+
+/** Instructions of the agent's, which the model reads before anything about a repository. */
+function rules(registry: ReturnType<typeof env.REGISTRY.getByName>) {
+	return registry.createLibraryAsset({ kind: "instructions", name: "rules", text: "Be brief.\n" });
 }
 
 describe("a conversation with a sandbox", () => {
@@ -75,6 +98,44 @@ describe("a conversation with a sandbox", () => {
 		expect(JSON.stringify(trace)).not.toContain(SECRET_TEXT);
 	});
 
+	it("checks out the agent's repository on a branch of the conversation's own, and says so", async () => {
+		const requests = fakeModel((call) =>
+			call === 0
+				? anthropicToolCall("run_command", { command: "git log -1", cwd: "repo" })
+				: anthropicStream("It builds."),
+		);
+		const { stub, machine, conversationId } = await conversation({
+			sandbox: true,
+			repository: true,
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Does it build?");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "It builds.", error: null });
+		const branch = `gateweave/${conversationId}`;
+		expect(await machine.seen()).toMatchObject({
+			checkouts: [
+				{
+					repository: {
+						owner: "acme",
+						name: "site",
+						externalId: "7",
+						installationId: "99",
+						defaultBranch: "main",
+					},
+					branch,
+				},
+			],
+			commands: [{ command: "git log -1", cwd: "/workspace/repo" }],
+		});
+		// The agent's instructions come first, then where the repository is.
+		const system = JSON.stringify(requests[0]?.body.system);
+		expect(system).toContain("Be brief.");
+		expect(system).toContain(`acme/site at /workspace/repo, on the branch ${branch}`);
+		expect(system.indexOf("Be brief.")).toBeLessThan(system.indexOf("acme/site"));
+	});
+
 	it("goes when the conversation is deleted", async () => {
 		const { stub, machine } = await conversation({ sandbox: true });
 		await stub.destroy();
@@ -91,6 +152,12 @@ describe("a conversation without a sandbox", () => {
 		socket.close();
 
 		expect(requests[0]?.body.tools).toBeUndefined();
-		expect(await machine.seen()).toEqual({ files: {}, commands: [], destroyed: false });
+		expect(JSON.stringify(requests[0]?.body.system)).not.toContain("/workspace");
+		expect(await machine.seen()).toEqual({
+			files: {},
+			commands: [],
+			checkouts: [],
+			destroyed: false,
+		});
 	});
 });

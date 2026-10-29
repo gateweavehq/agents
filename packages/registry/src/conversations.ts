@@ -11,7 +11,13 @@
  * A trigger's delivery runs in a conversation with no person in it (`./triggers.ts`), which
  * `started_by` names the trigger in, so it is nobody's to list, open or go on with.
  */
-import type { AgentSnapshot, Conversation, TurnEdge, TurnMcpServer } from "@gateweave/agents-model";
+import type {
+	AgentSnapshot,
+	Conversation,
+	SandboxRepository,
+	TurnEdge,
+	TurnMcpServer,
+} from "@gateweave/agents-model";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { agentDefinitions, agents, conversations, teams } from "./db/schema";
 import type { Db } from "./state";
@@ -29,6 +35,8 @@ export interface ConversationTurn {
 	edges: TurnEdge[];
 	/** Whether the turn has the agent's sandbox: it has one, and the turn has tools. */
 	sandbox: boolean;
+	/** The repository the sandbox checks out, when the turn has one and the agent chose one. */
+	repository: SandboxRepository | null;
 	runId: string;
 }
 

@@ -292,11 +292,22 @@ export function getAgent(db: Db, id: string): AgentDetail | null {
 		environment: pinnedAsset(db, row.envSetAssetId, row.envSetVersion),
 		mcpServers: pinnedServers(db, id),
 		sandbox: row.sandbox,
+		repository: chosenRepository(db, row.repositoryId),
 	};
 	const instructions = pinned
 		? (getAssetVersion(db, pinned.asset.id, pinned.version)?.files ?? [])
 		: [];
 	return { agent, repository, assets: read, definition, instructions };
+}
+
+/** The repository an agent's sandbox checks out, and whether the GitHub App still reaches it. */
+function chosenRepository(db: Db, repositoryId: string | null): AgentDefinition["repository"] {
+	if (repositoryId === null) return null;
+	const row = db.select().from(repositories).where(eq(repositories.id, repositoryId)).get();
+	if (!row) return null;
+	const reached =
+		row.provider === "github" && row.installationId !== null && row.removedAt === null;
+	return { id: row.id, owner: row.owner, name: row.name, removed: !reached };
 }
 
 /** The MCP servers an agent run by Gateweave pins, by name, with what each needs from its set. */

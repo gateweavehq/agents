@@ -1,5 +1,11 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
-import type { RunSpan, TurnEdge, TurnVia, WorkersAiSettings } from "@gateweave/agents-model";
+import {
+	conversationBranch,
+	type RunSpan,
+	type TurnEdge,
+	type TurnVia,
+	type WorkersAiSettings,
+} from "@gateweave/agents-model";
 import type { ConversationTurn, RegistryDO } from "@gateweave/agents-registry";
 import { type Agent, getAgentByName } from "agents";
 import {
@@ -10,9 +16,10 @@ import {
 	streamText,
 	type UIMessage,
 } from "ai";
+import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
 import { edgeTools } from "./edges";
 import { describeFailure, failureForLogs, type GatewaySettings, languageModel } from "./models";
-import { type SandboxPort, sandboxTools } from "./sandbox-tools";
+import { sandboxTools } from "./sandbox-tools";
 import { connectTools } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
@@ -24,7 +31,7 @@ interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 }
 
 /** What a conversation reaches of its sandbox over RPC. */
-interface Sandbox extends SandboxPort {
+interface Sandbox extends CheckoutPort {
 	destroy(): Promise<void>;
 }
 
@@ -202,17 +209,23 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		this.#failure = null;
 		const turn = begun ?? (await registry.beginTurn(conversationId, lastUserText(this.messages)));
 		if ("status" in turn) return failed(turn.message);
-		const { agent, key, mcpServers, edges, runId } = turn;
+		const { agent, key, mcpServers, edges, repository, runId } = turn;
 		const sandbox = turn.sandbox ? this.#sandbox() : null;
+		const branch = conversationBranch(conversationId);
 		const run = new RunRecorder(this.#sql, runId, agent);
 		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
 		// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with them. An
 		// edge is named after a member of the team, so it wins over any tool of that name.
 		const tools = {
 			...toolbox.tools,
-			...(sandbox ? sandboxTools(sandbox, run) : {}),
+			...(sandbox
+				? sandboxTools(repository ? withCheckout(sandbox, repository, branch) : sandbox, run)
+				: {}),
 			...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
 		};
+		const system = [agent.instructions, sandbox && repository && repositoryNote(repository, branch)]
+			.filter((part) => typeof part === "string")
+			.join("\n\n");
 		const end = async (status: "succeeded" | "failed" | "stopped", error: string | null = null) => {
 			if (error !== null) this.#failure = error;
 			await toolbox.close();
@@ -227,7 +240,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 					agent: agent.agentId,
 					conversation: conversationId,
 				}),
-				system: agent.instructions ?? undefined,
+				system: system === "" ? undefined : system,
 				// A turn stopped during a tool call leaves the call without a result, which providers
 				// refuse in a later turn.
 				messages: await convertToModelMessages(this.messages, {

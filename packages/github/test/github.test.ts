@@ -325,4 +325,29 @@ describe("GitHubApp", () => {
 			"GET https://api.github.com/installation/repositories?per_page=100&page=1",
 		]);
 	});
+
+	it("scopes a repository token to one repository and the permissions asked for", async () => {
+		const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+		const bodies: unknown[] = [];
+		vi.stubGlobal("fetch", async (_input: string, init?: RequestInit) => {
+			const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+			bodies.push(body);
+			return Response.json({ token: `ghs_${bodies.length}`, expires_at: expiresAt });
+		});
+		const app = new GitHubApp({ appId: "1", privateKey: pkcs1 });
+
+		expect(await app.repositoryToken("99", "7", { contents: "read" })).toBe("ghs_1");
+		expect(await app.repositoryToken("99", "7", { contents: "read" })).toBe("ghs_1");
+		// Another repository, other permissions or the whole installation each get a token of
+		// their own.
+		expect(await app.repositoryToken("99", "8", { contents: "read" })).toBe("ghs_2");
+		expect(await app.repositoryToken("99", "7", { contents: "write" })).toBe("ghs_3");
+		expect(await app.installationToken("99")).toBe("ghs_4");
+		expect(bodies).toEqual([
+			{ repository_ids: [7], permissions: { contents: "read" } },
+			{ repository_ids: [8], permissions: { contents: "read" } },
+			{ repository_ids: [7], permissions: { contents: "write" } },
+			null,
+		]);
+	});
 });

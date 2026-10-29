@@ -4,6 +4,8 @@ export {
 	type GitHubAppConfig,
 	GitHubError,
 	type Installation,
+	type RepositoryPermission,
+	sharedApp,
 	userInstallationIds,
 } from "./app";
 export {

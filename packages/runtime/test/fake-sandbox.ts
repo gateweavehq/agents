@@ -4,7 +4,9 @@
  * the test Worker binds as `SANDBOX`, so a conversation reaches it as it would a real one.
  */
 import { DurableObject } from "cloudflare:workers";
-import type { CommandResult, ReadResult, SandboxPort, WriteResult } from "../src/sandbox-tools";
+import type { SandboxRepository } from "@gateweave/agents-model";
+import type { CheckoutPort, CheckoutResult } from "../src/checkout";
+import type { CommandResult, ReadResult, WriteResult } from "../src/sandbox-tools";
 
 export interface RanCommand {
 	command: string;
@@ -12,11 +14,19 @@ export interface RanCommand {
 	timeoutSeconds: number;
 }
 
-export class MemorySandbox implements SandboxPort {
+export interface Checkout {
+	repository: SandboxRepository;
+	branch: string;
+}
+
+export class MemorySandbox implements CheckoutPort {
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
+	readonly checkouts: Checkout[] = [];
 	/** What the next commands answer, in order; then each exits 0 and prints its command line. */
 	readonly answers: CommandResult[] = [];
+	/** What the next checkouts answer, in order; then each checks out. */
+	readonly checkoutAnswers: CheckoutResult[] = [];
 
 	async run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult> {
 		this.commands.push({ command, cwd, timeoutSeconds });
@@ -32,9 +42,14 @@ export class MemorySandbox implements SandboxPort {
 		this.files.set(path, content);
 		return { written: new TextEncoder().encode(content).length };
 	}
+
+	async checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult> {
+		this.checkouts.push({ repository, branch });
+		return this.checkoutAnswers.shift() ?? { checkedOut: true };
+	}
 }
 
-export class FakeSandbox extends DurableObject implements SandboxPort {
+export class FakeSandbox extends DurableObject implements CheckoutPort {
 	readonly #memory = new MemorySandbox();
 	#destroyed = false;
 
@@ -50,15 +65,20 @@ export class FakeSandbox extends DurableObject implements SandboxPort {
 		return this.#memory.writeFile(path, content);
 	}
 
+	checkout(repository: SandboxRepository, branch: string) {
+		return this.#memory.checkout(repository, branch);
+	}
+
 	destroy(): void {
 		this.#destroyed = true;
 	}
 
-	/** What the tests check: the files, the commands, and whether the conversation destroyed it. */
+	/** What the tests check: files, commands, checkouts, and whether the conversation destroyed it. */
 	seen() {
 		return {
 			files: Object.fromEntries(this.#memory.files),
 			commands: this.#memory.commands,
+			checkouts: this.#memory.checkouts,
 			destroyed: this.#destroyed,
 		};
 	}

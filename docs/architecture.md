@@ -436,6 +436,22 @@ staging does, production and self-hosted deploys leave them off until their oper
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
   sandbox.
+- **A repository in the sandbox** (AGT-41). An agent with a sandbox can choose a repository the
+  workspace's GitHub App reaches (`agent_definitions.repository_id`). On the conversation's first
+  tool call, `withCheckout` (`packages/runtime/src/checkout.ts`) asks the sandbox to clone it into
+  `/workspace/repo` from its default branch, blobs on demand, onto `gateweave/<conversation>`,
+  and the model is told so after the agent's instructions. A checkout that fails is that tool's
+  answer, and the next call tries again. The conversation keeps the repository it first checked
+  out; one chosen later is for later conversations. The container's disk goes when it idles, so
+  the next checkout starts over.
+- **The token never enters the sandbox.** Git's requests go out through `SandboxOutbound` like any
+  other. `decideOutbound` lets through only git's smart HTTP fetch of that one repository
+  (`info/refs` for `git-upload-pack`, and the pack), refusing pushes and the rest of github.com.
+  For those it allows, the Worker asks the sandbox which repository it checked out and mints an
+  installation token scoped to that repository with `contents: read`
+  (`GitHubApp.repositoryToken`). The Worker adds the token as the request leaves, so no command
+  can print it. The registry refuses the turn when the app no longer reaches the repository, or
+  when the server is not set up as a GitHub App.
 
 ## Chat
 
@@ -757,8 +773,8 @@ provider keys.
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
-- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40): cloning the agent's repository
-  with a token scoped to it (AGT-41), opening pull requests (AGT-42), runs on a schedule or a
+- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40) and a repository in them (AGT-41):
+  opening pull requests (AGT-42), runs on a schedule or a
   label (AGT-43), the vendors' own coding CLIs (AGT-44), and metering each workspace's sandbox
   time before Cloud's production offers them (AGT-45). Sandboxes will also run the MCP servers
   that are local commands.
