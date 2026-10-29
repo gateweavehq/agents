@@ -264,14 +264,8 @@ describe("agents' engines", () => {
 		expect(await stub.agentSnapshot(plain.id)).toMatchObject({ engine: "gateweave" });
 	});
 
-	it("refuse Claude Code without a sandbox, an Anthropic model or MCP servers, on create", async () => {
+	it("refuse Claude Code without a sandbox or an Anthropic model, on create", async () => {
 		const stub = registry();
-		const acme = await stub.createMcpServer({
-			name: "acme",
-			transport: "http",
-			url: "https://mcp.acme.dev/mcp",
-			headers: [],
-		});
 		await inside(stub, (instance) => {
 			expect(() => instance.createAgent(claude({ sandbox: false }))).toThrow(
 				"Claude Code runs in the agent's sandbox: turn the sandbox on",
@@ -279,11 +273,25 @@ describe("agents' engines", () => {
 			expect(() => instance.createAgent(claude({ provider: "openai", model: "gpt-5" }))).toThrow(
 				"Claude Code calls Anthropic's models: choose one of them",
 			);
-			expect(() =>
-				instance.createAgent(claude({ mcpServers: [{ assetId: acme, version: 1, tools: null }] })),
-			).toThrow("Claude Code does not use the agent's MCP servers yet");
 		});
 		expect(await stub.listAgents()).toEqual([]);
+	});
+
+	it("let Claude Code use the agent's MCP servers", async () => {
+		const stub = registry();
+		const acme = await stub.createMcpServer({
+			name: "acme",
+			transport: "http",
+			url: "https://mcp.acme.dev/mcp",
+			headers: [],
+		});
+		const agent = await stub.createAgent(
+			claude({ mcpServers: [{ assetId: acme, version: 1, tools: null }] }),
+		);
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
+			engine: "claude-code",
+			mcpServers: [{ asset: expect.objectContaining({ id: acme }), version: 1 }],
+		});
 	});
 
 	it("refuse the same on edit, and leave the agent as it was", async () => {

@@ -399,7 +399,7 @@ export function AgentDialog({
 						</select>
 						<p className="text-xs text-muted-foreground">
 							{engine === "claude-code"
-								? "Runs Anthropic's Claude Code in the sandbox, with the repository's CLAUDE.md, skills and settings. It needs the sandbox and an Anthropic model."
+								? "Runs Anthropic's Claude Code in the sandbox, with the repository's CLAUDE.md, skills and settings, and the agent's tools. It needs the sandbox and an Anthropic model."
 								: "Gateweave's own loop, with the agent's tools."}
 						</p>
 					</div>

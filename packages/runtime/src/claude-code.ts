@@ -9,6 +9,10 @@
  * Anthropic key on its requests to Anthropic on the way out, while the turn runs (`./outbound.ts`).
  * One conversation is one Claude Code session, which each turn resumes while the sandbox has it.
  *
+ * The turn's other tools, its MCP servers, `open_pull_request` and a team's edges, reach the CLI
+ * as one MCP server, `gateweave`, which the conversation answers (`./claude-code-tools.ts`). Their
+ * calls come to the chat under their own names, and record their own spans, as in Gateweave's loop.
+ *
  * Checked 2026-10-29:
  * - headless runs and their flags: https://code.claude.com/docs/en/headless
  * - permission modes, and why not `bypassPermissions` (it refuses to run as root, as the sandbox's
@@ -18,11 +22,18 @@
 import {
 	type AgentSnapshot,
 	MODEL_PROVIDER_NAMES,
+	PULL_REQUEST_TOOL,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
 } from "@gateweave/agents-model";
 import type { UIMessage, UIMessageChunk } from "ai";
 import { z } from "zod";
+import {
+	CLAUDE_CODE_TOOL_PREFIX,
+	CLAUDE_CODE_TOOLS_SERVER,
+	type ClaudeCodeToolsAccess,
+	claudeCodeMcpConfig,
+} from "./claude-code-tools";
 import type { GatewayMetadata } from "./models";
 import type { RunRecorder } from "./trace";
 
@@ -50,7 +61,8 @@ export const CLAUDE_CODE_LOG = "/tmp/claude-code.log";
 /**
  * What the CLI runs with besides the sandbox's usual environment. Nothing it would send besides
  * its requests to the model gets out of the sandbox, so it sends none: no updates, telemetry or
- * error reports. Background tasks are off, so a turn ends when its last answer does.
+ * error reports. Background tasks are off, so a turn ends when its last answer does, and so is
+ * moving a slow call of Gateweave's tools to the background, so a delegated task is waited for.
  */
 export const CLAUDE_CODE_ENV: Record<string, string> = {
 	ANTHROPIC_API_KEY: CLAUDE_CODE_PLACEHOLDER_KEY,
@@ -58,12 +70,17 @@ export const CLAUDE_CODE_ENV: Record<string, string> = {
 	DISABLE_AUTOUPDATER: "1",
 	CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
 	CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+	CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS: "0",
 };
 
-/** The workspace's key for the turn, and what AI Gateway logs about its requests. */
-export interface ModelAccess {
+/**
+ * What the turn's requests out of the sandbox go with: the workspace's key and what AI Gateway
+ * logs about its requests to Anthropic, and the way to Gateweave's tools, if the turn has any.
+ */
+export interface ClaudeCodeAccess {
 	key: string;
 	metadata: GatewayMetadata;
+	tools: ClaudeCodeToolsAccess | null;
 }
 
 /** A turn for Claude Code, as the conversation hands it to its sandbox. */
@@ -77,7 +94,7 @@ export interface ClaudeCodeJob {
 	model: string;
 	/** Where it works: the repository's checkout, or the sandbox's root. */
 	cwd: string;
-	access: ModelAccess;
+	access: ClaudeCodeAccess;
 }
 
 /** What a conversation reaches of its sandbox to run Claude Code. */
@@ -88,13 +105,20 @@ export interface ClaudeCodePort {
 	stopClaudeCode(): Promise<void>;
 }
 
-/** The command line after `claude`, for a session to start or to resume. */
+/**
+ * The command line after `claude`, for a session to start or to resume, with Gateweave's tools or
+ * without. Only those: the repository's own MCP servers would reach nothing from the sandbox.
+ */
 export function claudeCodeArguments(options: {
 	model: string;
 	system: string;
 	session: string;
 	resume: boolean;
+	tools: boolean;
 }): string[] {
+	const allowed = options.tools
+		? [...ALLOWED_TOOLS, `mcp__${CLAUDE_CODE_TOOLS_SERVER}`]
+		: ALLOWED_TOOLS;
 	return [
 		"-p",
 		"--output-format",
@@ -107,9 +131,11 @@ export function claudeCodeArguments(options: {
 		"--permission-prompts",
 		"none",
 		"--allowedTools",
-		ALLOWED_TOOLS.join(","),
+		allowed.join(","),
 		"--max-turns",
 		String(CLAUDE_CODE_TURNS),
+		"--strict-mcp-config",
+		...(options.tools ? ["--mcp-config", claudeCodeMcpConfig(CLAUDE_CODE_SECONDS * 1000)] : []),
 		...(options.system === "" ? [] : ["--append-system-prompt", options.system]),
 		...(options.resume ? ["--resume", options.session] : ["--session-id", options.session]),
 	];
@@ -152,8 +178,15 @@ export function historyOf(messages: UIMessage[], name: string): string | null {
 	return text.length <= MAX_HISTORY ? text : `[…]\n${text.slice(-MAX_HISTORY)}`;
 }
 
-/** What Claude Code is told of where it runs, after the agent's instructions. */
-export function claudeCodeNote(repository: SandboxRepository | null, branch: string): string {
+/**
+ * What Claude Code is told of where it runs, after the agent's instructions. With `pullRequests`,
+ * it proposes its work with Gateweave's `open_pull_request`; without, it says what it changed.
+ */
+export function claudeCodeNote(
+	repository: SandboxRepository | null,
+	branch: string,
+	pullRequests: boolean,
+): string {
 	const sandbox =
 		"You run in a Linux sandbox that reaches no website: package registries such as npm and PyPI work, the rest of the internet does not.";
 	if (!repository) return sandbox;
@@ -161,7 +194,9 @@ export function claudeCodeNote(repository: SandboxRepository | null, branch: str
 	return [
 		sandbox,
 		`The repository ${name} is checked out at ${SANDBOX_REPOSITORY_PATH}, on the branch ${branch}, made from ${repository.defaultBranch}.`,
-		"git push does not work from the sandbox. Leave your work in the checkout and say in your answer what you changed.",
+		pullRequests
+			? `git push does not work from the sandbox. To propose your work, call ${PULL_REQUEST_TOOL} (a tool of the ${CLAUDE_CODE_TOOLS_SERVER} MCP server): it commits what you changed in the checkout and opens a pull request, or updates the one the branch has.`
+			: "git push does not work from the sandbox. Leave your work in the checkout and say in your answer what you changed.",
 	].join(" ");
 }
 
@@ -278,10 +313,14 @@ interface Request {
 	startedAt: number;
 }
 
-/** A tool call under way: its span, and whether the chat shows it. */
+/**
+ * A tool call under way: its span, and whether the chat shows it. A call of Gateweave's own tools
+ * has no span here: the conversation records it as it runs the tool, as in Gateweave's loop.
+ */
 interface ToolCall {
-	span: string;
+	span: string | null;
 	shown: boolean;
+	gateweave: boolean;
 }
 
 /**
@@ -397,18 +436,21 @@ export class ClaudeCodeTurn {
 			const call = toolUseBlock.safeParse(content);
 			if (!call.success || this.#tools.has(call.data.id)) continue;
 			request.toolCalls = true;
-			const span = this.#run.toolStarted(
-				CLAUDE_CODE_SERVER,
-				call.data.name,
-				byteSize(call.data.input),
-				now,
-			);
-			this.#tools.set(call.data.id, { span, shown: parent === null });
+			const { name } = call.data;
+			const gateweave = name.startsWith(CLAUDE_CODE_TOOL_PREFIX);
+			const span = gateweave
+				? null
+				: this.#run.toolStarted(CLAUDE_CODE_SERVER, name, byteSize(call.data.input), now);
+			this.#tools.set(call.data.id, { span, shown: parent === null, gateweave });
 			if (parent === null) {
 				this.#sink.write({
 					type: "tool-input-available",
 					toolCallId: call.data.id,
-					toolName: `${CLAUDE_CODE_SERVER}__${call.data.name}`,
+					// Gateweave's tools go by their own names, so the chat shows them as it does in
+					// Gateweave's loop: a pull request as its link, an edge as the member it reached.
+					toolName: gateweave
+						? name.slice(CLAUDE_CODE_TOOL_PREFIX.length)
+						: `${CLAUDE_CODE_SERVER}__${name}`,
 					input: call.data.input,
 					dynamic: true,
 				});
@@ -426,9 +468,9 @@ export class ClaudeCodeTurn {
 			if (!call) continue;
 			this.#tools.delete(result.data.tool_use_id);
 			const text = resultText(result.data.content);
-			if (result.data.is_error) {
+			if (call.span !== null && result.data.is_error) {
 				this.#run.toolEnded(call.span, { error: clip(text, TRACE_ERROR_LIMIT) }, now);
-			} else {
+			} else if (call.span !== null) {
 				this.#run.toolEnded(call.span, { outputBytes: byteSize(text), error: null }, now);
 			}
 			if (!call.shown) continue;
@@ -443,7 +485,7 @@ export class ClaudeCodeTurn {
 				this.#sink.write({
 					type: "tool-output-available",
 					toolCallId: result.data.tool_use_id,
-					output: { text: clip(text, MAX_CHAT_OUTPUT) },
+					output: (call.gateweave && outputOf(text)) || { text: clip(text, MAX_CHAT_OUTPUT) },
 					dynamic: true,
 				});
 			}
@@ -511,6 +553,20 @@ function describeApiError(
 			return detail
 				? `Claude Code could not finish: ${clip(detail, FAILURE_DETAIL_LIMIT)}`
 				: "Claude Code could not finish.";
+	}
+}
+
+/**
+ * The output of one of Gateweave's tools, which its server sent as JSON text, as the chat shows it
+ * in Gateweave's loop; null for text that is not a JSON object, or too long for the chat.
+ */
+function outputOf(text: string): object | null {
+	if (text.length > MAX_CHAT_OUTPUT) return null;
+	try {
+		const output: unknown = JSON.parse(text);
+		return typeof output === "object" && output !== null ? output : null;
+	} catch {
+		return null;
 	}
 }
 
