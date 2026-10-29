@@ -291,7 +291,7 @@ function Timeline({ run, trace, nested }: { run: RunEntry; trace: RunSpan[]; nes
 								))}
 							</p>
 						)}
-						{span.error && <p className="text-xs text-destructive">{span.error}</p>}
+						{span.error && <p className="break-words text-xs text-destructive">{span.error}</p>}
 						{span.kind === "edge" && span.childRunId && (
 							<NestedRun
 								id={span.childRunId}

@@ -428,7 +428,10 @@ staging does, production and self-hosted deploys leave them off until their oper
   the work, not a wall, since a command reaches the whole machine, which holds nothing else. They
   reach the container through `SandboxPort`, which the tests fill with files in memory.
 - **The trace** has a span for each call, under the server name `sandbox`, with its sizes and
-  never its content, like an MCP tool's. A turn with a sandbox may take 40 model requests
+  never its content, like an MCP tool's. A call that fails keeps the reason the tool gave the
+  model, clipped to 500 characters (`traced` with `showErrors`), so a run's page says why; it can
+  name a path or quote what git answered. An MCP server's reason is not kept, since it can carry
+  what a third party said. A turn with a sandbox may take 40 model requests
   (`MAX_SANDBOX_STEPS`) instead of 10, since its work goes in many small steps.
 - **The registry decides.** The agent's `sandbox` setting is in `agent_definitions` and its
   snapshot. `beginTurn` refuses a turn that needs a sandbox where the server binds none, and one
@@ -530,7 +533,8 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
   tokens, cache reads, estimated cost, finish reason, time to the first token and AI Gateway's
   log id (`cf-aig-log-id`). Connecting to each MCP server is a span too, with how many tools it
   gives the agent (after its allowlist), and so is each tool call, under the model request that made it, with the sizes of its
-  input and output. A trace holds no message text and no tool input or output, so it is private
+  input and output. A trace holds no message text and no tool input or output (only the reason a
+  sandbox tool failed, as above), so it is private
   to the conversation without being secret: it goes when the conversation is deleted, and admins
   can read it while it lasts.
 - **The runtime closes the run** once, from whichever of the AI SDK's `onEnd`, `onAbort` and

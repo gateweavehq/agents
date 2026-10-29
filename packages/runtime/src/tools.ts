@@ -158,28 +158,42 @@ async function openClient(
 const fetchWithoutRedirects: typeof fetch = (input, init) =>
 	fetch(input, { ...init, redirect: "manual" });
 
+/**
+ * How a traced tool's failures are recorded. A tool of the app's own (the sandbox's, and
+ * `open_pull_request`) says what went wrong in words written for the model, so its message is
+ * recorded; an MCP server's message can carry what a third party answered, so it is not.
+ */
+export interface TraceOptions {
+	/** Record the message the tool threw, not only that the call failed. */
+	showErrors?: boolean;
+}
+
+/** The longest failure the trace records, the message included. */
+export const FAILURE_LIMIT = 500;
+
 /** A tool that records each call as a span: its timing and sizes, never its input or output. */
 export function traced(
 	tool: ToolSet[string],
 	server: string,
 	name: string,
 	run: RunRecorder,
+	options: TraceOptions = {},
 ): ToolSet[string] {
 	const { execute } = tool;
 	if (!execute) return tool;
 	return {
 		...tool,
-		execute: async (input, options) => {
+		execute: async (input, callOptions) => {
 			const span = run.toolStarted(server, name, byteSize(input));
 			try {
-				const output: unknown = await execute(input, options);
+				const output: unknown = await execute(input, callOptions);
 				run.toolEnded(span, {
 					outputBytes: byteSize(output),
 					error: isToolError(output) ? "The tool answered with an error" : null,
 				});
 				return output;
 			} catch (error) {
-				run.toolEnded(span, { error: describeToolFailure(error) });
+				run.toolEnded(span, { error: describeToolFailure(error, options) });
 				throw error;
 			}
 		},
@@ -218,10 +232,18 @@ export function describeServerFailure(error: unknown, deadline?: AbortSignal): s
 	return "It could not be reached";
 }
 
-function describeToolFailure(error: unknown): string {
+function describeToolFailure(error: unknown, { showErrors = false }: TraceOptions): string {
 	if (error instanceof Error && error.name === "AbortError") return "The turn was stopped";
+	if (showErrors && error instanceof Error && error.message.trim() !== "") {
+		return clip(`The call failed: ${error.message.trim()}`, FAILURE_LIMIT);
+	}
 	const status = MCPClientError.isInstance(error) ? error.statusCode : undefined;
 	return status === undefined
 		? "The call failed"
 		: `The call failed: the server answered with an error (HTTP ${status})`;
+}
+
+/** `text` at most `length` characters long, the last one an ellipsis when it had to be cut. */
+function clip(text: string, length: number): string {
+	return text.length <= length ? text : `${text.slice(0, length - 1)}…`;
 }
