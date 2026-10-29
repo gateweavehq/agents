@@ -528,6 +528,8 @@ export const triggers = sqliteTable(
 		secretStart: text("secret_start").notNull(),
 		active: integer("active", { mode: "boolean" }).notNull(),
 		perDay: integer("per_day").notNull(),
+		/** The event types it starts runs for; null is every event. */
+		events: text("events", { mode: "json" }).$type<string[]>(),
 		createdBy: text("created_by").notNull(),
 		createdAt: integer("created_at").notNull(),
 		updatedAt: integer("updated_at").notNull(),

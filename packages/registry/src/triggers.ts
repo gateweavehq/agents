@@ -149,6 +149,7 @@ export function insertTrigger(
 		prompt: string;
 		target: TriggerTarget;
 		perDay: number;
+		events: string[] | null;
 		sealed: string;
 		secretStart: string;
 		createdBy: string;
@@ -178,7 +179,13 @@ export function insertTrigger(
 export function updateTrigger(
 	db: Db,
 	id: string,
-	patch: { name?: string; prompt?: string; perDay?: number; active?: boolean },
+	patch: {
+		name?: string;
+		prompt?: string;
+		perDay?: number;
+		events?: string[] | null;
+		active?: boolean;
+	},
 	now: number,
 ): Trigger | null {
 	const updated = db
@@ -307,6 +314,15 @@ export function admitDelivery(
 
 	if (!trigger.active) {
 		record("skipped", { error: "The trigger was paused" });
+		return { status: "skipped" };
+	}
+	if (trigger.events && !(event && trigger.events.includes(event))) {
+		const wanted = trigger.events.join(", ");
+		record("skipped", {
+			error: event
+				? `It starts runs on ${wanted} only, not ${event}`
+				: `It starts runs on ${wanted} only, and the event has no type`,
+		});
 		return { status: "skipped" };
 	}
 	const limited = limitOf(db, trigger, now);

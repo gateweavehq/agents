@@ -237,8 +237,8 @@ function WebhookStep({ made, onClose }: { made: TrackTriageSetUp; onClose: () =>
 				<DialogTitle>Now tell Track</DialogTitle>
 				<DialogDescription>
 					{made.agentName} is ready. In Track, open Settings → Webhooks and add a webhook with this
-					URL. Under Events, leave only Issue created checked, so it runs once per issue. Under For
-					agent, choose your agent, so that its own changes do not come back to it.
+					URL. Under Events, Issue created is all triage needs; the trigger skips the others. Under
+					For agent, choose your agent, so that its own changes do not come back to it.
 				</DialogDescription>
 			</DialogHeader>
 			<div className="space-y-2">

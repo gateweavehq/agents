@@ -272,6 +272,76 @@ describe("triggers", () => {
 		expect(await stub.getRun(turn.runId)).toMatchObject({ triggerId: trigger.id });
 	});
 
+	it("start only on the event types they are limited to, and skip the rest", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub);
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger, secret } = await create(stub, {
+			name: "New issues",
+			prompt: "Triage it",
+			target: { kind: "agent", agentId },
+			events: ["issue.created"],
+		});
+		expect(trigger.events).toEqual(["issue.created"]);
+
+		const changed = crypto.randomUUID();
+		const update = JSON.stringify({ type: "issue.updated", data: { title: "Login fails" } });
+		expect(await deliver(stub, trigger.id, secret, { id: changed, body: update })).toEqual({
+			status: "skipped",
+		});
+		expect(await deliver(stub, trigger.id, secret, { body: '{"data":{}}' })).toEqual({
+			status: "skipped",
+		});
+		const [entry] = await stub.listTriggers();
+		// Both may come in the same millisecond, so in either order.
+		expect(entry?.deliveries.map(({ status, event, error }) => ({ status, event, error }))).toEqual(
+			expect.arrayContaining([
+				{
+					status: "skipped",
+					event: null,
+					error: "It starts runs on issue.created only, and the event has no type",
+				},
+				{
+					status: "skipped",
+					event: "issue.updated",
+					error: "It starts runs on issue.created only, not issue.updated",
+				},
+			]),
+		);
+		expect(entry?.deliveries).toHaveLength(2);
+		await run(stub, trigger.id, secret);
+
+		// Taking every event again starts on any type, but what was skipped stays skipped.
+		expect(await stub.updateTrigger(trigger.id, { events: null })).toMatchObject({ events: null });
+		expect(await deliver(stub, trigger.id, secret, { id: changed, body: update })).toEqual({
+			status: "duplicate",
+			runId: null,
+		});
+		expect(await deliver(stub, trigger.id, secret, { body: update })).toMatchObject({
+			status: "start",
+		});
+	});
+
+	it("refuse event lists that are empty, repeated or not event types", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub);
+		const input = {
+			name: "New issues",
+			prompt: "Triage it",
+			target: { kind: "agent" as const, agentId },
+		};
+		for (const [events, message] of [
+			[[], "Name at least one event type, or take every event"],
+			[["issue.created", "issue.created"], "An event type is listed twice"],
+			[["issue created"], "Write event types as the sender names them, such as issue.created"],
+		] as const) {
+			await expect(
+				inside(stub, (instance) => instance.createTrigger({ ...input, events: [...events] }, ADA)),
+			).rejects.toThrow(message);
+		}
+		expect(await stub.listTriggers()).toEqual([]);
+	});
+
 	it("take the sender's own secret, or a new one, in place of the old", async () => {
 		const stub = registry();
 		const agentId = await withAgent(stub);

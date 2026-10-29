@@ -39,10 +39,10 @@ Setting it up takes two steps, one in each product. You need to be an owner or a
 ## 3. In Track: the webhook
 
 1. Open **Settings → Webhooks** and choose **Add webhook**.
-2. Paste the URL. Under **Events**, leave only **Issue created** checked: Track checks a few
-   events for a new webhook, and each one would start a run. Under **For agent**, choose the
-   agent member from step 1. Track then leaves out what that agent does, so the agent never
-   triggers itself.
+2. Paste the URL. Under **Events**, **Issue created** is all triage needs. Track checks a few
+   events for a new webhook; uncheck the others to save requests, though the trigger skips them
+   anyway. Under **For agent**, choose the agent member from step 1. Track then leaves out what
+   that agent does, so the agent never triggers itself.
 3. Track shows the webhook's secret (`whsec_…`) once. Paste it into the dialog in Agents, and
    choose **Save and finish**.
 
@@ -60,7 +60,7 @@ such as `track 2`.
 | Environment set        | `Track`        | Holds the key as the secret `TRACK_AGENT_KEY`, sealed. Nobody sees it again, and replacing it is how you rotate the key. |
 | MCP server (library)   | `track`        | Track's `/mcp`, with the header `Authorization: Bearer ${TRACK_AGENT_KEY}`.                                              |
 | Agent                  | `Triage`       | Pins the three above, and may use only five of Track's tools.                                                            |
-| Trigger                | `New issues`   | Starts a run of the agent for each delivery, at most 50 a day.                                                           |
+| Trigger                | `New issues`   | Starts a run of the agent for each new issue (`issue.created`), at most 50 a day.                                        |
 
 ### Only the tools triage needs
 

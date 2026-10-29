@@ -141,6 +141,13 @@
       "when": 1793274906581,
       "tag": "0019_mcp_tool_allowlist",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1793277458995,
+      "tag": "0020_trigger_events",
+      "breakpoints": true
     }
   ]
 }

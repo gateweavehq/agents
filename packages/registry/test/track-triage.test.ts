@@ -45,6 +45,7 @@ describe("Track triage", () => {
 			target: { kind: "agent", agentId: agent.id },
 			targetName: "Triage",
 			active: true,
+			events: ["issue.created"],
 		});
 
 		// The key is a secret of the agent's environment set, which only the runtime opens.
