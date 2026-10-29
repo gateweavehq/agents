@@ -196,16 +196,26 @@ export function agentMcpServer(
 export function agentServers(
 	db: Db,
 	agentId: string,
-): { name: string; reading: { server: RemoteServer } | { problem: string } }[] {
+): {
+	name: string;
+	reading: { server: RemoteServer } | { problem: string };
+	tools: string[] | null;
+}[] {
 	return db
-		.select({ id: assets.id, name: assets.name, version: agentMcpServers.version })
+		.select({
+			id: assets.id,
+			name: assets.name,
+			version: agentMcpServers.version,
+			tools: agentMcpServers.tools,
+		})
 		.from(agentMcpServers)
 		.innerJoin(assets, eq(assets.id, agentMcpServers.assetId))
 		.where(eq(agentMcpServers.agentId, agentId))
 		.orderBy(asc(assets.name), asc(assets.id))
 		.all()
-		.map(({ id, name, version }) => ({
+		.map(({ id, name, version, tools }) => ({
 			name,
+			tools,
 			reading: remoteServer(getAssetVersion(db, id, version)?.files ?? []),
 		}));
 }
@@ -215,7 +225,7 @@ export function agentServers(
  * agent's environment set. A server whose variables are not all there is left out, with why.
  */
 export function turnServer(
-	{ name, reading }: ReturnType<typeof agentServers>[number],
+	{ name, reading, tools }: ReturnType<typeof agentServers>[number],
 	environment: ResolvedEnvironment | null,
 ): TurnMcpServer {
 	if ("problem" in reading) return { name, problem: reading.problem };
@@ -231,7 +241,7 @@ export function turnServer(
 		if (value === undefined) missing.push(header.value.variable);
 		else headers[header.name] = `${header.value.prefix}${value}`;
 	}
-	if (missing.length === 0) return { name, transport, url, headers };
+	if (missing.length === 0) return { name, transport, url, headers, tools };
 	const names = [...new Set(missing)].sort(compare);
 	return {
 		name,

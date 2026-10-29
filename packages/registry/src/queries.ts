@@ -306,15 +306,15 @@ function pinnedServers(db: Db, agentId: string): AgentMcpServer[] {
 		...(environment?.secrets ?? []).filter((secret) => secret.sealed !== null).map((s) => s.name),
 	]);
 	return db
-		.select({ asset: assets, version: agentMcpServers.version })
+		.select({ asset: assets, version: agentMcpServers.version, tools: agentMcpServers.tools })
 		.from(agentMcpServers)
 		.innerJoin(assets, eq(assets.id, agentMcpServers.assetId))
 		.where(eq(agentMcpServers.agentId, agentId))
 		.orderBy(asc(assets.name), asc(assets.id))
 		.all()
-		.map(({ asset, version }) =>
+		.map(({ asset, version, tools }) =>
 			agentMcpServer(
-				{ asset: toAsset(asset), version, removed: asset.removedAt !== null },
+				{ asset: toAsset(asset), version, removed: asset.removedAt !== null, tools },
 				getAssetVersion(db, asset.id, version)?.files ?? [],
 				available,
 			),

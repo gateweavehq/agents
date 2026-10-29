@@ -139,7 +139,7 @@ function linkInstructions(db: Db, agentId: string, input: Definition): string[] 
 	db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, agentId)).run();
 	for (const pin of input.mcpServers)
 		db.insert(agentMcpServers)
-			.values({ agentId, ...pin })
+			.values({ agentId, assetId: pin.assetId, version: pin.version, tools: pin.tools })
 			.run();
 	const assetIds = [
 		input.instructions?.assetId,

@@ -33,7 +33,7 @@ const SEARCH = {
 };
 
 /** A conversation with an agent that pins `servers`, and an environment set with the token. */
-async function conversation(servers: McpServerInput[]) {
+async function conversation(servers: McpServerInput[], allowed: Record<string, string[]> = {}) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
 	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
@@ -45,7 +45,11 @@ async function conversation(servers: McpServerInput[]) {
 	await registry.setEnvSecret({ assetId: prod, name: "ACME_TOKEN", value: TOKEN }, "Ada");
 	const pins = [];
 	for (const server of servers) {
-		pins.push({ assetId: await registry.createMcpServer(server), version: 1 });
+		pins.push({
+			assetId: await registry.createMcpServer(server),
+			version: 1,
+			tools: allowed[server.name] ?? null,
+		});
 	}
 	const agent = await registry.createAgent({
 		name: "Reviewer",
@@ -111,6 +115,28 @@ describe("MCP servers", () => {
 		]);
 		const kept = JSON.stringify(trace);
 		for (const content of [QUERY, FOUND, TOKEN]) expect(kept).not.toContain(content);
+	});
+
+	it("offer only the tools an allowlist names, and skip a listed tool the server lacks", async () => {
+		const DELETE = { ...SEARCH, name: "delete_everything", description: "Deletes it all" };
+		const READ = { ...SEARCH, name: "read", description: "Reads one" };
+		const acme = new FakeMcpServer([SEARCH, DELETE, READ], () => ({ content: [] }));
+		const requests = fakeModel(() => anthropicStream("Hello."), { "mcp.acme.dev": acme.handle });
+		const { registry, stub } = await conversation([ACME], { acme: ["search", "read", "gone"] });
+		const socket = await connect(stub);
+		expect(await ask(socket, "Hello")).toMatchObject({ text: "Hello.", error: null });
+		socket.close();
+
+		const offered = ((requests[0]?.body.tools ?? []) as { name: string }[]).map(
+			(tool) => tool.name,
+		);
+		expect(offered.sort()).toEqual(["acme__read", "acme__search"]);
+		const [run] = await registry.listRuns();
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace).toMatchObject([
+			{ kind: "connect", status: "ok", server: "acme", tools: 2 },
+			{ kind: "model", status: "ok" },
+		]);
 	});
 
 	it("go on without a server that cannot be reached, and say why in the trace", async () => {
@@ -224,6 +250,7 @@ describe("checkMcpServer", () => {
 		transport: "http" as const,
 		url: "https://mcp.acme.dev/mcp",
 		headers: { Authorization: `Bearer ${TOKEN}` },
+		tools: null,
 	};
 
 	it("lists the server's tools with their descriptions, and sends its headers", async () => {

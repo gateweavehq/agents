@@ -466,6 +466,29 @@ export const providerKeyInput = z.object({
 });
 export type ProviderKeyInput = z.input<typeof providerKeyInput>;
 
+/** Most tools, and the longest name and description, a check of an MCP server keeps. */
+export const MCP_CHECK_LIMITS = { tools: 200, name: 200, description: 500 };
+
+/**
+ * The tools of a pinned MCP server an agent may use, by the name the server gives them. Null is
+ * every tool the server offers; a list is only those, which keeps an agent that reads untrusted
+ * text down to what its job needs.
+ */
+export const mcpToolAllowlist = z
+	.array(
+		z
+			.string()
+			.trim()
+			.min(1, "A tool name cannot be empty")
+			.max(MCP_CHECK_LIMITS.name, "A tool name is too long")
+			.regex(/^[^\s\p{Cc}]+$/u, "A tool name has no spaces or control characters"),
+	)
+	.min(1, "Choose at least one tool, or allow all of them")
+	.max(MCP_CHECK_LIMITS.tools, `An agent can use up to ${MCP_CHECK_LIMITS.tools} tools of a server`)
+	.refine((tools) => new Set(tools).size === tools.length, "A tool is chosen twice")
+	.nullable()
+	.default(null);
+
 /** Most MCP servers one agent run by Gateweave uses. */
 export const MAX_AGENT_MCP_SERVERS = 10;
 
@@ -493,7 +516,13 @@ export const agentDefinitionInput = projectInput.extend({
 		.default(null),
 	/** MCP servers (`mcp-server` library assets) whose tools it uses, each pinned to a version. */
 	mcpServers: z
-		.array(z.object({ assetId: z.string().min(1).max(64), version: z.number().int().positive() }))
+		.array(
+			z.object({
+				assetId: z.string().min(1).max(64),
+				version: z.number().int().positive(),
+				tools: mcpToolAllowlist,
+			}),
+		)
 		.max(MAX_AGENT_MCP_SERVERS, `An agent can use up to ${MAX_AGENT_MCP_SERVERS} MCP servers`)
 		.refine(
 			(pins) => new Set(pins.map((pin) => pin.assetId)).size === pins.length,
@@ -700,9 +729,6 @@ export const turnVia = z.object({
 	to: memberId,
 });
 export type TurnVia = z.input<typeof turnVia>;
-
-/** Most tools, and the longest name and description, a check of an MCP server keeps. */
-export const MCP_CHECK_LIMITS = { tools: 200, name: 200, description: 500 };
 
 /** What checking an MCP server found: its tools, or why it could not be reached. */
 export const mcpCheckResult = z.discriminatedUnion("ok", [

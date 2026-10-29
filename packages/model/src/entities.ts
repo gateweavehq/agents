@@ -334,6 +334,8 @@ export interface AgentMcpServer extends PinnedAsset {
 	connection: { transport: "http" | "sse"; url: string } | { problem: string };
 	/** The variables its headers name, each with whether the agent's environment set has it. */
 	variables: { name: string; state: "set" | "missing" }[];
+	/** The tools the agent may use, by the server's names; null is all of them. */
+	tools: string[] | null;
 }
 
 /** An agent with where it is configured and what it reads. */
@@ -651,7 +653,14 @@ export interface TurnEdge {
  * agent's environment set, or why the turn goes on without it. It lives as long as the turn.
  */
 export type TurnMcpServer =
-	| { name: string; transport: "http" | "sse"; url: string; headers: Record<string, string> }
+	| {
+			name: string;
+			transport: "http" | "sse";
+			url: string;
+			headers: Record<string, string>;
+			/** The tools the agent may use, by the server's names; null is all of them. */
+			tools: string[] | null;
+	  }
 	| { name: string; problem: string };
 
 /** A tool an MCP server offers, as a check listed it. */

@@ -242,6 +242,8 @@ export const agentMcpServers = sqliteTable(
 			.notNull()
 			.references(() => assets.id),
 		version: integer("version").notNull(),
+		/** The tools the agent may use, by the server's names; null is all of them. */
+		tools: text("tools", { mode: "json" }).$type<string[]>(),
 	},
 	(table) => [
 		primaryKey({ columns: [table.agentId, table.assetId] }),

@@ -65,7 +65,13 @@ async function connect(server: TurnMcpServer, run: RunRecorder, signal?: AbortSi
 	try {
 		opened = await openClient(server, options);
 		const { client, definitions } = opened;
-		const tools = client.toolsFromDefinitions(definitions);
+		// The allowlist names the server's own tool names; one it does not offer is just absent.
+		const allowed = server.tools && new Set(server.tools);
+		const tools = client.toolsFromDefinitions(
+			allowed
+				? { ...definitions, tools: definitions.tools.filter((tool) => allowed.has(tool.name)) }
+				: definitions,
+		);
 		run.serverConnected(span, Object.keys(tools).length);
 		return { name: server.name, client, tools };
 	} catch (error) {
