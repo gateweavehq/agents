@@ -60,6 +60,13 @@ Workers AI permission) and `CLOUDFLARE_ACCOUNT_ID`, or leave the account out and
 `AI_GATEWAY_URL`. Your Cloudflare account pays for those runs, so leave both out unless you mean
 that. Set the token with `pnpm wrangler secret put WORKERS_AI_TOKEN`.
 
+To let agents have a sandbox, a Linux machine per conversation where they run commands and edit
+files, add the `SANDBOX` binding and the `containers` entry that the `staging` environment in
+`wrangler.jsonc` has to the environment you deploy. Deploying then needs Docker, which builds
+`sandbox/Dockerfile`, and your Cloudflare account pays for the
+[Containers](https://developers.cloudflare.com/containers/) time; each workspace has at most three
+sandboxes at once, and each stops after 15 minutes without use.
+
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Run `pnpm verify` before you

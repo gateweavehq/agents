@@ -27,6 +27,8 @@ export interface ConversationTurn {
 	key: string | null;
 	mcpServers: TurnMcpServer[];
 	edges: TurnEdge[];
+	/** Whether the turn has the agent's sandbox: it has one, and the turn has tools. */
+	sandbox: boolean;
 	runId: string;
 }
 

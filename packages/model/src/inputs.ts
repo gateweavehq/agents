@@ -530,6 +530,11 @@ export const agentDefinitionInput = projectInput.extend({
 			"An MCP server is chosen twice",
 		)
 		.default([]),
+	/**
+	 * Whether its turns have a sandbox, where they run commands and edit files. Off by default; a
+	 * server that runs no sandboxes keeps the choice and refuses the agent's turns.
+	 */
+	sandbox: z.boolean().default(false),
 });
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
 

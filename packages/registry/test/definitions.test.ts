@@ -66,6 +66,7 @@ describe("agents run by Gateweave", () => {
 			provider: "anthropic",
 			model: "claude-sonnet-5-5",
 			instructions: "Review the change.\n",
+			sandbox: false,
 			updatedAt: agent.updatedAt,
 		});
 

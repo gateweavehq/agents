@@ -26,10 +26,14 @@
 			{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
 		]
 	},
+	// RunnerSandbox is each conversation's sandbox. It does nothing unless an environment binds it
+	// as SANDBOX with a container, as staging does: a sandbox needs Docker to deploy and is paid by
+	// the account, so production and self-hosted deploys leave it off until their operator opts in.
 	"exports": {
 		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
 		"ConversationAgent": { "type": "durable-object", "storage": "sqlite" },
-		"RateLimiter": { "type": "durable-object", "storage": "sqlite" }
+		"RateLimiter": { "type": "durable-object", "storage": "sqlite" },
+		"RunnerSandbox": { "type": "durable-object", "storage": "sqlite" }
 	},
 	// Email through Cloudflare Email Service. Nothing is sent until EMAIL_FROM names a sender on a
 	// domain onboarded to Email Sending; without it, Agents runs with email off.
@@ -55,9 +59,20 @@
 				"bindings": [
 					{ "name": "REGISTRY", "class_name": "RegistryDO" },
 					{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
-					{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+					{ "name": "RATE_LIMITER", "class_name": "RateLimiter" },
+					{ "name": "SANDBOX", "class_name": "RunnerSandbox" }
 				]
 			},
+			// Sandboxes: one container per conversation that uses one, built from sandbox/Dockerfile.
+			// Its size is set where it starts, and each workspace has at most three at once
+			// (MAX_WORKSPACE_SANDBOXES in packages/model).
+			"containers": [
+				{
+					"class_name": "RunnerSandbox",
+					"scheduling_policy": "durable_object",
+					"images": { "sandbox": { "dockerfile": "./sandbox/Dockerfile" } }
+				}
+			],
 			"send_email": [{ "name": "EMAIL" }],
 			"secrets": { "required": ["BETTER_AUTH_SECRET"] }
 		}

@@ -1,5 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { MAX_WORKSPACE_SANDBOXES, SANDBOX_IDLE_MINUTES } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
 
@@ -100,11 +101,13 @@ describe("conversations", () => {
 				provider: "anthropic",
 				model: "claude-sonnet-5-5",
 				instructions: "Review the change.\n",
+				sandbox: false,
 				updatedAt: agent.updatedAt,
 			},
 			key: "sk-ant-api03-abcdefgh",
 			mcpServers: [],
 			edges: [],
+			sandbox: false,
 			runId: expect.any(String),
 		});
 
@@ -191,5 +194,92 @@ describe("turns with Workers AI", () => {
 			expect(await instance.beginTurn(id, "Hello")).toEqual(refusal);
 		});
 		expect(await stub.beginTurn(id, "Hello")).toMatchObject({ key: null });
+	});
+});
+
+describe("turns with a sandbox", () => {
+	async function builderConversation(stub: ReturnType<typeof registry>, sandbox: boolean) {
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const agent = await stub.createAgent({
+			name: "Builder",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			sandbox,
+		});
+		return { agent, id: (await stub.startConversation(agent.id, ADA))?.id ?? "" };
+	}
+
+	/** Runs `fn` on a registry whose server binds sandboxes, which the test Worker does not. */
+	async function withSandboxes<T>(
+		stub: ReturnType<typeof registry>,
+		fn: (instance: RegistryDO) => Promise<T>,
+	) {
+		return runInDurableObject(stub, async (instance: RegistryDO) => {
+			// `env` is protected, and a test of the server's settings is what needs it.
+			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
+			settings.SANDBOX = {};
+			try {
+				return await fn(instance);
+			} finally {
+				delete settings.SANDBOX;
+			}
+		});
+	}
+
+	it("are off unless the agent is given one, which its definition keeps", async () => {
+		const stub = registry();
+		const plain = await builderConversation(stub, false);
+		expect(await stub.beginTurn(plain.id, "Hello")).toMatchObject({ sandbox: false });
+
+		const { agent, id } = await builderConversation(stub, true);
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({ sandbox: true });
+		await withSandboxes(stub, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toMatchObject({
+				agent: { name: "Builder", sandbox: true },
+				sandbox: true,
+			});
+		});
+	});
+
+	it("are refused up front on a server that runs no sandboxes", async () => {
+		const stub = registry();
+		const { id } = await builderConversation(stub, true);
+		expect(await stub.beginTurn(id, "Hello")).toEqual({
+			status: "refused",
+			message:
+				"This server does not run sandboxes, so Builder cannot answer. Whoever runs this server can turn them on; see the README.",
+		});
+		expect(await stub.listRuns()).toEqual([]);
+	});
+
+	it("are refused once the workspace's sandboxes are all in use, until one is idle", async () => {
+		const stub = registry();
+		const { agent, id: first } = await builderConversation(stub, true);
+		const others: string[] = [];
+		for (let n = 1; n < MAX_WORKSPACE_SANDBOXES; n++) {
+			others.push((await stub.startConversation(agent.id, ADA))?.id ?? "");
+		}
+		const last = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await withSandboxes(stub, async (instance) => {
+			for (const id of [first, ...others]) {
+				expect(await instance.beginTurn(id, "Build it")).toMatchObject({ sandbox: true });
+			}
+			expect(await instance.beginTurn(last, "Build it")).toEqual({
+				status: "refused",
+				message: `The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so Builder cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
+			});
+			// A conversation that has a sandbox goes on with it.
+			expect(await instance.beginTurn(first, "And test it")).toMatchObject({ sandbox: true });
+		});
+		// Runs that ended longer ago than a sandbox stays up no longer hold one.
+		await runInDurableObject(stub, (_instance, state) => {
+			const ended = Date.now() - (SANDBOX_IDLE_MINUTES + 1) * 60_000;
+			state.storage.sql.exec("UPDATE runs SET status = 'succeeded', ended_at = ?", ended);
+		});
+		await withSandboxes(stub, async (instance) => {
+			expect(await instance.beginTurn(last, "Build it")).toMatchObject({ sandbox: true });
+		});
 	});
 });

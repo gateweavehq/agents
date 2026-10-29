@@ -29,6 +29,7 @@ import {
 	type LibraryTarget,
 	libraryEditInput,
 	libraryTarget,
+	MAX_WORKSPACE_SANDBOXES,
 	type McpCheck,
 	type McpCheckResult,
 	type McpServerEditInput,
@@ -65,6 +66,9 @@ import {
 	repositoryInput,
 	runCursor,
 	runFinish,
+	SANDBOX_IDLE_MINUTES,
+	SANDBOX_NOT_OFFERED,
+	type SandboxSettings,
 	type ScanResult,
 	type Setup,
 	type SetupDetail,
@@ -72,6 +76,7 @@ import {
 	type SetupImportInput,
 	type SetupInput,
 	type SetupPins,
+	sandboxOffered,
 	scanResult,
 	setupImportInput,
 	setupInput,
@@ -189,6 +194,7 @@ import {
 	listNestedRuns,
 	listRuns,
 	runUsage,
+	sandboxesInUse,
 } from "./runs";
 import { scanRepository } from "./scanner";
 import {
@@ -684,7 +690,7 @@ export class RegistryDO extends DurableObject {
 		const plan = this.#planTurn(parties);
 		if ("status" in plan) return plan;
 		const { agent, position } = plan;
-		const prepared = await this.#prepareTurn(agent, position, true);
+		const prepared = await this.#prepareTurn(conversation, agent, position, true);
 		if ("status" in prepared) return prepared;
 		const runId = this.#write(() =>
 			beginRun(
@@ -694,6 +700,7 @@ export class RegistryDO extends DurableObject {
 					conversationId: conversation,
 					startedBy: parties.startedBy,
 					teamPath: position?.path ?? null,
+					sandbox: prepared.sandbox,
 				},
 				Date.now(),
 			),
@@ -724,7 +731,7 @@ export class RegistryDO extends DurableObject {
 		};
 		const plan = this.#planTurn(parties);
 		if ("status" in plan) return settle(plan);
-		const prepared = await this.#prepareTurn(plan.agent, plan.position, true);
+		const prepared = await this.#prepareTurn(conversation, plan.agent, plan.position, true);
 		if ("status" in prepared) return settle(prepared);
 		const { startedBy } = parties;
 		return this.#write(() => {
@@ -741,6 +748,7 @@ export class RegistryDO extends DurableObject {
 					conversationId: conversation,
 					startedBy,
 					teamPath: plan.position?.path ?? null,
+					sandbox: prepared.sandbox,
 				},
 				now,
 			);
@@ -771,7 +779,12 @@ export class RegistryDO extends DurableObject {
 		const plan = nestedTurnPlan(this.#db, via);
 		if ("refused" in plan) return refused(plan.refused);
 		// An ask is one model request without tools.
-		const prepared = await this.#prepareTurn(plan.agent, plan.position, via.kind !== "ask");
+		const prepared = await this.#prepareTurn(
+			conversation,
+			plan.agent,
+			plan.position,
+			via.kind !== "ask",
+		);
 		if ("status" in prepared) return prepared;
 		// The graphs and the limits decide as the run begins, since they may have changed while the
 		// key was opened, and other nested turns may have begun.
@@ -802,6 +815,7 @@ export class RegistryDO extends DurableObject {
 					startedBy: now.startedBy,
 					teamPath: now.position.path,
 					parent: now.parent,
+					sandbox: prepared.sandbox,
 				},
 				at,
 			);
@@ -810,10 +824,11 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * What a turn of `agent` needs besides its run: the key, opened, and with `tools`, its MCP
-	 * servers and the edges it can take where it stands in a team.
+	 * What a turn of `agent` in `conversation` needs besides its run: the key, opened, and with
+	 * `tools`, its MCP servers, its sandbox and the edges it can take where it stands in a team.
 	 */
 	async #prepareTurn(
+		conversation: string,
 		agent: AgentSnapshot,
 		position: TeamPosition | null,
 		tools: boolean,
@@ -830,6 +845,18 @@ export class RegistryDO extends DurableObject {
 				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
 			);
 		}
+		// An ask has no tools, so it needs no sandbox either.
+		const sandbox = tools && agent.sandbox;
+		if (sandbox && !sandboxOffered(this.env as SandboxSettings)) {
+			return refused(
+				`${SANDBOX_NOT_OFFERED}, so ${agent.name} cannot answer. Whoever runs this server can turn them on; see the README.`,
+			);
+		}
+		if (sandbox && sandboxesInUse(this.#db, conversation, Date.now()) >= MAX_WORKSPACE_SANDBOXES) {
+			return refused(
+				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
+			);
+		}
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
 		const servers = tools ? agentServers(this.#db, agent.agentId) : [];
 		const edges = tools && position ? turnEdges(this.#db, position) : [];
@@ -841,7 +868,7 @@ export class RegistryDO extends DurableObject {
 		]);
 		if ("status" in opened) return opened;
 		const mcpServers = servers.map((server) => turnServer(server, environment));
-		return { agent, key: opened.key, mcpServers, edges };
+		return { agent, key: opened.key, mcpServers, edges, sandbox };
 	}
 
 	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */

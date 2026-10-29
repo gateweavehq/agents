@@ -222,6 +222,8 @@ export const agentDefinitions = sqliteTable(
 		/** The environment set (an `env-set` library asset) it runs with, pinned like instructions. */
 		envSetAssetId: text("env_set_asset_id").references(() => assets.id),
 		envSetVersion: integer("env_set_version"),
+		/** Whether its turns have a sandbox to run commands and edit files in. */
+		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
 	},
 	(table) => [
 		index("agent_definitions_instructions_idx").on(table.instructionsAssetId),
@@ -501,6 +503,8 @@ export const runs = sqliteTable(
 		teamPath: text("team_path", { mode: "json" }).$type<string[]>(),
 		/** The trigger whose delivery started it. No foreign key: runs outlive their trigger. */
 		triggerId: text("trigger_id"),
+		/** Whether the turn had its conversation's sandbox, which counts against the workspace's. */
+		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),

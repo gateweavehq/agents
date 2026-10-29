@@ -50,6 +50,7 @@ export function AgentDialog({
 	agent,
 	library,
 	available,
+	sandboxOffered,
 	onSave,
 	onClose,
 }: {
@@ -57,6 +58,8 @@ export function AgentDialog({
 	library: LibraryEntry[];
 	/** The providers an agent can use: the workspace has a key, or the server offers it. */
 	available: ModelProvider[];
+	/** Whether the server runs sandboxes. */
+	sandboxOffered: boolean;
 	onSave: (input: AgentDefinitionInput) => Promise<void>;
 	onClose: () => void;
 }) {
@@ -81,6 +84,7 @@ export function AgentDialog({
 	);
 	// The last check of each library server, which says what tools there are to choose from.
 	const [checks, setChecks] = useState<Map<string, McpCheck | null>>(() => new Map());
+	const [sandbox, setSandbox] = useState(agent?.definition.sandbox ?? false);
 	const [models, setModels] = useState<ProviderModel[] | string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -163,6 +167,7 @@ export function AgentDialog({
 							tools: allowed.get(asset.id) ?? null,
 						};
 					}),
+				sandbox,
 			});
 			onClose();
 		} catch (failure) {
@@ -348,6 +353,24 @@ export function AgentDialog({
 							reached by Gateweave yet.
 						</p>
 					</fieldset>
+					<Label className="flex cursor-pointer items-start gap-3 font-normal has-disabled:cursor-not-allowed has-disabled:opacity-60">
+						<Checkbox
+							className="mt-0.5"
+							checked={sandbox}
+							// An agent keeps a sandbox it has on a server that runs none, until it is unticked.
+							disabled={!sandboxOffered && !sandbox}
+							onCheckedChange={(checked) => setSandbox(checked === true)}
+						/>
+						<span className="space-y-1">
+							<span className="block text-sm font-medium">
+								Sandbox{sandboxOffered ? "" : " (not on this server)"}
+							</span>
+							<span className="block text-xs text-muted-foreground">
+								A Linux machine for each conversation, where the agent runs commands and edits
+								files. It can download packages, and reach nothing else.
+							</span>
+						</span>
+					</Label>
 					{error && (
 						<p role="alert" className="text-sm text-destructive">
 							{error}

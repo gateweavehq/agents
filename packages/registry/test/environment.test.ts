@@ -250,6 +250,7 @@ describe("agents and environment sets", () => {
 			"model",
 			"name",
 			"provider",
+			"sandbox",
 			"updatedAt",
 		]);
 

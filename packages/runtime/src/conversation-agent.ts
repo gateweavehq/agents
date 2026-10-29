@@ -12,18 +12,29 @@ import {
 } from "ai";
 import { edgeTools } from "./edges";
 import { describeFailure, failureForLogs, type GatewaySettings, languageModel } from "./models";
+import { type SandboxPort, sandboxTools } from "./sandbox-tools";
 import { connectTools } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
 interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 	REGISTRY: DurableObjectNamespace<RegistryDO>;
 	CONVERSATIONS: DurableObjectNamespace<Agent<Cloudflare.Env>>;
+	/** Each conversation's sandbox (`./sandbox.ts`), where the deployment offers them. */
+	SANDBOX?: DurableObjectNamespace;
+}
+
+/** What a conversation reaches of its sandbox over RPC. */
+interface Sandbox extends SandboxPort {
+	destroy(): Promise<void>;
 }
 
 const SEPARATOR = ":";
 
 /** The model requests one turn may make: the first, and one after each round of tool calls. */
 export const MAX_STEPS = 10;
+
+/** The same for a turn with a sandbox, whose work takes many small steps. */
+export const MAX_SANDBOX_STEPS = 40;
 
 /** Most characters of a nested turn's answer that the model which asked for it reads. */
 export const MAX_ANSWER = 50_000;
@@ -70,6 +81,9 @@ export function conversationName(workspaceId: string, conversationId: string): s
  * Each turn that calls the model is a run. Its trace is kept here (`./trace.ts`) and its sum goes
  * to the registry when it ends. The agent's MCP servers are connected for each turn and closed
  * when it ends (`./tools.ts`).
+ *
+ * An agent with a sandbox also has tools that run commands and edit files on a Linux machine of
+ * the conversation's own (`./sandbox.ts`), which goes when the conversation is deleted.
  *
  * In a conversation with a team, the lead's turn also has the team's edges as tools
  * (`./edges.ts`). Taking one starts a nested turn in a new conversation of the same class, reached
@@ -189,11 +203,14 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		const turn = begun ?? (await registry.beginTurn(conversationId, lastUserText(this.messages)));
 		if ("status" in turn) return failed(turn.message);
 		const { agent, key, mcpServers, edges, runId } = turn;
+		const sandbox = turn.sandbox ? this.#sandbox() : null;
 		const run = new RunRecorder(this.#sql, runId, agent);
 		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
-		// An edge is named after a member of the team, so it wins over a server's tool of that name.
+		// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with them. An
+		// edge is named after a member of the team, so it wins over any tool of that name.
 		const tools = {
 			...toolbox.tools,
+			...(sandbox ? sandboxTools(sandbox, run) : {}),
 			...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
 		};
 		const end = async (status: "succeeded" | "failed" | "stopped", error: string | null = null) => {
@@ -218,7 +235,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 					ignoreIncompleteToolCalls: true,
 				}),
 				tools,
-				stopWhen: stepCountIs(MAX_STEPS),
+				stopWhen: stepCountIs(sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS),
 				abortSignal: options?.abortSignal,
 				onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
 				onStepEnd: (step) => run.stepEnded(step),
@@ -287,6 +304,25 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			throw new Error(outcome.error);
 		}
 		return outcome.answer ?? `${edge.name} has the message and takes a turn of its own on it.`;
+	}
+
+	/** Deletes the conversation, and its sandbox with it. */
+	override async destroy(): Promise<void> {
+		try {
+			await this.#sandbox()?.destroy();
+		} catch (error) {
+			console.error("A sandbox was not stopped", failureForLogs(error));
+		}
+		await super.destroy();
+	}
+
+	/**
+	 * The conversation's sandbox, under its own name; none where the deployment offers none, in
+	 * which case the registry refuses the turns that need one.
+	 */
+	#sandbox(): Sandbox | null {
+		const env = this.env as unknown as RuntimeEnv;
+		return (env.SANDBOX?.getByName(this.name) as unknown as Sandbox | undefined) ?? null;
 	}
 
 	/** The conversation's SQLite, with the trace's tables made on first use. */

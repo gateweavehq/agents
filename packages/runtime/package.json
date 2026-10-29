@@ -20,6 +20,7 @@
 		"@ai-sdk/openai-compatible": "catalog:",
 		"@ai-sdk/provider": "catalog:",
 		"@cloudflare/ai-chat": "catalog:",
+		"@cloudflare/sandbox": "1.0.3",
 		"@gateweave/agents-model": "workspace:*",
 		"@gateweave/agents-registry": "workspace:*",
 		"agents": "catalog:",

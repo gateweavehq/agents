@@ -12,6 +12,7 @@ import {
 	type RunFinish,
 	type RunTotal,
 	type RunUsage,
+	SANDBOX_IDLE_MINUTES,
 	type TeamEdgeKind,
 	type TotaledRun,
 	triggerOf,
@@ -20,6 +21,7 @@ import {
 	and,
 	asc,
 	count,
+	countDistinct,
 	desc,
 	eq,
 	gte,
@@ -54,12 +56,14 @@ export function beginRun(
 		startedBy,
 		teamPath = null,
 		parent = null,
+		sandbox = false,
 	}: {
 		agent: AgentSnapshot;
 		conversationId: string;
 		startedBy: string;
 		teamPath?: string[] | null;
 		parent?: RunParent | null;
+		sandbox?: boolean;
 	},
 	now: number,
 ): string {
@@ -77,10 +81,35 @@ export function beginRun(
 			teamPath,
 			// A trigger's runs keep it by id, nested ones too, to show its name.
 			triggerId: triggerOf(startedBy),
+			sandbox,
 			...parent,
 		})
 		.run();
 	return id;
+}
+
+/**
+ * The conversations besides `conversationId` whose sandbox may be running: a turn with it is
+ * going, or ended less than `SANDBOX_IDLE_MINUTES` ago. A run going for longer than
+ * `RUN_TIMEOUT` was cut short and does not count.
+ */
+export function sandboxesInUse(db: Db, conversationId: string, now: number): number {
+	const idle = now - SANDBOX_IDLE_MINUTES * 60_000;
+	const row = db
+		.select({ conversations: countDistinct(runs.conversationId) })
+		.from(runs)
+		.where(
+			and(
+				eq(runs.sandbox, true),
+				sql`${runs.conversationId} IS NOT ${conversationId}`,
+				or(
+					and(isNull(runs.endedAt), gte(runs.startedAt, now - RUN_TIMEOUT)),
+					gte(runs.endedAt, idle),
+				),
+			),
+		)
+		.get();
+	return row?.conversations ?? 0;
 }
 
 /** A run that may call others over a team's edges, as a nested turn needs it; null if none. */

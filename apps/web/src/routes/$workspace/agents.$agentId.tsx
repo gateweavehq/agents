@@ -41,6 +41,7 @@ export const Route = createFileRoute("/$workspace/agents/$agentId")({
 				...detail,
 				library: library ?? [],
 				available: availableProviders(keys),
+				sandboxOffered: keys?.sandbox ?? false,
 				// Null for members: owners and admins manage triggers.
 				triggers,
 			}
@@ -209,6 +210,19 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 						{admin ? " Choose a set with Edit." : ""}
 					</p>
 				)}
+			</section>
+
+			<section aria-labelledby="sandbox-heading" className="space-y-3">
+				<h2 id="sandbox-heading" className="text-sm font-medium">
+					Sandbox
+				</h2>
+				<p className="rounded-lg border p-6 text-sm text-muted-foreground">
+					{definition.sandbox
+						? data.sandboxOffered
+							? "Each conversation has a Linux machine of its own, where the agent runs commands and edits files. It can download packages, and reach nothing else. It stops after 15 minutes without use, and its files go with it."
+							: "The agent has a sandbox, but this server runs none, so it cannot answer. Whoever runs the server can turn sandboxes on."
+						: `No sandbox: the agent cannot run commands.${admin && data.sandboxOffered ? " Give it one with Edit." : ""}`}
+				</p>
 			</section>
 
 			<section aria-labelledby="mcp-heading" className="space-y-3">
@@ -388,6 +402,7 @@ function inputOf(agent: Agent, definition: AgentDefinition) {
 			version: server.version,
 			tools: server.tools,
 		})),
+		sandbox: definition.sandbox,
 	};
 }
 
@@ -508,6 +523,7 @@ function AgentActions({ definition }: { definition: AgentDefinition }) {
 					agent={{ agent, definition }}
 					library={data.library}
 					available={data.available}
+					sandboxOffered={data.sandboxOffered}
 					onSave={async (input) => {
 						await updateAgent({ data: { slug, agentId: agent.id, agent: input } });
 						await router.invalidate();
