@@ -63,26 +63,41 @@ const GATEWAY_PATHS: Record<KeyedProvider, string> = {
 /** A setting that is wrong, with a message fit to show whoever is chatting. */
 export class SettingsError extends Error {}
 
+/** The deployment's AI Gateway and its parts; null when it names none. */
+export function gatewayOf(settings: GatewaySettings) {
+	const gateway = settings.AI_GATEWAY_URL?.replace(/\/+$/, "");
+	if (gateway === undefined || gateway === "") return null;
+	const parts = parseGatewayUrl(gateway);
+	if (!parts) {
+		throw new SettingsError(
+			"This server's AI_GATEWAY_URL is not an AI Gateway address, so no agent can answer",
+		);
+	}
+	return { url: gateway, ...parts };
+}
+
+/** What the gateway logs about a request, and how it knows it may take it. */
+function gatewayHeadersOf(
+	settings: GatewaySettings,
+	metadata: GatewayMetadata,
+): Record<string, string> {
+	return {
+		"cf-aig-metadata": JSON.stringify(metadata),
+		...(settings.AI_GATEWAY_TOKEN
+			? { "cf-aig-authorization": `Bearer ${settings.AI_GATEWAY_TOKEN}` }
+			: {}),
+	};
+}
+
 export function languageModel(
 	agent: AgentSnapshot,
 	key: string | null,
 	settings: GatewaySettings & WorkersAiSettings,
 	metadata: GatewayMetadata,
 ): LanguageModel {
-	const gateway = settings.AI_GATEWAY_URL?.replace(/\/+$/, "");
-	const parts = gateway ? parseGatewayUrl(gateway) : null;
-	if (gateway !== undefined && gateway !== "" && !parts) {
-		throw new SettingsError(
-			"This server's AI_GATEWAY_URL is not an AI Gateway address, so no agent can answer",
-		);
-	}
-	// What the gateway logs about a request, and how it knows it may take it.
-	const gatewayHeaders = {
-		"cf-aig-metadata": JSON.stringify(metadata),
-		...(settings.AI_GATEWAY_TOKEN
-			? { "cf-aig-authorization": `Bearer ${settings.AI_GATEWAY_TOKEN}` }
-			: {}),
-	};
+	const parts = gatewayOf(settings);
+	const gateway = parts?.url;
+	const gatewayHeaders = gatewayHeadersOf(settings, metadata);
 	if (!isKeyedProvider(agent.provider)) {
 		// The registry refuses the turn up front on a server without these; this is the backstop.
 		const account = workersAiAccount(settings);
@@ -111,6 +126,37 @@ export function languageModel(
 		case "google":
 			return createGoogleGenerativeAI({ apiKey: key, ...through })(agent.model);
 	}
+}
+
+/**
+ * A request Claude Code sent to Anthropic from a sandbox (`./claude-code.ts`), as it leaves the
+ * Worker: with the workspace's key in place of the placeholder the sandbox holds, and through AI
+ * Gateway when the deployment names one, as Gateweave's own requests go.
+ */
+export function anthropicRequest(
+	request: Request,
+	key: string,
+	settings: GatewaySettings,
+	metadata: GatewayMetadata,
+): Request {
+	const url = new URL(request.url);
+	const headers = new Headers(request.headers);
+	headers.delete("authorization");
+	headers.set("x-api-key", key);
+	const parts = gatewayOf(settings);
+	if (parts) {
+		for (const [name, value] of Object.entries(gatewayHeadersOf(settings, metadata))) {
+			headers.set(name, value);
+		}
+	}
+	// The gateway's path for Anthropic ends where the API's own begins, at /v1.
+	const target = parts ? `${parts.url}/anthropic${url.pathname}${url.search}` : url.href;
+	return new Request(target, {
+		method: request.method,
+		headers,
+		body: request.body,
+		redirect: "manual",
+	});
 }
 
 /**

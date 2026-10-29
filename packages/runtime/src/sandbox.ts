@@ -7,8 +7,9 @@
  * goes with it. It has no internet: every HTTP and HTTPS request it makes comes to
  * `SandboxOutbound`, which lets downloads from package registries through, git's fetches of the
  * repository the conversation checked out, and the push of the conversation's branch that `push`
- * makes, and nothing else (`./outbound.ts`). It holds no secret of the workspace's, so a command
- * has none to leak: the token for that repository is added on the way out.
+ * makes, and Claude Code's requests to Anthropic while it runs a turn, and nothing else
+ * (`./outbound.ts`). It holds no secret of the workspace's, so a command has none to leak: the
+ * token for that repository, and the workspace's key for Anthropic, are added on the way out.
  *
  * A deployment offers sandboxes by binding this class as `SANDBOX` with a container (see
  * `wrangler.jsonc`); its image is `sandbox/Dockerfile`.
@@ -23,8 +24,19 @@ import {
 	type SandboxRepository,
 } from "@gateweave/agents-model";
 import type { CheckoutResult } from "./checkout";
-import { failureForLogs } from "./models";
 import {
+	CLAUDE_CODE_ENV,
+	CLAUDE_CODE_LOG,
+	CLAUDE_CODE_SECONDS,
+	type ClaudeCodeJob,
+	type ClaudeCodePort,
+	claudeCodeArguments,
+	claudeCodePrompt,
+	type ModelAccess,
+} from "./claude-code";
+import { anthropicRequest, failureForLogs, type GatewaySettings, SettingsError } from "./models";
+import {
+	ANTHROPIC_API,
 	checkPush,
 	decideOutbound,
 	type GitAccess,
@@ -80,6 +92,15 @@ export const MAX_PUSH_BYTES = 50_000_000;
 const REPOSITORY_KEY = "repository";
 /** The commit the conversation last pushed to its branch. */
 const PUSHED_KEY = "pushed";
+/** The conversation's Claude Code session, which its turns resume while the container has it. */
+const SESSION_KEY = "claude-code-session";
+
+/** How long Claude Code has to finish its turn when it is stopped, before it is killed. */
+const STOP_GRACE_MS = 10_000;
+
+/** The signals that stop Claude Code: Ctrl+C's, which ends its turn, and a kill's. */
+const SIGINT = 2;
+const SIGTERM = 15;
 
 /** `timeout`'s exit codes for a command it stopped, and one it had to kill. */
 const TIMED_OUT = new Set([124, 137]);
@@ -106,7 +127,7 @@ interface SandboxState extends DurableObjectState {
 	};
 }
 
-export class RunnerSandbox extends DurableObject implements SandboxPort {
+export class RunnerSandbox extends DurableObject implements SandboxPort, ClaudeCodePort {
 	readonly #container: Container | undefined;
 	readonly #outbound: Fetcher;
 	/** The container's start under way, which every call waits for. */
@@ -116,6 +137,13 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 	 * with this instance if the push never does.
 	 */
 	#push: PushWindow | null = null;
+	/** Claude Code's turn under way, if any. */
+	#claude: ExecProcess | null = null;
+	/**
+	 * The workspace's key for the turn Claude Code is running, which `SandboxOutbound` puts on its
+	 * requests to Anthropic. In memory alone, like `#push`, and only while the turn runs.
+	 */
+	#model: ModelAccess | null = null;
 
 	constructor(ctx: SandboxState, env: Cloudflare.Env) {
 		super(ctx, env);
@@ -327,6 +355,97 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 		}
 	}
 
+	/**
+	 * Starts a turn of Claude Code in `job.cwd`, resuming the conversation's session when the
+	 * container still has it, or starting one. Returns its events as it writes them; the stream ends
+	 * with the turn, which may run for `CLAUDE_CODE_SECONDS`, and the container stays up meanwhile.
+	 */
+	async startClaudeCode(job: ClaudeCodeJob): Promise<ReadableStream<Uint8Array>> {
+		if (this.#claude) throw new Error("Claude Code is already running a turn in this sandbox");
+		const container = await this.#ready();
+		let session = this.ctx.storage.kv.get<string>(SESSION_KEY);
+		const resume = session !== undefined && (await this.#hasSession(container, session));
+		if (!resume || session === undefined) {
+			session = crypto.randomUUID();
+			this.ctx.storage.kv.put(SESSION_KEY, session);
+		}
+		const argv = claudeCodeArguments({ model: job.model, system: job.system, session, resume });
+		this.#model = job.access;
+		await container.setInactivityTimeout(CLAUDE_CODE_SECONDS * 1000 + IDLE_MS);
+		let process: ExecProcess;
+		try {
+			process = await container.exec(
+				[
+					"timeout",
+					"--kill-after=30s",
+					`${CLAUDE_CODE_SECONDS}s`,
+					"bash",
+					"-c",
+					// Its own messages go to a file, so its output holds only its events.
+					`exec claude "$@" 2>>${CLAUDE_CODE_LOG}`,
+					"claude",
+					...argv,
+				],
+				{
+					cwd: job.cwd,
+					env: { ...COMMAND_ENV, ...CLAUDE_CODE_ENV },
+					stdin: "pipe",
+					stdout: "pipe",
+					stderr: "ignore",
+				},
+			);
+		} catch (error) {
+			await this.#claudeCodeEnded(container);
+			throw error;
+		}
+		this.#claude = process;
+		process.exitCode
+			.catch(() => null)
+			.then(() => this.#claudeCodeEnded(container))
+			.catch((error: unknown) =>
+				console.error("A sandbox did not settle after Claude Code", failureForLogs(error)),
+			);
+		// The message goes on its input, which has no limit on its length as an argument does.
+		const input = process.stdin?.getWriter();
+		if (input) {
+			await input.write(new TextEncoder().encode(claudeCodePrompt(job, resume)));
+			await input.close();
+		}
+		if (!process.stdout) throw new Error("Claude Code's output could not be read");
+		return process.stdout as ReadableStream<Uint8Array>;
+	}
+
+	async stopClaudeCode(): Promise<void> {
+		const process = this.#claude;
+		if (!process) return;
+		process.kill(SIGINT);
+		setTimeout(() => {
+			if (this.#claude === process) process.kill(SIGTERM);
+		}, STOP_GRACE_MS);
+	}
+
+	/** The key `SandboxOutbound` adds to Claude Code's requests to Anthropic; null when none runs. */
+	modelAccess(): ModelAccess | null {
+		return this.#model;
+	}
+
+	async #claudeCodeEnded(container: Container): Promise<void> {
+		this.#claude = null;
+		this.#model = null;
+		if (container.running) await container.setInactivityTimeout(IDLE_MS);
+	}
+
+	/** Whether the container has the session's transcript, which Claude Code keeps in its home. */
+	async #hasSession(container: Container, session: string): Promise<boolean> {
+		const found = await this.#exec(
+			container,
+			["find", "/root/.claude/projects", "-name", `${session}.jsonl`, "-print", "-quit"],
+			SANDBOX_ROOT,
+			30,
+		);
+		return found.exitCode === 0 && found.output.trim() !== "";
+	}
+
 	/** Stops the container, and its files go with it. The conversation calls it as it is deleted. */
 	async destroy(): Promise<void> {
 		if (this.#container?.running) await this.#container.destroy();
@@ -403,8 +522,11 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 	}
 }
 
-/** The settings `SandboxOutbound` reads: the sandboxes, and the deployment's GitHub App. */
-interface OutboundEnv {
+/**
+ * The settings `SandboxOutbound` reads: the sandboxes, the deployment's GitHub App, and its AI
+ * Gateway, which Claude Code's requests to Anthropic go through as Gateweave's own do.
+ */
+interface OutboundEnv extends GatewaySettings {
 	SANDBOX?: DurableObjectNamespace<RunnerSandbox>;
 	GITHUB_APP_ID?: string;
 	GITHUB_APP_PRIVATE_KEY?: string;
@@ -420,8 +542,18 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 	override async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		const access = url.hostname === "github.com" ? await this.#access() : null;
-		const decision = decideOutbound(request.method, url, access);
+		const model = url.hostname === ANTHROPIC_API ? await this.#modelAccess() : null;
+		const decision = decideOutbound(request.method, url, access, model !== null);
 		if (!decision.allow) return refused(decision.reason, 403);
+		if (decision.credentials === "anthropic" && model) {
+			try {
+				const env = this.env as unknown as OutboundEnv;
+				return await fetch(anthropicRequest(request, model.key, env, model.metadata));
+			} catch (error) {
+				if (error instanceof SettingsError) return refused(error.message, 502);
+				throw error;
+			}
+		}
 		let outgoing = request;
 		if (decision.push) {
 			// Git sends a push as it is. One encoded otherwise could hide its ref updates.
@@ -442,7 +574,7 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 			headers.delete("transfer-encoding");
 			outgoing = new Request(request, { headers, body });
 		}
-		if (decision.credentials && access) {
+		if ((decision.credentials === "read" || decision.credentials === "write") && access) {
 			const token = await this.#token(access.repository, decision.credentials);
 			if (token === null) {
 				const reason = `GitHub gave this sandbox no token to ${decision.credentials} the repository with`;
@@ -459,6 +591,13 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		const { sandbox } = this.ctx.props;
 		if (!env.SANDBOX || !sandbox) return null;
 		return env.SANDBOX.get(env.SANDBOX.idFromString(sandbox)).access();
+	}
+
+	async #modelAccess(): Promise<ModelAccess | null> {
+		const env = this.env as unknown as OutboundEnv;
+		const { sandbox } = this.ctx.props;
+		if (!env.SANDBOX || !sandbox) return null;
+		return env.SANDBOX.get(env.SANDBOX.idFromString(sandbox)).modelAccess();
 	}
 
 	async #token(repository: SandboxRepository, use: "read" | "write"): Promise<string | null> {

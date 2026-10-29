@@ -858,8 +858,8 @@ export class RegistryDO extends DurableObject {
 				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
 			);
 		}
-		// An ask has no tools, so it needs no sandbox either.
-		const sandbox = tools && agent.sandbox;
+		// An ask has no tools, so it needs no sandbox either, but Claude Code runs only in one.
+		const sandbox = agent.sandbox && (tools || agent.engine === "claude-code");
 		if (sandbox && !sandboxOffered(this.env as SandboxSettings)) {
 			return refused(
 				`${SANDBOX_NOT_OFFERED}, so ${agent.name} cannot answer. Whoever runs this server can turn them on; see the README.`,

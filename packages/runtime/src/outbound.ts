@@ -3,8 +3,9 @@
  * it makes comes to the Worker (`SandboxOutbound` in `./sandbox.ts`), which asks this. Package
  * registries are open for downloads, so a turn can install what a project needs, and github.com is
  * open for fetching the one repository the agent checks out, and for the push of the
- * conversation's branch that `open_pull_request` makes; nothing else is, so what the sandbox
- * holds cannot be sent anywhere.
+ * conversation's branch that `open_pull_request` makes. Anthropic's API is open to Claude Code's
+ * requests for the model while it runs a turn (`./claude-code.ts`). Nothing else is, so what the
+ * sandbox holds cannot be sent anywhere.
  */
 import { PULL_REQUEST_TOOL } from "@gateweave/agents-model";
 
@@ -22,6 +23,12 @@ export const PACKAGE_REGISTRIES: readonly string[] = [
 ];
 
 const GITHUB = "github.com";
+
+/** Where Claude Code sends its requests for the model. */
+export const ANTHROPIC_API = "api.anthropic.com";
+
+/** The paths of Anthropic's API that Claude Code's requests for the model use. */
+const ANTHROPIC_PATHS = new Set(["/v1/messages", "/v1/messages/count_tokens"]);
 
 /** The repository a sandbox's git may fetch from GitHub. */
 export interface GitRepository {
@@ -51,17 +58,31 @@ export interface GitAccess {
  * reads, or one that writes for a push, whose ref updates the Worker checks against `push` first.
  */
 export type OutboundDecision =
-	| { allow: true; credentials?: "read" | "write"; push?: PushWindow }
+	| { allow: true; credentials?: "read" | "write" | "anthropic"; push?: PushWindow }
 	| { allow: false; reason: string };
 
+/**
+ * `engine` says whether Claude Code is running a turn in the sandbox; a request to Anthropic that
+ * goes out then does so with the workspace's key, which the Worker puts in place of the
+ * placeholder.
+ */
 export function decideOutbound(
 	method: string,
 	url: URL,
 	access: GitAccess | null = null,
+	engine = false,
 ): OutboundDecision {
 	const host = url.hostname;
 	if (url.protocol !== "https:") return refuse(`${host} is reachable only over HTTPS`);
 	if (host === GITHUB && url.port === "") return decideGitHub(method, url, access);
+	if (host === ANTHROPIC_API && url.port === "") {
+		if (!engine) {
+			return refuse(`${host} is reachable from this sandbox only while Claude Code runs a turn`);
+		}
+		return method === "POST" && ANTHROPIC_PATHS.has(url.pathname)
+			? { allow: true, credentials: "anthropic" }
+			: refuse(`${host} takes only Claude Code's requests for the model from this sandbox`);
+	}
 	if (!PACKAGE_REGISTRIES.includes(host) || url.port !== "") {
 		return refuse(`${host} is not reachable from this sandbox: only package registries are`);
 	}

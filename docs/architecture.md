@@ -411,8 +411,7 @@ staging does, production and self-hosted deploys leave them off until their oper
   own loop with the agent's tools (`packages/runtime/src/conversation-agent.ts`). `claude-code` runs
   Anthropic's Claude Code CLI in the agent's sandbox, so it reads the repository's own `CLAUDE.md`,
   skills and settings as it would on a laptop. The registry enforces three rules for it: it needs a
-  sandbox, it calls Anthropic's models, and it uses no MCP servers yet. Its turns arrive with AGT-44's
-  next part; until then every agent takes Gateweave's loop.
+  sandbox, it calls Anthropic's models, and it uses no MCP servers yet. See **Claude Code** below.
 - **One container per conversation.** `RunnerSandbox` (`packages/runtime/src/sandbox.ts`) is a
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
@@ -444,7 +443,7 @@ staging does, production and self-hosted deploys leave them off until their oper
   that would make more than three of the workspace's conversations hold one at once
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
-  sandbox.
+  sandbox, unless the agent's engine is Claude Code, which runs only in one.
 - **A repository in the sandbox** (AGT-41). An agent with a sandbox can choose a repository the
   workspace's GitHub App reaches (`agent_definitions.repository_id`). On the conversation's first
   tool call, `withCheckout` (`packages/runtime/src/checkout.ts`) asks the sandbox to clone it into
@@ -467,8 +466,9 @@ staging does, production and self-hosted deploys leave them off until their oper
   agent's name with the address of the GitHub App's bot account
   (`<id>+<slug>[bot]@users.noreply.github.com`, read once per installation with
   `GitHubApp.botIdentity`), so GitHub links the commit to the app and a CLA check can read it.
-  Without the app, or when that lookup fails, it is the agent at `noreply@gateweave.com`. It refuses when the work has no commit the default branch lacks, then
-  runs `git push` of `gateweave/<conversation>` (`RunnerSandbox.push`). The Worker then opens a
+  Without the app, or when that lookup fails, it is the agent at `noreply@gateweave.com`. It
+  refuses when the work has no commit the default branch lacks, then runs `git push` of
+  `gateweave/<conversation>` (`RunnerSandbox.push`). The Worker then opens a
   pull request against the default branch with a token for `pull_requests: write` and
   `contents: read`, or updates the one the branch has open; the sandbox never makes it. GitHub
   lists only the first for these calls, but refuses a pull request with "not all refs are
@@ -487,6 +487,34 @@ staging does, production and self-hosted deploys leave them off until their oper
 
   A push it cannot read, encoded or over 50 MB, is refused too. A command the agent runs can never
   push, even while the window is open, to anything but that branch.
+- **Claude Code** (AGT-44). The image installs Anthropic's Claude Code CLI, pinned
+  (`CLAUDE_CODE_VERSION` in `sandbox/Dockerfile`). A turn of an agent whose engine is
+  `claude-code` checks the repository out first, if the agent has one, then runs `claude -p` there
+  with `--output-format stream-json` (`RunnerSandbox.startClaudeCode`,
+  `packages/runtime/src/claude-code.ts`). It runs in `dontAsk` mode with Bash, the file tools and
+  skills allowed, since nobody is there to approve a call; `bypassPermissions` refuses to run as
+  root, which the sandbox's commands are. The message goes on its input, the agent's instructions
+  and where it runs follow its own system prompt, and it may take 100 turns and an hour.
+  - **Its events are the turn.** The conversation reads the CLI's events as they come
+    (`ClaudeCodeTurn`): the main conversation's text goes to the chat, and its tool calls as
+    `claude-code__<tool>`, their results clipped to 4,000 characters. Each model request becomes a
+    model span, with its tokens and cost from Anthropic's usage, cached input counted in the input;
+    each tool call becomes a tool span under the server name `claude-code`, a subagent's too. A
+    result that is an error fails the turn, in the same words as Gateweave's loop uses.
+  - **The key never enters the sandbox.** The CLI's `ANTHROPIC_API_KEY` is a placeholder. While the
+    turn runs, `RunnerSandbox` holds the workspace's key in memory, and `decideOutbound` lets
+    `POST /v1/messages` (and `count_tokens`) to `api.anthropic.com` through. `SandboxOutbound`
+    puts the key on each such request (`anthropicRequest` in `packages/runtime/src/models.ts`), and
+    sends it through AI Gateway when the deployment names one, with the same metadata as
+    Gateweave's own requests. Updates, telemetry and error reports are off, and so are background
+    tasks, so a turn ends with its last answer.
+  - **One session per conversation.** The sandbox keeps the session's id; a later turn resumes it
+    while the container has its transcript. A container that stopped starts a new session, which
+    reads the conversation so far, the most recent 50,000 characters, before the new message.
+    Stopping a turn sends Claude Code Ctrl+C's signal, and a kill 10 seconds later.
+  - **Not yet:** the agent's MCP servers, a team's edges and `open_pull_request` (the CLI is told
+    that git push does not work, and to say what it changed). They come to it as an MCP server the
+    Worker serves to the sandbox.
 
 ## Chat
 

@@ -237,6 +237,49 @@ describe("turns with a sandbox", () => {
 		return { agent, id: (await stub.startConversation(agent.id, ADA))?.id ?? "" };
 	}
 
+	it("are Claude Code's even when it is asked over a team's edge, since it runs only in one", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const agent = (name: string, more: object = {}) =>
+			stub.createAgent({
+				name,
+				description: null,
+				provider: "anthropic",
+				model: "claude-sonnet-5-5",
+				instructions: null,
+				...more,
+			});
+		const planner = await agent("Planner");
+		const coder = await agent("Coder", { sandbox: true, engine: "claude-code" });
+		const team = (await stub.createTeam({ name: "Builders", description: null, lead: planner.id }))
+			.id;
+		await stub.setTeamGraph(team, {
+			lead: planner.id,
+			members: [
+				{ kind: "agent", id: planner.id },
+				{ kind: "agent", id: coder.id },
+			],
+			edges: [{ from: planner.id, to: coder.id, kind: "ask" }],
+		});
+		const conversation = (await stub.startTeamConversation(team, ADA))?.id ?? "";
+		await withSandboxes(stub, async (instance) => {
+			const root = await instance.beginTurn(conversation, "Plan the login page");
+			if ("status" in root) throw new Error(root.message);
+			const asked = await instance.beginTurn("nested-coder", "How big is the form?", {
+				parentRunId: root.runId,
+				parentSpanId: crypto.randomUUID(),
+				kind: "ask",
+				team,
+				to: coder.id,
+			});
+			expect(asked).toMatchObject({
+				agent: { name: "Coder", engine: "claude-code" },
+				sandbox: true,
+				edges: [],
+			});
+		});
+	});
+
 	it("are off unless the agent is given one, which its definition keeps", async () => {
 		const stub = registry();
 		const plain = await builderConversation(stub, false);
