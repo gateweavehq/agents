@@ -55,7 +55,10 @@ export const CODEX_PLACEHOLDER_KEY = "sk-gateweave-sandbox-placeholder";
 /** The variable the CLI reads its key from, by Gateweave's provider's `env_key`. */
 const KEY_VARIABLE = "GATEWEAVE_OPENAI_KEY";
 
-/** Where Codex keeps its sessions, under its home. */
+/**
+ * Where Codex keeps its sessions, under its home: its default, `~/.codex`, which it creates. It
+ * refuses to start with a `CODEX_HOME` that does not exist yet, as in a new container.
+ */
 export const CODEX_SESSIONS = "/root/.codex/sessions";
 
 /** Where its own messages go in the sandbox, out of the events' way. */
@@ -64,7 +67,6 @@ export const CODEX_LOG = "/tmp/codex.log";
 /** What the CLI runs with besides the sandbox's usual environment. */
 export const CODEX_ENV: Record<string, string> = {
 	[KEY_VARIABLE]: CODEX_PLACEHOLDER_KEY,
-	CODEX_HOME: "/root/.codex",
 };
 
 /** How long Gateweave's tools server has to answer the CLI's first requests. */

@@ -385,6 +385,12 @@ describe("Codex's command", () => {
 		expect(CODEX_ENV.GATEWEAVE_OPENAI_KEY).toBe(CODEX_PLACEHOLDER_KEY);
 	});
 
+	it("leaves Codex its own home, which a new container does not have yet", () => {
+		// Codex 0.165.0 exits before its first event when CODEX_HOME names a folder that does not
+		// exist, as staging showed; its default, ~/.codex, it creates.
+		expect(CODEX_ENV).not.toHaveProperty("CODEX_HOME");
+	});
+
 	it("resumes the sandbox's thread wherever it worked", () => {
 		expect(codexArguments({ ...base, resume: true }).slice(0, 4)).toEqual([
 			"exec",
