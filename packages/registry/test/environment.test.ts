@@ -246,6 +246,7 @@ describe("agents and environment sets", () => {
 		});
 		expect(Object.keys((await stub.agentSnapshot(created.id)) ?? {}).sort()).toEqual([
 			"agentId",
+			"engine",
 			"instructions",
 			"model",
 			"name",

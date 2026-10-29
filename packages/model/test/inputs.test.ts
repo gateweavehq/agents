@@ -360,3 +360,21 @@ describe("a run's pull request", () => {
 		expect(runPullRequest.safeParse({ ...pullRequest, number: 0 }).success).toBe(false);
 	});
 });
+
+describe("agent engines", () => {
+	const definition = (fields: Record<string, unknown>) =>
+		agentDefinitionInput.safeParse({
+			name: "Builder",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			...fields,
+		});
+
+	it("default to Gateweave's own loop, and refuse an unknown one", () => {
+		expect(definition({}).data?.engine).toBe("gateweave");
+		expect(definition({ engine: "claude-code" }).data?.engine).toBe("claude-code");
+		expect(definition({ engine: "codex" }).success).toBe(false);
+	});
+});

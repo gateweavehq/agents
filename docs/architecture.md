@@ -407,6 +407,12 @@ commands and reads, writes, edits, finds and searches files there. It is the fir
 runners (phase 5, AGT-9). A deployment offers sandboxes when it binds `SANDBOX` with a container;
 staging does, production and self-hosted deploys leave them off until their operator opts in.
 
+- **Engines.** What takes an agent's turns is its engine. `gateweave`, the default, is Gateweave's
+  own loop with the agent's tools (`packages/runtime/src/conversation-agent.ts`). `claude-code` runs
+  Anthropic's Claude Code CLI in the agent's sandbox, so it reads the repository's own `CLAUDE.md`,
+  skills and settings as it would on a laptop. The registry enforces three rules for it: it needs a
+  sandbox, it calls Anthropic's models, and it uses no MCP servers yet. Its turns arrive with AGT-44's
+  next part; until then every agent takes Gateweave's loop.
 - **One container per conversation.** `RunnerSandbox` (`packages/runtime/src/sandbox.ts`) is a
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian

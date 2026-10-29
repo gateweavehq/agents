@@ -67,6 +67,7 @@ describe("agents run by Gateweave", () => {
 			model: "claude-sonnet-5-5",
 			instructions: "Review the change.\n",
 			sandbox: false,
+			engine: "gateweave",
 			updatedAt: agent.updatedAt,
 		});
 
@@ -238,5 +239,71 @@ describe("agents run by Gateweave", () => {
 			status: "refused",
 			message: "Anthropic refused the key",
 		});
+	});
+});
+
+describe("agents' engines", () => {
+	const claude = (fields: Partial<AgentDefinitionInput> = {}) =>
+		reviewer(null, { engine: "claude-code", sandbox: true, ...fields });
+
+	it("are Gateweave's own loop unless chosen otherwise, and the choice is kept", async () => {
+		const stub = registry();
+		const plain = await stub.createAgent(reviewer(null));
+		expect((await stub.getAgent(plain.id))?.definition).toMatchObject({ engine: "gateweave" });
+		expect(await stub.agentSnapshot(plain.id)).toMatchObject({ engine: "gateweave" });
+
+		const agent = await stub.createAgent(claude());
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
+			engine: "claude-code",
+			sandbox: true,
+		});
+		expect(await stub.agentSnapshot(agent.id)).toMatchObject({ engine: "claude-code" });
+
+		// An update that does not name an engine keeps Gateweave's, as the rest of the definition.
+		await stub.updateAgent(plain.id, reviewer(null, { model: "claude-opus-5-5" }));
+		expect(await stub.agentSnapshot(plain.id)).toMatchObject({ engine: "gateweave" });
+	});
+
+	it("refuse Claude Code without a sandbox, an Anthropic model or MCP servers, on create", async () => {
+		const stub = registry();
+		const acme = await stub.createMcpServer({
+			name: "acme",
+			transport: "http",
+			url: "https://mcp.acme.dev/mcp",
+			headers: [],
+		});
+		await inside(stub, (instance) => {
+			expect(() => instance.createAgent(claude({ sandbox: false }))).toThrow(
+				"Claude Code runs in the agent's sandbox: turn the sandbox on",
+			);
+			expect(() => instance.createAgent(claude({ provider: "openai", model: "gpt-5" }))).toThrow(
+				"Claude Code calls Anthropic's models: choose one of them",
+			);
+			expect(() =>
+				instance.createAgent(claude({ mcpServers: [{ assetId: acme, version: 1, tools: null }] })),
+			).toThrow("Claude Code does not use the agent's MCP servers yet");
+		});
+		expect(await stub.listAgents()).toEqual([]);
+	});
+
+	it("refuse the same on edit, and leave the agent as it was", async () => {
+		const stub = registry();
+		const agent = await stub.createAgent(reviewer(null));
+		await inside(stub, (instance) => {
+			expect(() => instance.updateAgent(agent.id, claude({ sandbox: false }))).toThrow(
+				"Claude Code runs in the agent's sandbox: turn the sandbox on",
+			);
+			expect(() =>
+				instance.updateAgent(agent.id, claude({ provider: "google", model: "gemini-3" })),
+			).toThrow("Claude Code calls Anthropic's models: choose one of them");
+		});
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
+			engine: "gateweave",
+			sandbox: false,
+		});
+
+		const moved = await stub.updateAgent(agent.id, claude());
+		expect(moved).toMatchObject({ model: "claude-sonnet-5-5" });
+		expect(await stub.agentSnapshot(agent.id)).toMatchObject({ engine: "claude-code" });
 	});
 });

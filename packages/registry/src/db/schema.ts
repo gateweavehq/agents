@@ -6,6 +6,7 @@
  * longer finds them, and come back if it finds them again, so history and ids survive.
  */
 import {
+	AGENT_ENGINES,
 	AGENT_RUNTIMES,
 	APPLICATION_STATES,
 	ASSET_KINDS,
@@ -228,6 +229,8 @@ export const agentDefinitions = sqliteTable(
 		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
 		/** The repository its sandbox checks out; only an agent with a sandbox has one. */
 		repositoryId: text("repository_id").references(() => repositories.id),
+		/** What takes its turns: Gateweave's own loop, or Claude Code in the sandbox. */
+		engine: text("engine", { enum: AGENT_ENGINES }).notNull().default("gateweave"),
 	},
 	(table) => [
 		index("agent_definitions_instructions_idx").on(table.instructionsAssetId),

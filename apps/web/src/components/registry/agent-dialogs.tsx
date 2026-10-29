@@ -1,7 +1,10 @@
 import {
+	AGENT_ENGINES,
 	type Agent,
 	type AgentDefinition,
 	type AgentDefinitionInput,
+	type AgentEngine,
+	ENGINE_NAMES,
 	INSTRUCTION_KINDS,
 	isKeyedProvider,
 	type LibraryEntry,
@@ -87,6 +90,7 @@ export function AgentDialog({
 	// The last check of each library server, which says what tools there are to choose from.
 	const [checks, setChecks] = useState<Map<string, McpCheck | null>>(() => new Map());
 	const [sandbox, setSandbox] = useState(agent?.definition.sandbox ?? false);
+	const [engine, setEngine] = useState<AgentEngine>(agent?.definition.engine ?? "gateweave");
 	const chosenRepository = agent?.definition.repository ?? null;
 	const [repositoryId, setRepositoryId] = useState(chosenRepository?.id ?? "");
 	// The repositories the workspace's GitHub App reaches, which a sandbox can check out.
@@ -186,6 +190,7 @@ export function AgentDialog({
 						};
 					}),
 				sandbox,
+				engine,
 				// The repository is checked out in the sandbox, so it goes with it.
 				repositoryId: sandbox && repositoryId !== "" ? repositoryId : null,
 			});
@@ -373,6 +378,31 @@ export function AgentDialog({
 							reached by Gateweave yet.
 						</p>
 					</fieldset>
+					<div className="space-y-2">
+						<Label htmlFor="agent-engine">Engine</Label>
+						<select
+							id="agent-engine"
+							value={engine}
+							onChange={(event) => {
+								const next = event.target.value as AgentEngine;
+								setEngine(next);
+								// Claude Code runs in the sandbox, so choosing it turns the sandbox on.
+								if (next === "claude-code") setSandbox(true);
+							}}
+							className={SELECT}
+						>
+							{AGENT_ENGINES.map((option) => (
+								<option key={option} value={option}>
+									{ENGINE_NAMES[option]}
+								</option>
+							))}
+						</select>
+						<p className="text-xs text-muted-foreground">
+							{engine === "claude-code"
+								? "Runs Anthropic's Claude Code in the sandbox, with the repository's CLAUDE.md, skills and settings. It needs the sandbox and an Anthropic model."
+								: "Gateweave's own loop, with the agent's tools."}
+						</p>
+					</div>
 					<Label className="flex cursor-pointer items-start gap-3 font-normal has-disabled:cursor-not-allowed has-disabled:opacity-60">
 						<Checkbox
 							className="mt-0.5"

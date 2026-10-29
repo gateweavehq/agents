@@ -36,6 +36,7 @@ export function createAgent(db: Db, input: Definition, now: number): Agent {
 	checkEnvironment(db, input.environment, null);
 	checkMcpServers(db, input.mcpServers, new Set());
 	checkRepository(db, input, null);
+	checkEngine(input);
 	const id = crypto.randomUUID();
 	const row = {
 		id,
@@ -64,6 +65,7 @@ export function updateAgent(db: Db, id: string, input: Definition, now: number):
 	checkEnvironment(db, input.environment, current.envSetAssetId);
 	checkMcpServers(db, input.mcpServers, pinnedServers(db, id));
 	checkRepository(db, input, current.repositoryId);
+	checkEngine(input);
 	const row = db
 		.update(agents)
 		.set({
@@ -112,6 +114,7 @@ export function agentSnapshot(db: Db, id: string): AgentSnapshot | null {
 		// Pinning checked that every file has text, and a version never changes.
 		instructions: files.length > 0 ? files.map((file) => file.content ?? "").join("\n\n") : null,
 		sandbox: definition.sandbox,
+		engine: definition.engine,
 		updatedAt: agent.updatedAt,
 	};
 }
@@ -141,6 +144,7 @@ function definitionRow(agentId: string, input: Definition) {
 		envSetVersion: input.environment?.version ?? null,
 		sandbox: input.sandbox,
 		repositoryId: input.repositoryId,
+		engine: input.engine,
 	};
 }
 
@@ -228,6 +232,24 @@ function repositoryProblem(repository: typeof repositories.$inferSelect): string
 	}
 	if (repository.removedAt !== null) return `The workspace's GitHub App no longer reaches ${name}`;
 	return null;
+}
+
+/**
+ * What Claude Code needs, each rule in words the person can act on: the sandbox it runs in, an
+ * Anthropic model, and no MCP servers yet (a later part brings them to it). Gateweave's loop has
+ * no rules of its own.
+ */
+function checkEngine(input: Definition): void {
+	if (input.engine !== "claude-code") return;
+	if (!input.sandbox) {
+		throw new AgentError("Claude Code runs in the agent's sandbox: turn the sandbox on");
+	}
+	if (input.provider !== "anthropic") {
+		throw new AgentError("Claude Code calls Anthropic's models: choose one of them");
+	}
+	if (input.mcpServers.length > 0) {
+		throw new AgentError("Claude Code does not use the agent's MCP servers yet");
+	}
 }
 
 /**

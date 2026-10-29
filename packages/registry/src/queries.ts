@@ -292,6 +292,7 @@ export function getAgent(db: Db, id: string): AgentDetail | null {
 		environment: pinnedAsset(db, row.envSetAssetId, row.envSetVersion),
 		mcpServers: pinnedServers(db, id),
 		sandbox: row.sandbox,
+		engine: row.engine,
 		repository: chosenRepository(db, row.repositoryId),
 	};
 	const instructions = pinned

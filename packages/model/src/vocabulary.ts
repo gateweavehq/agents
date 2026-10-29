@@ -18,6 +18,20 @@ export const RUNTIME_NAMES: Record<AgentRuntime, string> = {
 };
 
 /**
+ * What takes an agent run by Gateweave its turns: Gateweave's own loop with the agent's tools, or
+ * Anthropic's Claude Code CLI, run in the agent's sandbox, which reads the repository's own
+ * `CLAUDE.md`, skills and settings. Claude Code's turns arrive in a later part; until then the
+ * runtime uses Gateweave's loop for every agent.
+ */
+export const AGENT_ENGINES = ["gateweave", "claude-code"] as const;
+export type AgentEngine = (typeof AGENT_ENGINES)[number];
+
+export const ENGINE_NAMES: Record<AgentEngine, string> = {
+	gateweave: "Gateweave",
+	"claude-code": "Claude Code",
+};
+
+/**
  * What an asset is. `instructions` are what an agent always reads (`AGENTS.md`, `CLAUDE.md`,
  * `GEMINI.md`, Cursor rules, a subagent's definition); `prompt` covers reusable prompts and slash
  * commands; `settings` is an agent's own configuration file, such as `.claude/settings.json`;
