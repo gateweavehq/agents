@@ -5,6 +5,7 @@ import {
 	type PullRequestOutcome,
 	type RunSpan,
 	type SandboxRepository,
+	type TriggerTurnOutcome,
 	type TurnEdge,
 	type TurnVia,
 	type WorkersAiSettings,
@@ -71,7 +72,7 @@ export type NestedTurnOutcome =
 	| { runId: string | null; error: string };
 
 /** How a trigger's turn began: its run, or why it could not. */
-export type TriggerTurnOutcome = { runId: string } | { runId: null; error: string };
+export type { TriggerTurnOutcome };
 
 /**
  * What a conversation reaches of another over RPC. Narrower than the class's own stub, whose type

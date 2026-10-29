@@ -30,3 +30,16 @@ export function formatShortDate(time: number): string {
 export function formatDateTime(time: number): string {
 	return long.format(time);
 }
+
+/** "Fri, Oct 30, 09:00 Europe/Istanbul": the time as a clock in that time zone reads it. */
+export function formatInZone(time: number, timeZone: string): string {
+	const clock = new Intl.DateTimeFormat(undefined, {
+		weekday: "short",
+		month: "short",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+		timeZone,
+	});
+	return `${clock.format(time)} ${timeZone}`;
+}

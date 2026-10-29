@@ -620,7 +620,8 @@ lead as it is then (`packages/registry/src/team-turns.ts`, `packages/runtime/src
 ## Triggers
 
 A trigger starts a run of an agent run by Gateweave, or of a team's lead, when another service
-posts a webhook to it (`packages/registry/src/triggers.ts`, `apps/web/src/server/triggers.ts`).
+posts a webhook to it (`packages/registry/src/triggers.ts`, `apps/web/src/server/triggers.ts`), or
+on a schedule.
 Owners and admins make them on the agent's or team's page, each with a name, a prompt and how
 many runs it may start a day.
 
@@ -661,6 +662,20 @@ many runs it may start a day.
   `beginTurn` refuses it. Its runs (`runs.trigger_id`, nested ones too) belong to the trigger, so
   owners and admins see them and members do not, and the run's page shows its conversation,
   which the server reads from the Durable Object for that page alone.
+- **Schedules.** A trigger can instead start runs on a schedule (`triggers.schedule`): a cron
+  expression of five fields read in an IANA time zone, so `0 9 * * 1-5` stays 9:00 on weekdays
+  across summer time ([croner](https://github.com/hexagon/croner) parses it). It runs at most
+  every five minutes, and one that never runs is refused. A scheduled trigger takes no webhooks:
+  its URL answers `404` and its secret is never shown. The registry keeps each one's next time
+  (`triggers.next_run_at`, null while paused) and sets its alarm for the earliest, together with
+  the label scans. When the alarm fires, each due schedule is admitted in one write as a delivery
+  with the id `schedule:<due time>`, under the same limits as a webhook's, and its next time is
+  taken from then on. A schedule that fell behind, as when nothing woke the registry, runs once
+  rather than once for each time it missed. The run starts in its own conversation, as a
+  webhook's does, with an event of the type `schedule` whose `data.scheduledFor` is the time it
+  was due. The registry package cannot reach the runtime, so the app's `RegistryDO`
+  (`apps/web/src/server/registry-do.ts`) subclasses it to call `triggerTurn` on the
+  conversation, as the gateway does; a run that cannot begin is kept as a failed delivery.
 - **What came lately** shows under each trigger: its last ten deliveries, whether each started a
   run, was skipped, went over a limit or failed, and why.
 - **Deleting a trigger** deletes its deliveries; the conversations and runs it started stay. A

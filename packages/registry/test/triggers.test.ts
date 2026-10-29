@@ -1,6 +1,6 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { TRIGGER_LIMITS, type TriggerInput } from "@gateweave/agents-model";
+import { nextScheduledRun, TRIGGER_LIMITS, type TriggerInput } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
 
@@ -399,5 +399,127 @@ describe("triggers", () => {
 			triggerId: trigger.id,
 			triggerName: null,
 		});
+	});
+});
+
+describe("scheduled triggers", () => {
+	const WEEKDAYS = { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" };
+
+	/** Makes the trigger's next run due a minute ago, as if the time had come. */
+	const makeDue = (stub: Stub, triggerId: string, at = Date.now() - 60_000) =>
+		runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("UPDATE triggers SET next_run_at = ? WHERE id = ?", at, triggerId);
+			return at;
+		});
+
+	async function scheduled(stub: Stub, input: Partial<TriggerInput> = {}) {
+		const agentId = await withAgent(stub);
+		const made = await create(stub, {
+			name: "Standup",
+			prompt: "Sum up what changed since {{data.scheduledFor}}",
+			target: { kind: "agent", agentId },
+			schedule: WEEKDAYS,
+			...input,
+		});
+		return { ...made, agentId };
+	}
+
+	it("start a run when their time comes, once for each time", async () => {
+		const name = crypto.randomUUID();
+		const stub = env.REGISTRY.getByName(name);
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const before = Date.now();
+		const { trigger } = await scheduled(stub);
+		expect(trigger).toMatchObject({ schedule: WEEKDAYS, events: null, active: true });
+		expect(trigger.nextRunAt).toBe(nextScheduledRun(WEEKDAYS, trigger.createdAt));
+		expect(trigger.nextRunAt).toBeGreaterThan(before);
+
+		// The app's registry finds its workspace by the name it was reached by.
+		expect(await runInDurableObject(stub, (_instance, state) => state.id.name)).toBe(name);
+		const due = await makeDue(stub, trigger.id);
+		expect(await runDurableObjectAlarm(stub)).toBe(true);
+		const [started, ...more] = await stub.startedTurns();
+		expect(more).toEqual([]);
+		const scheduledFor = new Date(due).toISOString();
+		expect(started?.text).toMatch(new RegExp(`^Sum up what changed since ${scheduledFor}\n`));
+		const [listed] = await stub.listTriggers();
+		expect(listed?.deliveries).toMatchObject([
+			{ id: `schedule:${due}`, event: "schedule", status: "started" },
+		]);
+		// The next run counts from now, not from the time that was due.
+		expect(listed?.nextRunAt).toBe(
+			nextScheduledRun(WEEKDAYS, listed?.deliveries[0]?.receivedAt ?? 0),
+		);
+
+		// An alarm that comes again for the same time starts nothing more.
+		await makeDue(stub, trigger.id, due);
+		await runDurableObjectAlarm(stub);
+		expect(await stub.startedTurns()).toHaveLength(1);
+	});
+
+	it("name the run's conversation for the trigger, and note a run that could not begin", async () => {
+		const stub = registry();
+		const { trigger } = await scheduled(stub);
+		await makeDue(stub, trigger.id);
+		await runDurableObjectAlarm(stub);
+		// No key for the agent's provider, so the run could not begin.
+		const [listed] = await stub.listTriggers();
+		expect(listed?.deliveries[0]).toMatchObject({ status: "failed", runId: null });
+		expect(listed?.deliveries[0]?.error).toMatch(/key/i);
+		const [started] = await stub.startedTurns();
+		const title = await runInDurableObject(
+			stub,
+			(_instance, state) =>
+				state.storage.sql
+					.exec<{ title: string }>(
+						"SELECT title FROM conversations WHERE id = ?",
+						started?.conversationId ?? "",
+					)
+					.one().title,
+		);
+		expect(title).toBe("Standup");
+	});
+
+	it("start nothing while paused, and count from the time they are resumed", async () => {
+		const stub = registry();
+		const { trigger } = await scheduled(stub);
+		const paused = await stub.updateTrigger(trigger.id, { active: false });
+		expect(paused).toMatchObject({ active: false, nextRunAt: null });
+		await runDurableObjectAlarm(stub);
+		expect(await stub.startedTurns()).toEqual([]);
+
+		const resumedAt = Date.now();
+		const resumed = await stub.updateTrigger(trigger.id, { active: true });
+		expect(resumed?.nextRunAt).toBe(nextScheduledRun(WEEKDAYS, resumed?.updatedAt ?? 0));
+		expect(resumed?.nextRunAt).toBeGreaterThan(resumedAt);
+	});
+
+	it("hold their runs to the runs a day", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger } = await scheduled(stub, { perDay: 1 });
+		await makeDue(stub, trigger.id, Date.now() - 120_000);
+		await runDurableObjectAlarm(stub);
+		await makeDue(stub, trigger.id, Date.now() - 60_000);
+		await runDurableObjectAlarm(stub);
+		expect(await stub.startedTurns()).toHaveLength(1);
+		const [listed] = await stub.listTriggers();
+		expect(listed?.deliveries.map((delivery) => delivery.status)).toEqual(["limited", "started"]);
+	});
+
+	it("take no webhooks, and take them again once the schedule is taken away", async () => {
+		const stub = registry();
+		const { trigger, secret } = await scheduled(stub);
+		expect(await deliver(stub, trigger.id, secret)).toEqual({ status: "not_found" });
+
+		const changed = await stub.updateTrigger(trigger.id, { schedule: null });
+		expect(changed).toMatchObject({ schedule: null, nextRunAt: null });
+		expect(await deliver(stub, trigger.id, secret)).toMatchObject({ status: "start" });
+
+		const again = await stub.updateTrigger(trigger.id, {
+			schedule: { cron: "30 18 * * 5", timeZone: "UTC" },
+		});
+		expect(again).toMatchObject({ events: null });
+		expect(new Date(again?.nextRunAt ?? 0).getUTCDay()).toBe(5);
 	});
 });

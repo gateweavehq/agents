@@ -100,6 +100,7 @@ import {
 	type TriggerReceipt,
 	type TriggerRefusal,
 	type TriggerTarget,
+	type TriggerTurnOutcome,
 	type TurnMcpServer,
 	type TurnVia,
 	teamGraphInput,
@@ -232,12 +233,15 @@ import {
 import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
 import {
 	admitDelivery,
+	admitScheduledRun,
 	deleteTeamTriggers,
 	deleteTrigger,
 	deliveryOf,
+	dueSchedules,
 	insertTrigger,
 	listTriggers,
 	newTriggerSecret,
+	nextScheduleAt,
 	replaceSecret,
 	secretStartOf,
 	settleDelivery,
@@ -289,7 +293,7 @@ export class RegistryDO extends DurableObject {
 		void ctx.blockConcurrencyWhile(async () => {
 			await migrate(this.#db, migrations);
 			// A migration may queue scans, as 0008 does.
-			await this.#scheduleScans();
+			await this.#scheduleAlarm();
 		});
 	}
 
@@ -462,7 +466,7 @@ export class RegistryDO extends DurableObject {
 			this.#applying.delete(key);
 			// Finding an old pull request merged queued a scan of the repository, even if applying
 			// was refused after that.
-			await this.#scheduleScans();
+			await this.#scheduleAlarm();
 		}
 	}
 
@@ -1025,14 +1029,20 @@ export class RegistryDO extends DurableObject {
 			),
 		);
 		if ("refused" in made) return refused(made.refused);
+		await this.#scheduleAlarm();
 		return { trigger: made, secret };
 	}
 
-	/** Renames, rewords, limits, pauses or resumes a trigger. Null when there is no such trigger. */
-	updateTrigger(triggerId: string, patch: TriggerPatch): Trigger | null {
+	/**
+	 * Renames, rewords, limits, reschedules, pauses or resumes a trigger. Null when there is no such
+	 * trigger.
+	 */
+	async updateTrigger(triggerId: string, patch: TriggerPatch): Promise<Trigger | null> {
 		const trigger = id.parse(triggerId);
 		const data = triggerPatch.parse(patch);
-		return this.#write(() => updateTrigger(this.#db, trigger, data, Date.now()));
+		const updated = this.#write(() => updateTrigger(this.#db, trigger, data, Date.now()));
+		await this.#scheduleAlarm();
+		return updated;
 	}
 
 	/** Deletes a trigger and its deliveries. Its conversations and runs stay. */
@@ -1080,7 +1090,8 @@ export class RegistryDO extends DurableObject {
 		if (!parsed.success) return { status: "unauthorized" };
 		const delivery = parsed.data;
 		const trigger = triggerRow(this.#db, delivery.triggerId);
-		if (!trigger) return { status: "not_found" };
+		// A scheduled trigger starts its own runs, and its URL takes nothing.
+		if (!trigger || trigger.schedule !== null) return { status: "not_found" };
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
 		let secret: string;
@@ -1183,7 +1194,7 @@ export class RegistryDO extends DurableObject {
 		const result = this.#write(() =>
 			reconcileInstallation(this.#db, installation, data, Date.now()),
 		);
-		await this.#scheduleScans();
+		await this.#scheduleAlarm();
 		return result;
 	}
 
@@ -1200,7 +1211,7 @@ export class RegistryDO extends DurableObject {
 		const repositories = ids.parse(repositoryIds);
 		const forced = z.boolean().parse(force);
 		const queued = this.#write(() => requestScans(this.#db, repositories, Date.now(), forced));
-		await this.#scheduleScans();
+		await this.#scheduleAlarm();
 		return queued;
 	}
 
@@ -1232,7 +1243,7 @@ export class RegistryDO extends DurableObject {
 			recordPullRequest(this.#db, repository, number, to, Date.now()),
 		);
 		// A merge queues a scan of the repository, for drift.
-		await this.#scheduleScans();
+		await this.#scheduleAlarm();
 		return known;
 	}
 
@@ -1248,11 +1259,15 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => recordScanError(this.#db, repository, text, Date.now()));
 	}
 
-	/** Works through the scans that are due, then sets the alarm for the next one. */
+	/**
+	 * Begins the scheduled runs that are due and works through the scans that are, then sets the
+	 * alarm for what comes next.
+	 */
 	override async alarm(): Promise<void> {
+		await this.#runSchedules();
 		const due = dueScans(this.#db, Date.now(), SCANS_PER_ALARM);
 		for (const request of due) await this.#scan(request);
-		await this.#scheduleScans();
+		await this.#scheduleAlarm();
 	}
 
 	/** Deletes everything, when the workspace is deleted. */
@@ -1319,9 +1334,52 @@ export class RegistryDO extends DurableObject {
 			.get()?.id;
 	}
 
-	async #scheduleScans(): Promise<void> {
-		const next = nextScanAt(this.#db);
-		if (next !== null) await this.ctx.storage.setAlarm(Math.max(next, Date.now()));
+	/** Sets the alarm for the next scan or scheduled run, whichever is due first. */
+	async #scheduleAlarm(): Promise<void> {
+		const due = [nextScanAt(this.#db), nextScheduleAt(this.#db)].filter((at) => at !== null);
+		if (due.length > 0) await this.ctx.storage.setAlarm(Math.max(Math.min(...due), Date.now()));
+	}
+
+	/**
+	 * Opens a conversation for each scheduled run that is due, in one write, then begins the runs.
+	 * A run that cannot begin is noted on its delivery, as a webhook's is.
+	 */
+	async #runSchedules(): Promise<void> {
+		const now = Date.now();
+		const starts = this.#write(() =>
+			dueSchedules(this.#db, now).flatMap((trigger) => {
+				const admitted = admitScheduledRun(this.#db, trigger, now);
+				return admitted.status === "start" ? [admitted] : [];
+			}),
+		);
+		for (const { conversationId, text } of starts) {
+			let outcome: TriggerTurnOutcome;
+			try {
+				outcome = await this.startTriggerTurn(conversationId, text);
+			} catch (error) {
+				console.error(
+					"registry: a scheduled run could not be started",
+					error instanceof Error ? error.message : String(error),
+				);
+				outcome = { runId: null, error: "The run could not be started" };
+			}
+			if (outcome.runId === null) {
+				const { error } = outcome;
+				this.#write(() => settleDelivery(this.#db, conversationId, { error }));
+			}
+		}
+	}
+
+	/**
+	 * Begins a trigger's run in the conversation opened for it, as the app's gateway does for a
+	 * webhook's delivery. The runtime is not this package's to reach, so here it cannot: the app's
+	 * Worker exports a `RegistryDO` that does (`apps/web/src/server/registry-do.ts`).
+	 */
+	protected async startTriggerTurn(
+		_conversationId: string,
+		_text: string,
+	): Promise<TriggerTurnOutcome> {
+		return { runId: null, error: "This server does not start scheduled runs" };
 	}
 
 	/** The workspace's key for the provider, opened, or why it cannot be. */

@@ -4,19 +4,27 @@
  * delivery to the registry, which checks its Standard Webhooks signature with the trigger's secret,
  * keeps one row per `webhook-id` so a retry starts nothing twice, and holds each trigger to its
  * runs per minute and per day. The runtime then begins the run (`beginTriggerTurn`).
+ *
+ * A scheduled trigger takes no webhooks: the registry's alarm wakes when its next run is due
+ * (`dueSchedules`), and the run is admitted the same way, under the same limits.
  */
 import {
 	eventType,
+	nextScheduledRun,
+	SCHEDULE_EVENT,
+	scheduleEvent,
 	TRIGGER_LIMITS,
 	TRIGGER_SECRET_PREFIX,
 	type Trigger,
 	type TriggerDelivery,
 	type TriggerEntry,
 	type TriggerHeaders,
+	type TriggerSchedule,
 	type TriggerTarget,
+	triggerMessage,
 	triggerStarter,
 } from "@gateweave/agents-model";
-import { and, count, desc, eq, gte, inArray, isNull, lt, min } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lt, lte, min } from "drizzle-orm";
 import {
 	agentDefinitions,
 	agents,
@@ -150,6 +158,7 @@ export function insertTrigger(
 		target: TriggerTarget;
 		perDay: number;
 		events: string[] | null;
+		schedule: TriggerSchedule | null;
 		sealed: string;
 		secretStart: string;
 		createdBy: string;
@@ -167,6 +176,7 @@ export function insertTrigger(
 			agentId: target.kind === "agent" ? target.agentId : null,
 			teamId: target.kind === "team" ? target.teamId : null,
 			active: true,
+			nextRunAt: row.schedule && nextScheduledRun(row.schedule, now),
 			createdAt: now,
 			updatedAt: now,
 		})
@@ -184,17 +194,32 @@ export function updateTrigger(
 		prompt?: string;
 		perDay?: number;
 		events?: string[] | null;
+		schedule?: TriggerSchedule | null;
 		active?: boolean;
 	},
 	now: number,
 ): Trigger | null {
-	const updated = db
-		.update(triggers)
-		.set({ ...patch, updatedAt: now })
+	const current = db
+		.select({ schedule: triggers.schedule, active: triggers.active })
+		.from(triggers)
 		.where(eq(triggers.id, id))
-		.returning({ id: triggers.id })
 		.get();
-	return updated ? getTrigger(db, id) : null;
+	if (!current) return null;
+	const schedule = patch.schedule === undefined ? current.schedule : patch.schedule;
+	const active = patch.active ?? current.active;
+	// A schedule given, changed or resumed counts from now: a resumed one does not run at once for
+	// a time it missed while paused.
+	const timing =
+		patch.schedule === undefined && patch.active === undefined
+			? {}
+			: { nextRunAt: active && schedule ? nextScheduledRun(schedule, now) : null };
+	// A schedule's runs all start the same way, so it has no event types.
+	const events = schedule ? { events: null } : {};
+	db.update(triggers)
+		.set({ ...patch, ...timing, ...events, updatedAt: now })
+		.where(eq(triggers.id, id))
+		.run();
+	return getTrigger(db, id);
 }
 
 export function replaceSecret(
@@ -238,6 +263,53 @@ export function deleteTeamTriggers(db: Db, teamId: string): void {
 	if (ids.length === 0) return;
 	db.delete(triggerDeliveries).where(inArray(triggerDeliveries.triggerId, ids)).run();
 	db.delete(triggers).where(inArray(triggers.id, ids)).run();
+}
+
+/** Active scheduled triggers whose next run is due. */
+export function dueSchedules(db: Db, now: number) {
+	return db
+		.select()
+		.from(triggers)
+		.where(and(eq(triggers.active, true), lte(triggers.nextRunAt, now)))
+		.all();
+}
+
+/** When the next scheduled run is due, of any active trigger; null when none is. */
+export function nextScheduleAt(db: Db): number | null {
+	return (
+		db
+			.select({ at: min(triggers.nextRunAt) })
+			.from(triggers)
+			.where(eq(triggers.active, true))
+			.get()?.at ?? null
+	);
+}
+
+/** What a schedule's run came to: started, with its message, or what `admitDelivery` said. */
+export type ScheduledAdmission =
+	| Exclude<Admission, { status: "start" }>
+	| { status: "start"; conversationId: string; text: string };
+
+/**
+ * Admits the run a schedule is due for, as a webhook's delivery is, with the time it was due as
+ * the delivery's id, so an alarm run twice starts it once. The next run counts from now: a
+ * schedule the alarm reached late runs once, not once for each time it missed.
+ */
+export function admitScheduledRun(
+	db: Db,
+	trigger: NonNullable<ReturnType<typeof triggerRow>>,
+	now: number,
+): ScheduledAdmission {
+	const { schedule, nextRunAt } = trigger;
+	if (!schedule || nextRunAt === null) return { status: "skipped" };
+	const body = scheduleEvent(schedule, nextRunAt);
+	const admitted = admitDelivery(db, trigger, { id: `schedule:${nextRunAt}`, body }, now);
+	db.update(triggers)
+		.set({ nextRunAt: nextScheduledRun(schedule, now) })
+		.where(eq(triggers.id, trigger.id))
+		.run();
+	if (admitted.status !== "start") return admitted;
+	return { ...admitted, text: triggerMessage(trigger.prompt, body) };
 }
 
 /** What `admitDelivery` decided, before the message is made. */
@@ -350,7 +422,7 @@ export function admitDelivery(
 			teamId: target.kind === "team" ? target.teamId : null,
 			rootId: null,
 			triggerId: trigger.id,
-			title: event ? `${trigger.name}: ${event}` : trigger.name,
+			title: event && event !== SCHEDULE_EVENT ? `${trigger.name}: ${event}` : trigger.name,
 			createdAt: now,
 			updatedAt: now,
 		})

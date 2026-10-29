@@ -169,6 +169,13 @@
       "when": 1793287736979,
       "tag": "0023_run_pull_request",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1793291447722,
+      "tag": "0024_trigger_schedules",
+      "breakpoints": true
     }
   ]
 }

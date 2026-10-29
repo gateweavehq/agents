@@ -21,6 +21,7 @@ import {
 	TEAM_EDGE_KINDS,
 	TEAM_MEMBER_KINDS,
 	TRIGGER_DELIVERY_STATUSES,
+	type TriggerSchedule,
 } from "@gateweave/agents-model";
 import { sql } from "drizzle-orm";
 import {
@@ -541,6 +542,10 @@ export const triggers = sqliteTable(
 		perDay: integer("per_day").notNull(),
 		/** The event types it starts runs for; null is every event. */
 		events: text("events", { mode: "json" }).$type<string[]>(),
+		/** When it starts runs on its own; null for a trigger that starts on webhooks. */
+		schedule: text("schedule", { mode: "json" }).$type<TriggerSchedule>(),
+		/** When its schedule starts the next run, while it is active: the alarm wakes for it. */
+		nextRunAt: integer("next_run_at"),
 		createdBy: text("created_by").notNull(),
 		createdAt: integer("created_at").notNull(),
 		updatedAt: integer("updated_at").notNull(),
@@ -548,6 +553,7 @@ export const triggers = sqliteTable(
 	(table) => [
 		index("triggers_agent_idx").on(table.agentId),
 		index("triggers_team_idx").on(table.teamId),
+		index("triggers_next_run_idx").on(table.nextRunAt),
 	],
 );
 
