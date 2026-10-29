@@ -548,7 +548,7 @@ export class RegistryDO extends DurableObject {
 		const plan = mcpCheckPlan(this.#db, id.parse(assetId));
 		if (!plan) return null;
 		const environment = plan.agentId ? await this.resolveEnvironment(plan.agentId) : null;
-		return turnServer({ name: plan.name, reading: plan.reading }, environment);
+		return turnServer({ name: plan.name, reading: plan.reading, tools: null }, environment);
 	}
 
 	/** Keeps how checking a server went as its last check. Null when it is not in the library. */

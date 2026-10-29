@@ -1,0 +1,1 @@
+ALTER TABLE `agent_mcp_servers` ADD `tools` text;

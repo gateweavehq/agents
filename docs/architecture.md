@@ -267,6 +267,10 @@ with no repository and its own id as its key, and a row in `agent_definitions` b
 - **Instructions** are a library asset of kind instructions or prompt, pinned to a version as a
   setup's assets are, and all text. The agent reads it through `agent_assets`, so the asset's
   page lists the agent. A new version in the library changes nothing until someone moves the pin.
+- **MCP servers** are pinned like instructions, each optionally limited to some of its tools (see
+  "MCP servers"). The form offers the tools of the server's last check on the MCP page; a server
+  never checked keeps the list its pin has and says to check it first, so saving the form never
+  drops a limit it could not show.
 - **A turn reads one snapshot** (`agentSnapshot`): the model and the pinned instructions' text, in
   one synchronous read, so a turn never mixes two versions of an agent.
 - **Removing an agent** marks it removed, as scans do, so its id stays known to whatever names
@@ -319,13 +323,20 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   runtime could not reach: one that runs as a local command, or whose URL breaks the rules above.
   The agent's page shows each server's transport and URL, or why it cannot be reached, and the
   variables its headers use, each marked set or missing in the agent's environment set.
+- **A pin can limit the agent to some of the server's tools** (`tools` on the pin, a JSON list of
+  the server's own tool names; null is all of them). An agent that reads text nobody vetted, such
+  as issue bodies, should hold only the tools its job needs, so a prompt hidden in that text
+  cannot reach the rest. The list is the agent's, not the server's: it moves with the pin to a
+  newer version, and a name the server does not offer is just absent. Names are checked as input
+  (no spaces, no repeats, at least one); an empty list is not "no tools", so it is refused.
 - **Each turn connects anew** (`packages/runtime/src/tools.ts`). `beginTurn` reads the agent's
   servers with the agent, before anything awaits, and returns each with its headers' values filled
   in from the opened environment set, in memory for that turn like the key. A server whose
   variables are not all there is left out, with which ones. The runtime connects to the rest at
-  once with `@ai-sdk/mcp`, ten seconds each to connect and list their tools, and closes every
-  connection when the turn ends. It does not use the Agents SDK's `addMcpServer`, which would
-  keep the headers, secrets included, in the conversation's SQLite.
+  once with `@ai-sdk/mcp`, ten seconds each to connect and list their tools, keeps only the tools
+  the pin allows before they reach the model, and closes every connection when the turn ends. It
+  does not use the Agents SDK's `addMcpServer`, which would keep the headers, secrets included, in
+  the conversation's SQLite.
 - **No redirects.** The MCP client refuses them with `redirect: "error"`, which Workers do not
   take, so the runtime gives it a `fetch` with `redirect: "manual"`: a 3xx is a failure, and the
   agent's headers never reach the address it names.
@@ -399,7 +410,7 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
   SQLite (`trace_runs`, `trace_spans`), written as each step starts and ends, with its timing,
   tokens, cache reads, estimated cost, finish reason, time to the first token and AI Gateway's
   log id (`cf-aig-log-id`). Connecting to each MCP server is a span too, with how many tools it
-  offers, and so is each tool call, under the model request that made it, with the sizes of its
+  gives the agent (after its allowlist), and so is each tool call, under the model request that made it, with the sizes of its
   input and output. A trace holds no message text and no tool input or output, so it is private
   to the conversation without being secret: it goes when the conversation is deleted, and admins
   can read it while it lasts.
@@ -561,7 +572,8 @@ workspace.
 - **Agents** lists every agent and subagent by runtime, and owners and admins define agents run
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its
-  pinned instructions with their text, its environment set and its MCP servers. Owners and
+  pinned instructions with their text, its environment set and its MCP servers, with "Only: …"
+  under a server the agent is limited to some tools of. Owners and
   admins also see its triggers there, as they do on a team's page.
 - **Teams** lists the teams with their leads. A team's page draws its graph top-down from the
   lead (`apps/web/src/lib/team-layout.ts`, inline SVG, no graph library): each member one row

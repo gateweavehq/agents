@@ -184,6 +184,45 @@ describe("mcpServerInput", () => {
 });
 
 describe("agentDefinitionInput", () => {
+	const withTools = (tools: unknown) =>
+		agentDefinitionInput.safeParse({
+			name: "Triage",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			mcpServers: [{ assetId: "a", version: 1, tools }],
+		});
+
+	it("allows every tool of a server unless a list says otherwise", () => {
+		const parsed = agentDefinitionInput.parse({
+			name: "Triage",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			mcpServers: [{ assetId: "a", version: 1 }],
+		});
+		expect(parsed.mcpServers[0]?.tools).toBeNull();
+		expect(withTools([" get_issue ", "search_issues"]).data?.mcpServers[0]?.tools).toEqual([
+			"get_issue",
+			"search_issues",
+		]);
+	});
+
+	it("refuses a tool list that is empty, repeats a tool or has a name no server could give", () => {
+		const message = (tools: unknown) => withTools(tools).error?.issues[0]?.message;
+		expect(message([])).toBe("Choose at least one tool, or allow all of them");
+		expect(message(["a", "a"])).toBe("A tool is chosen twice");
+		expect(message(["a b"])).toBe("A tool name has no spaces or control characters");
+		expect(message(["a\u0000"])).toBe("A tool name has no spaces or control characters");
+		expect(message([" "])).toBe("A tool name cannot be empty");
+		expect(message(["x".repeat(201)])).toBe("A tool name is too long");
+		expect(message(Array.from({ length: 201 }, (_, index) => `tool_${index}`))).toBe(
+			"An agent can use up to 200 tools of a server",
+		);
+	});
+
 	it("pins each MCP server once", () => {
 		const parsed = agentDefinitionInput.safeParse({
 			name: "Reviewer",

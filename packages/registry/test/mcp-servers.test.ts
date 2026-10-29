@@ -147,6 +147,7 @@ describe("MCP servers", () => {
 				asset: expect.objectContaining({ id: acme, name: "acme" }),
 				version: 1,
 				removed: false,
+				tools: null,
 				connection: { transport: "http", url: "https://mcp.acme.dev/mcp" },
 				// The secret is declared but has no value yet.
 				variables: [
@@ -223,6 +224,92 @@ describe("MCP servers", () => {
 		});
 	});
 
+	it("can be limited to some of their tools, which stay through updates and newer versions", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const acme = await stub.createMcpServer({ ...ACME, headers: [] });
+		const docs = await stub.createMcpServer({
+			name: "docs",
+			transport: "sse",
+			url: "https://docs.acme.dev/sse",
+			headers: [],
+		});
+		const tools = ["search_issues", "get_issue"];
+		const input = reviewer([
+			{ assetId: acme, version: 1, tools },
+			{ assetId: docs, version: 1 },
+		]);
+		const agent = await stub.createAgent(input);
+		const pinned = async () =>
+			(await stub.getAgent(agent.id))?.definition?.mcpServers.map(({ asset, version, tools }) => [
+				asset.name,
+				version,
+				tools,
+			]);
+		// Only the pin that asked has a list; the other keeps all of its server's tools.
+		expect(await pinned()).toEqual([
+			["acme", 1, tools],
+			["docs", 1, null],
+		]);
+
+		// A turn gets the list, in the order it was written.
+		const conversation = await stub.startConversation(agent.id, "user-ada");
+		expect(await stub.beginTurn(conversation?.id ?? "", "Hello")).toMatchObject({
+			mcpServers: [
+				{ name: "acme", tools },
+				{ name: "docs", tools: null },
+			],
+		});
+
+		// Moving the pin to the server's newer version keeps the list; so does saving again.
+		await stub.editMcpServer({
+			assetId: acme,
+			transport: "http",
+			url: "https://mcp.acme.dev/v2",
+			headers: [],
+		});
+		await stub.updateAgent(agent.id, {
+			...input,
+			mcpServers: [
+				{ assetId: acme, version: 2, tools },
+				{ assetId: docs, version: 1 },
+			],
+		});
+		expect(await pinned()).toEqual([
+			["acme", 2, tools],
+			["docs", 1, null],
+		]);
+
+		// A list can be lifted again.
+		await stub.updateAgent(agent.id, {
+			...input,
+			mcpServers: [{ assetId: acme, version: 2, tools: null }],
+		});
+		expect(await pinned()).toEqual([["acme", 2, null]]);
+	});
+
+	it("refuse a tool list that is empty, repeats a tool or holds a name no server could have", async () => {
+		const stub = registry();
+		const acme = await stub.createMcpServer(ACME);
+		const refused = async (tools: string[]) => {
+			let message = "";
+			await inside(stub, (instance) => {
+				try {
+					instance.createAgent(reviewer([{ assetId: acme, version: 1, tools }]));
+				} catch (error) {
+					message = error instanceof Error ? error.message : String(error);
+				}
+			});
+			return message;
+		};
+		expect(await refused([])).toContain("Choose at least one tool, or allow all of them");
+		expect(await refused(["get_issue", "get_issue"])).toContain("A tool is chosen twice");
+		expect(await refused(["get issue"])).toContain("no spaces or control characters");
+		expect(await refused(["  "])).toContain("A tool name cannot be empty");
+		expect(await refused(["x".repeat(201)])).toContain("A tool name is too long");
+		expect(await stub.listAgents()).toEqual([]);
+	});
+
 	it("cannot be pinned when an agent could not reach them", async () => {
 		const stub = registry();
 		const local = await scannedServer(stub, "local", { command: "npx", args: ["-y", "@acme/mcp"] });
@@ -263,6 +350,7 @@ describe("MCP servers", () => {
 			transport: "http",
 			url: "https://open.acme.dev/mcp",
 			headers: {},
+			tools: null,
 		});
 		expect(await target(acme)).toEqual({
 			name: "acme",
@@ -309,6 +397,7 @@ describe("MCP servers", () => {
 			transport: "http",
 			url: "https://mcp.acme.dev/v2",
 			headers: { Authorization: "Bearer current-token", "X-Team": "platform" },
+			tools: null,
 		});
 
 		// Gone, removed or not an MCP server: nothing to check.

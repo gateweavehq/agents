@@ -239,6 +239,11 @@ function McpServerState({ server }: { server: AgentMcpServer }) {
 
 	return (
 		<div className="w-full space-y-1 text-xs text-muted-foreground">
+			{server.tools && (
+				<p>
+					Only: <span className="font-mono">{server.tools.join(", ")}</span>
+				</p>
+			)}
 			{"problem" in connection ? (
 				<p className="text-destructive">{connection.problem}</p>
 			) : (
@@ -311,8 +316,9 @@ function PinRow({
 			const input = inputOf(agent, definition);
 			const latest = { assetId: asset.id, version: asset.version };
 			if (field === "mcp-server") {
+				// The newer version keeps the tools the agent was limited to.
 				input.mcpServers = input.mcpServers.map((server) =>
-					server.assetId === asset.id ? latest : server,
+					server.assetId === asset.id ? { ...server, version: asset.version } : server,
 				);
 			} else {
 				input[field] = latest;
@@ -375,6 +381,7 @@ function inputOf(agent: Agent, definition: AgentDefinition) {
 		mcpServers: definition.mcpServers.map((server) => ({
 			assetId: server.asset.id,
 			version: server.version,
+			tools: server.tools,
 		})),
 	};
 }

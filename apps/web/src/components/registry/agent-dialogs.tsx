@@ -5,6 +5,7 @@ import {
 	INSTRUCTION_KINDS,
 	type LibraryEntry,
 	MAX_AGENT_MCP_SERVERS,
+	type McpCheck,
 	type Metadata,
 	MODEL_PROVIDER_NAMES,
 	MODEL_PROVIDERS,
@@ -28,7 +29,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
-import { getModels } from "#/lib/registry";
+import { getMcpServers, getModels } from "#/lib/registry";
 
 function message(error: unknown) {
 	return error instanceof Error ? error.message : "Something went wrong";
@@ -70,10 +71,28 @@ export function AgentDialog({
 	const [servers, setServers] = useState(
 		() => new Set(pinnedServers.map((server) => server.asset.id)),
 	);
+	// The tools each pinned server is limited to; null is all of them.
+	const [allowed, setAllowed] = useState(
+		() => new Map(pinnedServers.map((server) => [server.asset.id, server.tools])),
+	);
+	// The last check of each library server, which says what tools there are to choose from.
+	const [checks, setChecks] = useState<Map<string, McpCheck | null>>(() => new Map());
 	const [models, setModels] = useState<ProviderModel[] | string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const hasKey = keyed.includes(provider);
+
+	useEffect(() => {
+		let live = true;
+		getMcpServers({ data: slug })
+			.then((found) => {
+				if (live) setChecks(new Map((found ?? []).map((entry) => [entry.asset.id, entry.check])));
+			})
+			.catch(() => {});
+		return () => {
+			live = false;
+		};
+	}, [slug]);
 
 	useEffect(() => {
 		setModels(null);
@@ -126,7 +145,11 @@ export function AgentDialog({
 					.filter((asset) => servers.has(asset.id))
 					.map((asset) => {
 						const kept = pinnedServers.find((server) => server.asset.id === asset.id);
-						return { assetId: asset.id, version: kept?.version ?? asset.version };
+						return {
+							assetId: asset.id,
+							version: kept?.version ?? asset.version,
+							tools: allowed.get(asset.id) ?? null,
+						};
 					}),
 			});
 			onClose();
@@ -294,6 +317,15 @@ export function AgentDialog({
 															: `v${asset.version}`}
 												</span>
 											</Label>
+											{servers.has(asset.id) && (
+												<ToolChoice
+													offered={checks.get(asset.id)}
+													tools={allowed.get(asset.id) ?? null}
+													onChange={(tools) =>
+														setAllowed((current) => new Map(current).set(asset.id, tools))
+													}
+												/>
+											)}
 										</li>
 									);
 								})}
@@ -320,6 +352,66 @@ export function AgentDialog({
 				</form>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+/**
+ * Limits a chosen server to some of its tools. The choices are the tools its last check listed;
+ * without one, the pin keeps the list it has, so saving never drops it unseen.
+ */
+function ToolChoice({
+	offered,
+	tools,
+	onChange,
+}: {
+	offered: McpCheck | null | undefined;
+	tools: string[] | null;
+	onChange: (tools: string[] | null) => void;
+}) {
+	const listed = offered?.ok ? offered.tools.map((tool) => tool.name) : [];
+	if (listed.length === 0) {
+		return (
+			<p className="px-2.5 pb-2.5 pl-10 text-xs text-muted-foreground">
+				{tools ? `Only: ${tools.join(", ")}. ` : "All of its tools. "}
+				Check the server on the MCP page to choose its tools.
+			</p>
+		);
+	}
+	// A tool kept from before that the server no longer lists stays visible, so it can be dropped.
+	const choices = [...listed, ...(tools ?? []).filter((tool) => !listed.includes(tool))];
+	return (
+		<div className="space-y-1.5 px-2.5 pb-2.5 pl-10">
+			<Label className="flex cursor-pointer items-center gap-2 text-xs font-normal">
+				<Checkbox
+					checked={tools === null}
+					onCheckedChange={(checked) => onChange(checked === true ? null : listed)}
+				/>
+				All tools
+			</Label>
+			{tools !== null && (
+				<ul className="max-h-32 space-y-1 overflow-y-auto">
+					{choices.map((tool) => (
+						<li key={tool}>
+							<Label className="flex cursor-pointer items-center gap-2 font-mono text-xs font-normal has-disabled:cursor-not-allowed">
+								<Checkbox
+									checked={tools.includes(tool)}
+									// One tool stays: an empty list would mean no tools, which is leaving the server out.
+									disabled={tools.length === 1 && tools.includes(tool)}
+									onCheckedChange={(checked) =>
+										onChange(
+											checked === true
+												? choices.filter((name) => name === tool || tools.includes(name))
+												: tools.filter((name) => name !== tool),
+										)
+									}
+								/>
+								<span className="min-w-0 truncate">{tool}</span>
+							</Label>
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
 	);
 }
 
