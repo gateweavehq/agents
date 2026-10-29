@@ -7,12 +7,14 @@
  * a team stay in the Worker, and each call is a span in the run's trace as in any other turn.
  *
  * Each request gets a fresh server from `createMcpHandler`, which answers the 2026-07-28 revision
- * and the stateless 2025 one, whichever the CLI speaks.
+ * and the stateless 2025 one, whichever the CLI speaks. Claude Code 2.1.308 speaks the first: it
+ * asks `server/discover`, then `tools/list`, then calls tools, each request on its own.
  *
  * Checked 2026-10-29:
  * - `createMcpHandler` and `fromJsonSchema`: `index.d.mts` of @modelcontextprotocol/server 2.3.1
- * - `--mcp-config`, `--strict-mcp-config`, a server's `timeout`, and `mcp__<server>` in allowed
- *   tools: https://code.claude.com/docs/en/cli-reference and https://code.claude.com/docs/en/mcp
+ * - `--mcp-config`, `--strict-mcp-config`, a server's `timeout` and `alwaysLoad`, and
+ *   `mcp__<server>` in allowed tools: https://code.claude.com/docs/en/cli-reference and
+ *   https://code.claude.com/docs/en/mcp
  * - per-request limits of HTTP servers and automatic backgrounding:
  *   https://code.claude.com/docs/en/env-vars (`MCP_TOOL_TIMEOUT`,
  *   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`)
@@ -50,11 +52,19 @@ export interface ClaudeCodeToolsAccess {
 /**
  * The `--mcp-config` that names the server. Its `timeout`, the turn's own limit, lifts the 60
  * seconds an HTTP server's request may take otherwise: a delegated task can take that long.
+ * `alwaysLoad` gives the model the tools in its first request, as Gateweave's loop does. Otherwise
+ * the CLI connects in the background, sends the first request without them, and later keeps them
+ * behind its tool search, a step the model would have to take first.
  */
 export function claudeCodeMcpConfig(timeoutMs: number): string {
 	return JSON.stringify({
 		mcpServers: {
-			[CLAUDE_CODE_TOOLS_SERVER]: { type: "http", url: CLAUDE_CODE_TOOLS_URL, timeout: timeoutMs },
+			[CLAUDE_CODE_TOOLS_SERVER]: {
+				type: "http",
+				url: CLAUDE_CODE_TOOLS_URL,
+				timeout: timeoutMs,
+				alwaysLoad: true,
+			},
 		},
 	});
 }
@@ -86,7 +96,13 @@ export async function serveClaudeCodeTools(
 		})),
 	);
 	const handler = createMcpHandler(() => {
-		const server = new McpServer({ name: CLAUDE_CODE_TOOLS_SERVER, version: "1.0.0" });
+		// The tools do not change while the turn runs, so the server says so. A server that said
+		// they might would have the CLI open `subscriptions/listen`, a stream this handler, made for
+		// one request, cannot keep.
+		const server = new McpServer(
+			{ name: CLAUDE_CODE_TOOLS_SERVER, version: "1.0.0" },
+			{ capabilities: { tools: { listChanged: false } } },
+		);
 		for (const { name, tool, description, jsonSchema } of definitions) {
 			server.registerTool(name, { description, inputSchema: fromJsonSchema(jsonSchema) }, (input) =>
 				callTool(tool, input, signal),
@@ -95,6 +111,7 @@ export async function serveClaudeCodeTools(
 		return server;
 	});
 	try {
+		// No tool sends anything before its result, so the answer is whole once it comes.
 		return await handler.fetch(request);
 	} finally {
 		await handler.close();

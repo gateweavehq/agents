@@ -407,6 +407,34 @@ describe("an agent whose engine is Claude Code", () => {
 		const client = await createMCPClient({
 			transport: { type: "http", url: CLAUDE_CODE_TOOLS_URL, fetch: answer(token) },
 		});
+		// As Claude Code 2.1.308 asks first: the tools never change while the turn runs, so it has
+		// no reason to open a stream for changes.
+		const discovered = await answer(token)(
+			new Request(CLAUDE_CODE_TOOLS_URL, {
+				method: "POST",
+				headers: {
+					accept: "application/json, text/event-stream",
+					"content-type": "application/json",
+					"mcp-method": "server/discover",
+					"mcp-protocol-version": "2026-07-28",
+				},
+				body: JSON.stringify({
+					jsonrpc: "2.0",
+					id: 1,
+					method: "server/discover",
+					params: {
+						_meta: {
+							"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+							"io.modelcontextprotocol/clientInfo": { name: "claude-code", version: "2.1.308" },
+							"io.modelcontextprotocol/clientCapabilities": {},
+						},
+					},
+				}),
+			}),
+		);
+		expect(await discovered.json()).toMatchObject({
+			result: { capabilities: { tools: { listChanged: false } } },
+		});
 		const { tools } = await client.listTools();
 		expect(tools).toMatchObject([
 			{
@@ -503,7 +531,12 @@ describe("Claude Code's command", () => {
 		const config = argv[argv.indexOf("--mcp-config") + 1] ?? "";
 		expect(JSON.parse(config)).toEqual({
 			mcpServers: {
-				gateweave: { type: "http", url: "http://tools.gateweave.internal/mcp", timeout: 3_600_000 },
+				gateweave: {
+					type: "http",
+					url: "http://tools.gateweave.internal/mcp",
+					timeout: 3_600_000,
+					alwaysLoad: true,
+				},
 			},
 		});
 		expect(argv[argv.indexOf("--allowedTools") + 1]?.split(",")).toContain("mcp__gateweave");
