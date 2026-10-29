@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import {
+	AGENT_ENGINES,
 	ASSET_KINDS,
 	KEYED_PROVIDERS,
 	MODEL_PROVIDERS,
@@ -540,6 +541,11 @@ export const agentDefinitionInput = projectInput.extend({
 	 * for each conversation. Only an agent with a sandbox has one.
 	 */
 	repositoryId: z.string().min(1).max(64).nullable().default(null),
+	/**
+	 * What takes its turns: Gateweave's own loop, or Claude Code in its sandbox. Its rules (a
+	 * sandbox, an Anthropic model, no MCP servers for Claude Code) are the registry's to enforce.
+	 */
+	engine: z.enum(AGENT_ENGINES).default("gateweave"),
 });
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
 

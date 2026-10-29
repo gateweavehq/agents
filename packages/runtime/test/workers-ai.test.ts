@@ -182,6 +182,7 @@ describe("the Workers AI model", () => {
 		model: SCOUT,
 		instructions: null,
 		sandbox: false,
+		engine: "gateweave",
 		updatedAt: 0,
 	};
 	const metadata = { workspace: "w", agent: "agent-1", conversation: "c" };

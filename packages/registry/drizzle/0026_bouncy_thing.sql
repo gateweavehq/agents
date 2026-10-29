@@ -1,0 +1,1 @@
+ALTER TABLE `agent_definitions` ADD `engine` text DEFAULT 'gateweave' NOT NULL;

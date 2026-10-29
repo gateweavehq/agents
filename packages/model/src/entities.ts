@@ -1,6 +1,7 @@
 /** What the registry returns. Times are milliseconds since the epoch. */
 import type { Metadata, ScanProblem } from "./inputs";
 import type {
+	AgentEngine,
 	AgentRuntime,
 	ApplicationState,
 	AssetKind,
@@ -334,6 +335,8 @@ export interface AgentDefinition {
 	 * none. `removed` once the app no longer reaches it, and the agent's turns are refused.
 	 */
 	repository: { id: string; owner: string; name: string; removed: boolean } | null;
+	/** What takes its turns: Gateweave's own loop, or Claude Code in its sandbox. */
+	engine: AgentEngine;
 }
 
 /** An MCP server an agent run by Gateweave uses. */
@@ -381,6 +384,8 @@ export interface AgentSnapshot {
 	instructions: string | null;
 	/** Whether its turns have a sandbox. */
 	sandbox: boolean;
+	/** What takes its turns: Gateweave's own loop, or Claude Code in its sandbox. */
+	engine: AgentEngine;
 	/** When the definition last changed. */
 	updatedAt: number;
 }

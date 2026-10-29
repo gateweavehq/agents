@@ -102,6 +102,7 @@ describe("conversations", () => {
 				model: "claude-sonnet-5-5",
 				instructions: "Review the change.\n",
 				sandbox: false,
+				engine: "gateweave",
 				updatedAt: agent.updatedAt,
 			},
 			key: "sk-ant-api03-abcdefgh",
@@ -247,6 +248,26 @@ describe("turns with a sandbox", () => {
 			expect(await instance.beginTurn(id, "Hello")).toMatchObject({
 				agent: { name: "Builder", sandbox: true },
 				sandbox: true,
+			});
+		});
+	});
+
+	it("carry the agent's engine, so Claude Code turns can tell theirs apart", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const agent = await stub.createAgent({
+			name: "Builder",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			sandbox: true,
+			engine: "claude-code",
+		});
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await withSandboxes(stub, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toMatchObject({
+				agent: { name: "Builder", engine: "claude-code" },
 			});
 		});
 	});

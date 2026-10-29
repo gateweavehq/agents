@@ -3,6 +3,7 @@ import {
 	type AgentDefinition,
 	type AgentDetail,
 	type AgentMcpServer,
+	ENGINE_NAMES,
 	isKeyedProvider,
 	MODEL_PROVIDER_NAMES,
 	type PinnedAsset,
@@ -126,6 +127,8 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 	const data = Route.useLoaderData();
 	if (!data) return null;
 	const provider = MODEL_PROVIDER_NAMES[definition.provider];
+	// Claude Code calls Anthropic's models only, so its line leaves the provider out.
+	const lead = definition.engine === "gateweave" ? provider : ENGINE_NAMES[definition.engine];
 
 	return (
 		<>
@@ -134,7 +137,7 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 					Model
 				</h2>
 				<p className="rounded-lg border p-3 text-sm">
-					{provider} · <span className="font-mono">{definition.model}</span>
+					{lead} · <span className="font-mono">{definition.model}</span>
 				</p>
 				{!data.available.includes(definition.provider) && (
 					<p className="text-sm text-amber-600 dark:text-amber-500">
