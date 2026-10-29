@@ -110,6 +110,47 @@ function assistant(
 	});
 }
 
+/** One of the API's streaming events, as Claude Code passes it on with partial messages. */
+function streamEvent(
+	event: object,
+	extra: { parent_tool_use_id?: string; ttft_ms?: number } = {},
+): string {
+	return JSON.stringify({
+		type: "stream_event",
+		event,
+		parent_tool_use_id: extra.parent_tool_use_id ?? null,
+		...(extra.ttft_ms === undefined ? {} : { ttft_ms: extra.ttft_ms }),
+		uuid: crypto.randomUUID(),
+		session_id: "session",
+	});
+}
+
+/** A request's start: its id and its usage so far, which counts one token of output. */
+function messageStart(id: string, extra: { parent_tool_use_id?: string; ttft_ms?: number } = {}) {
+	const message = {
+		id,
+		type: "message",
+		role: "assistant",
+		model: "claude-sonnet-5-5",
+		content: [],
+		stop_reason: null,
+		usage: { input_tokens: 10, output_tokens: 1 },
+	};
+	return streamEvent({ type: "message_start", message }, extra);
+}
+
+/** A request's end, with its final usage and no word of which request it is. */
+function messageDelta(outputTokens: number, extra: { parent_tool_use_id?: string } = {}) {
+	return streamEvent(
+		{
+			type: "message_delta",
+			delta: { stop_reason: "end_turn", stop_sequence: null },
+			usage: { output_tokens: outputTokens },
+		},
+		extra,
+	);
+}
+
 function toolResult(toolUseId: string, content: string, isError = false): string {
 	return JSON.stringify({
 		type: "user",
@@ -278,6 +319,46 @@ describe("an agent whose engine is Claude Code", () => {
 		expect(turn.raw.join("\n")).not.toContain("a subagent's thought");
 		const [run] = await registry.listRuns();
 		expect(run).toMatchObject({ status: "succeeded", steps: 3 });
+	});
+
+	it("counts each request's output from its end, which its blocks do not carry", async () => {
+		const { registry, stub, machine } = await conversation();
+		// As the API streams them: a block's usage is the request's start's, one token of output.
+		const usage = { input_tokens: 10, output_tokens: 1 };
+		const sub = { parent_tool_use_id: "toolu_agent" };
+		await machine.scriptClaudeCode({
+			lines: [
+				messageStart("msg_1", { ttft_ms: 420.4 }),
+				assistant("msg_1", { type: "text", text: "Let me ask a helper. " }, usage),
+				assistant(
+					"msg_1",
+					{ type: "tool_use", id: "toolu_agent", name: "Agent", input: { prompt: "look" } },
+					usage,
+				),
+				messageDelta(60),
+				messageStart("msg_sub", { ...sub, ttft_ms: 300 }),
+				assistant("msg_sub", { type: "text", text: "Found it." }, usage, sub),
+				messageDelta(40, sub),
+				toolResult("toolu_agent", "found it"),
+				messageStart("msg_2"),
+				assistant("msg_2", { type: "text", text: "Done." }, usage),
+				messageDelta(15),
+				result(),
+			],
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Look around");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "Let me ask a helper. Done.", error: null });
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({ status: "succeeded", steps: 3, outputTokens: 60 + 40 + 15 });
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "model")).toMatchObject([
+			{ step: 0, outputTokens: 60, firstTokenMs: 420 },
+			{ step: 1, outputTokens: 40, firstTokenMs: 300 },
+			{ step: 2, outputTokens: 15, firstTokenMs: null },
+		]);
 	});
 
 	it("fails the turn in the app's words when Anthropic refuses the key", async () => {
@@ -524,6 +605,10 @@ describe("an agent whose engine is Claude Code", () => {
 
 describe("Claude Code's command", () => {
 	const base = { model: "claude-sonnet-5-5", system: "", session: "s", resume: false };
+
+	it("asks for the API's streaming events, the only ones with a request's final usage", () => {
+		expect(claudeCodeArguments({ ...base, tools: false })).toContain("--include-partial-messages");
+	});
 
 	it("names Gateweave's MCP server, and only it, when the turn has tools", () => {
 		const argv = claudeCodeArguments({ ...base, tools: true });
