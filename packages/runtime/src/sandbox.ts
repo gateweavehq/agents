@@ -129,8 +129,9 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 
 	/**
 	 * Checks out the repository at `SANDBOX_REPOSITORY_PATH` on a new `branch` from its default
-	 * branch, unless it is there already. A conversation keeps the repository it first checked out:
-	 * a repository chosen later on the agent is for its next conversations.
+	 * branch, or from what the conversation pushed (`#branchStart`), unless it is there already. A
+	 * conversation keeps the repository it first checked out: a repository chosen later on the agent
+	 * is for its next conversations.
 	 */
 	async checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult> {
 		const kept = this.#repository();
@@ -159,22 +160,51 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 			SANDBOX_ROOT,
 			CLONE_SECONDS,
 		);
-		if (clone.exitCode !== 0) {
+		// Gone, so the next tool call clones again rather than finding a checkout off the branch.
+		const failed = async (error: string): Promise<CheckoutResult> => {
 			await this.#exec(container, ["rm", "-rf", SANDBOX_REPOSITORY_PATH], SANDBOX_ROOT, 30);
-			return { error: `${name} could not be checked out.\n${clone.output}` };
-		}
+			return { error };
+		};
+		if (clone.exitCode !== 0) return failed(`${name} could not be checked out.\n${clone.output}`);
+		const start = await this.#branchStart(container, branch);
+		if ("error" in start) return failed(start.error);
 		const switched = await this.#exec(
 			container,
-			["git", "switch", "--create", branch],
+			["git", "switch", "--create", branch, ...start.from],
 			SANDBOX_REPOSITORY_PATH,
 			30,
 		);
 		if (switched.exitCode !== 0) {
-			return {
-				error: `${name} is cloned, but the branch ${branch} was not made.\n${switched.output}`,
-			};
+			return failed(
+				`${name} is cloned, but the branch ${branch} was not made.\n${switched.output}`,
+			);
 		}
 		return { checkedOut: true };
+	}
+
+	/**
+	 * Where a new checkout's branch starts: the default branch, or, when the conversation pushed
+	 * before its sandbox stopped, the branch as it is on GitHub, so the work goes on from there and
+	 * the next push adds to it. A branch deleted since, such as after its pull request merged,
+	 * starts over from the default branch.
+	 */
+	async #branchStart(
+		container: Container,
+		branch: string,
+	): Promise<{ from: string[] } | { error: string }> {
+		if (this.ctx.storage.kv.get<string>(PUSHED_KEY) === undefined) return { from: [] };
+		const remote = `refs/remotes/origin/${branch}`;
+		const fetched = await this.#exec(
+			container,
+			["git", "fetch", "--quiet", "origin", `refs/heads/${branch}:${remote}`],
+			SANDBOX_REPOSITORY_PATH,
+			CLONE_SECONDS,
+		);
+		if (fetched.exitCode === 0) return { from: [remote] };
+		if (/couldn't find remote ref/i.test(fetched.output)) return { from: [] };
+		return {
+			error: `The work this conversation pushed to ${branch} could not be fetched.\n${fetched.output}`,
+		};
 	}
 
 	/**
