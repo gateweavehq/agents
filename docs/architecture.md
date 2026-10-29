@@ -607,10 +607,10 @@ staging does, production and self-hosted deploys leave them off until their oper
     the container has OpenCode's database; otherwise it starts a new one with the conversation so
     far. Gateweave's tools are the same MCP server, a `remote` one in its settings without OAuth,
     whose timeout, the turn's hour, covers each call. OpenCode speaks MCP's 2025-11-25 revision.
-  - **It needs a bigger machine.** OpenCode runs on Bun, and on the default `lite` instance type
-    (256 MiB, 1/16 vCPU) it runs out of memory before its first answer, as a local run of the
-    image under those limits showed; with `basic` (1 GiB, 1/4 vCPU) a turn starts in about half a
-    minute. Claude Code and Codex fit in `lite`.
+  - **It needs more than the smallest machine.** OpenCode runs on Bun. A local run of the image
+    under `lite`'s limits (256 MiB, 1/16 vCPU) ran out of memory before its first answer; under
+    `basic`'s (1 GiB, 1/4 vCPU) a turn took about half a minute and used 415 MiB at most. The
+    sandbox starts as `standard-1`, so keep it at `basic` or above. Claude Code fits in `lite`.
 
 ## Chat
 

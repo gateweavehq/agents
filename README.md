@@ -75,9 +75,7 @@ as the clone leaves, so the token never enters the sandbox. For the one push a p
 it mints a token that writes, and only to the conversation's own branch. An agent can also take its
 turns with Claude Code, Codex or OpenCode, which the image installs, in place of Gateweave's own
 loop. They run in its sandbox with the workspace's Anthropic or OpenAI key, which the Worker adds
-to their requests on the way out, so the key never enters the sandbox either. OpenCode needs the
-`basic` instance type or a bigger one (`instance_type` in the `containers` entry): on the default,
-`lite`, it runs out of memory.
+to their requests on the way out, so the key never enters the sandbox either.
 
 ## Contributing
 
