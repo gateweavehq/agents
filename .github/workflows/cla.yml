@@ -31,4 +31,6 @@ jobs:
           path-to-signatures: signatures/cla.json
           # Signatures live on their own branch so main can stay protected.
           branch: cla-signatures
-          allowlist: xgame92,dependabot[bot],renovate[bot]
+          # gateweave-agents-staging[bot] commits what agents write on Gateweave Agents' staging, in
+          # workspaces of this organization. Its production app's bot joins it once that app exists.
+          allowlist: xgame92,dependabot[bot],renovate[bot],gateweave-agents-staging[bot]
