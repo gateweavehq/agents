@@ -10,5 +10,11 @@ RUN apt-get update \
     bash ca-certificates coreutils curl git jq python3 python3-pip python3-venv ripgrep \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shim
+# Claude Code, for agents whose engine it is (packages/runtime/src/claude-code.ts). Anthropic's,
+# under its own terms; the image installs it when it is built, and pins it, since its auto-updater
+# is off in the sandbox.
+ARG CLAUDE_CODE_VERSION=2.1.308
+RUN npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+  && npm cache clean --force
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

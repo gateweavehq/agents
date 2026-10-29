@@ -11,6 +11,7 @@ import {
 	type ConnectSpan,
 	type EdgeSpan,
 	type ModelSpan,
+	type RequestTokens,
 	type RunFinish,
 	type RunSpan,
 	type RunStatus,
@@ -44,6 +45,15 @@ interface SpanRow {
 	started_at: number;
 	ended_at: number | null;
 	attributes: string;
+}
+
+/** A model request that answered: the model, its tokens, and how it ended. */
+export interface EndedRequest {
+	model: string;
+	tokens: RequestTokens;
+	finishReason: string | null;
+	firstTokenMs: number | null;
+	gatewayLogId: string | null;
 }
 
 /** AI Gateway's id for a request's log entry, on its response. */
@@ -104,13 +114,33 @@ export class RunRecorder {
 
 	stepEnded(result: StepResult<ToolSet>, now = Date.now()): void {
 		const { usage } = result;
-		const tokens = {
-			input: usage.inputTokens ?? 0,
-			output: usage.outputTokens ?? 0,
-			cacheRead: usage.inputTokenDetails.cacheReadTokens ?? 0,
-			cacheWrite: usage.inputTokenDetails.cacheWriteTokens ?? 0,
-		};
-		const model = result.response.modelId || this.#agent.model;
+		this.requestEnded(
+			result.stepNumber,
+			{
+				model: result.response.modelId || this.#agent.model,
+				tokens: {
+					input: usage.inputTokens ?? 0,
+					output: usage.outputTokens ?? 0,
+					cacheRead: usage.inputTokenDetails.cacheReadTokens ?? 0,
+					cacheWrite: usage.inputTokenDetails.cacheWriteTokens ?? 0,
+				},
+				finishReason: result.finishReason,
+				firstTokenMs:
+					result.performance.timeToFirstOutputMs === undefined
+						? null
+						: Math.round(result.performance.timeToFirstOutputMs),
+				gatewayLogId: result.response.headers?.[GATEWAY_LOG_ID] ?? null,
+			},
+			now,
+		);
+	}
+
+	/**
+	 * A model request that answered, however the turn made it: through the AI SDK (`stepEnded`), or
+	 * as an engine in the sandbox reports it (`./claude-code.ts`).
+	 */
+	requestEnded(step: number, request: EndedRequest, now = Date.now()): void {
+		const { model, tokens } = request;
 		const { provider } = this.#agent;
 		const attributes: ModelAttributes = {
 			model,
@@ -120,16 +150,12 @@ export class RunRecorder {
 			cost:
 				requestCost(provider, model, tokens, now) ??
 				requestCost(provider, this.#agent.model, tokens, now),
-			finishReason: result.finishReason,
-			firstTokenMs:
-				result.performance.timeToFirstOutputMs === undefined
-					? null
-					: Math.round(result.performance.timeToFirstOutputMs),
-			gatewayLogId: result.response.headers?.[GATEWAY_LOG_ID] ?? null,
+			finishReason: request.finishReason,
+			firstTokenMs: request.firstTokenMs,
+			gatewayLogId: request.gatewayLogId,
 			error: null,
 		};
-		const status = result.finishReason === "error" ? "error" : "ok";
-		this.#endStep(result.stepNumber, status, attributes, now);
+		this.#endStep(step, request.finishReason === "error" ? "error" : "ok", attributes, now);
 	}
 
 	/** A request that failed before the model answered, with why in the app's words. */

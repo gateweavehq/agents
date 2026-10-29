@@ -20,8 +20,7 @@ export const RUNTIME_NAMES: Record<AgentRuntime, string> = {
 /**
  * What takes an agent run by Gateweave its turns: Gateweave's own loop with the agent's tools, or
  * Anthropic's Claude Code CLI, run in the agent's sandbox, which reads the repository's own
- * `CLAUDE.md`, skills and settings. Claude Code's turns arrive in a later part; until then the
- * runtime uses Gateweave's loop for every agent.
+ * `CLAUDE.md`, skills and settings.
  */
 export const AGENT_ENGINES = ["gateweave", "claude-code"] as const;
 export type AgentEngine = (typeof AGENT_ENGINES)[number];

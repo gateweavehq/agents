@@ -1,0 +1,514 @@
+/**
+ * Claude Code as an agent's engine (AGT-44). A turn of an agent whose engine is `claude-code` runs
+ * Anthropic's Claude Code CLI in the conversation's sandbox, in place of Gateweave's own loop. It
+ * reads the repository's CLAUDE.md, skills and settings as it would on a laptop, works with its own
+ * tools, and the turn passes on what it does as its events come: its text and tool calls to the
+ * chat, and each model request and tool call to the run's trace.
+ *
+ * The CLI holds no key. It sends a placeholder, and `SandboxOutbound` puts the workspace's
+ * Anthropic key on its requests to Anthropic on the way out, while the turn runs (`./outbound.ts`).
+ * One conversation is one Claude Code session, which each turn resumes while the sandbox has it.
+ *
+ * Checked 2026-10-29:
+ * - headless runs and their flags: https://code.claude.com/docs/en/headless
+ * - permission modes, and why not `bypassPermissions` (it refuses to run as root, as the sandbox's
+ *   commands do): https://code.claude.com/docs/en/permission-modes
+ * - the events' shapes: `SDKMessage` in `sdk.d.ts` of @anthropic-ai/claude-agent-sdk 0.3.312
+ */
+import {
+	type AgentSnapshot,
+	MODEL_PROVIDER_NAMES,
+	SANDBOX_REPOSITORY_PATH,
+	type SandboxRepository,
+} from "@gateweave/agents-model";
+import type { UIMessage, UIMessageChunk } from "ai";
+import { z } from "zod";
+import type { GatewayMetadata } from "./models";
+import type { RunRecorder } from "./trace";
+
+/** The server the trace and the chat name for Claude Code's own tools. */
+export const CLAUDE_CODE_SERVER = "claude-code";
+
+/** What the CLI sends as its key, which `SandboxOutbound` replaces with the workspace's. */
+export const CLAUDE_CODE_PLACEHOLDER_KEY = "sk-ant-gateweave-sandbox-placeholder";
+
+/** The agentic turns one message may take, each a model request and the tools it calls. */
+export const CLAUDE_CODE_TURNS = 100;
+
+/** How long one turn may run before the sandbox stops it. */
+export const CLAUDE_CODE_SECONDS = 60 * 60;
+
+/**
+ * The tools that would otherwise ask for a person's approval, which nobody is there to give.
+ * Reading and searching need none. The web tools stay off: the sandbox reaches no website anyway.
+ */
+const ALLOWED_TOOLS = ["Bash", "Edit", "Write", "NotebookEdit", "Skill", "Monitor"];
+
+/** Where the CLI's own messages go in the sandbox, out of the events' way. */
+export const CLAUDE_CODE_LOG = "/tmp/claude-code.log";
+
+/**
+ * What the CLI runs with besides the sandbox's usual environment. Nothing it would send besides
+ * its requests to the model gets out of the sandbox, so it sends none: no updates, telemetry or
+ * error reports. Background tasks are off, so a turn ends when its last answer does.
+ */
+export const CLAUDE_CODE_ENV: Record<string, string> = {
+	ANTHROPIC_API_KEY: CLAUDE_CODE_PLACEHOLDER_KEY,
+	CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+	DISABLE_AUTOUPDATER: "1",
+	CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+	CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1",
+};
+
+/** The workspace's key for the turn, and what AI Gateway logs about its requests. */
+export interface ModelAccess {
+	key: string;
+	metadata: GatewayMetadata;
+}
+
+/** A turn for Claude Code, as the conversation hands it to its sandbox. */
+export interface ClaudeCodeJob {
+	/** The person's message. */
+	prompt: string;
+	/** The conversation so far, for a sandbox that no longer has its session; null for none. */
+	history: string | null;
+	/** What Claude Code reads after its own system prompt. */
+	system: string;
+	model: string;
+	/** Where it works: the repository's checkout, or the sandbox's root. */
+	cwd: string;
+	access: ModelAccess;
+}
+
+/** What a conversation reaches of its sandbox to run Claude Code. */
+export interface ClaudeCodePort {
+	/** Starts the turn. Its events, one JSON object a line, as Claude Code writes them. */
+	startClaudeCode(job: ClaudeCodeJob): Promise<ReadableStream<Uint8Array>>;
+	/** Ends the turn under way: Claude Code finishes it as it would on Ctrl+C, or is killed. */
+	stopClaudeCode(): Promise<void>;
+}
+
+/** The command line after `claude`, for a session to start or to resume. */
+export function claudeCodeArguments(options: {
+	model: string;
+	system: string;
+	session: string;
+	resume: boolean;
+}): string[] {
+	return [
+		"-p",
+		"--output-format",
+		"stream-json",
+		"--verbose",
+		"--model",
+		options.model,
+		"--permission-mode",
+		"dontAsk",
+		"--permission-prompts",
+		"none",
+		"--allowedTools",
+		ALLOWED_TOOLS.join(","),
+		"--max-turns",
+		String(CLAUDE_CODE_TURNS),
+		...(options.system === "" ? [] : ["--append-system-prompt", options.system]),
+		...(options.resume ? ["--resume", options.session] : ["--session-id", options.session]),
+	];
+}
+
+/** What Claude Code reads first: the message, after the conversation so far when it lost that. */
+export function claudeCodePrompt(job: ClaudeCodeJob, resumed: boolean): string {
+	if (resumed || job.history === null) return job.prompt;
+	return [
+		"This conversation began in a sandbox that has stopped since, so you do not have it. What was said so far:",
+		job.history,
+		"The person's new message:",
+		job.prompt,
+	].join("\n\n");
+}
+
+/** Most characters of the conversation so far that a new session reads. */
+export const MAX_HISTORY = 50_000;
+
+/**
+ * The conversation before its last message, as text, for a session that starts over: what the
+ * person said and what the agent answered, the most recent kept when it is long. Null when the
+ * last message is the first.
+ */
+export function historyOf(messages: UIMessage[], name: string): string | null {
+	const earlier = messages.slice(
+		0,
+		messages.findLastIndex((message) => message.role === "user"),
+	);
+	const said = earlier.flatMap((message) => {
+		const text = message.parts
+			.flatMap((part) => (part.type === "text" ? [part.text] : []))
+			.join("\n\n")
+			.trim();
+		if (text === "") return [];
+		return [`${message.role === "user" ? "The person" : name}: ${text}`];
+	});
+	if (said.length === 0) return null;
+	const text = said.join("\n\n");
+	return text.length <= MAX_HISTORY ? text : `[…]\n${text.slice(-MAX_HISTORY)}`;
+}
+
+/** What Claude Code is told of where it runs, after the agent's instructions. */
+export function claudeCodeNote(repository: SandboxRepository | null, branch: string): string {
+	const sandbox =
+		"You run in a Linux sandbox that reaches no website: package registries such as npm and PyPI work, the rest of the internet does not.";
+	if (!repository) return sandbox;
+	const name = `${repository.owner}/${repository.name}`;
+	return [
+		sandbox,
+		`The repository ${name} is checked out at ${SANDBOX_REPOSITORY_PATH}, on the branch ${branch}, made from ${repository.defaultBranch}.`,
+		"git push does not work from the sandbox. Leave your work in the checkout and say in your answer what you changed.",
+	].join(" ");
+}
+
+/** Splits a stream into its lines, skipping empty ones and any longer than `MAX_LINE`. */
+export async function* linesOf(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+	// Inside a line too long to keep, until it ends.
+	let skipping = false;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		let end = buffer.indexOf("\n");
+		while (end !== -1) {
+			const line = buffer.slice(0, end);
+			buffer = buffer.slice(end + 1);
+			if (!skipping && line.trim() !== "") yield line;
+			skipping = false;
+			end = buffer.indexOf("\n");
+		}
+		if (buffer.length > MAX_LINE) {
+			buffer = "";
+			skipping = true;
+		}
+	}
+	buffer += decoder.decode();
+	if (!skipping && buffer.trim() !== "") yield buffer;
+}
+
+/** The longest event kept: a tool's result can be a whole file, which the trace needs no more of. */
+export const MAX_LINE = 8_000_000;
+
+/** Most characters of a tool's result the chat keeps: Claude Code has the whole of it. */
+export const MAX_CHAT_OUTPUT = 4_000;
+
+/** The longest failure of a tool the trace records. */
+const TRACE_ERROR_LIMIT = 500;
+
+const usageSchema = z.object({
+	input_tokens: z.number().optional(),
+	output_tokens: z.number().optional(),
+	cache_creation_input_tokens: z.number().nullish(),
+	cache_read_input_tokens: z.number().nullish(),
+});
+
+const assistantEvent = z.object({
+	type: z.literal("assistant"),
+	parent_tool_use_id: z.string().nullish(),
+	error: z.string().optional(),
+	message: z.object({
+		id: z.string(),
+		model: z.string().optional(),
+		content: z.array(z.unknown()),
+		usage: usageSchema.nullish(),
+	}),
+});
+
+const userEvent = z.object({
+	type: z.literal("user"),
+	parent_tool_use_id: z.string().nullish(),
+	message: z.object({ content: z.union([z.string(), z.array(z.unknown())]) }),
+});
+
+const resultEvent = z.object({
+	type: z.literal("result"),
+	subtype: z.string(),
+	is_error: z.boolean(),
+	num_turns: z.number().optional(),
+});
+
+const textBlock = z.object({ type: z.literal("text"), text: z.string() });
+
+const toolUseBlock = z.object({
+	type: z.literal("tool_use"),
+	id: z.string(),
+	name: z.string(),
+	input: z.unknown(),
+});
+
+const toolResultBlock = z.object({
+	type: z.literal("tool_result"),
+	tool_use_id: z.string(),
+	is_error: z.boolean().optional(),
+	content: z.unknown(),
+});
+
+/** Where a turn's chat chunks go: the stream the conversation answers with. */
+export interface ChunkSink {
+	write(chunk: UIMessageChunk): void;
+}
+
+/** How a turn of Claude Code went. */
+export type ClaudeCodeOutcome = { status: "succeeded" } | { status: "failed"; error: string };
+
+/** A model request of the turn, which Claude Code sends block by block, with the usage so far. */
+interface Request {
+	step: number;
+	/** The tool call of a subagent it belongs to; null in the main conversation. */
+	parent: string | null;
+	model: string;
+	usage: z.infer<typeof usageSchema>;
+	toolCalls: boolean;
+	startedAt: number;
+}
+
+/** A tool call under way: its span, and whether the chat shows it. */
+interface ToolCall {
+	span: string;
+	shown: boolean;
+}
+
+/**
+ * Follows one turn of Claude Code, an event at a time. The main conversation's text and tool calls
+ * go to the chat, a subagent's only to the trace, which records every model request and tool call.
+ */
+export class ClaudeCodeTurn {
+	readonly #sink: ChunkSink;
+	readonly #run: RunRecorder;
+	readonly #agent: AgentSnapshot;
+	readonly #requests = new Map<string, Request>();
+	readonly #tools = new Map<string, ToolCall>();
+	#steps = 0;
+	/** Whether the chat has a step open, from the main conversation's request it shows. */
+	#stepOpen = false;
+	#result: z.infer<typeof resultEvent> | null = null;
+	/** Why a model request failed, as Claude Code names it. */
+	#apiError: string | null = null;
+
+	constructor(sink: ChunkSink, run: RunRecorder, agent: AgentSnapshot) {
+		this.#sink = sink;
+		this.#run = run;
+		this.#agent = agent;
+	}
+
+	/** Takes one line of Claude Code's output. Anything not an event it knows is left alone. */
+	take(line: string, now = Date.now()): void {
+		let event: unknown;
+		try {
+			event = JSON.parse(line);
+		} catch {
+			return;
+		}
+		const assistant = assistantEvent.safeParse(event);
+		if (assistant.success) {
+			this.#assistant(assistant.data, now);
+			return;
+		}
+		const user = userEvent.safeParse(event);
+		if (user.success) {
+			this.#user(user.data, now);
+			return;
+		}
+		const result = resultEvent.safeParse(event);
+		if (result.success) {
+			this.#result = result.data;
+			this.#endRequests(null, now);
+		}
+	}
+
+	/** Ends what is still open and says how the turn went. */
+	end(now = Date.now()): ClaudeCodeOutcome {
+		this.#endRequests(undefined, now);
+		this.#closeStep();
+		const result = this.#result;
+		if (!result) return failed("Claude Code stopped before it finished.");
+		if (result.subtype === "error_max_turns") {
+			return failed(
+				`Claude Code stopped after ${result.num_turns ?? CLAUDE_CODE_TURNS} turns, the most one message may take.`,
+			);
+		}
+		if (result.subtype !== "success" || result.is_error) {
+			return failed(describeApiError(this.#agent, this.#apiError));
+		}
+		return { status: "succeeded" };
+	}
+
+	#assistant(event: z.infer<typeof assistantEvent>, now: number): void {
+		const { message } = event;
+		const parent = event.parent_tool_use_id ?? null;
+		if (event.error && event.error !== "max_output_tokens") this.#apiError = event.error;
+		let request = this.#requests.get(message.id);
+		if (!request) {
+			// A new request means the one before it in the same conversation has answered.
+			this.#endRequests(parent, now);
+			request = {
+				step: this.#steps++,
+				parent,
+				model: message.model ?? this.#agent.model,
+				usage: {},
+				toolCalls: false,
+				startedAt: now,
+			};
+			this.#requests.set(message.id, request);
+			this.#run.stepStarted(request.step, now);
+			if (parent === null) {
+				this.#closeStep();
+				this.#sink.write({ type: "start-step" });
+				this.#stepOpen = true;
+			}
+		}
+		if (message.usage) request.usage = message.usage;
+		for (const content of message.content) {
+			const text = textBlock.safeParse(content);
+			if (text.success && parent === null && text.data.text !== "") {
+				const id = crypto.randomUUID();
+				this.#sink.write({ type: "text-start", id });
+				this.#sink.write({ type: "text-delta", id, delta: text.data.text });
+				this.#sink.write({ type: "text-end", id });
+				continue;
+			}
+			const call = toolUseBlock.safeParse(content);
+			if (!call.success || this.#tools.has(call.data.id)) continue;
+			request.toolCalls = true;
+			const span = this.#run.toolStarted(
+				CLAUDE_CODE_SERVER,
+				call.data.name,
+				byteSize(call.data.input),
+				now,
+			);
+			this.#tools.set(call.data.id, { span, shown: parent === null });
+			if (parent === null) {
+				this.#sink.write({
+					type: "tool-input-available",
+					toolCallId: call.data.id,
+					toolName: `${CLAUDE_CODE_SERVER}__${call.data.name}`,
+					input: call.data.input,
+					dynamic: true,
+				});
+			}
+		}
+	}
+
+	#user(event: z.infer<typeof userEvent>, now: number): void {
+		const { content } = event.message;
+		if (typeof content === "string") return;
+		for (const block of content) {
+			const result = toolResultBlock.safeParse(block);
+			if (!result.success) continue;
+			const call = this.#tools.get(result.data.tool_use_id);
+			if (!call) continue;
+			this.#tools.delete(result.data.tool_use_id);
+			const text = resultText(result.data.content);
+			if (result.data.is_error) {
+				this.#run.toolEnded(call.span, { error: clip(text, TRACE_ERROR_LIMIT) }, now);
+			} else {
+				this.#run.toolEnded(call.span, { outputBytes: byteSize(text), error: null }, now);
+			}
+			if (!call.shown) continue;
+			if (result.data.is_error) {
+				this.#sink.write({
+					type: "tool-output-error",
+					toolCallId: result.data.tool_use_id,
+					errorText: clip(text, MAX_CHAT_OUTPUT),
+					dynamic: true,
+				});
+			} else {
+				this.#sink.write({
+					type: "tool-output-available",
+					toolCallId: result.data.tool_use_id,
+					output: { text: clip(text, MAX_CHAT_OUTPUT) },
+					dynamic: true,
+				});
+			}
+		}
+	}
+
+	/**
+	 * Ends the requests still open: those of the conversation `parent` names (null is the main
+	 * one), or all of them when it is undefined.
+	 */
+	#endRequests(parent: string | null | undefined, now: number): void {
+		for (const [id, request] of this.#requests) {
+			if (parent !== undefined && request.parent !== parent) continue;
+			this.#requests.delete(id);
+			const { usage } = request;
+			const cacheRead = usage.cache_read_input_tokens ?? 0;
+			const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+			this.#run.requestEnded(
+				request.step,
+				{
+					model: request.model,
+					// Anthropic counts cached input apart; the trace counts it in the input too.
+					tokens: {
+						input: (usage.input_tokens ?? 0) + cacheRead + cacheWrite,
+						output: usage.output_tokens ?? 0,
+						cacheRead,
+						cacheWrite,
+					},
+					finishReason: request.toolCalls ? "tool-calls" : "stop",
+					firstTokenMs: null,
+					gatewayLogId: null,
+				},
+				now,
+			);
+		}
+	}
+
+	#closeStep(): void {
+		if (!this.#stepOpen) return;
+		this.#sink.write({ type: "finish-step" });
+		this.#stepOpen = false;
+	}
+}
+
+/** Why Claude Code's turn failed, in the same words as a turn of Gateweave's own loop. */
+function describeApiError(agent: AgentSnapshot, error: string | null): string {
+	const name = MODEL_PROVIDER_NAMES[agent.provider];
+	switch (error) {
+		case "authentication_failed":
+			return `${name} refused the workspace's key. An owner or admin can check it in Settings.`;
+		case "billing_error":
+			return `${name} refused the workspace's key for its billing. An owner can check the account.`;
+		case "rate_limit":
+			return `${name} is limiting the workspace's requests. Try again shortly.`;
+		case "model_not_found":
+			return `${name} has no model ${agent.model} for the workspace's key.`;
+		case "overloaded":
+		case "server_error":
+			return `${name} could not answer just now. Try again shortly.`;
+		default:
+			return "Claude Code could not finish.";
+	}
+}
+
+/** A tool's result as text: Claude Code sends it as a string or as content blocks. */
+function resultText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.flatMap((block) => {
+			const text = textBlock.safeParse(block);
+			return text.success ? [text.data.text] : [];
+		})
+		.join("\n");
+}
+
+function clip(text: string, limit: number): string {
+	return text.length <= limit ? text : `${text.slice(0, limit)}…`;
+}
+
+function byteSize(value: unknown): number {
+	return new TextEncoder().encode(typeof value === "string" ? value : (JSON.stringify(value) ?? ""))
+		.length;
+}
+
+function failed(error: string): ClaudeCodeOutcome {
+	return { status: "failed", error };
+}

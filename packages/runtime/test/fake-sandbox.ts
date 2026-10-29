@@ -1,11 +1,13 @@
 /**
  * Sandboxes for the tests, which have no containers: files in memory, and commands that are only
  * recorded. `MemorySandbox` stands behind the tools directly; `FakeSandbox` is the Durable Object
- * the test Worker binds as `SANDBOX`, so a conversation reaches it as it would a real one.
+ * the test Worker binds as `SANDBOX`, so a conversation reaches it as it would a real one. Claude
+ * Code writes what a test scripted for it.
  */
 import { DurableObject } from "cloudflare:workers";
 import type { SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
+import type { ClaudeCodeJob, ClaudeCodePort } from "../src/claude-code";
 import type { CommitAuthor, PushPort, PushResult } from "../src/pull-requests";
 import type { CommandResult, ReadResult, WriteResult } from "../src/sandbox-tools";
 
@@ -65,9 +67,20 @@ export class MemorySandbox implements CheckoutPort, PushPort {
 	}
 }
 
-export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort {
+/** What a turn of Claude Code writes, and whether it then waits until it is stopped. */
+export interface ClaudeCodeScript {
+	lines: string[];
+	untilStopped?: boolean;
+}
+
+export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort, ClaudeCodePort {
 	readonly #memory = new MemorySandbox();
 	#destroyed = false;
+	readonly #jobs: ClaudeCodeJob[] = [];
+	readonly #scripts: ClaudeCodeScript[] = [];
+	/** Ends the turn of Claude Code that waits to be stopped. */
+	#release: (() => void) | null = null;
+	#stops = 0;
 
 	run(command: string, cwd: string, timeoutSeconds: number) {
 		return this.#memory.run(command, cwd, timeoutSeconds);
@@ -89,6 +102,35 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 		return this.#memory.push(branch, message, author);
 	}
 
+	/** What the next turn of Claude Code writes; one without a script writes nothing. */
+	scriptClaudeCode(script: ClaudeCodeScript): void {
+		this.#scripts.push(script);
+	}
+
+	async startClaudeCode(job: ClaudeCodeJob): Promise<ReadableStream<Uint8Array>> {
+		this.#jobs.push(job);
+		const { lines, untilStopped = false } = this.#scripts.shift() ?? { lines: [] };
+		const { readable, writable } = new IdentityTransformStream();
+		const writer = writable.getWriter();
+		const encoder = new TextEncoder();
+		void (async () => {
+			for (const line of lines)
+				await writer.write(
+					encoder.encode(`${line}
+`),
+				);
+			if (untilStopped) await new Promise<void>((resolve) => (this.#release = resolve));
+			await writer.close();
+		})();
+		return readable;
+	}
+
+	async stopClaudeCode(): Promise<void> {
+		this.#stops += 1;
+		this.#release?.();
+		this.#release = null;
+	}
+
 	destroy(): void {
 		this.#destroyed = true;
 	}
@@ -103,6 +145,8 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 			commands: this.#memory.commands,
 			checkouts: this.#memory.checkouts,
 			pushes: this.#memory.pushes,
+			claudeCode: this.#jobs,
+			stops: this.#stops,
 			destroyed: this.#destroyed,
 		};
 	}
