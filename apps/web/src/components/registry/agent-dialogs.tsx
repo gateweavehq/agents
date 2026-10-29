@@ -122,6 +122,14 @@ export function AgentDialog({
 		...library.map(({ asset }) => asset).filter((asset) => asset.kind === "mcp-server"),
 	].filter((asset, index, all) => all.findIndex(({ id }) => id === asset.id) === index);
 
+	// A model id belongs to its provider, so another provider starts with none; going back to the
+	// agent's own brings its model back.
+	function changeProvider(next: ModelProvider) {
+		const saved = agent?.definition;
+		setProvider(next);
+		setModel(saved && saved.provider === next ? saved.model : "");
+	}
+
 	function toggleServer(assetId: string, on: boolean) {
 		setServers((current) => {
 			const next = new Set(current);
@@ -171,8 +179,8 @@ export function AgentDialog({
 					<DialogHeader>
 						<DialogTitle>{agent ? "Edit agent" : "New agent"}</DialogTitle>
 						<DialogDescription>
-							An agent run by Gateweave calls a model with the workspace's key for its provider, and
-							always reads its instructions from the library.
+							An agent run by Gateweave calls a model with the workspace's key for its provider
+							(Workers AI needs none), and always reads its instructions from the library.
 						</DialogDescription>
 					</DialogHeader>
 					<div className="space-y-2">
@@ -202,7 +210,7 @@ export function AgentDialog({
 							<select
 								id="agent-provider"
 								value={provider}
-								onChange={(event) => setProvider(event.target.value as ModelProvider)}
+								onChange={(event) => changeProvider(event.target.value as ModelProvider)}
 								className={SELECT}
 							>
 								{MODEL_PROVIDERS.map((option) => (

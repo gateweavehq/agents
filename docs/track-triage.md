@@ -31,6 +31,8 @@ Setting it up takes two steps, one in each product. You need to be an owner or a
    - **Agent key**: the key from step 1.
    - **Provider and model**: a fast model does the job, such as Claude Haiku. The workspace
      needs a key for the provider (**Settings → Model providers**) before the agent can answer.
+     Workers AI needs none where the server offers it, which it pays for itself; Kimi K2.6
+     (`@cf/moonshotai/kimi-k2.6`) triages well there.
 3. Choose **Set up**. Agents first asks Track's MCP server, with the key, for its tools, so a
    wrong address or key is reported at once and nothing is made. Then it makes everything below
    in one go.
@@ -70,10 +72,18 @@ never as instructions. The tool limit is the backstop: an issue that talks the m
 something else still cannot make it create issues, labels or teams. Change the list in the
 agent's settings, if you need to.
 
+### Proposals instead of changes
+
+In Track, **Settings → Agents** lets an admin choose which kinds of change the agent only
+proposes, such as the priority. Track holds those on the issue for a person to accept or dismiss,
+and tells the agent, which then says in its comment that it proposed them. Labels can stay
+direct while priority waits for a person, for example.
+
 ## Costs and limits
 
-Each new issue is one run, on your workspace's provider key, and shows under **Runs** with its
-tokens and cost. The trigger starts at most 50 runs a day. Change that on the agent's page, or
+Each new issue is one run, on your workspace's provider key (or, for Workers AI, the server's
+account), and shows under **Runs** with its tokens and cost. A run on Kimi K2.6 costs about a
+cent. The trigger starts at most 50 runs a day. Change that on the agent's page, or
 pause the trigger there.
 
 ## When it does not work
