@@ -457,8 +457,12 @@ staging does, production and self-hosted deploys leave them off until their oper
   every change with the title as the message, by the agent at `noreply@gateweave.com`, with the
   repository's own hooks. It refuses when the work has no commit the default branch lacks, then
   runs `git push` of `gateweave/<conversation>` (`RunnerSandbox.push`). The Worker then opens a
-  pull request against the default branch with a token for `pull_requests: write` alone, or
-  updates the one the branch has open; the sandbox never makes it. The pull request goes on the run
+  pull request against the default branch with a token for `pull_requests: write` and
+  `contents: read`, or updates the one the branch has open; the sandbox never makes it. GitHub
+  lists only the first for these calls, but refuses a pull request with "not all refs are
+  readable" without the second. A sandbox that stopped and starts again (after 15 minutes without
+  use) clones the repository afresh and goes on from the branch as the conversation last pushed
+  it, so its next push adds to the same pull request. The pull request goes on the run
   (`runs.pull_request`), and Runs and Chat link to it.
 - **Only that push gets through.** `RunnerSandbox` opens a push window, in memory, for as long as
   its own `git push` runs. Only then does `decideOutbound` let `git-receive-pack` through, with a

@@ -202,7 +202,10 @@ describe("a conversation with a sandbox", () => {
 		expect(github).toEqual([
 			{
 				route: "POST /app/installations/99/access_tokens",
-				body: { repository_ids: [7], permissions: { pull_requests: "write" } },
+				body: {
+					repository_ids: [7],
+					permissions: { contents: "read", pull_requests: "write" },
+				},
 			},
 			{
 				route: `GET /repos/acme/site/pulls?head=acme%3Agateweave%2F${conversationId}&state=open&per_page=1`,

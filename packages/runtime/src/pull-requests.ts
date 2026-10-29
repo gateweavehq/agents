@@ -5,7 +5,7 @@
  *
  * The push leaves through `SandboxOutbound`, which lets that one push through with a token that
  * writes, and only to the conversation's branch. The pull request is made here, in the Worker, with
- * a token for pull requests alone. The sandbox never holds either.
+ * a token that writes pull requests and only reads the code. The sandbox never holds either.
  */
 import {
 	type GitHubApp,
@@ -60,7 +60,10 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 	const name = { owner: repository.owner, name: repository.name };
 	return {
 		async propose({ branch, title, body }) {
+			// GitHub lists only Pull requests for these calls, but refuses to open one with "not all
+			// refs are readable" unless the token can also read the branches.
 			const token = await app.repositoryToken(repository.installationId, repository.externalId, {
+				contents: "read",
 				pull_requests: "write",
 			});
 			const open = await openPullRequestFrom(token, name, branch);
