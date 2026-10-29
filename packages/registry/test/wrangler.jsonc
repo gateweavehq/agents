@@ -6,7 +6,12 @@
 	"compatibility_date": "2026-10-01",
 	"compatibility_flags": ["nodejs_compat"],
 	// A key for the tests' sealed secrets only; it protects nothing.
-	"vars": { "SECRETS_KEY": "dGVzdC1vbmx5LXNlY3JldHMta2V5LXRlc3Qtb25seS0=" },
+	// A Workers AI token and account that exist only here, so the registry sees Workers AI as on.
+	"vars": {
+		"SECRETS_KEY": "dGVzdC1vbmx5LXNlY3JldHMta2V5LXRlc3Qtb25seS0=",
+		"WORKERS_AI_TOKEN": "workers-ai-test-token-not-a-real-one",
+		"CLOUDFLARE_ACCOUNT_ID": "0123456789abcdef0123456789abcdef"
+	},
 	"durable_objects": {
 		"bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }]
 	},

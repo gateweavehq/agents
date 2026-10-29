@@ -9,6 +9,7 @@ import {
 	AGENT_RUNTIMES,
 	APPLICATION_STATES,
 	ASSET_KINDS,
+	KEYED_PROVIDERS,
 	type McpTool,
 	type Metadata,
 	MODEL_PROVIDERS,
@@ -396,7 +397,7 @@ export const scanRequests = sqliteTable(
  * the key check ever decrypt it; the app sees `hint`.
  */
 export const providerKeys = sqliteTable("provider_keys", {
-	provider: text("provider", { enum: MODEL_PROVIDERS }).primaryKey(),
+	provider: text("provider", { enum: KEYED_PROVIDERS }).primaryKey(),
 	sealed: text("sealed").notNull(),
 	hint: text("hint").notNull(),
 	addedBy: text("added_by").notNull(),

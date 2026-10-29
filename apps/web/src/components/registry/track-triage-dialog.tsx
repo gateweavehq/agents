@@ -1,4 +1,11 @@
-import { MODEL_PROVIDER_NAMES, MODEL_PROVIDERS, type ModelProvider } from "@gateweave/agents-model";
+import {
+	isKeyedProvider,
+	MODEL_PROVIDER_NAMES,
+	MODEL_PROVIDERS,
+	type ModelProvider,
+	providerMissing,
+	providerPickerNote,
+} from "@gateweave/agents-model";
 import { useNavigate } from "@tanstack/react-router";
 import { Copy } from "lucide-react";
 import { type FormEvent, useState } from "react";
@@ -24,6 +31,7 @@ const GATEWEAVE_TRACK = "https://track.gateweave.com";
 /** A model to start from for each provider: triage is short work, so a fast one. */
 const SUGGESTED_MODELS: Partial<Record<ModelProvider, string>> = {
 	anthropic: "claude-haiku-5-5",
+	"workers-ai": "@cf/meta/llama-4-scout-17b-16e-instruct",
 };
 
 const SELECT = "h-9 w-full rounded-md border bg-transparent px-2 text-sm";
@@ -37,10 +45,10 @@ function message(error: unknown) {
  * agent and its trigger; then the webhook to add in Track, whose secret comes back here.
  */
 export function TrackTriageDialog({
-	keyed,
+	available,
 	onClose,
 }: {
-	keyed: ModelProvider[];
+	available: ModelProvider[];
 	onClose: () => void;
 }) {
 	const [made, setMade] = useState<TrackTriageSetUp | null>(null);
@@ -50,7 +58,7 @@ export function TrackTriageDialog({
 				{made ? (
 					<WebhookStep made={made} onClose={onClose} />
 				) : (
-					<SetUpStep keyed={keyed} onMade={setMade} onClose={onClose} />
+					<SetUpStep available={available} onMade={setMade} onClose={onClose} />
 				)}
 			</DialogContent>
 		</Dialog>
@@ -58,16 +66,16 @@ export function TrackTriageDialog({
 }
 
 function SetUpStep({
-	keyed,
+	available,
 	onMade,
 	onClose,
 }: {
-	keyed: ModelProvider[];
+	available: ModelProvider[];
 	onMade: (made: TrackTriageSetUp) => void;
 	onClose: () => void;
 }) {
 	const { slug } = useWorkspace();
-	const first = MODEL_PROVIDERS.find((provider) => keyed.includes(provider)) ?? "anthropic";
+	const first = MODEL_PROVIDERS.find((provider) => available.includes(provider)) ?? "anthropic";
 	const [trackUrl, setTrackUrl] = useState(GATEWEAVE_TRACK);
 	const [agentKey, setAgentKey] = useState("");
 	const [provider, setProvider] = useState<ModelProvider>(first);
@@ -149,7 +157,7 @@ function SetUpStep({
 						{MODEL_PROVIDERS.map((option) => (
 							<option key={option} value={option}>
 								{MODEL_PROVIDER_NAMES[option]}
-								{keyed.includes(option) ? "" : " (no key)"}
+								{available.includes(option) ? "" : providerPickerNote(option)}
 							</option>
 						))}
 					</select>
@@ -167,10 +175,12 @@ function SetUpStep({
 					/>
 				</div>
 			</div>
-			{!keyed.includes(provider) && (
+			{!available.includes(provider) && (
 				<p className="text-xs text-amber-600 dark:text-amber-500">
-					The workspace has no {MODEL_PROVIDER_NAMES[provider]} key yet, so the agent cannot answer
-					until an owner or admin adds one in Settings.
+					{providerMissing(provider)}
+					{isKeyedProvider(provider)
+						? " yet, so the agent cannot answer until an owner or admin adds one in Settings."
+						: ", so the agent cannot answer until whoever runs the server turns it on."}
 				</p>
 			)}
 			{error && (

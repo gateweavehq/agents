@@ -54,6 +54,12 @@ caching and rate limits, set `AI_GATEWAY_URL` to
 `https://gateway.ai.cloudflare.com/v1/<account id>/<gateway>`, and `AI_GATEWAY_TOKEN` if the
 gateway is authenticated.
 
+To offer [Workers AI](https://developers.cloudflare.com/workers-ai/) models to every workspace,
+with no key of their own, set the secret `WORKERS_AI_TOKEN` (a Cloudflare API token with the
+Workers AI permission) and `CLOUDFLARE_ACCOUNT_ID`, or leave the account out and it is taken from
+`AI_GATEWAY_URL`. Your Cloudflare account pays for those runs, so leave both out unless you mean
+that. Set the token with `pnpm wrangler secret put WORKERS_AI_TOKEN`.
+
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Run `pnpm verify` before you

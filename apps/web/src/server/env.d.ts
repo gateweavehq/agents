@@ -35,5 +35,15 @@ declare namespace Cloudflare {
 		AI_GATEWAY_URL?: string;
 		/** The gateway's token, when it is an authenticated gateway. */
 		AI_GATEWAY_TOKEN?: string;
+		/**
+		 * A Cloudflare API token with Workers AI permission. Workers AI is offered to every workspace
+		 * only when this is set (with an account, below), and this deployment's Cloudflare account
+		 * pays for its runs. Never put it in wrangler.jsonc.
+		 */
+		WORKERS_AI_TOKEN?: string;
+		/**
+		 * The Cloudflare account that pays for Workers AI. Taken from AI_GATEWAY_URL when unset.
+		 */
+		CLOUDFLARE_ACCOUNT_ID?: string;
 	}
 }

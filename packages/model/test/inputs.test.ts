@@ -4,9 +4,21 @@ import {
 	agentDefinitionInput,
 	type DetectedAgent,
 	type DetectedAsset,
+	isKeyedProvider,
+	KEYED_PROVIDERS,
+	MODEL_PROVIDERS,
 	mcpServerInput,
+	parseGatewayUrl,
+	providerKeyInput,
+	providerMissing,
+	providerMissingShort,
+	providerPickerNote,
 	repositoryPath,
 	scanResult,
+	WORKERS_AI_NOT_OFFERED,
+	workersAiAccount,
+	workersAiBaseUrl,
+	workersAiOffered,
 } from "../src";
 
 const COMMIT = "a".repeat(40);
@@ -237,6 +249,73 @@ describe("agentDefinitionInput", () => {
 		});
 		expect(parsed.success ? null : parsed.error.issues[0]?.message).toBe(
 			"An MCP server is chosen twice",
+		);
+	});
+});
+
+describe("model providers", () => {
+	const definition = (provider: string, model: string) =>
+		agentDefinitionInput.safeParse({
+			name: "Triage",
+			description: null,
+			provider,
+			model,
+			instructions: null,
+		});
+
+	it("lets an agent use Workers AI, with its own model ids", () => {
+		const parsed = definition("workers-ai", "@cf/meta/llama-4-scout-17b-16e-instruct");
+		expect(parsed.data?.provider).toBe("workers-ai");
+		expect(parsed.data?.model).toBe("@cf/meta/llama-4-scout-17b-16e-instruct");
+		expect(definition("workers-ai", "@cf/meta/llama 4").success).toBe(false);
+		expect(definition("cloudflare", "x").success).toBe(false);
+	});
+
+	it("keeps keys to the providers that have them", () => {
+		const key = (provider: string) => providerKeyInput.safeParse({ provider, key: "sk-abcdefgh" });
+		for (const provider of KEYED_PROVIDERS) expect(key(provider).success).toBe(true);
+		expect(key("workers-ai").success).toBe(false);
+		expect(MODEL_PROVIDERS).toEqual([...KEYED_PROVIDERS, "workers-ai"]);
+		expect(KEYED_PROVIDERS.every(isKeyedProvider)).toBe(true);
+		expect(isKeyedProvider("workers-ai")).toBe(false);
+	});
+
+	it("says what a provider is missing", () => {
+		expect(providerMissing("openai")).toBe("The workspace has no OpenAI key");
+		expect(providerMissing("workers-ai")).toBe(WORKERS_AI_NOT_OFFERED);
+		expect(providerMissingShort("google")).toBe("no Google key yet");
+		expect(providerMissingShort("workers-ai")).toBe("not on this server");
+		expect(providerPickerNote("anthropic")).toBe(" (no key)");
+		expect(providerPickerNote("workers-ai")).toBe(" (not on this server)");
+	});
+});
+
+describe("Workers AI settings", () => {
+	const gateway = "https://gateway.ai.cloudflare.com/v1/abc123/main";
+
+	it("is offered only with the token and an account to charge", () => {
+		expect(workersAiOffered({})).toBe(false);
+		expect(workersAiOffered({ WORKERS_AI_TOKEN: "t" })).toBe(false);
+		expect(workersAiOffered({ CLOUDFLARE_ACCOUNT_ID: "abc123" })).toBe(false);
+		expect(workersAiOffered({ WORKERS_AI_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "abc123" })).toBe(false);
+		expect(workersAiOffered({ WORKERS_AI_TOKEN: "t", CLOUDFLARE_ACCOUNT_ID: "abc123" })).toBe(true);
+		expect(workersAiOffered({ WORKERS_AI_TOKEN: "t", AI_GATEWAY_URL: gateway })).toBe(true);
+		expect(workersAiOffered({ WORKERS_AI_TOKEN: "t", AI_GATEWAY_URL: "https://example.com" })).toBe(
+			false,
+		);
+	});
+
+	it("charges the account named outright, else the gateway's", () => {
+		expect(workersAiAccount({ AI_GATEWAY_URL: `${gateway}/` })).toBe("abc123");
+		expect(workersAiAccount({ AI_GATEWAY_URL: gateway, CLOUDFLARE_ACCOUNT_ID: " other " })).toBe(
+			"other",
+		);
+		// A named account that is not an id is not replaced by the gateway's.
+		expect(workersAiAccount({ AI_GATEWAY_URL: gateway, CLOUDFLARE_ACCOUNT_ID: "a/b" })).toBeNull();
+		expect(parseGatewayUrl(`${gateway}//`)).toEqual({ account: "abc123", gateway: "main" });
+		expect(parseGatewayUrl("https://gateway.ai.cloudflare.com/v1/abc123")).toBeNull();
+		expect(workersAiBaseUrl("abc123")).toBe(
+			"https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1",
 		);
 	});
 });

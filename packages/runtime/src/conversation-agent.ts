@@ -1,5 +1,5 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
-import type { RunSpan, TurnEdge, TurnVia } from "@gateweave/agents-model";
+import type { RunSpan, TurnEdge, TurnVia, WorkersAiSettings } from "@gateweave/agents-model";
 import type { ConversationTurn, RegistryDO } from "@gateweave/agents-registry";
 import { type Agent, getAgentByName } from "agents";
 import {
@@ -15,7 +15,7 @@ import { describeFailure, failureForLogs, type GatewaySettings, languageModel } 
 import { connectTools } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
-interface RuntimeEnv extends GatewaySettings {
+interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 	REGISTRY: DurableObjectNamespace<RegistryDO>;
 	CONVERSATIONS: DurableObjectNamespace<Agent<Cloudflare.Env>>;
 }

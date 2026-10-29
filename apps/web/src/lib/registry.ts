@@ -5,6 +5,7 @@ import {
 	type AssetDetail,
 	type AssetKind,
 	agentDefinitionInput,
+	isKeyedProvider,
 	type LibraryEntry,
 	libraryEditInput,
 	libraryTarget,
@@ -212,11 +213,19 @@ export const setTeamGraph = createServerFn({ method: "POST" })
 		return team;
 	});
 
-/** The models the workspace's key for `provider` can use, to choose an agent's model from. */
+/**
+ * The models the workspace's key for `provider` can use, to choose an agent's model from. For
+ * Workers AI, the models the server's own token can use.
+ */
 export const getModels = createServerFn({ method: "GET" })
 	.validator(z.object({ slug: z.string().min(1), provider: z.enum(MODEL_PROVIDERS) }))
 	.handler(async ({ data }): Promise<ProviderModel[]> => {
 		const registry = await managedRegistryOf(data.slug);
+		if (!isKeyedProvider(data.provider)) {
+			// Workers AI has no workspace key: the server lists its models with its own token.
+			const { workersAiModels } = await import("#/server/workers-ai");
+			return workersAiModels();
+		}
 		const models = await registry.listModels(data.provider);
 		if ("status" in models) throw new Error(models.message);
 		return models;

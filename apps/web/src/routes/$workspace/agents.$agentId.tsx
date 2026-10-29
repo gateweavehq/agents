@@ -3,8 +3,10 @@ import {
 	type AgentDefinition,
 	type AgentDetail,
 	type AgentMcpServer,
+	isKeyedProvider,
 	MODEL_PROVIDER_NAMES,
 	type PinnedAsset,
+	providerMissing,
 } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { MessagesSquare, Pencil, Trash2 } from "lucide-react";
@@ -17,6 +19,7 @@ import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
+import { availableProviders } from "#/lib/available-providers";
 import { startChat } from "#/lib/chat";
 import { getProviderKeys } from "#/lib/providers";
 import { getAgent, getLibrary, removeAgent, updateAgent } from "#/lib/registry";
@@ -37,7 +40,7 @@ export const Route = createFileRoute("/$workspace/agents/$agentId")({
 			detail && {
 				...detail,
 				library: library ?? [],
-				keyed: keys?.keys.map((key) => key.provider) ?? [],
+				available: availableProviders(keys),
 				// Null for members: owners and admins manage triggers.
 				triggers,
 			}
@@ -131,10 +134,12 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 				<p className="rounded-lg border p-3 text-sm">
 					{provider} · <span className="font-mono">{definition.model}</span>
 				</p>
-				{!data.keyed.includes(definition.provider) && (
+				{!data.available.includes(definition.provider) && (
 					<p className="text-sm text-amber-600 dark:text-amber-500">
-						The workspace has no {provider} key, so this agent cannot run yet.{" "}
-						{admin ? (
+						{providerMissing(definition.provider)}, so this agent cannot run yet.{" "}
+						{!isKeyedProvider(definition.provider) ? (
+							"Whoever runs the server can turn it on."
+						) : admin ? (
 							<Link
 								to="/$workspace/settings/models"
 								params={{ workspace: slug }}
@@ -502,7 +507,7 @@ function AgentActions({ definition }: { definition: AgentDefinition }) {
 				<AgentDialog
 					agent={{ agent, definition }}
 					library={data.library}
-					keyed={data.keyed}
+					available={data.available}
 					onSave={async (input) => {
 						await updateAgent({ data: { slug, agentId: agent.id, agent: input } });
 						await router.invalidate();

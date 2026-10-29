@@ -8,6 +8,7 @@ import { AgentList } from "#/components/registry/agent-list";
 import { TrackTriageDialog } from "#/components/registry/track-triage-dialog";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
+import { availableProviders } from "#/lib/available-providers";
 import { getProviderKeys } from "#/lib/providers";
 import { createAgent, getAgents, getLibrary } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
@@ -51,14 +52,14 @@ function AgentsPage() {
 /** Agents set up in one step, with everything they need around them. */
 function ReadyMade() {
 	const { slug } = useWorkspace();
-	const [keyed, setKeyed] = useState<ModelProvider[] | null>(null);
+	const [available, setAvailable] = useState<ModelProvider[] | null>(null);
 	const [loading, setLoading] = useState(false);
 
 	async function open() {
 		setLoading(true);
 		try {
 			const keys = await getProviderKeys({ data: slug });
-			setKeyed(keys?.keys.map((key) => key.provider) ?? []);
+			setAvailable(availableProviders(keys));
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : "Something went wrong");
 		} finally {
@@ -84,7 +85,7 @@ function ReadyMade() {
 					Set up
 				</Button>
 			</div>
-			{keyed && <TrackTriageDialog keyed={keyed} onClose={() => setKeyed(null)} />}
+			{available && <TrackTriageDialog available={available} onClose={() => setAvailable(null)} />}
 		</section>
 	);
 }
@@ -122,7 +123,7 @@ function NewAgentButton() {
 			{choices && (
 				<AgentDialog
 					library={choices.library ?? []}
-					keyed={choices.keys?.keys.map((key) => key.provider) ?? []}
+					available={availableProviders(choices.keys)}
 					onSave={async (agent) => {
 						const created = await createAgent({ data: { slug, agent } });
 						toast.success(`${created.name} was created`);

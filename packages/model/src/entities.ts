@@ -6,6 +6,7 @@ import type {
 	AssetKind,
 	DriftFileState,
 	DriftState,
+	KeyedProvider,
 	ModelProvider,
 	RepositoryProvider,
 	RepositoryRuntime,
@@ -278,7 +279,7 @@ export interface Overview {
  * is its last four characters, enough to tell two keys apart.
  */
 export interface ProviderKey {
-	provider: ModelProvider;
+	provider: KeyedProvider;
 	hint: string;
 	/** Who added it, by name, as the app knew them then. Replacing a key adds a new one. */
 	addedBy: string;

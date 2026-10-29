@@ -110,6 +110,7 @@ export interface RegistryStub {
 	): Promise<ApplyOutcome | ApplyRefusal>;
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
+	listProviderKeys(): Promise<ProviderKey[]>;
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
 	createMcpServer(input: McpServerInput): Promise<string>;
 	editMcpServer(input: McpServerEditInput): Promise<number>;
@@ -192,7 +193,8 @@ function builtModules(): V4ModuleDefinition[] {
  * With `github`, the Worker is set up as that GitHub App, and its requests to github.com and
  * api.github.com reach the fake instead of failing. With `models`, its requests to the model
  * providers' APIs reach that fake. Requests to a host in `hosts` reach its handler, as an MCP
- * server elsewhere would be reached. It has a `SECRETS_KEY` unless `secrets` is false.
+ * server elsewhere would be reached. It has a `SECRETS_KEY` unless `secrets` is false, and the
+ * other settings in `settings` (such as `WORKERS_AI_TOKEN`, which offers Workers AI).
  */
 export async function startAgents(
 	origin: string,
@@ -202,12 +204,14 @@ export async function startAgents(
 		models,
 		hosts = {},
 		secrets = true,
+		settings = {},
 	}: {
 		isolates?: number;
 		github?: FakeGitHub;
 		models?: FakeModels;
 		hosts?: Record<string, (request: Request) => Response | Promise<Response>>;
 		secrets?: boolean;
+		settings?: Record<string, string>;
 	} = {},
 ) {
 	const config = JSON.parse(readFileSync(join(serverDir, "wrangler.json"), "utf8")) as BuiltConfig;
@@ -241,6 +245,7 @@ export async function startAgents(
 						BETTER_AUTH_URL: origin,
 						EMAIL_FROM: `${EMAIL_FROM.name} <${EMAIL_FROM.email}>`,
 						...(secrets ? { SECRETS_KEY: secretsKey } : {}),
+						...settings,
 						...github?.bindings(),
 					},
 					serviceBindings: { EMAIL: "outbox" },

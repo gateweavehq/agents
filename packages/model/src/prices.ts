@@ -8,6 +8,8 @@
  * - https://platform.claude.com/docs/en/about-claude/pricing (cache writes at the 5-minute rate)
  * - https://developers.openai.com/api/docs/pricing
  * - https://ai.google.dev/gemini-api/docs/pricing (context caching, without storage)
+ * - https://developers.cloudflare.com/workers-ai/platform/pricing/ (Workers AI, from the `price`
+ *   property of the model catalog; a model that lists no cached rate bills cached input as input)
  */
 import type { ModelProvider } from "./vocabulary";
 
@@ -160,6 +162,15 @@ export const MODEL_PRICES: Record<ModelProvider, Record<string, ModelPrice | Mod
 		},
 		"gemini-2.5-flash": { input: 0.3, output: 2.5, cacheRead: 0.03 },
 		"gemini-2.5-flash-lite": { input: 0.1, output: 0.4, cacheRead: 0.01 },
+	},
+	// Checked 2026-10-29. The deployment pays these, not the workspace.
+	"workers-ai": {
+		"@cf/meta/llama-4-scout-17b-16e-instruct": { input: 0.27, output: 0.85, cacheRead: 0.27 },
+		"@cf/openai/gpt-oss-120b": { input: 0.35, output: 0.75, cacheRead: 0.35 },
+		"@cf/openai/gpt-oss-20b": { input: 0.2, output: 0.3, cacheRead: 0.2 },
+		"@cf/qwen/qwen3-30b-a3b-fp8": { input: 0.0509, output: 0.335, cacheRead: 0.0509 },
+		"@cf/zai-org/glm-4.7-flash": { input: 0.0605, output: 0.4, cacheRead: 0.0605 },
+		"@cf/moonshotai/kimi-k2.6": { input: 0.95, output: 4, cacheRead: 0.16 },
 	},
 };
 

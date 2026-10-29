@@ -1,4 +1,4 @@
-import { MODEL_PROVIDER_NAMES } from "@gateweave/agents-model";
+import { MODEL_PROVIDER_NAMES, providerMissingShort } from "@gateweave/agents-model";
 import { createFileRoute, getRouteApi, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { MessagesSquare } from "lucide-react";
 import { useState } from "react";
@@ -115,7 +115,7 @@ function AgentRow({ agent }: { agent: ChatAgent }) {
 				<p className="truncate text-sm font-medium">{agent.name}</p>
 				<p className="truncate text-xs text-muted-foreground">
 					{MODEL_PROVIDER_NAMES[agent.provider]} · <span className="font-mono">{agent.model}</span>
-					{agent.keyed ? "" : ` · no ${MODEL_PROVIDER_NAMES[agent.provider]} key yet`}
+					{agent.available ? "" : ` · ${providerMissingShort(agent.provider)}`}
 				</p>
 				{agent.description && (
 					<p className="line-clamp-2 text-sm text-muted-foreground">{agent.description}</p>
@@ -140,7 +140,7 @@ function TeamRow({ team }: { team: ChatTeam }) {
 				<p className="truncate text-xs text-muted-foreground">
 					{lead ? `Led by ${lead.name}` : `Its lead, ${team.leadName}, was removed`} ·{" "}
 					{team.members === 1 ? "1 member" : `${team.members} members`}
-					{lead && !lead.keyed ? ` · no ${MODEL_PROVIDER_NAMES[lead.provider]} key yet` : ""}
+					{lead && !lead.available ? ` · ${providerMissingShort(lead.provider)}` : ""}
 				</p>
 				{team.description && (
 					<p className="line-clamp-2 text-sm text-muted-foreground">{team.description}</p>

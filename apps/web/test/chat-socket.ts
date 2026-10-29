@@ -7,9 +7,17 @@ export function ask(socket: WebSocket, text: string): Promise<{ text: string; ra
 		const turn = { text: "", raw: [] as string[] };
 		socket.addEventListener("message", (event) => {
 			const raw = String(event.data);
-			const frame = JSON.parse(raw) as { type: string; id?: string; body?: string; done?: boolean };
+			const frame = JSON.parse(raw) as {
+				type: string;
+				id?: string;
+				body?: string;
+				done?: boolean;
+				error?: boolean;
+			};
 			if (frame.type !== "cf_agent_use_chat_response" || frame.id !== id) return;
 			turn.raw.push(raw);
+			// A turn the registry refuses is answered with the reason, not with chunks.
+			if (frame.error) return reject(new Error(frame.body));
 			if (frame.body?.trim()) {
 				const chunk = JSON.parse(frame.body) as {
 					type: string;

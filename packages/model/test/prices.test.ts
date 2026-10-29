@@ -51,17 +51,45 @@ it("knows a dated snapshot of a listed model, and nothing it does not list", () 
 });
 
 it("lists sensible prices", () => {
-	for (const models of Object.values(MODEL_PRICES)) {
+	for (const [provider, models] of Object.entries(MODEL_PRICES)) {
 		for (const [model, listed] of Object.entries(models)) {
 			const periods = Array.isArray(listed) ? listed : [listed];
 			for (const price of periods) {
 				expect(price.input, model).toBeGreaterThan(0);
 				expect(price.output, model).toBeGreaterThanOrEqual(price.input);
-				expect(price.cacheRead, model).toBeLessThan(price.input);
+				// Workers AI lists no cached rate for most models, so cached input costs what input does.
+				if (provider === "workers-ai")
+					expect(price.cacheRead, model).toBeLessThanOrEqual(price.input);
+				else expect(price.cacheRead, model).toBeLessThan(price.input);
 				if (price.long) expect(price.long.input, model).toBeGreaterThan(price.input);
 			}
 			const days = periods.map((price) => price.since ?? "");
 			expect(days, model).toEqual([...days].sort());
 		}
 	}
+});
+
+it("prices the Workers AI models the catalog lists, and no others", () => {
+	const at = day("2026-10-29");
+	// A million tokens in and out, at the catalog's per-million rates.
+	const million = tokens(1_000_000, 1_000_000);
+	expect(requestCost("workers-ai", "@cf/meta/llama-4-scout-17b-16e-instruct", million, at)).toBe(
+		1_120_000,
+	);
+	expect(requestCost("workers-ai", "@cf/openai/gpt-oss-120b", million, at)).toBe(1_100_000);
+	expect(requestCost("workers-ai", "@cf/openai/gpt-oss-20b", million, at)).toBe(500_000);
+	expect(requestCost("workers-ai", "@cf/qwen/qwen3-30b-a3b-fp8", million, at)).toBe(385_900);
+	expect(requestCost("workers-ai", "@cf/zai-org/glm-4.7-flash", million, at)).toBe(460_500);
+	expect(requestCost("workers-ai", "@cf/moonshotai/kimi-k2.6", million, at)).toBe(4_950_000);
+	// Kimi lists a cached rate; the other models bill cached input as input.
+	expect(
+		requestCost("workers-ai", "@cf/moonshotai/kimi-k2.6", tokens(1_000_000, 0, 500_000), at),
+	).toBe(475_000 + 80_000);
+	expect(
+		requestCost("workers-ai", "@cf/openai/gpt-oss-20b", tokens(1_000_000, 0, 500_000), at),
+	).toBe(200_000);
+	// Any other model costs what an unknown model of any provider does: no estimate.
+	expect(requestCost("workers-ai", "@cf/meta/llama-3.1-8b-instruct", million, at)).toBeNull();
+	// Prices belong to a provider: the same id under another one is not listed.
+	expect(priceOf("openai", "@cf/openai/gpt-oss-20b", at)).toBeNull();
 });

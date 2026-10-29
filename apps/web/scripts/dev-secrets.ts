@@ -17,6 +17,8 @@ export const OPTIONAL_SECRETS = [
 	"SECRETS_KEY",
 	"AI_GATEWAY_URL",
 	"AI_GATEWAY_TOKEN",
+	"WORKERS_AI_TOKEN",
+	"CLOUDFLARE_ACCOUNT_ID",
 ] as const;
 
 /** What local dev loads from .dev.vars: the required secrets, and the optional ones it sets. */

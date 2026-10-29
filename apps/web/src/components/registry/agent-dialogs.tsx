@@ -3,6 +3,7 @@ import {
 	type AgentDefinition,
 	type AgentDefinitionInput,
 	INSTRUCTION_KINDS,
+	isKeyedProvider,
 	type LibraryEntry,
 	MAX_AGENT_MCP_SERVERS,
 	type McpCheck,
@@ -12,6 +13,8 @@ import {
 	type ModelProvider,
 	type PinnedAsset,
 	type ProviderModel,
+	providerMissing,
+	providerPickerNote,
 } from "@gateweave/agents-model";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
@@ -39,20 +42,21 @@ const SELECT = "h-9 w-full rounded-md border bg-transparent px-2 text-sm";
 
 /**
  * Defines a new agent run by Gateweave, or changes `agent`. Models are listed with the
- * workspace's key for the provider; any model id can be typed. Assets already pinned keep their
- * version, and a newly chosen asset is pinned to its latest.
+ * workspace's key for the provider (for Workers AI, with the server's own token); any model id
+ * can be typed. Assets already pinned keep their version, and a newly chosen asset is pinned to
+ * its latest.
  */
 export function AgentDialog({
 	agent,
 	library,
-	keyed,
+	available,
 	onSave,
 	onClose,
 }: {
 	agent?: { agent: Agent; definition: AgentDefinition };
 	library: LibraryEntry[];
-	/** The providers the workspace has a key for. */
-	keyed: ModelProvider[];
+	/** The providers an agent can use: the workspace has a key, or the server offers it. */
+	available: ModelProvider[];
 	onSave: (input: AgentDefinitionInput) => Promise<void>;
 	onClose: () => void;
 }) {
@@ -63,7 +67,7 @@ export function AgentDialog({
 	const [name, setName] = useState(agent?.agent.name ?? "");
 	const [description, setDescription] = useState(agent?.agent.description ?? "");
 	const [provider, setProvider] = useState<ModelProvider>(
-		agent?.definition.provider ?? keyed[0] ?? "anthropic",
+		agent?.definition.provider ?? available[0] ?? "anthropic",
 	);
 	const [model, setModel] = useState(agent?.definition.model ?? "");
 	const [instructions, setInstructions] = useState(pinned?.asset.id ?? "");
@@ -80,7 +84,7 @@ export function AgentDialog({
 	const [models, setModels] = useState<ProviderModel[] | string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const hasKey = keyed.includes(provider);
+	const usable = available.includes(provider);
 
 	useEffect(() => {
 		let live = true;
@@ -96,7 +100,7 @@ export function AgentDialog({
 
 	useEffect(() => {
 		setModels(null);
-		if (!hasKey) return;
+		if (!usable) return;
 		let live = true;
 		getModels({ data: { slug, provider } })
 			.then((found) => live && setModels(found))
@@ -104,7 +108,7 @@ export function AgentDialog({
 		return () => {
 			live = false;
 		};
-	}, [slug, provider, hasKey]);
+	}, [slug, provider, usable]);
 
 	const choices = library.filter(({ asset }) =>
 		(INSTRUCTION_KINDS as readonly string[]).includes(asset.kind),
@@ -204,7 +208,7 @@ export function AgentDialog({
 								{MODEL_PROVIDERS.map((option) => (
 									<option key={option} value={option}>
 										{MODEL_PROVIDER_NAMES[option]}
-										{keyed.includes(option) ? "" : " (no key)"}
+										{available.includes(option) ? "" : providerPickerNote(option)}
 									</option>
 								))}
 							</select>
@@ -232,7 +236,7 @@ export function AgentDialog({
 							)}
 						</div>
 					</div>
-					<ModelsHint provider={provider} hasKey={hasKey} models={models} />
+					<ModelsHint provider={provider} usable={usable} models={models} />
 					<div className="space-y-2">
 						<Label htmlFor="agent-instructions">Instructions</Label>
 						<select
@@ -435,16 +439,24 @@ function pinFor(
 
 function ModelsHint({
 	provider,
-	hasKey,
+	usable,
 	models,
 }: {
 	provider: ModelProvider;
-	hasKey: boolean;
+	usable: boolean;
 	models: ProviderModel[] | string | null;
 }) {
 	const { slug } = useWorkspace();
 	const name = MODEL_PROVIDER_NAMES[provider];
-	if (!hasKey) {
+	if (!usable && !isKeyedProvider(provider)) {
+		return (
+			<p className="-mt-2 text-xs text-muted-foreground">
+				{providerMissing(provider)}, so this agent cannot run until whoever runs the server turns it
+				on. Type the model's id meanwhile.
+			</p>
+		);
+	}
+	if (!usable) {
 		return (
 			<p className="-mt-2 text-xs text-muted-foreground">
 				The workspace has no {name} key yet, so this agent cannot run until someone adds one in{" "}
@@ -467,8 +479,8 @@ function ModelsHint({
 	}
 	return (
 		<p className="-mt-2 text-xs text-muted-foreground">
-			{models.length === 1 ? "1 model" : `${models.length} models`} available with the workspace's{" "}
-			{name} key.
+			{models.length === 1 ? "1 model" : `${models.length} models`} available{" "}
+			{isKeyedProvider(provider) ? `with the workspace's ${name} key` : `on this server`}.
 		</p>
 	);
 }
