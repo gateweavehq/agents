@@ -7,14 +7,13 @@
 	"compatibility_flags": ["nodejs_compat"],
 	// A key for the tests' sealed secrets only; it protects nothing. The Workers AI token and
 	// account are as made up: no test reaches Cloudflare, and the model's API is a spy on fetch.
-	// So is the GitHub App: the registry only checks that one is set up before a sandbox checks
-	// out a repository, and the stand-in sandbox clones nothing.
+	// So is the GitHub App, whose GitHub is a spy on fetch too; its key is made for each run in
+	// vitest.config.ts. The stand-in sandbox clones and pushes nothing.
 	"vars": {
 		"SECRETS_KEY": "dGVzdC1vbmx5LXNlY3JldHMta2V5LXRlc3Qtb25seS0=",
 		"WORKERS_AI_TOKEN": "workers-ai-test-token-not-a-real-one",
 		"CLOUDFLARE_ACCOUNT_ID": "0123456789abcdef0123456789abcdef",
-		"GITHUB_APP_ID": "12345",
-		"GITHUB_APP_PRIVATE_KEY": "not-a-key"
+		"GITHUB_APP_ID": "12345"
 	},
 	// SANDBOX is a stand-in with files in memory: the tests have no containers.
 	"durable_objects": {

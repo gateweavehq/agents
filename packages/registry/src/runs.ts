@@ -10,6 +10,7 @@ import {
 	type Run,
 	type RunCursor,
 	type RunFinish,
+	type RunPullRequest,
 	type RunTotal,
 	type RunUsage,
 	SANDBOX_IDLE_MINUTES,
@@ -165,6 +166,20 @@ export function finishRun(db: Db, id: string, finish: Required<RunFinish>): bool
 		.returning({ id: runs.id })
 		.get();
 	return closed !== undefined;
+}
+
+/**
+ * Puts the pull request a run opened or pushed to on it, while it goes. False when there is no
+ * such run going.
+ */
+export function recordRunPullRequest(db: Db, id: string, pullRequest: RunPullRequest): boolean {
+	const recorded = db
+		.update(runs)
+		.set({ pullRequest })
+		.where(and(eq(runs.id, id), eq(runs.status, "running")))
+		.returning({ id: runs.id })
+		.get();
+	return recorded !== undefined;
 }
 
 /**

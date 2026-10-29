@@ -62,6 +62,28 @@ describe("runs", () => {
 		expect((await stub.getRun(runId))?.status).toBe("succeeded");
 	});
 
+	it("carry the pull request their turn opened, while they go", async () => {
+		const { stub, runId } = await turn();
+		expect((await stub.getRun(runId))?.pullRequest).toBeNull();
+		const pullRequest = {
+			repository: "acme/site",
+			number: 12,
+			url: "https://github.com/acme/site/pull/12",
+		};
+		expect(await stub.recordRunPullRequest(runId, pullRequest)).toBe(true);
+		expect((await stub.getRun(runId))?.pullRequest).toEqual(pullRequest);
+
+		await stub.finishRun(runId, finished);
+		expect(
+			await stub.recordRunPullRequest(runId, {
+				...pullRequest,
+				number: 13,
+				url: "https://github.com/acme/site/pull/13",
+			}),
+		).toBe(false);
+		expect((await stub.getRun(runId))?.pullRequest).toEqual(pullRequest);
+	});
+
 	it("are not opened for a turn that cannot call the model", async () => {
 		const stub = registry();
 		const agent = await stub.createAgent({

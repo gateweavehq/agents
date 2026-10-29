@@ -1,7 +1,7 @@
 import { MODEL_PROVIDER_NAMES, type RunSpan, type TeamEdgeKind } from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import type { UIMessage } from "ai";
-import { ChevronRight, MessagesSquare, Webhook } from "lucide-react";
+import { ChevronRight, GitPullRequestArrow, MessagesSquare, Webhook } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Transcript } from "#/components/chat/conversation-view";
 import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
@@ -42,6 +42,20 @@ function RunPage() {
 						{run.triggerId !== null && <Webhook aria-hidden className="size-3.5 shrink-0" />}
 						Started by {run.startedByName} on {formatDateTime(run.startedAt)}
 					</p>
+					{run.pullRequest && (
+						<p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+							<GitPullRequestArrow aria-hidden className="size-3.5 shrink-0" />
+							Proposed its work in{" "}
+							<a
+								href={run.pullRequest.url}
+								target="_blank"
+								rel="noreferrer"
+								className="font-medium text-foreground underline-offset-4 hover:underline"
+							>
+								{run.pullRequest.repository}#{run.pullRequest.number}
+							</a>
+						</p>
+					)}
 					{run.parentRunId && run.edge && (
 						<p className="text-sm text-muted-foreground">
 							{EDGE_REACHED[run.edge]}{" "}

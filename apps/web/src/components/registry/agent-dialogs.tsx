@@ -417,7 +417,7 @@ export function AgentDialog({
 							<p className="text-xs text-muted-foreground">
 								Each conversation checks it out at <code>{SANDBOX_REPOSITORY_PATH}</code> on a
 								branch of its own, through the workspace's GitHub App. The agent changes the files
-								there, and cannot push them yet.
+								there and proposes them as a pull request; it pushes nothing else.
 							</p>
 						</div>
 					)}

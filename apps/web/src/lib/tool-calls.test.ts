@@ -1,6 +1,11 @@
 import type { DynamicToolUIPart, ToolUIPart, UIMessage } from "ai";
 import { expect, it } from "vitest";
-import { describeEdgeCall, describeToolCall, toolCallsOf } from "./tool-calls";
+import {
+	describeEdgeCall,
+	describePullRequestCall,
+	describeToolCall,
+	toolCallsOf,
+} from "./tool-calls";
 
 const call = { type: "dynamic-tool", toolCallId: "call-1", input: { query: "flaky" } } as const;
 
@@ -76,4 +81,44 @@ it("shows a call over a team's edge as its kind and the member it went to", () =
 	expect(describeEdgeCall(edge("tool-acme__search", { state: "input-available" }), members)).toBe(
 		null,
 	);
+});
+
+it("shows a call of open_pull_request by the pull request it made, linking only to GitHub", () => {
+	const pull = (state: object, type = "tool-open_pull_request") =>
+		({
+			type,
+			toolCallId: "call-3",
+			input: { title: "Fix the cart", body: "" },
+			...state,
+		}) as ToolUIPart;
+	const made = {
+		repository: "acme/site",
+		number: 12,
+		url: "https://github.com/acme/site/pull/12",
+		opened: true,
+		head: "a".repeat(40),
+	};
+	expect(describePullRequestCall(pull({ state: "input-available" }))).toEqual({
+		state: "running",
+		pullRequest: null,
+		error: null,
+	});
+	expect(describePullRequestCall(pull({ state: "output-available", output: made }))).toEqual({
+		state: "done",
+		pullRequest: { number: 12, url: "https://github.com/acme/site/pull/12", opened: true },
+		error: null,
+	});
+	expect(
+		describePullRequestCall(
+			pull({ state: "output-available", output: { ...made, url: "https://evil.example/pull/12" } }),
+		),
+	).toEqual({ state: "done", pullRequest: null, error: null });
+	expect(
+		describePullRequestCall(
+			pull({ state: "output-error", errorText: "There is nothing to propose" }),
+		),
+	).toEqual({ state: "failed", pullRequest: null, error: "There is nothing to propose" });
+	expect(
+		describePullRequestCall({ ...call, toolName: "search", state: "output-available", output: "" }),
+	).toBeNull();
 });

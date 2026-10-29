@@ -1,4 +1,9 @@
-import { readEdgeToolName, type TeamEdgeKind } from "@gateweave/agents-model";
+import {
+	PULL_REQUEST_TOOL,
+	type PullRequestOutcome,
+	readEdgeToolName,
+	type TeamEdgeKind,
+} from "@gateweave/agents-model";
 import {
 	type DynamicToolUIPart,
 	getToolName,
@@ -67,5 +72,35 @@ export function describeEdgeCall(
 		member: read.member,
 		state,
 		error: part.state === "output-error" ? part.errorText : null,
+	};
+}
+
+/**
+ * A call of the sandbox's `open_pull_request`, by the pull request it made, or null for any other
+ * tool. Only a link to the pull request's page on GitHub is shown: the output is the runtime's, but
+ * the page should not link anywhere else whatever it holds.
+ */
+export function describePullRequestCall(part: ToolCallPart): {
+	state: CallState;
+	pullRequest: { number: number; url: string; opened: boolean } | null;
+	error: string | null;
+} | null {
+	if (getToolName(part) !== PULL_REQUEST_TOOL) return null;
+	if (part.state === "input-streaming" || part.state === "input-available") {
+		return { state: "running", pullRequest: null, error: null };
+	}
+	if (part.state !== "output-available") {
+		return { state: "failed", pullRequest: null, error: part.errorText ?? null };
+	}
+	const output = part.output as Partial<PullRequestOutcome> | null;
+	const { number, url, opened } = output ?? {};
+	const linkable =
+		typeof number === "number" &&
+		typeof url === "string" &&
+		/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url);
+	return {
+		state: "done",
+		pullRequest: linkable ? { number, url, opened: opened === true } : null,
+		error: null,
 	};
 }

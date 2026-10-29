@@ -169,6 +169,23 @@ export async function pullRequest(
 	}
 }
 
+/** The open pull request from `branch` of the repository itself, or null when it has none. */
+export async function openPullRequestFrom(
+	token: string,
+	repository: RepositoryName,
+	branch: string,
+): Promise<PullRequest | null> {
+	const query = new URLSearchParams({
+		head: `${repository.owner}:${branch}`,
+		state: "open",
+		per_page: "1",
+	});
+	const [found] = z
+		.array(pullSchema)
+		.parse(await request(`${repositoryPath(repository)}/pulls?${query}`, token));
+	return found ? toPullRequest(found) : null;
+}
+
 export async function updatePullRequest(
 	token: string,
 	repository: RepositoryName,

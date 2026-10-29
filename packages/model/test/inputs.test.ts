@@ -14,6 +14,7 @@ import {
 	providerMissingShort,
 	providerPickerNote,
 	repositoryPath,
+	runPullRequest,
 	scanResult,
 	WORKERS_AI_NOT_OFFERED,
 	workersAiAccount,
@@ -317,5 +318,45 @@ describe("Workers AI settings", () => {
 		expect(workersAiBaseUrl("abc123")).toBe(
 			"https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1",
 		);
+	});
+});
+
+describe("a run's pull request", () => {
+	const pullRequest = {
+		repository: "acme/site",
+		number: 12,
+		url: "https://github.com/acme/site/pull/12",
+	};
+
+	it("is a pull request's page on GitHub, which the app links to, and nothing else", () => {
+		expect(runPullRequest.safeParse(pullRequest).success).toBe(true);
+		expect(
+			runPullRequest.safeParse({
+				...pullRequest,
+				repository: "a-b/c.d_e",
+				url: "https://github.com/a-b/c.d_e/pull/12",
+			}).success,
+		).toBe(true);
+		for (const url of [
+			"https://evil.example/acme/site/pull/12",
+			"https://github.com/acme/site/pull/13",
+			"http://github.com/acme/site/pull/12",
+			"javascript:alert(1)//https://github.com/acme/site/pull/12",
+		]) {
+			expect(runPullRequest.safeParse({ ...pullRequest, url }).success).toBe(false);
+		}
+		for (const repository of [
+			"acme",
+			"acme/site/x",
+			"acme/../site",
+			"acme/..",
+			"./site",
+			"acme/si te",
+			"/site",
+		]) {
+			const url = `https://github.com/${repository}/pull/12`;
+			expect(runPullRequest.safeParse({ ...pullRequest, repository, url }).success).toBe(false);
+		}
+		expect(runPullRequest.safeParse({ ...pullRequest, number: 0 }).success).toBe(false);
 	});
 });

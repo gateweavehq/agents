@@ -48,3 +48,21 @@ export interface SandboxRepository {
 export function conversationBranch(conversationId: string): string {
 	return `gateweave/${conversationId}`;
 }
+
+/**
+ * The tool of a turn whose sandbox has a repository that pushes the conversation's branch and
+ * opens a pull request from it. The chat shows its calls by the pull request they made.
+ */
+export const PULL_REQUEST_TOOL = "open_pull_request";
+
+/** What `PULL_REQUEST_TOOL` answers with when it made or updated the pull request. */
+export interface PullRequestOutcome {
+	/** `owner/name`. */
+	repository: string;
+	number: number;
+	url: string;
+	/** Whether this call opened it, or pushed to one the conversation had open. */
+	opened: boolean;
+	/** The commit the branch is at now. */
+	head: string;
+}

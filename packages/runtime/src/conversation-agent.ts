@@ -1,7 +1,10 @@
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
+import { sharedApp } from "@gateweave/agents-github";
 import {
 	conversationBranch,
+	type PullRequestOutcome,
 	type RunSpan,
+	type SandboxRepository,
 	type TurnEdge,
 	type TurnVia,
 	type WorkersAiSettings,
@@ -19,6 +22,13 @@ import {
 import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
 import { edgeTools } from "./edges";
 import { describeFailure, failureForLogs, type GatewaySettings, languageModel } from "./models";
+import {
+	COMMIT_EMAIL,
+	gitHubPullRequests,
+	type PullRequestPort,
+	type PushPort,
+	pullRequestTools,
+} from "./pull-requests";
 import { sandboxTools } from "./sandbox-tools";
 import { connectTools } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
@@ -28,10 +38,13 @@ interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 	CONVERSATIONS: DurableObjectNamespace<Agent<Cloudflare.Env>>;
 	/** Each conversation's sandbox (`./sandbox.ts`), where the deployment offers them. */
 	SANDBOX?: DurableObjectNamespace;
+	/** The deployment's GitHub App, which opens the pull requests a sandbox's work goes into. */
+	GITHUB_APP_ID?: string;
+	GITHUB_APP_PRIVATE_KEY?: string;
 }
 
 /** What a conversation reaches of its sandbox over RPC. */
-interface Sandbox extends CheckoutPort {
+interface Sandbox extends CheckoutPort, PushPort {
 	destroy(): Promise<void>;
 }
 
@@ -90,7 +103,9 @@ export function conversationName(workspaceId: string, conversationId: string): s
  * when it ends (`./tools.ts`).
  *
  * An agent with a sandbox also has tools that run commands and edit files on a Linux machine of
- * the conversation's own (`./sandbox.ts`), which goes when the conversation is deleted.
+ * the conversation's own (`./sandbox.ts`), which goes when the conversation is deleted. With a
+ * repository, the sandbox checks it out on a branch of the conversation's own, and
+ * `open_pull_request` proposes the work from there (`./pull-requests.ts`).
  *
  * In a conversation with a team, the lead's turn also has the team's edges as tools
  * (`./edges.ts`). Taking one starts a nested turn in a new conversation of the same class, reached
@@ -214,12 +229,24 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		const branch = conversationBranch(conversationId);
 		const run = new RunRecorder(this.#sql, runId, agent);
 		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
+		const checkedOut = sandbox && repository ? withCheckout(sandbox, repository, branch) : null;
+		const github = repository ? this.#pullRequests(repository) : null;
 		// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with them. An
 		// edge is named after a member of the team, so it wins over any tool of that name.
 		const tools = {
 			...toolbox.tools,
-			...(sandbox
-				? sandboxTools(repository ? withCheckout(sandbox, repository, branch) : sandbox, run)
+			...(sandbox ? sandboxTools(checkedOut ?? sandbox, run) : {}),
+			...(sandbox && checkedOut && repository && github
+				? pullRequestTools({
+						sandbox,
+						ready: checkedOut.ready,
+						github,
+						repository,
+						branch,
+						author: { name: agent.name, email: COMMIT_EMAIL },
+						record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
+						run,
+					})
 				: {}),
 			...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
 		};
@@ -317,6 +344,30 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			throw new Error(outcome.error);
 		}
 		return outcome.answer ?? `${edge.name} has the message and takes a turn of its own on it.`;
+	}
+
+	/**
+	 * Where the pull requests of a sandbox's work are made: GitHub, through the deployment's GitHub
+	 * App. None on a server that is not one, whose registry refuses turns with a repository anyway.
+	 */
+	#pullRequests(repository: SandboxRepository): PullRequestPort | null {
+		const env = this.env as unknown as RuntimeEnv;
+		const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
+		if (!appId || !privateKey) return null;
+		return gitHubPullRequests(sharedApp({ appId, privateKey }), repository);
+	}
+
+	/** Puts the pull request on the run. A failure is logged: the pull request is made anyway. */
+	async #recordPullRequest(
+		registry: DurableObjectStub<RegistryDO>,
+		runId: string,
+		{ repository, number, url }: PullRequestOutcome,
+	): Promise<void> {
+		try {
+			await registry.recordRunPullRequest(runId, { repository, number, url });
+		} catch (error) {
+			console.error("A run's pull request was not recorded", { runId, ...failureForLogs(error) });
+		}
 	}
 
 	/** Deletes the conversation, and its sandbox with it. */

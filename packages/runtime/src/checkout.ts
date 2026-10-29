@@ -4,7 +4,11 @@
  * the conversation's own (`RunnerSandbox.checkout` in `./sandbox.ts`), and the agent is told where
  * it is.
  */
-import { SANDBOX_REPOSITORY_PATH, type SandboxRepository } from "@gateweave/agents-model";
+import {
+	PULL_REQUEST_TOOL,
+	SANDBOX_REPOSITORY_PATH,
+	type SandboxRepository,
+} from "@gateweave/agents-model";
 import type { SandboxPort } from "./sandbox-tools";
 
 /** How a checkout went: done now, there already, or why not, in words the model reads. */
@@ -15,6 +19,12 @@ export interface CheckoutPort extends SandboxPort {
 	checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult>;
 }
 
+/** The sandbox as the tools reach it, with the repository checked out before any of them runs. */
+export interface CheckedOutSandbox extends SandboxPort {
+	/** Checks the repository out, unless it is already; why it could not be, if it could not. */
+	ready(): Promise<string | null>;
+}
+
 /**
  * The sandbox as the tools reach it, checking out the repository before the first of them runs.
  * A checkout that fails is the tool's answer, and the next tool call tries again.
@@ -23,7 +33,7 @@ export function withCheckout(
 	sandbox: CheckoutPort,
 	repository: SandboxRepository,
 	branch: string,
-): SandboxPort {
+): CheckedOutSandbox {
 	let pending: Promise<string | null> | undefined;
 	const problem = async (): Promise<string | null> => {
 		pending ??= sandbox.checkout(repository, branch).then(
@@ -35,6 +45,7 @@ export function withCheckout(
 		return found;
 	};
 	return {
+		ready: problem,
 		async run(command, cwd, timeoutSeconds) {
 			const failed = await problem();
 			if (failed !== null) return { exitCode: 1, output: failed, timedOut: false };
@@ -57,5 +68,6 @@ export function repositoryNote(repository: SandboxRepository, branch: string): s
 	return [
 		`Your sandbox has the repository ${name} at ${SANDBOX_REPOSITORY_PATH}, on the branch ${branch}, made from ${repository.defaultBranch}.`,
 		"Read its AGENTS.md or CLAUDE.md, if it has one, before you change it. Its files are checked out when you first use a tool.",
+		`When the work is done and checked, ${PULL_REQUEST_TOOL} proposes it as a pull request; git push does not work in the sandbox.`,
 	].join(" ");
 }

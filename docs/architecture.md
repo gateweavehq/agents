@@ -452,6 +452,25 @@ staging does, production and self-hosted deploys leave them off until their oper
   (`GitHubApp.repositoryToken`). The Worker adds the token as the request leaves, so no command
   can print it. The registry refuses the turn when the app no longer reaches the repository, or
   when the server is not set up as a GitHub App.
+- **Pull requests from the sandbox** (AGT-42). A turn whose sandbox has a repository also has
+  `open_pull_request {title, body}` (`packages/runtime/src/pull-requests.ts`). The sandbox commits
+  every change with the title as the message, by the agent at `noreply@gateweave.com`, with the
+  repository's own hooks. It refuses when the work has no commit the default branch lacks, then
+  runs `git push` of `gateweave/<conversation>` (`RunnerSandbox.push`). The Worker then opens a
+  pull request against the default branch with a token for `pull_requests: write` alone, or
+  updates the one the branch has open; the sandbox never makes it. The pull request goes on the run
+  (`runs.pull_request`), and Runs and Chat link to it.
+- **Only that push gets through.** `RunnerSandbox` opens a push window, in memory, for as long as
+  its own `git push` runs. Only then does `decideOutbound` let `git-receive-pack` through, with a
+  token for `contents: write`. Before the pack goes on, `SandboxOutbound` reads the ref updates it
+  starts with (`pushedRefs`) and refuses anything else (`checkPush`):
+  - more than one ref, or any ref but the conversation's branch;
+  - deleting the branch;
+  - an update from a commit other than the one the conversation last pushed, so commits someone
+    else pushed are never dropped.
+
+  A push it cannot read, encoded or over 50 MB, is refused too. A command the agent runs can never
+  push, even while the window is open, to anything but that branch.
 
 ## Chat
 
@@ -773,9 +792,8 @@ provider keys.
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
-- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40) and a repository in them (AGT-41):
-  opening pull requests (AGT-42), runs on a schedule or a
-  label (AGT-43), the vendors' own coding CLIs (AGT-44), and metering each workspace's sandbox
+- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40), a repository in them (AGT-41) and
+  pull requests from them (AGT-42): runs on a schedule or a label (AGT-43), the vendors' own coding CLIs (AGT-44), and metering each workspace's sandbox
   time before Cloud's production offers them (AGT-45). Sandboxes will also run the MCP servers
   that are local commands.
 

@@ -6,6 +6,7 @@ import {
 	ArrowUp,
 	CircleAlert,
 	Forward,
+	GitPullRequestArrow,
 	LoaderCircle,
 	MessageCircleQuestionMark,
 	Send,
@@ -19,6 +20,7 @@ import { Textarea } from "#/components/ui/textarea";
 import {
 	type CallState,
 	describeEdgeCall,
+	describePullRequestCall,
 	describeToolCall,
 	type ToolCallPart,
 	toolCallsOf,
@@ -200,11 +202,10 @@ function Message({
 					<ul aria-label="Tools used" className="mb-2 flex flex-wrap gap-1.5">
 						{calls.map((part) => {
 							const edge = members && describeEdgeCall(part, members);
-							return edge ? (
-								<EdgeCall key={part.toolCallId} {...edge} />
-							) : (
-								<ToolCall key={part.toolCallId} part={part} />
-							);
+							if (edge) return <EdgeCall key={part.toolCallId} {...edge} />;
+							const pull = describePullRequestCall(part);
+							if (pull) return <PullRequestCall key={part.toolCallId} {...pull} />;
+							return <ToolCall key={part.toolCallId} part={part} />;
 						})}
 					</ul>
 				)}
@@ -236,6 +237,51 @@ function ToolCall({ part }: { part: ToolCallPart }) {
 			)}
 			<span className="truncate font-mono">{tool}</span>
 			{state === "failed" && <span className="sr-only">(failed)</span>}
+		</li>
+	);
+}
+
+/**
+ * A call of `open_pull_request`: the pull request it opened or pushed to, linked, or why there is
+ * none, which shows on hover and which the model says too.
+ */
+function PullRequestCall({
+	state,
+	pullRequest,
+	error,
+}: NonNullable<ReturnType<typeof describePullRequestCall>>) {
+	const Icon = { running: LoaderCircle, done: GitPullRequestArrow, failed: CircleAlert }[state];
+	const label =
+		state === "running"
+			? "Opening a pull request"
+			: state === "failed" || !pullRequest
+				? "Could not open a pull request"
+				: `${pullRequest.opened ? "Opened" : "Pushed to"} pull request #${pullRequest.number}`;
+	return (
+		<li
+			className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
+			title={error ?? undefined}
+		>
+			<Icon
+				aria-hidden="true"
+				className={cn(
+					"size-3 shrink-0",
+					state === "running" && "animate-spin",
+					state === "done" && "text-emerald-700 dark:text-emerald-400",
+				)}
+			/>
+			{pullRequest ? (
+				<a
+					href={pullRequest.url}
+					target="_blank"
+					rel="noreferrer"
+					className="truncate font-medium text-foreground underline-offset-4 hover:underline"
+				>
+					{label}
+				</a>
+			) : (
+				<span className="truncate">{label}</span>
+			)}
 		</li>
 	);
 }
