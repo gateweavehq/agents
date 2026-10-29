@@ -78,6 +78,12 @@ const PUSH_SECONDS = 300;
 export const MAX_PUSH_BYTES = 50_000_000;
 
 const REPOSITORY_KEY = "repository";
+/** The commit the conversation last pushed to its branch. */
+const PUSHED_KEY = "pushed";
+
+/** `timeout`'s exit codes for a command it stopped, and one it had to kill. */
+const TIMED_OUT = new Set([124, 137]);
+
 /** The environment a commit is made with: the author, as both its author and its committer. */
 export function commitEnvironment(author: CommitAuthor): Record<string, string> {
 	return {
@@ -87,12 +93,6 @@ export function commitEnvironment(author: CommitAuthor): Record<string, string> 
 		GIT_COMMITTER_EMAIL: author.email,
 	};
 }
-
-/** The commit the conversation last pushed to its branch. */
-const PUSHED_KEY = "pushed";
-
-/** `timeout`'s exit codes for a command it stopped, and one it had to kill. */
-const TIMED_OUT = new Set([124, 137]);
 
 /** What `SandboxOutbound` is made with: the sandbox whose requests it decides on. */
 interface OutboundProps {
