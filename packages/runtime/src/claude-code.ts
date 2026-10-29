@@ -202,6 +202,15 @@ export const MAX_CHAT_OUTPUT = 4_000;
 /** The longest failure of a tool the trace records. */
 const TRACE_ERROR_LIMIT = 500;
 
+/**
+ * The model Claude Code names on a message it writes itself, such as why a request failed. Its text
+ * is meant for a terminal ("Invalid API key · Fix external API key"), and no request made it.
+ */
+const SYNTHETIC_MODEL = "<synthetic>";
+
+/** The longest part of Claude Code's own words a failure it has no name for quotes. */
+const FAILURE_DETAIL_LIMIT = 300;
+
 const usageSchema = z.object({
 	input_tokens: z.number().optional(),
 	output_tokens: z.number().optional(),
@@ -291,6 +300,8 @@ export class ClaudeCodeTurn {
 	#result: z.infer<typeof resultEvent> | null = null;
 	/** Why a model request failed, as Claude Code names it. */
 	#apiError: string | null = null;
+	/** What Claude Code last said itself, which a failure it has no name for quotes. */
+	#detail: string | null = null;
 
 	constructor(sink: ChunkSink, run: RunRecorder, agent: AgentSnapshot) {
 		this.#sink = sink;
@@ -335,7 +346,7 @@ export class ClaudeCodeTurn {
 			);
 		}
 		if (result.subtype !== "success" || result.is_error) {
-			return failed(describeApiError(this.#agent, this.#apiError));
+			return failed(describeApiError(this.#agent, this.#apiError, this.#detail));
 		}
 		return { status: "succeeded" };
 	}
@@ -344,6 +355,15 @@ export class ClaudeCodeTurn {
 		const { message } = event;
 		const parent = event.parent_tool_use_id ?? null;
 		if (event.error && event.error !== "max_output_tokens") this.#apiError = event.error;
+		if (message.model === SYNTHETIC_MODEL) {
+			// Neither the model's answer nor a request: the turn's outcome says what went wrong.
+			const text = message.content.flatMap((content) => {
+				const block = textBlock.safeParse(content);
+				return block.success ? [block.data.text] : [];
+			});
+			this.#detail = text.join("\n").trim() || this.#detail;
+			return;
+		}
 		let request = this.#requests.get(message.id);
 		if (!request) {
 			// A new request means the one before it in the same conversation has answered.
@@ -469,7 +489,11 @@ export class ClaudeCodeTurn {
 }
 
 /** Why Claude Code's turn failed, in the same words as a turn of Gateweave's own loop. */
-function describeApiError(agent: AgentSnapshot, error: string | null): string {
+function describeApiError(
+	agent: AgentSnapshot,
+	error: string | null,
+	detail: string | null,
+): string {
 	const name = MODEL_PROVIDER_NAMES[agent.provider];
 	switch (error) {
 		case "authentication_failed":
@@ -484,7 +508,9 @@ function describeApiError(agent: AgentSnapshot, error: string | null): string {
 		case "server_error":
 			return `${name} could not answer just now. Try again shortly.`;
 		default:
-			return "Claude Code could not finish.";
+			return detail
+				? `Claude Code could not finish: ${clip(detail, FAILURE_DETAIL_LIMIT)}`
+				: "Claude Code could not finish.";
 	}
 }
 

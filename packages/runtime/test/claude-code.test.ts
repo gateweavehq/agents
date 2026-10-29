@@ -55,7 +55,7 @@ function assistant(
 	id: string,
 	content: object,
 	usage: object,
-	extra: { parent_tool_use_id?: string; error?: string } = {},
+	extra: { parent_tool_use_id?: string; error?: string; model?: string } = {},
 ): string {
 	return JSON.stringify({
 		type: "assistant",
@@ -63,7 +63,7 @@ function assistant(
 			id,
 			type: "message",
 			role: "assistant",
-			model: "claude-sonnet-5-5",
+			model: extra.model ?? "claude-sonnet-5-5",
 			content: [content],
 			stop_reason: null,
 			usage,
@@ -249,16 +249,18 @@ describe("an agent whose engine is Claude Code", () => {
 		const { registry, stub, machine } = await conversation();
 		const refusal =
 			"Anthropic refused the workspace's key. An owner or admin can check it in Settings.";
+		// What Claude Code 2.1.308 sends on staging when Anthropic answers 401.
+		const terminalWords = "Invalid API key · Fix external API key";
 		await machine.scriptClaudeCode({
 			lines: [
 				INIT,
 				assistant(
 					"msg_1",
-					{ type: "text", text: "API Error: 401 invalid x-api-key" },
+					{ type: "text", text: terminalWords },
 					{ input_tokens: 0, output_tokens: 0 },
-					{ error: "authentication_failed" },
+					{ error: "authentication_failed", model: "<synthetic>" },
 				),
-				result({ is_error: true, result: "API Error: 401 invalid x-api-key" }),
+				result({ is_error: true, result: terminalWords }),
 			],
 		});
 		const socket = await connect(stub);
@@ -266,8 +268,33 @@ describe("an agent whose engine is Claude Code", () => {
 		socket.close();
 
 		expect(turn.error).toBe(refusal);
+		// Claude Code's message for a terminal is neither the chat's answer nor a model request.
+		expect(turn.text).toBe("");
 		const [run] = await registry.listRuns();
-		expect(run).toMatchObject({ status: "failed", error: refusal });
+		expect(run).toMatchObject({ status: "failed", error: refusal, steps: 0 });
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "model")).toEqual([]);
+	});
+
+	it("quotes Claude Code when it fails for a reason the app has no words for", async () => {
+		const { stub, machine } = await conversation();
+		await machine.scriptClaudeCode({
+			lines: [
+				INIT,
+				assistant(
+					"msg_1",
+					{ type: "text", text: "API Error: 400 prompt is too long" },
+					{ input_tokens: 0, output_tokens: 0 },
+					{ error: "invalid_request", model: "<synthetic>" },
+				),
+				result({ is_error: true, result: "API Error: 400 prompt is too long" }),
+			],
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Hello");
+		socket.close();
+
+		expect(turn.error).toBe("Claude Code could not finish: API Error: 400 prompt is too long");
 	});
 
 	it("fails the turn when Claude Code stops without a result", async () => {
