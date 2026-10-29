@@ -505,7 +505,7 @@ function limitOf(
 	if ((day?.n ?? 0) >= trigger.perDay) {
 		return {
 			retryAfter: secondsUntil((day?.oldest ?? now) + DAY, now),
-			message: `The trigger started its ${trigger.perDay} runs for the day`,
+			message: `The trigger started its ${trigger.perDay} ${trigger.perDay === 1 ? "run" : "runs"} for the day`,
 		};
 	}
 	return null;

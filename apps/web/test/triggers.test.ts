@@ -152,7 +152,7 @@ it("holds a trigger to its runs a day, telling the sender when to try again", as
 	const over = await post(url, secret);
 	expect(over.status).toBe(429);
 	expect(Number(over.headers.get("retry-after"))).toBeGreaterThan(23 * 60 * 60);
-	expect(await over.json()).toEqual({ error: "The trigger started its 1 runs for the day" });
+	expect(await over.json()).toEqual({ error: "The trigger started its 1 run for the day" });
 
 	// Paused, it takes events and starts nothing.
 	const [trigger] = await registry.listTriggers();
