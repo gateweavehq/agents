@@ -1,5 +1,13 @@
 import { expect, it } from "vitest";
-import { eventType, triggerMessage, triggerOf, triggerSecret, triggerStarter } from "../src";
+import {
+	eventType,
+	triggerInput,
+	triggerMessage,
+	triggerOf,
+	triggerPatch,
+	triggerSecret,
+	triggerStarter,
+} from "../src";
 
 const EVENT = JSON.stringify({
 	type: "issue.created",
@@ -37,4 +45,26 @@ it("takes a sender's secret only as Standard Webhooks writes it", () => {
 	expect(triggerSecret.parse(` ${secret} `)).toBe(secret);
 	expect(triggerSecret.safeParse("whsec_short").success).toBe(false);
 	expect(triggerSecret.safeParse(secret.replace("whsec_", "")).success).toBe(false);
+});
+
+it("starts on every event unless given event types, which it trims", () => {
+	const input = {
+		name: "New issues",
+		prompt: "Triage it",
+		target: { kind: "agent", agentId: "a" },
+	};
+	expect(triggerInput.parse(input).events).toBeNull();
+	expect(triggerInput.parse({ ...input, events: [" issue.created "] }).events).toEqual([
+		"issue.created",
+	]);
+	// A patch leaves the events alone, or sets them, or takes every event again.
+	expect(triggerPatch.parse({}).events).toBeUndefined();
+	expect(triggerPatch.parse({ events: null }).events).toBeNull();
+	expect(
+		triggerPatch.safeParse({
+			events: Array(21)
+				.fill(0)
+				.map((_, i) => `e${i}`),
+		}).error?.issues[0]?.message,
+	).toBe("A trigger can start on up to 20 event types");
 });

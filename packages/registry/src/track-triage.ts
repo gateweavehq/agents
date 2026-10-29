@@ -8,6 +8,7 @@ import {
 	type Agent,
 	agentDefinitionInput,
 	TRACK_KEY_VARIABLE,
+	TRACK_TRIAGE_EVENT,
 	TRACK_TRIAGE_NAMES,
 	TRACK_TRIAGE_PROMPT,
 	TRACK_TRIAGE_TOOLS,
@@ -105,6 +106,8 @@ export function setUpTrackTriage(
 			prompt: TRACK_TRIAGE_PROMPT,
 			target: { kind: "agent", agentId: agent.id },
 			perDay: 50,
+			// Track sends what its webhook was set to send; only a new issue is triage's.
+			events: [TRACK_TRIAGE_EVENT],
 			sealed: plan.sealedSecret,
 			secretStart: plan.secretStart,
 			createdBy: plan.createdBy,

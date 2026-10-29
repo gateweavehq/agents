@@ -522,6 +522,11 @@ many runs it may start a day.
   up to 1,000), counting the runs that began and those about to, in the write that admits the
   delivery. Past either, the sender gets `429` with `Retry-After`. A workspace has at most 50
   triggers. A paused trigger answers `202` and starts nothing.
+- **Event types.** A trigger may be limited to some event types, by the `type` in the event's
+  body (`triggers.events`, up to 20, null for every event). An event of another type, or with
+  none, answers `202`, starts nothing, and shows as skipped with why, so a sender set to send more
+  than the job needs costs no runs. Like a paused trigger's, a skipped event stays skipped when
+  its sender retries it.
 - **Its own conversation.** An admitted delivery opens a conversation for its run alone, started
   by `trigger:<id>` rather than a member (`conversations.trigger_id`), titled after the trigger
   and the event's `type`. The gateway then calls `triggerTurn` on its `ConversationAgent` over
@@ -552,7 +557,8 @@ names, the prompt and the tools are in `packages/model/src/track-triage.ts`, the
   one, so the MCP page lists its tools at once.
 - **One write makes it all:** the instructions, an environment set whose secret
   `TRACK_AGENT_KEY` holds the key, Track's MCP server with `Authorization: Bearer
-  ${TRACK_AGENT_KEY}`, the agent pinning all three, and a trigger for it, 50 runs a day. The key
+  ${TRACK_AGENT_KEY}`, the agent pinning all three, and a trigger for it on `issue.created` only,
+  50 runs a day. The key
   and the trigger's secret are sealed before the write, the workspace's trigger limit is checked
   before anything is inserted, and a refusal after that throws, so a failure leaves nothing half
   made. A name already in the library gets a number (`track 2`).

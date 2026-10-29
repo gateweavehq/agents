@@ -64,10 +64,10 @@ async function settled(registry: RegistryStub, runId: string) {
 	throw new Error("The run did not end");
 }
 
-/** An issue.created event as Track's webhooks send it, signed with the webhook's secret. */
-function deliver(url: string, secret: string) {
+/** An issue event as Track's webhooks send it, signed with the webhook's secret. */
+function deliver(url: string, secret: string, type = "issue.created") {
 	const body = JSON.stringify({
-		type: "issue.created",
+		type,
 		timestamp: new Date().toISOString(),
 		data: {
 			workspace: { id: "ws_1", slug: "acme" },
@@ -155,11 +155,20 @@ it("triages each new Track issue with the agent member's key and only triage's t
 		arguments: { key: "TRK-7" },
 	});
 
+	// Track sends what its webhook was set to; the trigger starts only on new issues.
+	const requests = models.requests.length;
+	const changed = await deliver(url, secret, "issue.updated");
+	expect(changed.status).toBe(202);
+	expect(await changed.json()).toEqual({ skipped: true });
+	expect(models.requests).toHaveLength(requests);
+
 	// The agent's page shows where its trigger listens, and never the key.
 	const agent = await page(`/triage/agents/${made.agent.id}`, owner.headers.cookie);
 	expect(agent).toContain("New issues");
 	expect(agent).toContain(url);
 	expect(agent).toContain("https://track.test/mcp");
+	expect(agent).toContain("on <code>issue.created</code> only");
+	expect(agent).toContain("It starts runs on issue.created only, not issue.updated");
 	expect(agent).not.toContain(AGENT_KEY);
 });
 

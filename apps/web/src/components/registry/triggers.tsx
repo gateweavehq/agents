@@ -158,8 +158,15 @@ function TriggerRow({
 						)}
 					</p>
 					<p className="text-xs text-muted-foreground">
-						Up to {trigger.perDay} {trigger.perDay === 1 ? "run" : "runs"} a day · signed with{" "}
-						<code>{trigger.secretStart}…</code>
+						Up to {trigger.perDay} {trigger.perDay === 1 ? "run" : "runs"} a day ·{" "}
+						{trigger.events ? (
+							<>
+								on <code>{trigger.events.join(", ")}</code> only
+							</>
+						) : (
+							"on every event"
+						)}{" "}
+						· signed with <code>{trigger.secretStart}…</code>
 					</p>
 				</div>
 				<DropdownMenu>
@@ -311,7 +318,10 @@ function Deliveries({ deliveries }: { deliveries: TriggerDelivery[] }) {
 	);
 }
 
-/** Makes a trigger, or edits `trigger`: its name, its prompt and how many runs it may start. */
+/**
+ * Makes a trigger, or edits `trigger`: its name, its prompt, the events it starts on and how many
+ * runs it may start.
+ */
 function TriggerDialog({
 	trigger,
 	targetName,
@@ -320,12 +330,18 @@ function TriggerDialog({
 }: {
 	trigger?: TriggerView;
 	targetName: string;
-	onSave: (input: { name: string; prompt: string; perDay: number }) => Promise<void>;
+	onSave: (input: {
+		name: string;
+		prompt: string;
+		perDay: number;
+		events: string[] | null;
+	}) => Promise<void>;
 	onClose: () => void;
 }) {
 	const [name, setName] = useState(trigger?.name ?? "");
 	const [prompt, setPrompt] = useState(trigger?.prompt ?? "");
 	const [perDay, setPerDay] = useState(String(trigger?.perDay ?? TRIGGER_LIMITS.defaultPerDay));
+	const [events, setEvents] = useState(trigger?.events?.join(", ") ?? "");
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -334,7 +350,13 @@ function TriggerDialog({
 		setPending(true);
 		setError(null);
 		try {
-			await onSave({ name: name.trim(), prompt: prompt.trim(), perDay: Number(perDay) });
+			const types = events.split(/[\s,]+/).filter(Boolean);
+			await onSave({
+				name: name.trim(),
+				prompt: prompt.trim(),
+				perDay: Number(perDay),
+				events: types.length > 0 ? types : null,
+			});
 			onClose();
 		} catch (failure) {
 			setError(message(failure));
@@ -380,6 +402,23 @@ function TriggerDialog({
 						<p className="text-xs text-muted-foreground">
 							Write <code>{"{{path}}"}</code> to put in a value from the event, such as{" "}
 							<code>{"{{data.title}}"}</code>.
+						</p>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="trigger-events">Events</Label>
+						<Input
+							id="trigger-events"
+							value={events}
+							onChange={(event) => setEvents(event.target.value)}
+							maxLength={2000}
+							placeholder="Every event"
+							spellCheck={false}
+							className="font-mono text-xs"
+						/>
+						<p className="text-xs text-muted-foreground">
+							The event types to start a run on, as the sender names them in the event's{" "}
+							<code>type</code>, separated by commas: <code>issue.created</code>. Others are
+							skipped. Leave it empty for every event.
 						</p>
 					</div>
 					<div className="space-y-2">

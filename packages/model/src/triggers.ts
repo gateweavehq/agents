@@ -11,7 +11,10 @@ export const TRIGGER_DELIVERY_STATUSES = [
 	"accepted",
 	/** It started a run. */
 	"started",
-	/** The trigger was paused, so it started nothing, and a retry starts nothing either. */
+	/**
+	 * The trigger was paused, or the event is not one it starts runs for, so it started nothing,
+	 * and a retry starts nothing either.
+	 */
 	"skipped",
 	/** Over the trigger's limits. A retry once there is room starts the run. */
 	"limited",
@@ -29,6 +32,8 @@ export const TRIGGER_LIMITS = {
 	maxPerDay: 1000,
 	/** Triggers a workspace may have. */
 	perWorkspace: 50,
+	/** Event types one trigger may be limited to. */
+	events: 20,
 	/** Largest body a trigger takes, in bytes. */
 	bodyBytes: 64 * 1024,
 	/** How far a delivery's timestamp may be from now, in seconds, as Standard Webhooks advises. */
@@ -65,6 +70,8 @@ export interface Trigger {
 	active: boolean;
 	/** Runs it may start in a day. */
 	perDay: number;
+	/** The event types it starts runs for, by the `type` in the event's body; null is every event. */
+	events: string[] | null;
 	/** The start of its secret, to tell secrets apart. */
 	secretStart: string;
 	createdAt: number;
@@ -109,7 +116,7 @@ export type TriggerReceipt =
 	| { status: "duplicate"; runId: string | null }
 	/** A retry of a delivery whose run is starting now: the sender may ask again in `retryAfter`. */
 	| { status: "starting"; retryAfter: number }
-	/** The trigger is paused. */
+	/** The trigger is paused, or the event is not one it starts runs for. */
 	| { status: "skipped" }
 	/** Over a limit; the sender may try again in `retryAfter` seconds. */
 	| { status: "limited"; retryAfter: number; message: string }
@@ -135,6 +142,28 @@ const perDay = z
 	);
 const id = z.string().min(1).max(64);
 
+/**
+ * The event types a trigger starts runs for, as Standard Webhooks senders name them in the body's
+ * `type` (`issue.created`). Null is every event, and an event of another type, or with none, is
+ * skipped. A sender that sends more than the job needs then costs no runs.
+ */
+export const triggerEvents = z
+	.array(
+		z
+			.string()
+			.trim()
+			.min(1, "An event type cannot be empty")
+			.max(100, "An event type is at most 100 characters")
+			.regex(
+				/^[A-Za-z0-9_.:-]+$/,
+				"Write event types as the sender names them, such as issue.created",
+			),
+	)
+	.min(1, "Name at least one event type, or take every event")
+	.max(TRIGGER_LIMITS.events, `A trigger can start on up to ${TRIGGER_LIMITS.events} event types`)
+	.refine((events) => new Set(events).size === events.length, "An event type is listed twice")
+	.nullable();
+
 export const triggerInput = z.object({
 	name,
 	prompt,
@@ -143,6 +172,7 @@ export const triggerInput = z.object({
 		z.object({ kind: z.literal("team"), teamId: id }),
 	]),
 	perDay: perDay.default(TRIGGER_LIMITS.defaultPerDay),
+	events: triggerEvents.default(null),
 });
 export type TriggerInput = z.input<typeof triggerInput>;
 
@@ -151,6 +181,7 @@ export const triggerPatch = z.object({
 	name: name.optional(),
 	prompt: prompt.optional(),
 	perDay: perDay.optional(),
+	events: triggerEvents.optional(),
 	active: z.boolean().optional(),
 });
 export type TriggerPatch = z.input<typeof triggerPatch>;
