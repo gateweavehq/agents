@@ -117,9 +117,7 @@ function SetUpStep({
 					maxLength={2000}
 					required
 				/>
-				<p className="text-xs text-muted-foreground">
-					Where you open Track, without the workspace.
-				</p>
+				<p className="text-xs text-muted-foreground">Track's address. Any page of it will do.</p>
 			</div>
 			<div className="space-y-2">
 				<Label htmlFor="triage-agent-key">Agent key</Label>
@@ -239,8 +237,8 @@ function WebhookStep({ made, onClose }: { made: TrackTriageSetUp; onClose: () =>
 				<DialogTitle>Now tell Track</DialogTitle>
 				<DialogDescription>
 					{made.agentName} is ready. In Track, open Settings → Webhooks and add a webhook with this
-					URL, the event Issue created, and your agent under For agent, so that its own changes do
-					not come back to it.
+					URL. Under Events, leave only Issue created checked, so it runs once per issue. Under For
+					agent, choose your agent, so that its own changes do not come back to it.
 				</DialogDescription>
 			</DialogHeader>
 			<div className="space-y-2">

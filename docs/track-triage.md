@@ -39,9 +39,10 @@ Setting it up takes two steps, one in each product. You need to be an owner or a
 ## 3. In Track: the webhook
 
 1. Open **Settings → Webhooks** and choose **Add webhook**.
-2. Paste the URL, choose the event **Issue created**, and under **For agent** choose the agent
-   member from step 1. Track then leaves out what that agent does, so the agent never triggers
-   itself.
+2. Paste the URL. Under **Events**, leave only **Issue created** checked: Track checks a few
+   events for a new webhook, and each one would start a run. Under **For agent**, choose the
+   agent member from step 1. Track then leaves out what that agent does, so the agent never
+   triggers itself.
 3. Track shows the webhook's secret (`whsec_…`) once. Paste it into the dialog in Agents, and
    choose **Save and finish**.
 
@@ -77,9 +78,9 @@ pause the trigger there.
 
 ## When it does not work
 
-- **"Track did not answer with this key"** when setting up: check the address (without the
-  workspace's slug) and that the key was copied whole. A key revoked in Track is refused too.
-- **The trigger lists deliveries as refused:** the secret in Agents is not the webhook's. Paste
-  Track's again.
+- **"Track did not answer with this key"** when setting up: check the address and that the key
+  was copied whole. A key revoked in Track is refused too.
+- **Nothing reaches the trigger:** the webhook's recent deliveries in Track show what Agents
+  answered. A 401 means the secret in Agents is not the webhook's: paste Track's again.
 - **Deliveries that failed** say why under the trigger, such as a missing provider key. The run's
   page shows what the agent did.
