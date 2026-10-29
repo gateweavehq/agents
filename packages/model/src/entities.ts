@@ -327,6 +327,8 @@ export interface AgentDefinition {
 	environment: PinnedAsset | null;
 	/** The MCP servers whose tools it uses, by name. */
 	mcpServers: AgentMcpServer[];
+	/** Whether its turns have a sandbox: a Linux machine to run commands and edit files in. */
+	sandbox: boolean;
 }
 
 /** An MCP server an agent run by Gateweave uses. */
@@ -372,6 +374,8 @@ export interface AgentSnapshot {
 	model: string;
 	/** The text of its instructions, files in path order; null when it has none. */
 	instructions: string | null;
+	/** Whether its turns have a sandbox. */
+	sandbox: boolean;
 	/** When the definition last changed. */
 	updatedAt: number;
 }

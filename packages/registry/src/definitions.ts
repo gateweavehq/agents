@@ -101,6 +101,7 @@ export function agentSnapshot(db: Db, id: string): AgentSnapshot | null {
 		model: definition.model,
 		// Pinning checked that every file has text, and a version never changes.
 		instructions: files.length > 0 ? files.map((file) => file.content ?? "").join("\n\n") : null,
+		sandbox: definition.sandbox,
 		updatedAt: agent.updatedAt,
 	};
 }
@@ -127,6 +128,7 @@ function definitionRow(agentId: string, input: Definition) {
 		instructionsVersion: input.instructions?.version ?? null,
 		envSetAssetId: input.environment?.assetId ?? null,
 		envSetVersion: input.environment?.version ?? null,
+		sandbox: input.sandbox,
 	};
 }
 

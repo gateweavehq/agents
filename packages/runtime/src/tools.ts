@@ -159,7 +159,7 @@ const fetchWithoutRedirects: typeof fetch = (input, init) =>
 	fetch(input, { ...init, redirect: "manual" });
 
 /** A tool that records each call as a span: its timing and sizes, never its input or output. */
-function traced(
+export function traced(
 	tool: ToolSet[string],
 	server: string,
 	name: string,

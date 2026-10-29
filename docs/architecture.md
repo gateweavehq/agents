@@ -311,6 +311,8 @@ with no repository and its own id as its key, and a row in `agent_definitions` b
   "MCP servers"). The form offers the tools of the server's last check on the MCP page; a server
   never checked keeps the list its pin has and says to check it first, so saving the form never
   drops a limit it could not show.
+- **A sandbox**, off by default, gives each of the agent's conversations a Linux machine to run
+  commands and edit files in (see "Sandboxes").
 - **A turn reads one snapshot** (`agentSnapshot`): the model and the pinned instructions' text, in
   one synchronous read, so a turn never mixes two versions of an agent.
 - **Removing an agent** marks it removed, as scans do, so its id stays known to whatever names
@@ -397,6 +399,43 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   headers live in that request's memory and never reach the browser; the check keeps no header
   value and nothing the server said but its tools' names and descriptions. Servers that run as a
   local command are listed as unavailable and cannot be checked until cloud runners (AGT-9).
+
+## Sandboxes
+
+An agent with a sandbox works on a Linux machine of its own in each conversation: it runs
+commands and reads, writes, edits, finds and searches files there. It is the first part of cloud
+runners (phase 5, AGT-9). A deployment offers sandboxes when it binds `SANDBOX` with a container;
+staging does, production and self-hosted deploys leave them off until their operator opts in.
+
+- **One container per conversation.** `RunnerSandbox` (`packages/runtime/src/sandbox.ts`) is a
+  Durable Object with a container, named like its conversation and reached only by it, over RPC.
+  It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
+  with Node.js 24, Python 3, git, ripgrep, curl, jq and the shim `@cloudflare/sandbox` 1.0 talks
+  to), as a `standard-1` instance, and stops after 15 minutes without a call; its disk goes with
+  it. Deleting the conversation stops it at once.
+- **No internet, but packages.** The container starts with `enableInternet: false`, and all of its
+  HTTP and HTTPS goes to `SandboxOutbound`, a `WorkerEntrypoint` of the app's Worker, through the
+  container's own certificate authority. `decideOutbound` (`packages/runtime/src/outbound.ts`)
+  lets GET and HEAD to package registries through (npm, PyPI, crates.io, Go's module proxy) and
+  answers everything else with a 403 that says why, which the command prints. A redirect goes
+  back to the command, so each address it leads to is decided on too. The sandbox holds no secret
+  of the workspace's: the key, the environment set and MCP headers stay in the Worker.
+- **The tools** (`packages/runtime/src/sandbox-tools.ts`): `run_command` (a bash line, in a
+  directory, stopped by `timeout` after 120 seconds unless the model asks for up to 600, its
+  output clipped to its first and last 15 KB), `read_file` (numbered lines, 2,000 at a time),
+  `write_file`, `edit_file` (an exact replacement, found once unless every place is asked for),
+  `find_files` and `search` (ripgrep). File paths stay under `/workspace`; that keeps the tools on
+  the work, not a wall, since a command reaches the whole machine, which holds nothing else. They
+  reach the container through `SandboxPort`, which the tests fill with files in memory.
+- **The trace** has a span for each call, under the server name `sandbox`, with its sizes and
+  never its content, like an MCP tool's. A turn with a sandbox may take 40 model requests
+  (`MAX_SANDBOX_STEPS`) instead of 10, since its work goes in many small steps.
+- **The registry decides.** The agent's `sandbox` setting is in `agent_definitions` and its
+  snapshot. `beginTurn` refuses a turn that needs a sandbox where the server binds none, and one
+  that would make more than three of the workspace's conversations hold one at once
+  (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
+  minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
+  sandbox.
 
 ## Chat
 
@@ -718,7 +757,10 @@ provider keys.
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
-- **Cloud runners** (phase 5, AGT-9): coding agents in Sandboxes, which also run the MCP servers
+- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40): cloning the agent's repository
+  with a token scoped to it (AGT-41), opening pull requests (AGT-42), runs on a schedule or a
+  label (AGT-43), the vendors' own coding CLIs (AGT-44), and metering each workspace's sandbox
+  time before Cloud's production offers them (AGT-45). Sandboxes will also run the MCP servers
   that are local commands.
 
 ## Deploys

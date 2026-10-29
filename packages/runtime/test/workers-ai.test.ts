@@ -181,6 +181,7 @@ describe("the Workers AI model", () => {
 		provider: "workers-ai",
 		model: SCOUT,
 		instructions: null,
+		sandbox: false,
 		updatedAt: 0,
 	};
 	const metadata = { workspace: "w", agent: "agent-1", conversation: "c" };

@@ -291,6 +291,7 @@ export function getAgent(db: Db, id: string): AgentDetail | null {
 		instructions: pinned,
 		environment: pinnedAsset(db, row.envSetAssetId, row.envSetVersion),
 		mcpServers: pinnedServers(db, id),
+		sandbox: row.sandbox,
 	};
 	const instructions = pinned
 		? (getAssetVersion(db, pinned.asset.id, pinned.version)?.files ?? [])

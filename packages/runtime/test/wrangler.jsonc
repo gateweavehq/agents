@@ -12,14 +12,17 @@
 		"WORKERS_AI_TOKEN": "workers-ai-test-token-not-a-real-one",
 		"CLOUDFLARE_ACCOUNT_ID": "0123456789abcdef0123456789abcdef"
 	},
+	// SANDBOX is a stand-in with files in memory: the tests have no containers.
 	"durable_objects": {
 		"bindings": [
 			{ "name": "REGISTRY", "class_name": "RegistryDO" },
-			{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" }
+			{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
+			{ "name": "SANDBOX", "class_name": "FakeSandbox" }
 		]
 	},
 	"exports": {
 		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
-		"ConversationAgent": { "type": "durable-object", "storage": "sqlite" }
+		"ConversationAgent": { "type": "durable-object", "storage": "sqlite" },
+		"FakeSandbox": { "type": "durable-object", "storage": "sqlite" }
 	}
 }

@@ -2,7 +2,7 @@ import handler from "@tanstack/react-start/server-entry";
 import { handleChatRequest, isChatRequest } from "./server/chat";
 
 export { RegistryDO } from "@gateweave/agents-registry";
-export { ConversationAgent } from "@gateweave/agents-runtime";
+export { ConversationAgent, RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
 export { RateLimiter } from "./server/rate-limit";
 
 export default {

@@ -8,6 +8,7 @@ import {
 	type ProviderKey,
 	type ProviderModel,
 	providerKeyInput,
+	sandboxOffered,
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -26,15 +27,21 @@ async function memberOf(slug: string, admin: boolean) {
 }
 
 /**
- * The keys, whether this server can keep keys at all (it needs `SECRETS_KEY`), and whether it
- * offers Workers AI, which has no key: the deployment pays for it.
+ * The keys, whether this server can keep keys at all (it needs `SECRETS_KEY`), whether it offers
+ * Workers AI, which has no key: the deployment pays for it, and whether it runs sandboxes, which
+ * the deployment pays for too.
  */
 export const getProviderKeys = createServerFn({ method: "GET" })
 	.validator(z.string().min(1))
 	.handler(
 		async ({
 			data: slug,
-		}): Promise<{ configured: boolean; keys: ProviderKey[]; workersAi: boolean } | null> => {
+		}): Promise<{
+			configured: boolean;
+			keys: ProviderKey[];
+			workersAi: boolean;
+			sandbox: boolean;
+		} | null> => {
 			const found = await memberOf(slug, false);
 			if (!found) return null;
 			const { env } = await import("cloudflare:workers");
@@ -43,6 +50,7 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 				configured: Boolean(env.SECRETS_KEY),
 				keys: await found.registry.listProviderKeys(),
 				workersAi: offersWorkersAi(),
+				sandbox: sandboxOffered(env),
 			};
 		},
 	);
