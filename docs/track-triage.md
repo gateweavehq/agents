@@ -16,9 +16,10 @@ Setting it up takes two steps, one in each product. You need to be an owner or a
 
 ## 1. In Track: an agent member and its key
 
-1. Open **Settings → Agents** in your Track workspace and add an agent, named for instance
+1. Open **Settings → Agents** in your Track workspace and create an agent, named for instance
    "Triage". It shows in Track as a member, and everything it does there carries its name.
-2. Choose **New key** and copy the key. It starts with `gwt_`, and Track shows it once.
+2. Copy the key Track shows. It starts with `gwt_`, and Track shows it once; for another one
+   later, choose **New key** next to the agent.
 
 ## 2. In Agents: the ready-made triage agent
 

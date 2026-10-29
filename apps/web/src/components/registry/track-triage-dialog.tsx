@@ -135,8 +135,8 @@ function SetUpStep({
 					required
 				/>
 				<p className="text-xs text-muted-foreground">
-					In Track, add an agent under Settings → Agents, then make a key for it with New key. It is
-					kept encrypted, and checked with Track before anything is made.
+					In Track, create an agent under Settings → Agents and copy the key it shows. It is kept
+					encrypted, and checked with Track before anything is made.
 				</p>
 			</div>
 			<div className="grid grid-cols-2 gap-3">
