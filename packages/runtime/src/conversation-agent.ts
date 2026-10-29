@@ -340,7 +340,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			key,
 			repository,
 			runId,
-		}: Pick<ConversationTurn, "agent" | "key" | "repository" | "runId">,
+			sandbox: sandboxed,
+		}: Pick<ConversationTurn, "agent" | "key" | "repository" | "runId" | "sandbox">,
 		run: RunRecorder,
 		signal: AbortSignal | undefined,
 	): Response {
@@ -351,7 +352,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			const finish = run.finish(status, error);
 			if (finish) await this.#report(registry, runId, finish);
 		};
-		const sandbox = this.#sandbox();
+		const sandbox = sandboxed ? this.#sandbox() : null;
 		const refusal = claudeCodeRefusal(agent, key, sandbox !== null, env);
 		if (refusal !== null || sandbox === null || key === null) {
 			const message = refusal ?? SANDBOX_NOT_OFFERED;
