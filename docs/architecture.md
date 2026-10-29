@@ -490,8 +490,9 @@ staging does, production and self-hosted deploys leave them off until their oper
 - **Claude Code** (AGT-44). The image installs Anthropic's Claude Code CLI, pinned
   (`CLAUDE_CODE_VERSION` in `sandbox/Dockerfile`). A turn of an agent whose engine is
   `claude-code` checks the repository out first, if the agent has one, then runs `claude -p` there
-  with `--output-format stream-json` (`RunnerSandbox.startClaudeCode`,
-  `packages/runtime/src/claude-code.ts`). It runs in `dontAsk` mode with Bash, the file tools and
+  with `--output-format stream-json` (`RunnerSandbox.startEngine`, the engines' common part in
+  `packages/runtime/src/engines.ts`, Claude Code's own in `packages/runtime/src/claude-code.ts`).
+  It runs in `dontAsk` mode with Bash, the file tools and
   skills allowed, since nobody is there to approve a call; `bypassPermissions` refuses to run as
   root, which the sandbox's commands are. The message goes on its input, the agent's instructions
   and where it runs follow its own system prompt, and it may take 100 turns and an hour.
@@ -523,10 +524,10 @@ staging does, production and self-hosted deploys leave them off until their oper
   - **Gateweave's tools are one MCP server.** The turn's other tools, the agent's MCP servers,
     `open_pull_request` and a team's edges, are the same as in Gateweave's loop. The CLI reaches
     them as the MCP server `gateweave`, at `http://tools.gateweave.internal/mcp`
-    (`packages/runtime/src/claude-code-tools.ts`): `--mcp-config` names it, `--strict-mcp-config`
+    (`packages/runtime/src/engine-tools.ts`): `--mcp-config` names it, `--strict-mcp-config`
     keeps any other server the repository configures out, and `mcp__gateweave` is allowed. That
     host exists only inside the sandbox. `SandboxOutbound` hands its requests to the conversation
-    (`ConversationAgent.claudeCodeTools`) with a token made for the turn, which the sandbox never
+    (`ConversationAgent.engineTools`) with a token made for the turn, which the sandbox never
     sees, and the conversation answers them with `createMcpHandler` from
     `@modelcontextprotocol/server`. So an MCP server's secret headers, the GitHub App and the team's
     other conversations stay in the Worker. The server is `alwaysLoad`, so the model has the tools

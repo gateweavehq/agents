@@ -3,6 +3,7 @@ import { sharedApp } from "@gateweave/agents-github";
 import {
 	type AgentSnapshot,
 	conversationBranch,
+	ENGINE_NAMES,
 	PULL_REQUEST_TOOL,
 	type PullRequestOutcome,
 	providerMissing,
@@ -27,15 +28,18 @@ import {
 	type UIMessage,
 } from "ai";
 import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
+import { ClaudeCodeTurn } from "./claude-code";
+import { edgeTools } from "./edges";
+import { serveEngineTools } from "./engine-tools";
 import {
-	type ClaudeCodePort,
-	ClaudeCodeTurn,
-	claudeCodeNote,
+	type ChunkSink,
+	type EnginePort,
+	type EngineTurn,
+	engineNote,
 	historyOf,
 	linesOf,
-} from "./claude-code";
-import { serveClaudeCodeTools } from "./claude-code-tools";
-import { edgeTools } from "./edges";
+	type SandboxEngine,
+} from "./engines";
 import {
 	describeFailure,
 	failureForLogs,
@@ -67,7 +71,7 @@ interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 }
 
 /** What a conversation reaches of its sandbox over RPC. */
-interface Sandbox extends CheckoutPort, PushPort, ClaudeCodePort {
+interface Sandbox extends CheckoutPort, PushPort, EnginePort {
 	destroy(): Promise<void>;
 }
 
@@ -130,9 +134,10 @@ export function conversationName(workspaceId: string, conversationId: string): s
  * repository, the sandbox checks it out on a branch of the conversation's own, and
  * `open_pull_request` proposes the work from there (`./pull-requests.ts`).
  *
- * An agent whose engine is Claude Code takes its turns differently: Claude Code runs in the sandbox
- * with its own tools, and the turn passes on what it does (`./claude-code.ts`). The rest of the
- * turn's tools reach it as an MCP server that this conversation answers (`./claude-code-tools.ts`).
+ * An agent whose engine is a vendor's coding agent, such as Claude Code, takes its turns
+ * differently: the vendor's CLI runs in the sandbox with its own tools, and the turn passes on what
+ * it does (`./engines.ts`). The rest of the turn's tools reach it as an MCP server that this
+ * conversation answers (`./engine-tools.ts`).
  *
  * In a conversation with a team, the lead's turn also has the team's edges as tools
  * (`./edges.ts`). Taking one starts a nested turn in a new conversation of the same class, reached
@@ -153,8 +158,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	#stopNested: AbortController | null = null;
 	/** Why the turn under way failed, in the app's words; null while it has not. */
 	#failure: string | null = null;
-	/** The tools of the turn Claude Code is running, which its sandbox reaches with the token. */
-	#claudeCodeTools: { token: string; tools: ToolSet; signal: AbortSignal } | null = null;
+	/** The tools of the turn an engine is running, which its sandbox reaches with the token. */
+	#engineTools: { token: string; tools: ToolSet; signal: AbortSignal } | null = null;
 
 	override async onStart(): Promise<void> {
 		// A restart cut these runs short: they will not end on their own.
@@ -234,16 +239,16 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 
 	/**
-	 * Answers Claude Code's requests to Gateweave's tools, which `SandboxOutbound` hands on from
-	 * the conversation's sandbox while a turn runs. A request without the turn's token finds
-	 * nothing, as does any once the turn has ended.
+	 * Answers an engine's requests to Gateweave's tools, which `SandboxOutbound` hands on from the
+	 * conversation's sandbox while a turn runs. A request without the turn's token finds nothing,
+	 * as does any once the turn has ended.
 	 */
-	async claudeCodeTools(token: string, request: Request): Promise<Response> {
-		const turn = this.#claudeCodeTools;
+	async engineTools(token: string, request: Request): Promise<Response> {
+		const turn = this.#engineTools;
 		if (!turn || typeof token !== "string" || token !== turn.token) {
 			return new Response(null, { status: 404 });
 		}
-		return serveClaudeCodeTools(turn.tools, request, turn.signal);
+		return serveEngineTools(turn.tools, request, turn.signal);
 	}
 
 	/**
@@ -270,8 +275,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		const sandbox = turn.sandbox ? this.#sandbox() : null;
 		const branch = conversationBranch(conversationId);
 		const run = new RunRecorder(this.#sql, runId, agent);
-		if (agent.engine === "claude-code") {
-			return this.#claudeCodeTurn(turn, run, options?.abortSignal);
+		if (agent.engine !== "gateweave") {
+			return this.#engineTurn(agent.engine, turn, run, options?.abortSignal);
 		}
 		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
 		const checkedOut = sandbox && repository ? withCheckout(sandbox, repository, branch) : null;
@@ -347,14 +352,15 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 
 	/**
-	 * A turn of an agent whose engine is Claude Code: it runs in the sandbox, on the repository
-	 * checked out first, with the workspace's key added to its requests on the way out. Its text and
-	 * tool calls come to the chat as it works, and the run's trace records each model request and
-	 * tool call. The turn's other tools, its MCP servers, `open_pull_request` and a team's edges,
-	 * are the same as in Gateweave's loop, and reach Claude Code through `claudeCodeTools`. Stopping
-	 * the turn stops Claude Code and the calls under way.
+	 * A turn of an agent whose engine runs in the sandbox, on the repository checked out first, with
+	 * the workspace's key added to its requests on the way out. Its text and tool calls come to the
+	 * chat as it works, and the run's trace records its model requests and tool calls. The turn's
+	 * other tools, its MCP servers, `open_pull_request` and a team's edges, are the same as in
+	 * Gateweave's loop, and reach the CLI through `engineTools`. Stopping the turn stops the CLI and
+	 * the calls under way.
 	 */
-	#claudeCodeTurn(
+	#engineTurn(
+		engine: SandboxEngine,
 		{
 			agent,
 			key,
@@ -378,7 +384,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			if (finish) await this.#report(registry, runId, finish);
 		};
 		const sandbox = sandboxed ? this.#sandbox() : null;
-		const refusal = claudeCodeRefusal(agent, key, sandbox !== null, env);
+		const refusal = engineRefusal(agent, key, sandbox !== null, env);
 		if (refusal !== null || sandbox === null || key === null) {
 			const message = refusal ?? SANDBOX_NOT_OFFERED;
 			void end("failed", message);
@@ -421,16 +427,17 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 				const offered = Object.keys(tools).length > 0;
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
-				if (offered) this.#claudeCodeTools = { token, tools, signal: calls.signal };
-				const turn = new ClaudeCodeTurn(writer, run, agent);
+				if (offered) this.#engineTools = { token, tools, signal: calls.signal };
+				const turn = engineTurn(engine, writer, run, agent);
 				const stop = () => {
 					calls.abort();
-					sandbox.stopClaudeCode().catch(() => {});
+					sandbox.stopEngine().catch(() => {});
 				};
 				signal?.addEventListener("abort", stop, { once: true });
 				try {
-					const note = claudeCodeNote(repository, branch, PULL_REQUEST_TOOL in tools);
-					const events = await sandbox.startClaudeCode({
+					const note = engineNote(repository, branch, PULL_REQUEST_TOOL in tools);
+					const events = await sandbox.startEngine({
+						engine,
 						prompt: lastUserText(this.messages),
 						history: historyOf(this.messages, agent.name),
 						system: [agent.instructions, note]
@@ -450,10 +457,10 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 					});
 					for await (const line of linesOf(events)) turn.take(line);
 				} catch (error) {
-					console.error("Claude Code's turn failed", failureForLogs(error));
+					console.error(`${ENGINE_NAMES[engine]}'s turn failed`, failureForLogs(error));
 				} finally {
 					signal?.removeEventListener("abort", stop);
-					if (this.#claudeCodeTools?.token === token) this.#claudeCodeTools = null;
+					if (this.#engineTools?.token === token) this.#engineTools = null;
 					calls.abort();
 					await toolbox.close();
 				}
@@ -469,8 +476,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 				writer.write({ type: "finish" });
 			},
 			onError: (error) => {
-				console.error("Claude Code's turn failed", failureForLogs(error));
-				const message = "Claude Code could not finish.";
+				console.error(`${ENGINE_NAMES[engine]}'s turn failed`, failureForLogs(error));
+				const message = `${ENGINE_NAMES[engine]} could not finish.`;
 				void end("failed", message);
 				return message;
 			},
@@ -624,12 +631,25 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 }
 
+/** Follows a turn of the engine. */
+function engineTurn(
+	engine: SandboxEngine,
+	sink: ChunkSink,
+	run: RunRecorder,
+	agent: AgentSnapshot,
+): EngineTurn {
+	switch (engine) {
+		case "claude-code":
+			return new ClaudeCodeTurn(sink, run, agent);
+	}
+}
+
 /**
- * Why a turn of Claude Code cannot start, in words for whoever is chatting; null when it can. The
+ * Why a turn of an engine cannot start, in words for whoever is chatting; null when it can. The
  * registry enforces the agent's side, so these are the server's: a sandbox, the workspace's key and
  * a working AI Gateway setting.
  */
-function claudeCodeRefusal(
+function engineRefusal(
 	agent: AgentSnapshot,
 	key: string | null,
 	sandboxed: boolean,

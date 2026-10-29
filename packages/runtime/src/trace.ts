@@ -137,7 +137,7 @@ export class RunRecorder {
 
 	/**
 	 * A model request that answered, however the turn made it: through the AI SDK (`stepEnded`), or
-	 * as an engine in the sandbox reports it (`./claude-code.ts`).
+	 * as an engine in the sandbox reports it (`./engines.ts`).
 	 */
 	requestEnded(step: number, request: EndedRequest, now = Date.now()): void {
 		const { model, tokens } = request;

@@ -1,23 +1,19 @@
 /**
- * Gateweave's tools for Claude Code (AGT-44): the agent's MCP servers, `open_pull_request` and a
- * team's edges, served to the CLI as one MCP server named `gateweave`. Claude Code reaches it at
- * `CLAUDE_CODE_TOOLS_URL`, a host that exists only inside the sandbox: `SandboxOutbound` takes the
- * request and hands it to the conversation, which runs each call the way Gateweave's own loop
- * would. So the secrets in an MCP server's headers, the GitHub App and the other conversations of
- * a team stay in the Worker, and each call is a span in the run's trace as in any other turn.
+ * Gateweave's tools for an engine in the sandbox (AGT-44): the agent's MCP servers,
+ * `open_pull_request` and a team's edges, served to the vendor's CLI as one MCP server named
+ * `gateweave`. The CLI reaches it at `ENGINE_TOOLS_URL`, a host that exists only inside the
+ * sandbox: `SandboxOutbound` takes the request and hands it to the conversation, which runs each
+ * call the way Gateweave's own loop would. So the secrets in an MCP server's headers, the GitHub
+ * App and the other conversations of a team stay in the Worker, and each call is a span in the
+ * run's trace as in any other turn. Each engine names the server to its CLI in its own way
+ * (`./claude-code.ts`).
  *
  * Each request gets a fresh server from `createMcpHandler`, which answers the 2026-07-28 revision
  * and the stateless 2025 one, whichever the CLI speaks. Claude Code 2.1.308 speaks the first: it
  * asks `server/discover`, then `tools/list`, then calls tools, each request on its own.
  *
- * Checked 2026-10-29:
- * - `createMcpHandler` and `fromJsonSchema`: `index.d.mts` of @modelcontextprotocol/server 2.3.1
- * - `--mcp-config`, `--strict-mcp-config`, a server's `timeout` and `alwaysLoad`, and
- *   `mcp__<server>` in allowed tools: https://code.claude.com/docs/en/cli-reference and
- *   https://code.claude.com/docs/en/mcp
- * - per-request limits of HTTP servers and automatic backgrounding:
- *   https://code.claude.com/docs/en/env-vars (`MCP_TOOL_TIMEOUT`,
- *   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`)
+ * Checked 2026-10-29: `createMcpHandler` and `fromJsonSchema`, in `index.d.mts` of
+ * @modelcontextprotocol/server 2.3.1.
  */
 import {
 	type CallToolResult,
@@ -27,22 +23,19 @@ import {
 	McpServer,
 } from "@modelcontextprotocol/server";
 import { asSchema, type ModelMessage, type ToolSet } from "ai";
-import { CLAUDE_CODE_TOOLS_HOST, CLAUDE_CODE_TOOLS_PATH } from "./outbound";
+import { ENGINE_TOOLS_HOST, ENGINE_TOOLS_PATH } from "./outbound";
 
-/** The name Claude Code knows the server by, which prefixes its tools: `mcp__gateweave__<tool>`. */
-export const CLAUDE_CODE_TOOLS_SERVER = "gateweave";
-
-/** What Claude Code calls Gateweave's tools, before their own names. */
-export const CLAUDE_CODE_TOOL_PREFIX = `mcp__${CLAUDE_CODE_TOOLS_SERVER}__`;
+/** The name the CLI knows the server by. */
+export const ENGINE_TOOLS_SERVER = "gateweave";
 
 /**
- * Where Claude Code reaches the server. Plain HTTP: the request never leaves Cloudflare, since the
+ * Where the CLI reaches the server. Plain HTTP: the request never leaves Cloudflare, since the
  * sandbox's network hands every request to `SandboxOutbound`.
  */
-export const CLAUDE_CODE_TOOLS_URL = `http://${CLAUDE_CODE_TOOLS_HOST}${CLAUDE_CODE_TOOLS_PATH}`;
+export const ENGINE_TOOLS_URL = `http://${ENGINE_TOOLS_HOST}${ENGINE_TOOLS_PATH}`;
 
 /** How the sandbox's requests reach the conversation's tools while a turn has them. */
-export interface ClaudeCodeToolsAccess {
+export interface EngineToolsAccess {
 	/** The conversation's Durable Object, by name. */
 	conversation: string;
 	/** Made for the turn: a request without it gets no tools. */
@@ -50,35 +43,15 @@ export interface ClaudeCodeToolsAccess {
 }
 
 /**
- * The `--mcp-config` that names the server. Its `timeout`, the turn's own limit, lifts the 60
- * seconds an HTTP server's request may take otherwise: a delegated task can take that long.
- * `alwaysLoad` gives the model the tools in its first request, as Gateweave's loop does. Otherwise
- * the CLI connects in the background, sends the first request without them, and later keeps them
- * behind its tool search, a step the model would have to take first.
- */
-export function claudeCodeMcpConfig(timeoutMs: number): string {
-	return JSON.stringify({
-		mcpServers: {
-			[CLAUDE_CODE_TOOLS_SERVER]: {
-				type: "http",
-				url: CLAUDE_CODE_TOOLS_URL,
-				timeout: timeoutMs,
-				alwaysLoad: true,
-			},
-		},
-	});
-}
-
-/**
- * A request of Claude Code's as it goes to the conversation over RPC, which takes no
- * `AbortSignal`. The conversation cancels the calls itself when the turn ends.
+ * A request of the CLI's as it goes to the conversation over RPC, which takes no `AbortSignal`.
+ * The conversation cancels the calls itself when the turn ends.
  */
 export function toolsRequest(request: Request): Request {
 	return new Request(request, { signal: null });
 }
 
-/** Answers one request of Claude Code's to the server, with the turn's tools. */
-export async function serveClaudeCodeTools(
+/** Answers one request of the CLI's to the server, with the turn's tools. */
+export async function serveEngineTools(
 	tools: ToolSet,
 	request: Request,
 	signal: AbortSignal,
@@ -100,7 +73,7 @@ export async function serveClaudeCodeTools(
 		// they might would have the CLI open `subscriptions/listen`, a stream this handler, made for
 		// one request, cannot keep.
 		const server = new McpServer(
-			{ name: CLAUDE_CODE_TOOLS_SERVER, version: "1.0.0" },
+			{ name: ENGINE_TOOLS_SERVER, version: "1.0.0" },
 			{ capabilities: { tools: { listChanged: false } } },
 		);
 		for (const { name, tool, description, jsonSchema } of definitions) {

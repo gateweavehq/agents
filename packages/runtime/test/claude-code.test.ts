@@ -4,8 +4,9 @@ import type { McpServerInput } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
-import { CLAUDE_CODE_PLACEHOLDER_KEY, claudeCodeArguments, linesOf } from "../src/claude-code";
-import { CLAUDE_CODE_TOOLS_URL, toolsRequest } from "../src/claude-code-tools";
+import { CLAUDE_CODE_PLACEHOLDER_KEY, claudeCodeArguments } from "../src/claude-code";
+import { ENGINE_TOOLS_URL, toolsRequest } from "../src/engine-tools";
+import { linesOf } from "../src/engines";
 import { anthropicRequest } from "../src/models";
 import { decideOutbound } from "../src/outbound";
 import { FakeMcpServer } from "./fake-mcp";
@@ -212,7 +213,7 @@ describe("an agent whose engine is Claude Code", () => {
 		const { workspaceId, registry, stub, machine, conversationId, agentId } = await conversation({
 			repository: true,
 		});
-		await machine.scriptClaudeCode({ lines: LISTING });
+		await machine.scriptEngine({ lines: LISTING });
 		const socket = await connect(stub);
 		const turn = await ask(socket, "List the files");
 		socket.close();
@@ -224,7 +225,7 @@ describe("an agent whose engine is Claude Code", () => {
 		const seen = await machine.seen();
 		// The repository is checked out first, and Claude Code works in it.
 		expect(seen.checkouts).toMatchObject([{ branch }]);
-		expect(seen.claudeCode).toMatchObject([
+		expect(seen.engine).toMatchObject([
 			{
 				prompt: "List the files",
 				history: null,
@@ -237,7 +238,7 @@ describe("an agent whose engine is Claude Code", () => {
 			},
 		]);
 		// The agent's instructions come first, then where it runs.
-		const system = seen.claudeCode[0]?.system ?? "";
+		const system = seen.engine[0]?.system ?? "";
 		expect(system).toContain("Be brief.");
 		expect(system).toContain(
 			`acme/site is checked out at /workspace/repo, on the branch ${branch}`,
@@ -266,27 +267,27 @@ describe("an agent whose engine is Claude Code", () => {
 
 	it("works at the sandbox's root when the agent has no repository", async () => {
 		const { stub, machine } = await conversation();
-		await machine.scriptClaudeCode({ lines: LISTING });
+		await machine.scriptEngine({ lines: LISTING });
 		const socket = await connect(stub);
 		await ask(socket, "List the files");
 		socket.close();
 
 		const seen = await machine.seen();
 		expect(seen.checkouts).toEqual([]);
-		expect(seen.claudeCode).toMatchObject([{ cwd: "/workspace" }]);
-		expect(seen.claudeCode[0]?.system).toContain("reaches no website");
+		expect(seen.engine).toMatchObject([{ cwd: "/workspace" }]);
+		expect(seen.engine[0]?.system).toContain("reaches no website");
 	});
 
 	it("hands a later turn the conversation so far, for a sandbox that lost its session", async () => {
 		const { stub, machine } = await conversation();
-		await machine.scriptClaudeCode({ lines: LISTING });
-		await machine.scriptClaudeCode({ lines: LISTING });
+		await machine.scriptEngine({ lines: LISTING });
+		await machine.scriptEngine({ lines: LISTING });
 		const socket = await connect(stub);
 		await ask(socket, "List the files");
 		await ask(socket, "And the folders?");
 		socket.close();
 
-		const [, second] = (await machine.seen()).claudeCode;
+		const [, second] = (await machine.seen()).engine;
 		expect(second?.prompt).toBe("And the folders?");
 		expect(second?.history).toContain("The person: List the files");
 		expect(second?.history).toContain("Builder: Let me look.");
@@ -296,7 +297,7 @@ describe("an agent whose engine is Claude Code", () => {
 	it("records a subagent's work in the trace, not in the chat", async () => {
 		const { registry, stub, machine } = await conversation();
 		const usage = { input_tokens: 10, output_tokens: 1 };
-		await machine.scriptClaudeCode({
+		await machine.scriptEngine({
 			lines: [
 				assistant(
 					"msg_1",
@@ -326,7 +327,7 @@ describe("an agent whose engine is Claude Code", () => {
 		// As the API streams them: a block's usage is the request's start's, one token of output.
 		const usage = { input_tokens: 10, output_tokens: 1 };
 		const sub = { parent_tool_use_id: "toolu_agent" };
-		await machine.scriptClaudeCode({
+		await machine.scriptEngine({
 			lines: [
 				messageStart("msg_1", { ttft_ms: 420.4 }),
 				assistant("msg_1", { type: "text", text: "Let me ask a helper. " }, usage),
@@ -367,7 +368,7 @@ describe("an agent whose engine is Claude Code", () => {
 			"Anthropic refused the workspace's key. An owner or admin can check it in Settings.";
 		// What Claude Code 2.1.308 sends on staging when Anthropic answers 401.
 		const terminalWords = "Invalid API key · Fix external API key";
-		await machine.scriptClaudeCode({
+		await machine.scriptEngine({
 			lines: [
 				INIT,
 				assistant(
@@ -394,7 +395,7 @@ describe("an agent whose engine is Claude Code", () => {
 
 	it("quotes Claude Code when it fails for a reason the app has no words for", async () => {
 		const { stub, machine } = await conversation();
-		await machine.scriptClaudeCode({
+		await machine.scriptEngine({
 			lines: [
 				INIT,
 				assistant(
@@ -415,7 +416,7 @@ describe("an agent whose engine is Claude Code", () => {
 
 	it("fails the turn when Claude Code stops without a result", async () => {
 		const { registry, stub, machine } = await conversation();
-		await machine.scriptClaudeCode({ lines: [INIT] });
+		await machine.scriptEngine({ lines: [INIT] });
 		const socket = await connect(stub);
 		const turn = await ask(socket, "Hello");
 		socket.close();
@@ -426,7 +427,7 @@ describe("an agent whose engine is Claude Code", () => {
 
 	it("says how many turns it took when it ran out of them", async () => {
 		const { stub, machine } = await conversation();
-		await machine.scriptClaudeCode({
+		await machine.scriptEngine({
 			lines: [INIT, result({ subtype: "error_max_turns", is_error: true, num_turns: 100 })],
 		});
 		const socket = await connect(stub);
@@ -438,7 +439,7 @@ describe("an agent whose engine is Claude Code", () => {
 
 	it("stops Claude Code when the turn is stopped", async () => {
 		const { registry, stub, machine } = await conversation();
-		await machine.scriptClaudeCode({
+		await machine.scriptEngine({
 			lines: [
 				INIT,
 				assistant("msg_1", { type: "text", text: "Working on it." }, { input_tokens: 1 }),
@@ -448,7 +449,7 @@ describe("an agent whose engine is Claude Code", () => {
 		const socket = await connect(stub);
 		const id = crypto.randomUUID();
 		const turn = ask(socket, "Take your time", id);
-		await vi.waitFor(async () => expect((await machine.seen()).claudeCode).toHaveLength(1));
+		await vi.waitFor(async () => expect((await machine.seen()).engine).toHaveLength(1));
 		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
 		await turn;
 		socket.close();
@@ -466,13 +467,13 @@ describe("an agent whose engine is Claude Code", () => {
 		const { registry, stub, machine, workspaceId, conversationId } = await conversation({
 			servers: [ACME],
 		});
-		await machine.scriptClaudeCode({ lines: [INIT], untilStopped: true });
+		await machine.scriptEngine({ lines: [INIT], untilStopped: true });
 		const socket = await connect(stub);
 		const id = crypto.randomUUID();
 		const turn = ask(socket, "Which issues are flaky?", id);
-		await vi.waitFor(async () => expect((await machine.seen()).claudeCode).toHaveLength(1));
+		await vi.waitFor(async () => expect((await machine.seen()).engine).toHaveLength(1));
 
-		const [job] = (await machine.seen()).claudeCode;
+		const [job] = (await machine.seen()).engine;
 		// The sandbox's requests reach the conversation with a token made for the turn.
 		expect(job?.access.tools).toEqual({
 			conversation: conversationName(workspaceId, conversationId),
@@ -481,17 +482,14 @@ describe("an agent whose engine is Claude Code", () => {
 		const token = job?.access.tools?.token ?? "";
 		// The client asks for `redirect: "error"`, which Workers refuse, as `fetchWithoutRedirects` says.
 		const answer = (secret: string) => (input: RequestInfo | URL, init?: RequestInit) =>
-			stub.claudeCodeTools(
-				secret,
-				toolsRequest(new Request(input, { ...init, redirect: "manual" })),
-			);
+			stub.engineTools(secret, toolsRequest(new Request(input, { ...init, redirect: "manual" })));
 		const client = await createMCPClient({
-			transport: { type: "http", url: CLAUDE_CODE_TOOLS_URL, fetch: answer(token) },
+			transport: { type: "http", url: ENGINE_TOOLS_URL, fetch: answer(token) },
 		});
 		// As Claude Code 2.1.308 asks first: the tools never change while the turn runs, so it has
 		// no reason to open a stream for changes.
 		const discovered = await answer(token)(
-			new Request(CLAUDE_CODE_TOOLS_URL, {
+			new Request(ENGINE_TOOLS_URL, {
 				method: "POST",
 				headers: {
 					accept: "application/json, text/event-stream",
@@ -534,7 +532,7 @@ describe("an agent whose engine is Claude Code", () => {
 		await client.close();
 		// Without the turn's token there is nothing to reach.
 		const ping = () =>
-			new Request(CLAUDE_CODE_TOOLS_URL, {
+			new Request(ENGINE_TOOLS_URL, {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
@@ -559,7 +557,7 @@ describe("an agent whose engine is Claude Code", () => {
 	it("shows Gateweave's tools in the chat under their own names, and leaves their spans to them", async () => {
 		const { registry, stub, machine } = await conversation();
 		const usage = { input_tokens: 10, output_tokens: 1 };
-		await machine.scriptClaudeCode({
+		await machine.scriptEngine({
 			lines: [
 				INIT,
 				assistant(
@@ -594,12 +592,12 @@ describe("an agent whose engine is Claude Code", () => {
 
 	it("offers Claude Code no MCP server when the turn has no tools", async () => {
 		const { stub, machine } = await conversation();
-		await machine.scriptClaudeCode({ lines: LISTING });
+		await machine.scriptEngine({ lines: LISTING });
 		const socket = await connect(stub);
 		await ask(socket, "List the files");
 		socket.close();
 
-		expect((await machine.seen()).claudeCode[0]?.access.tools).toBeNull();
+		expect((await machine.seen()).engine[0]?.access.tools).toBeNull();
 	});
 });
 
@@ -636,12 +634,12 @@ describe("Claude Code's command", () => {
 });
 
 describe("Gateweave's tools from the sandbox", () => {
-	const tools = new URL(CLAUDE_CODE_TOOLS_URL);
+	const tools = new URL(ENGINE_TOOLS_URL);
 
 	it("are reachable only while a turn of Claude Code has them, and only at their address", () => {
 		expect(decideOutbound("POST", tools)).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", tools, null, true)).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", tools, null, true, true)).toEqual({
+		expect(decideOutbound("POST", tools, null, "claude-code")).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", tools, null, "claude-code", true)).toEqual({
 			allow: true,
 			credentials: "tools",
 		});
@@ -650,7 +648,7 @@ describe("Gateweave's tools from the sandbox", () => {
 			"http://tools.gateweave.internal:8080/mcp",
 			"https://tools.gateweave.internal/mcp",
 		]) {
-			expect(decideOutbound("POST", new URL(elsewhere), null, true, true)).toMatchObject({
+			expect(decideOutbound("POST", new URL(elsewhere), null, "claude-code", true)).toMatchObject({
 				allow: false,
 			});
 		}
@@ -662,15 +660,15 @@ describe("Anthropic from the sandbox", () => {
 
 	it("is reachable only while Claude Code runs a turn, and only for the model", () => {
 		expect(decideOutbound("POST", messages)).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", messages, null, true)).toEqual({
+		expect(decideOutbound("POST", messages, null, "claude-code")).toEqual({
 			allow: true,
 			credentials: "anthropic",
 		});
 		const tokens = new URL("https://api.anthropic.com/v1/messages/count_tokens");
-		expect(decideOutbound("POST", tokens, null, true)).toMatchObject({ allow: true });
-		expect(decideOutbound("GET", messages, null, true)).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", tokens, null, "claude-code")).toMatchObject({ allow: true });
+		expect(decideOutbound("GET", messages, null, "claude-code")).toMatchObject({ allow: false });
 		const files = new URL("https://api.anthropic.com/v1/files");
-		expect(decideOutbound("POST", files, null, true)).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", files, null, "claude-code")).toMatchObject({ allow: false });
 	});
 
 	it("gets the workspace's key in place of the placeholder", async () => {

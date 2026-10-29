@@ -7,9 +7,9 @@
  * goes with it. It has no internet: every HTTP and HTTPS request it makes comes to
  * `SandboxOutbound`, which lets downloads from package registries through, git's fetches of the
  * repository the conversation checked out, and the push of the conversation's branch that `push`
- * makes, and Claude Code's requests to Anthropic while it runs a turn, and nothing else
+ * makes, and an engine's requests to its model's provider while it runs a turn, and nothing else
  * (`./outbound.ts`). It holds no secret of the workspace's, so a command has none to leak: the
- * token for that repository, and the workspace's key for Anthropic, are added on the way out.
+ * token for that repository, and the workspace's key for the model, are added on the way out.
  *
  * A deployment offers sandboxes by binding this class as `SANDBOX` with a container (see
  * `wrangler.jsonc`); its image is `sandbox/Dockerfile`.
@@ -24,23 +24,21 @@ import {
 	type SandboxRepository,
 } from "@gateweave/agents-model";
 import type { CheckoutResult } from "./checkout";
+import { claudeCodeCommand } from "./claude-code";
+import { toolsRequest } from "./engine-tools";
 import {
-	CLAUDE_CODE_ENV,
-	CLAUDE_CODE_LOG,
-	CLAUDE_CODE_SECONDS,
-	type ClaudeCodeAccess,
-	type ClaudeCodeJob,
-	type ClaudeCodePort,
-	claudeCodeArguments,
-	claudeCodePrompt,
-} from "./claude-code";
-import { toolsRequest } from "./claude-code-tools";
+	ENGINE_SECONDS,
+	type EngineCommand,
+	type EngineJob,
+	type EnginePort,
+	type RunningEngine,
+} from "./engines";
 import { anthropicRequest, failureForLogs, type GatewaySettings, SettingsError } from "./models";
 import {
 	ANTHROPIC_API,
-	CLAUDE_CODE_TOOLS_HOST,
 	checkPush,
 	decideOutbound,
+	ENGINE_TOOLS_HOST,
 	type GitAccess,
 	type PushWindow,
 	pushedRefs,
@@ -97,10 +95,10 @@ const PUSHED_KEY = "pushed";
 /** The conversation's Claude Code session, which its turns resume while the container has it. */
 const SESSION_KEY = "claude-code-session";
 
-/** How long Claude Code has to finish its turn when it is stopped, before it is killed. */
+/** How long an engine has to finish its turn when it is stopped, before it is killed. */
 const STOP_GRACE_MS = 10_000;
 
-/** The signals that stop Claude Code: Ctrl+C's, which ends its turn, and a kill's. */
+/** The signals that stop an engine: Ctrl+C's, which ends its turn, and a kill's. */
 const SIGINT = 2;
 const SIGTERM = 15;
 
@@ -129,7 +127,7 @@ interface SandboxState extends DurableObjectState {
 	};
 }
 
-export class RunnerSandbox extends DurableObject implements SandboxPort, ClaudeCodePort {
+export class RunnerSandbox extends DurableObject implements SandboxPort, EnginePort {
 	readonly #container: Container | undefined;
 	readonly #outbound: Fetcher;
 	/** The container's start under way, which every call waits for. */
@@ -139,14 +137,14 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, ClaudeC
 	 * with this instance if the push never does.
 	 */
 	#push: PushWindow | null = null;
-	/** Claude Code's turn under way, if any. */
-	#claude: ExecProcess | null = null;
+	/** The engine's turn under way, if any. */
+	#engine: ExecProcess | null = null;
 	/**
-	 * What the turn Claude Code is running reaches through `SandboxOutbound`: the workspace's key,
-	 * which goes on its requests to Anthropic, and the way to the conversation's tools. In memory
-	 * alone, like `#push`, and only while the turn runs.
+	 * What the turn the engine is running reaches through `SandboxOutbound`: the workspace's key,
+	 * which goes on its requests to the model's provider, and the way to the conversation's tools.
+	 * In memory alone, like `#push`, and only while the turn runs.
 	 */
-	#claudeCodeAccess: ClaudeCodeAccess | null = null;
+	#running: RunningEngine | null = null;
 
 	constructor(ctx: SandboxState, env: Cloudflare.Env) {
 		super(ctx, env);
@@ -359,93 +357,96 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, ClaudeC
 	}
 
 	/**
-	 * Starts a turn of Claude Code in `job.cwd`, resuming the conversation's session when the
+	 * Starts a turn of the job's engine in `job.cwd`, resuming the conversation's session when the
 	 * container still has it, or starting one. Returns its events as it writes them; the stream ends
-	 * with the turn, which may run for `CLAUDE_CODE_SECONDS`, and the container stays up meanwhile.
+	 * with the turn, which may run for `ENGINE_SECONDS`, and the container stays up meanwhile.
 	 */
-	async startClaudeCode(job: ClaudeCodeJob): Promise<ReadableStream<Uint8Array>> {
-		if (this.#claude) throw new Error("Claude Code is already running a turn in this sandbox");
+	async startEngine(job: EngineJob): Promise<ReadableStream<Uint8Array>> {
+		if (this.#engine) throw new Error("An engine is already running a turn in this sandbox");
 		const container = await this.#ready();
-		let session = this.ctx.storage.kv.get<string>(SESSION_KEY);
-		const resume = session !== undefined && (await this.#hasSession(container, session));
-		if (!resume || session === undefined) {
-			session = crypto.randomUUID();
-			this.ctx.storage.kv.put(SESSION_KEY, session);
-		}
-		const argv = claudeCodeArguments({
-			model: job.model,
-			system: job.system,
-			session,
-			resume,
-			tools: job.access.tools !== null,
-		});
-		this.#claudeCodeAccess = job.access;
-		await container.setInactivityTimeout(CLAUDE_CODE_SECONDS * 1000 + IDLE_MS);
+		const command = await this.#commandFor(container, job);
+		this.#running = { engine: job.engine, access: job.access };
+		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
 		let process: ExecProcess;
 		try {
 			process = await container.exec(
 				[
 					"timeout",
 					"--kill-after=30s",
-					`${CLAUDE_CODE_SECONDS}s`,
+					`${ENGINE_SECONDS}s`,
 					"bash",
 					"-c",
 					// Its own messages go to a file, so its output holds only its events.
-					`exec claude "$@" 2>>${CLAUDE_CODE_LOG}`,
-					"claude",
-					...argv,
+					`exec "$0" "$@" 2>>${command.log}`,
+					...command.argv,
 				],
 				{
 					cwd: job.cwd,
-					env: { ...COMMAND_ENV, ...CLAUDE_CODE_ENV },
+					env: { ...COMMAND_ENV, ...command.env },
 					stdin: "pipe",
 					stdout: "pipe",
 					stderr: "ignore",
 				},
 			);
 		} catch (error) {
-			await this.#claudeCodeEnded(container);
+			await this.#engineEnded(container);
 			throw error;
 		}
-		this.#claude = process;
+		this.#engine = process;
 		process.exitCode
 			.catch(() => null)
-			.then(() => this.#claudeCodeEnded(container))
+			.then(() => this.#engineEnded(container))
 			.catch((error: unknown) =>
-				console.error("A sandbox did not settle after Claude Code", failureForLogs(error)),
+				console.error("A sandbox did not settle after its engine", failureForLogs(error)),
 			);
 		// The message goes on its input, which has no limit on its length as an argument does.
 		const input = process.stdin?.getWriter();
 		if (input) {
-			await input.write(new TextEncoder().encode(claudeCodePrompt(job, resume)));
+			await input.write(new TextEncoder().encode(command.input));
 			await input.close();
 		}
-		if (!process.stdout) throw new Error("Claude Code's output could not be read");
+		if (!process.stdout) throw new Error("The engine's output could not be read");
 		return process.stdout as ReadableStream<Uint8Array>;
 	}
 
-	async stopClaudeCode(): Promise<void> {
-		const process = this.#claude;
+	async stopEngine(): Promise<void> {
+		const process = this.#engine;
 		if (!process) return;
 		process.kill(SIGINT);
 		setTimeout(() => {
-			if (this.#claude === process) process.kill(SIGTERM);
+			if (this.#engine === process) process.kill(SIGTERM);
 		}, STOP_GRACE_MS);
 	}
 
-	/** What `SandboxOutbound` lets Claude Code's turn reach; null when none runs. */
-	claudeCodeAccess(): ClaudeCodeAccess | null {
-		return this.#claudeCodeAccess;
+	/** The engine whose turn `SandboxOutbound` lets out, and with what; null when none runs. */
+	runningEngine(): RunningEngine | null {
+		return this.#running;
 	}
 
-	async #claudeCodeEnded(container: Container): Promise<void> {
-		this.#claude = null;
-		this.#claudeCodeAccess = null;
+	async #engineEnded(container: Container): Promise<void> {
+		this.#engine = null;
+		this.#running = null;
 		if (container.running) await container.setInactivityTimeout(IDLE_MS);
 	}
 
+	/** The command for the job's turn, in the session the container has, or a new one. */
+	async #commandFor(container: Container, job: EngineJob): Promise<EngineCommand> {
+		switch (job.engine) {
+			case "claude-code": {
+				let session = this.ctx.storage.kv.get<string>(SESSION_KEY);
+				const resume =
+					session !== undefined && (await this.#hasClaudeCodeSession(container, session));
+				if (!resume || session === undefined) {
+					session = crypto.randomUUID();
+					this.ctx.storage.kv.put(SESSION_KEY, session);
+				}
+				return claudeCodeCommand(job, session, resume);
+			}
+		}
+	}
+
 	/** Whether the container has the session's transcript, which Claude Code keeps in its home. */
-	async #hasSession(container: Container, session: string): Promise<boolean> {
+	async #hasClaudeCodeSession(container: Container, session: string): Promise<boolean> {
 		const found = await this.#exec(
 			container,
 			["find", "/root/.claude/projects", "-name", `${session}.jsonl`, "-print", "-quit"],
@@ -512,7 +513,7 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, ClaudeC
 			});
 			// The intercepts last as long as this run of the container. The tools' host is named too,
 			// so that the container's network answers lookups of a name that exists nowhere else.
-			await container.interceptOutboundHttp(CLAUDE_CODE_TOOLS_HOST, this.#outbound);
+			await container.interceptOutboundHttp(ENGINE_TOOLS_HOST, this.#outbound);
 			await container.interceptAllOutboundHttp(this.#outbound);
 			await container.interceptOutboundHttps("*", this.#outbound);
 			await container.setInactivityTimeout(IDLE_MS);
@@ -535,7 +536,7 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, ClaudeC
 
 /**
  * The settings `SandboxOutbound` reads: the sandboxes, the deployment's GitHub App, and its AI
- * Gateway, which Claude Code's requests to Anthropic go through as Gateweave's own do.
+ * Gateway, which an engine's requests to the model go through as Gateweave's own do.
  */
 interface OutboundEnv extends GatewaySettings {
 	SANDBOX?: DurableObjectNamespace<RunnerSandbox>;
@@ -544,9 +545,9 @@ interface OutboundEnv extends GatewaySettings {
 	GITHUB_APP_PRIVATE_KEY?: string;
 }
 
-/** What `SandboxOutbound` reaches of a conversation: the tools of the turn Claude Code runs. */
+/** What `SandboxOutbound` reaches of a conversation: the tools of the turn an engine runs. */
 interface ToolsConversation {
-	claudeCodeTools(token: string, request: Request): Promise<Response>;
+	engineTools(token: string, request: Request): Promise<Response>;
 }
 
 /**
@@ -554,30 +555,31 @@ interface ToolsConversation {
  * the Worker, and the rest get a 403 whose text says why, which the command prints. A fetch of the
  * conversation's repository goes out with a token minted for that repository alone, to read it,
  * and the push `RunnerSandbox.push` makes with one that writes, once its ref updates are checked.
- * While Claude Code runs a turn, its requests to Anthropic go out with the workspace's key, and
+ * While an engine runs a turn, its requests to the model go out with the workspace's key, and
  * those to Gateweave's tools never go out: the conversation answers them, with the turn's token.
  */
 export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundProps> {
 	override async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		const access = url.hostname === "github.com" ? await this.#access() : null;
-		const claudeCode =
-			url.hostname === ANTHROPIC_API || url.hostname === CLAUDE_CODE_TOOLS_HOST
-				? await this.#claudeCodeAccess()
+		const running =
+			url.hostname === ANTHROPIC_API || url.hostname === ENGINE_TOOLS_HOST
+				? await this.#runningEngine()
 				: null;
-		const tools = claudeCode?.tools ?? null;
+		const tools = running?.access.tools ?? null;
 		const decision = decideOutbound(
 			request.method,
 			url,
 			access,
-			claudeCode !== null,
+			running?.engine ?? null,
 			tools !== null,
 		);
 		if (!decision.allow) return refused(decision.reason, 403);
 		const env = this.env as unknown as OutboundEnv;
-		if (decision.credentials === "anthropic" && claudeCode) {
+		if (decision.credentials === "anthropic" && running) {
+			const { key, metadata } = running.access;
 			try {
-				return await fetch(anthropicRequest(request, claudeCode.key, env, claudeCode.metadata));
+				return await fetch(anthropicRequest(request, key, env, metadata));
 			} catch (error) {
 				if (error instanceof SettingsError) return refused(error.message, 502);
 				throw error;
@@ -585,7 +587,7 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		}
 		if (decision.credentials === "tools" && tools) {
 			const conversation = env.CONVERSATIONS.getByName(tools.conversation);
-			return (conversation as unknown as ToolsConversation).claudeCodeTools(
+			return (conversation as unknown as ToolsConversation).engineTools(
 				tools.token,
 				toolsRequest(request),
 			);
@@ -629,11 +631,11 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		return env.SANDBOX.get(env.SANDBOX.idFromString(sandbox)).access();
 	}
 
-	async #claudeCodeAccess(): Promise<ClaudeCodeAccess | null> {
+	async #runningEngine(): Promise<RunningEngine | null> {
 		const env = this.env as unknown as OutboundEnv;
 		const { sandbox } = this.ctx.props;
 		if (!env.SANDBOX || !sandbox) return null;
-		return env.SANDBOX.get(env.SANDBOX.idFromString(sandbox)).claudeCodeAccess();
+		return env.SANDBOX.get(env.SANDBOX.idFromString(sandbox)).runningEngine();
 	}
 
 	async #token(repository: SandboxRepository, use: "read" | "write"): Promise<string | null> {

@@ -3,12 +3,13 @@
  * it makes comes to the Worker (`SandboxOutbound` in `./sandbox.ts`), which asks this. Package
  * registries are open for downloads, so a turn can install what a project needs, and github.com is
  * open for fetching the one repository the agent checks out, and for the push of the
- * conversation's branch that `open_pull_request` makes. Anthropic's API is open to Claude Code's
- * requests for the model while it runs a turn (`./claude-code.ts`), and so is the host where it
- * finds Gateweave's tools, which only the Worker answers (`./claude-code-tools.ts`). Nothing else
- * is, so what the sandbox holds cannot be sent anywhere.
+ * conversation's branch that `open_pull_request` makes. While an engine runs a turn
+ * (`./engines.ts`), its provider's API is open to the CLI's requests for the model, and so is the
+ * host where it finds Gateweave's tools, which only the Worker answers (`./engine-tools.ts`).
+ * Nothing else is, so what the sandbox holds cannot be sent anywhere.
  */
 import { PULL_REQUEST_TOOL } from "@gateweave/agents-model";
+import type { SandboxEngine } from "./engines";
 
 /** The hosts a sandbox downloads packages from: npm, PyPI, crates.io and Go's module proxy. */
 export const PACKAGE_REGISTRIES: readonly string[] = [
@@ -32,13 +33,13 @@ export const ANTHROPIC_API = "api.anthropic.com";
 const ANTHROPIC_PATHS = new Set(["/v1/messages", "/v1/messages/count_tokens"]);
 
 /**
- * Where Claude Code finds Gateweave's tools. No such host exists outside the sandbox: the Worker
+ * Where an engine finds Gateweave's tools. No such host exists outside the sandbox: the Worker
  * answers it, under a name no one can register.
  */
-export const CLAUDE_CODE_TOOLS_HOST = "tools.gateweave.internal";
+export const ENGINE_TOOLS_HOST = "tools.gateweave.internal";
 
 /** The path the tools are answered at, on that host. */
-export const CLAUDE_CODE_TOOLS_PATH = "/mcp";
+export const ENGINE_TOOLS_PATH = "/mcp";
 
 /** The repository a sandbox's git may fetch from GitHub. */
 export interface GitRepository {
@@ -72,7 +73,7 @@ export type OutboundDecision =
 	| { allow: false; reason: string };
 
 /**
- * `engine` says whether Claude Code is running a turn in the sandbox; a request to Anthropic that
+ * `engine` is the engine running a turn in the sandbox, if any; a request to its provider that
  * goes out then does so with the workspace's key, which the Worker puts in place of the
  * placeholder. `tools` says whether that turn has Gateweave's tools, which the conversation
  * answers.
@@ -81,20 +82,20 @@ export function decideOutbound(
 	method: string,
 	url: URL,
 	access: GitAccess | null = null,
-	engine = false,
+	engine: SandboxEngine | null = null,
 	tools = false,
 ): OutboundDecision {
 	const host = url.hostname;
-	if (host === CLAUDE_CODE_TOOLS_HOST) {
+	if (host === ENGINE_TOOLS_HOST) {
 		if (!tools) return refuse(`${host} answers this sandbox only while a turn has its tools`);
-		return url.protocol === "http:" && url.port === "" && url.pathname === CLAUDE_CODE_TOOLS_PATH
+		return url.protocol === "http:" && url.port === "" && url.pathname === ENGINE_TOOLS_PATH
 			? { allow: true, credentials: "tools" }
-			: refuse(`${host} answers only at http://${host}${CLAUDE_CODE_TOOLS_PATH}`);
+			: refuse(`${host} answers only at http://${host}${ENGINE_TOOLS_PATH}`);
 	}
 	if (url.protocol !== "https:") return refuse(`${host} is reachable only over HTTPS`);
 	if (host === GITHUB && url.port === "") return decideGitHub(method, url, access);
 	if (host === ANTHROPIC_API && url.port === "") {
-		if (!engine) {
+		if (engine !== "claude-code") {
 			return refuse(`${host} is reachable from this sandbox only while Claude Code runs a turn`);
 		}
 		return method === "POST" && ANTHROPIC_PATHS.has(url.pathname)
