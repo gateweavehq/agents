@@ -4,6 +4,7 @@ packages:
 
 # Versions shared across workspace packages. Reference them with "catalog:".
 catalog:
+  "@ai-sdk/openai-compatible": 3.0.80
   "@ai-sdk/provider": 4.0.34
   "@cloudflare/ai-chat": 0.12.2
   "@cloudflare/vitest-plugin": 1.4.8

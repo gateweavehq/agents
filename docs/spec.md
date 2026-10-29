@@ -115,7 +115,8 @@ The same shape as Track: one Worker per product and one Durable Object per works
   against the team graph. Long, multi-step jobs run as Workflows, so they survive restarts.
 - **Models** go through Cloudflare AI Gateway when the deployment names one: OpenAI, Anthropic
   and Google behind one endpoint, with caching, rate limits, fallbacks and logs. Without it,
-  requests go to the provider directly.
+  requests go to the provider directly. Workers AI models need no workspace key: a deployment
+  that sets a token for it offers them, and pays.
 - **Tools.** Remote MCP servers from the library, reached by a client opened for each turn;
   scripts and code in Cloudflare Sandboxes; secrets sealed in the workspace's registry and never
   copied into prompts (see "Decisions").
@@ -182,7 +183,8 @@ runtime is designed alongside it, so the data model fits both.
   Secrets Store was set aside: it is in beta, and its secrets are bindings fixed at deploy time,
   not values each workspace adds. Workers AI and AI Gateway's Unified Billing stay off unless a
   deployment turns them on, so a self-hosted server never spends its owner's money on someone
-  else's workspace.
+  else's workspace. Workers AI is that opt-in (AGT-36, 2026-10-29): `WORKERS_AI_TOKEN` and an
+  account, and off in Gateweave Cloud's production until Cloud meters it.
 - **Agents run by Gateweave live with the agents scans find** (AGT-22, 2026-10-28). They are rows
   in the same `agents` table, so every page that lists agents shows them, with their definition
   in a table of its own. Instructions come from the library, pinned to a version, rather than as

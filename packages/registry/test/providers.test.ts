@@ -236,3 +236,26 @@ describe("provider keys", () => {
 		expect(await stub.listProviderKeys()).toEqual([]);
 	});
 });
+
+describe("Workers AI has no key", () => {
+	it("is refused by every API that takes a key", async () => {
+		const stub = registry();
+		await expect(
+			runInDurableObject(stub, (instance: RegistryDO) =>
+				instance.saveProviderKey({ provider: "workers-ai", key: KEY } as never, "Ada"),
+			),
+		).rejects.toThrow();
+		await expect(
+			runInDurableObject(stub, (instance: RegistryDO) => instance.checkProviderKey("workers-ai")),
+		).rejects.toThrow();
+		await expect(
+			runInDurableObject(stub, (instance: RegistryDO) => instance.listModels("workers-ai")),
+		).rejects.toThrow();
+		await expect(
+			runInDurableObject(stub, (instance: RegistryDO) =>
+				Promise.resolve(instance.removeProviderKey("workers-ai")),
+			),
+		).rejects.toThrow();
+		expect(await stub.listProviderKeys()).toEqual([]);
+	});
+});

@@ -35,8 +35,9 @@
 	// domain onboarded to Email Sending; without it, Agents runs with email off.
 	"send_email": [{ "name": "EMAIL" }],
 	// Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, the six
-	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, and AI_GATEWAY_URL with
-	// AI_GATEWAY_TOKEN (see apps/web/src/server/env.d.ts).
+	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, AI_GATEWAY_URL with AI_GATEWAY_TOKEN,
+	// and WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID (see
+	// apps/web/src/server/env.d.ts).
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
 	// The top level is production. Staging is a separate Worker with its own database and
 	// workspaces; bindings are not inherited, so they are repeated here.

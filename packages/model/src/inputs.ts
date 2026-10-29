@@ -6,6 +6,7 @@
 import { z } from "zod";
 import {
 	ASSET_KINDS,
+	KEYED_PROVIDERS,
 	MODEL_PROVIDERS,
 	REPOSITORY_PROVIDERS,
 	REPOSITORY_RUNTIMES,
@@ -456,7 +457,7 @@ export type TeamGraphInput = z.input<typeof teamGraphInput>;
  * spaces; trimming forgives the newline a copy often brings along.
  */
 export const providerKeyInput = z.object({
-	provider: z.enum(MODEL_PROVIDERS),
+	provider: z.enum(KEYED_PROVIDERS),
 	key: z
 		.string()
 		.trim()
@@ -494,12 +495,12 @@ export const MAX_AGENT_MCP_SERVERS = 10;
 
 /**
  * An agent defined in the app and run by Gateweave: the model it calls with the workspace's key
- * for that provider, and what it always reads, a library asset pinned to a version (one of
+ * for that provider (Workers AI needs none), and what it always reads, a library asset pinned to a version (one of
  * `INSTRUCTION_KINDS`).
  */
 export const agentDefinitionInput = projectInput.extend({
 	provider: z.enum(MODEL_PROVIDERS),
-	/** The provider's id for the model, as its models API lists it. */
+	/** The provider's id for the model, as its models API lists it (`@cf/…` for Workers AI). */
 	model: z
 		.string()
 		.trim()

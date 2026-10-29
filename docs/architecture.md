@@ -238,7 +238,10 @@ needs no GitHub request.
 
 A workspace brings its own keys for the model providers its agents use (Anthropic, OpenAI and
 Google), so usage is billed to the workspace's accounts. An owner or admin adds them on the
-Models settings page.
+Models settings page. **Workers AI** is the exception: it needs no key of the workspace's (see
+"Workers AI" below). Everything about keys (saving, sealing, checking) takes only the three keyed
+providers, `KEYED_PROVIDERS` in `packages/model/src/vocabulary.ts`; `MODEL_PROVIDERS` is those
+and Workers AI, for what an agent definition may name.
 
 - **Sealed in the registry.** A key is encrypted with AES-256-GCM before it is stored, under a
   key derived with HKDF from the server's `SECRETS_KEY` secret and the workspace's Durable Object
@@ -254,6 +257,43 @@ Models settings page.
 - **Losing `SECRETS_KEY` loses the keys.** A check then says the key cannot be opened, and it
   has to be added again.
   Sealed values carry a version, so a rotation scheme can be added beside this one.
+
+### Workers AI
+
+Workers AI models run on Cloudflare's own GPUs and cost the workspace nothing directly: the
+**deployment pays** through its Cloudflare account, and only when it opts in. Gateweave Cloud's
+production leaves it off for now; a self-hoster turns it on.
+
+- **Turning it on** takes a secret `WORKERS_AI_TOKEN` (a Cloudflare API token with the Workers AI
+  permission, never in `wrangler.jsonc`) and the account that pays: the var
+  `CLOUDFLARE_ACCOUNT_ID`, or else the account in `AI_GATEWAY_URL`. Without both, Workers AI is
+  not offered, and says so: the agent dialogs label it "(not on this server)", Settings > Models
+  says the server does not offer it, and a turn of an agent that uses it is refused up front with
+  "This server does not offer Workers AI". `workersAiOffered` in `packages/model/src/workers-ai.ts`
+  decides, for the registry, the runtime and the app alike.
+- **No key.** Workspaces never save one, and Settings > Models has no key form for it. The
+  registry's `beginTurn` hands the runtime `key: null` for it; the runtime reads the token and
+  account from its own environment. The token is never stored, never returned by a server
+  function and never in a page; the registry only sees whether it is set.
+- **Reached by URL**, like AI Gateway, because the `AI` binding always calls Cloudflare. The
+  runtime uses Cloudflare's OpenAI-compatible REST API through `@ai-sdk/openai-compatible`
+  (`packages/runtime/src/models.ts`): `https://api.cloudflare.com/client/v4/accounts/<account>/ai/v1`,
+  `Authorization: Bearer <WORKERS_AI_TOKEN>`, with `includeUsage` on. With `AI_GATEWAY_URL` set,
+  the request goes to the same URL with a `cf-aig-gateway-id` header naming the gateway, plus
+  `cf-aig-metadata` and (for an authenticated gateway) `cf-aig-authorization`, as for the other
+  providers.
+- **Usage.** Streamed, every chunk carries a `usage` object with that chunk's increment, and the
+  last chunk before `[DONE]` carries the totals for the request, which is the one the AI SDK
+  keeps. A test pins this shape, so a change in the SDK cannot silently undercount.
+- **Models** are Workers AI's own ids, such as `@cf/meta/llama-4-scout-17b-16e-instruct`. The
+  lists in the agent dialog and on Settings > Models come from the catalog
+  (`GET /accounts/<account>/ai/models/search?task=Text Generation`, in
+  `packages/runtime/src/workers-ai.ts`), made with the deployment's token and keeping the models
+  whose `function_calling` property is `"true"`, because agents need tools. Any id can still be
+  typed.
+- **Prices** for six models are in `MODEL_PRICES` (`packages/model/src/prices.ts`), from the
+  catalog's `price` property. Other Workers AI models get no estimate, as an unlisted model of any
+  provider does.
 
 ## Agents run by Gateweave
 
@@ -384,7 +424,7 @@ after a reconnect.
   shown nor logged.
 - **AI Gateway, when the deployment names one.** With `AI_GATEWAY_URL`
   (`https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`), every model request goes through
-  that gateway with the workspace's key, and `cf-aig-metadata` names the workspace, agent and
+  that gateway with the workspace's key (Workers AI: the deployment's token, see "Workers AI"), and `cf-aig-metadata` names the workspace, agent and
   conversation so its logs and analytics split by workspace. `AI_GATEWAY_TOKEN` is for an
   authenticated gateway. The gateway is reached by URL rather than through an `ai` binding,
   because the binding always calls Cloudflare: local development and the tests would need a
@@ -674,8 +714,9 @@ provider keys.
   check`. It is built and tested here, and stays private until then.
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
   [Track triage](#track-triage).
-- **Workers AI** as a model provider (AGT-36), once it is settled who pays for its runs on
-  Gateweave Cloud.
+- **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
+  Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
+  them.
 - **Cloud runners** (phase 5, AGT-9): coding agents in Sandboxes, which also run the MCP servers
   that are local commands.
 

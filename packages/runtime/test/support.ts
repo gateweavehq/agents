@@ -157,6 +157,36 @@ export function fakeModel(
 	return requests;
 }
 
+/** One streamed chunk of `POST /ai/v1/chat/completions`, as Workers AI sends it. */
+interface CompletionChunk {
+	delta: Record<string, unknown>;
+	finish?: "stop" | "tool_calls";
+	/** The tokens this chunk adds, or on the last chunk, the totals for the request. */
+	usage: { prompt_tokens: number; completion_tokens: number };
+}
+
+/** A streamed OpenAI-compatible answer: each chunk with its usage, then `[DONE]`. */
+export function completionStream(chunks: CompletionChunk[]): Response {
+	const body = chunks
+		.map(({ delta, finish, usage }, index) => {
+			const last = index === chunks.length - 1;
+			return `data: ${JSON.stringify({
+				id: "chatcmpl-1",
+				object: "chat.completion.chunk",
+				created: 1,
+				model: "@cf/meta/llama-4-scout-17b-16e-instruct",
+				choices: [{ index: 0, delta, finish_reason: finish ?? null }],
+				usage: { ...usage, total_tokens: usage.prompt_tokens + usage.completion_tokens },
+				// Workers AI's own measure of what the request cost, on the last chunk.
+				...(last ? { neurons: 42 } : {}),
+			})}\n\n`;
+		})
+		.join("");
+	return new Response(`${body}data: [DONE]\n\n`, {
+		headers: { "content-type": "text/event-stream" },
+	});
+}
+
 /** Anthropic's streamed answer that calls one tool, as `POST /v1/messages` sends it. */
 export function anthropicToolCall(name: string, input: object): Response {
 	const events: [string, unknown][] = [

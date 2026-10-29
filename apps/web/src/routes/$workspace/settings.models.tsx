@@ -1,8 +1,9 @@
 import {
+	KEYED_PROVIDERS,
+	type KeyedProvider,
 	MODEL_PROVIDER_NAMES,
-	MODEL_PROVIDERS,
-	type ModelProvider,
 	type ProviderKey,
+	type ProviderModel,
 } from "@gateweave/agents-model";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -25,18 +26,25 @@ import { formatDateTime, formatRelative } from "#/lib/dates";
 import {
 	checkProviderKey,
 	getProviderKeys,
+	getWorkersAiModels,
 	removeProviderKey,
 	saveProviderKey,
 } from "#/lib/providers";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/settings/models")({
-	loader: ({ params }) => getProviderKeys({ data: params.workspace }),
+	loader: async ({ params }) => {
+		const [keys, workersAiModels] = await Promise.all([
+			getProviderKeys({ data: params.workspace }),
+			getWorkersAiModels({ data: params.workspace }),
+		]);
+		return keys && { ...keys, workersAiModels };
+	},
 	component: ModelsPage,
 });
 
 /** Where each provider hands out keys. */
-const KEY_PAGES: Record<ModelProvider, string> = {
+const KEY_PAGES: Record<KeyedProvider, string> = {
 	anthropic: "https://platform.claude.com/settings/keys",
 	openai: "https://platform.openai.com/api-keys",
 	google: "https://aistudio.google.com/apikey",
@@ -56,14 +64,22 @@ function ModelsPage() {
 			<Notice title="Models unavailable">You are no longer a member of this workspace.</Notice>
 		);
 	}
-	if (!data.configured) {
-		return (
-			<Notice title="Model keys are not set up on this server">
-				Whoever runs this server can turn them on by setting the SECRETS_KEY secret; see the README
-				in the repository.
-			</Notice>
-		);
-	}
+	return (
+		<div className="space-y-10">
+			{data.configured ? (
+				<KeyedProviders keys={data.keys} admin={admin} />
+			) : (
+				<Notice title="Model keys are not set up on this server">
+					Whoever runs this server can turn them on by setting the SECRETS_KEY secret; see the
+					README in the repository.
+				</Notice>
+			)}
+			<WorkersAi offered={data.workersAi} models={data.workersAiModels} />
+		</div>
+	);
+}
+
+function KeyedProviders({ keys, admin }: { keys: ProviderKey[]; admin: boolean }) {
 	return (
 		<section aria-labelledby="models-heading" className="space-y-6">
 			<div className="space-y-1">
@@ -77,11 +93,11 @@ function ModelsPage() {
 				</p>
 			</div>
 			<ul className="divide-y rounded-lg border">
-				{MODEL_PROVIDERS.map((provider) => (
+				{KEYED_PROVIDERS.map((provider) => (
 					<ProviderRow
 						key={provider}
 						provider={provider}
-						saved={data.keys.find((key) => key.provider === provider)}
+						saved={keys.find((key) => key.provider === provider)}
 						admin={admin}
 					/>
 				))}
@@ -93,12 +109,62 @@ function ModelsPage() {
 	);
 }
 
+/**
+ * Workers AI has no key to add: this server's operator turns it on, and pays for the runs through
+ * their own Cloudflare account. So the page only says whether it is on, and which models it has.
+ */
+function WorkersAi({
+	offered,
+	models,
+}: {
+	offered: boolean;
+	/** The models, or why they could not be listed; null when the server does not offer it. */
+	models: ProviderModel[] | string | null;
+}) {
+	const name = MODEL_PROVIDER_NAMES["workers-ai"];
+
+	return (
+		<section aria-labelledby="workers-ai-heading" className="space-y-3">
+			<div className="space-y-1">
+				<h2 id="workers-ai-heading" className="text-base font-semibold">
+					{name}
+				</h2>
+				<p className="text-sm text-muted-foreground">
+					{offered
+						? "This server offers Workers AI models to every workspace. They need no key: whoever runs the server pays for their runs."
+						: "This server does not offer Workers AI. Whoever runs it can turn it on by setting WORKERS_AI_TOKEN, and CLOUDFLARE_ACCOUNT_ID unless AI_GATEWAY_URL names the account; see the README in the repository."}
+				</p>
+			</div>
+			{offered && models !== null && (
+				<div className="rounded-lg border p-3 text-sm">
+					{typeof models === "string" ? (
+						<p role="alert" className="text-destructive">
+							{models}
+						</p>
+					) : (
+						<details>
+							<summary className="cursor-pointer">
+								{models.length === 1 ? "1 model" : `${models.length} models`} that can use tools
+							</summary>
+							<ul className="mt-2 space-y-0.5 font-mono text-xs text-muted-foreground">
+								{models.map((model) => (
+									<li key={model.id}>{model.id}</li>
+								))}
+							</ul>
+						</details>
+					)}
+				</div>
+			)}
+		</section>
+	);
+}
+
 function ProviderRow({
 	provider,
 	saved,
 	admin,
 }: {
-	provider: ModelProvider;
+	provider: KeyedProvider;
 	saved: ProviderKey | undefined;
 	admin: boolean;
 }) {
@@ -215,7 +281,7 @@ function KeyDialog({
 	onSave,
 	onClose,
 }: {
-	provider: ModelProvider;
+	provider: KeyedProvider;
 	onSave: (key: string) => Promise<void>;
 	onClose: () => void;
 }) {

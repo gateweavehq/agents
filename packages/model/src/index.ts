@@ -6,3 +6,4 @@ export * from "./prices";
 export * from "./track-triage";
 export * from "./triggers";
 export * from "./vocabulary";
+export * from "./workers-ai";

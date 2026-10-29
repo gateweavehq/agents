@@ -69,15 +69,51 @@ export type DriftFileState = (typeof DRIFT_FILE_STATES)[number];
 /**
  * Model providers a workspace brings its own key for. The runtime calls their models through AI
  * Gateway with that key, so usage is billed to the workspace's own account with the provider.
+ * Everything about keys (saving, sealing, checking) takes only these.
  */
-export const MODEL_PROVIDERS = ["anthropic", "openai", "google"] as const;
+export const KEYED_PROVIDERS = ["anthropic", "openai", "google"] as const;
+export type KeyedProvider = (typeof KEYED_PROVIDERS)[number];
+
+/**
+ * Every provider an agent run by Gateweave can use: the keyed ones, and Workers AI, which needs no
+ * key of the workspace's own. The deployment pays for it, and only when its operator turned it on
+ * (`WORKERS_AI_TOKEN`; see `./workers-ai.ts`).
+ */
+export const MODEL_PROVIDERS = [...KEYED_PROVIDERS, "workers-ai"] as const;
 export type ModelProvider = (typeof MODEL_PROVIDERS)[number];
 
 export const MODEL_PROVIDER_NAMES: Record<ModelProvider, string> = {
 	anthropic: "Anthropic",
 	openai: "OpenAI",
 	google: "Google",
+	"workers-ai": "Workers AI",
 };
+
+export function isKeyedProvider(provider: ModelProvider): provider is KeyedProvider {
+	return (KEYED_PROVIDERS as readonly string[]).includes(provider);
+}
+
+/**
+ * Why an agent of this provider cannot answer, as the start of a sentence: the workspace has no
+ * key, or this server does not offer the provider.
+ */
+export function providerMissing(provider: ModelProvider): string {
+	return isKeyedProvider(provider)
+		? `The workspace has no ${MODEL_PROVIDER_NAMES[provider]} key`
+		: `This server does not offer ${MODEL_PROVIDER_NAMES[provider]}`;
+}
+
+/** What follows a provider's name in a picker while no agent of it can answer. */
+export function providerPickerNote(provider: ModelProvider): string {
+	return isKeyedProvider(provider) ? " (no key)" : " (not on this server)";
+}
+
+/** The same in a few words, to follow an agent's name in a list. */
+export function providerMissingShort(provider: ModelProvider): string {
+	return isKeyedProvider(provider)
+		? `no ${MODEL_PROVIDER_NAMES[provider]} key yet`
+		: "not on this server";
+}
 
 /** The kinds of library asset an agent run by Gateweave can take its instructions from. */
 export const INSTRUCTION_KINDS = ["instructions", "prompt"] as const satisfies readonly AssetKind[];

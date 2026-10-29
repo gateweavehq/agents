@@ -1,5 +1,7 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import type { RegistryDO } from "../src";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -119,5 +121,75 @@ describe("conversations", () => {
 			status: "refused",
 			message: "This conversation was deleted",
 		});
+	});
+});
+
+describe("turns with Workers AI", () => {
+	const TOKEN = "workers-ai-test-token-not-a-real-one";
+	const SCOUT = "@cf/meta/llama-4-scout-17b-16e-instruct";
+
+	async function workersAiConversation(stub: ReturnType<typeof registry>) {
+		const agent = await stub.createAgent({
+			name: "Scout",
+			description: null,
+			provider: "workers-ai",
+			model: SCOUT,
+			instructions: null,
+		});
+		return (await stub.startConversation(agent.id, ADA))?.id ?? "";
+	}
+
+	/** Runs `fn` on a registry whose server has not turned Workers AI on. */
+	async function withoutToken<T>(
+		stub: ReturnType<typeof registry>,
+		fn: (instance: RegistryDO) => Promise<T>,
+	) {
+		return runInDurableObject(stub, async (instance: RegistryDO) => {
+			// `env` is protected, and a test of the server's settings is what needs it.
+			const { env: settings } = instance as unknown as {
+				env: Record<string, string | undefined>;
+			};
+			const kept = settings.WORKERS_AI_TOKEN;
+			delete settings.WORKERS_AI_TOKEN;
+			try {
+				return await fn(instance);
+			} finally {
+				settings.WORKERS_AI_TOKEN = kept;
+			}
+		});
+	}
+
+	it("begin without a key of the workspace's, and never carry the token", async () => {
+		const stub = registry();
+		const id = await workersAiConversation(stub);
+		const turn = await stub.beginTurn(id, "Hello");
+		expect(turn).toMatchObject({
+			agent: { provider: "workers-ai", model: SCOUT },
+			key: null,
+			mcpServers: [],
+			edges: [],
+			runId: expect.any(String),
+		});
+		expect(JSON.stringify(turn)).not.toContain(TOKEN);
+		expect(await stub.listProviderKeys()).toEqual([]);
+	});
+
+	it("are refused up front on a server that did not turn it on", async () => {
+		const stub = registry();
+		const id = await workersAiConversation(stub);
+		const refusal = {
+			status: "refused",
+			message:
+				"This server does not offer Workers AI, so Scout cannot answer. Whoever runs this server can turn it on; see the README.",
+		};
+		await withoutToken(stub, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toEqual(refusal);
+		});
+		// The refusal is not the workspace's to fix: a key for another provider changes nothing.
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await withoutToken(stub, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toEqual(refusal);
+		});
+		expect(await stub.beginTurn(id, "Hello")).toMatchObject({ key: null });
 	});
 });

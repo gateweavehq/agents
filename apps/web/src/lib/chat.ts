@@ -9,14 +9,17 @@ import { z } from "zod";
 
 const id = z.string().min(1).max(64);
 
-/** An agent someone can talk to, and whether the workspace has a key for its provider. */
+/**
+ * An agent someone can talk to, and whether it can answer: the workspace has a key for its
+ * provider, or the server offers its provider (Workers AI).
+ */
 export interface ChatAgent {
 	id: string;
 	name: string;
 	description: string | null;
 	provider: ModelProvider;
 	model: string;
-	keyed: boolean;
+	available: boolean;
 }
 
 /** A team someone can talk to. Its lead answers, so the team answers only while it has one. */
@@ -45,13 +48,15 @@ async function memberOf(slug: string) {
 	};
 }
 
-/** The agents run by Gateweave, with the providers the workspace has keys for. */
+/** The agents run by Gateweave, with the providers the workspace has keys for, or the server offers. */
 async function chatAgents(registry: NonNullable<Awaited<ReturnType<typeof memberOf>>>["registry"]) {
-	const [agents, keys] = await Promise.all([
+	const [agents, keys, { offersWorkersAi }] = await Promise.all([
 		registry.listRunnableAgents(),
 		registry.listProviderKeys(),
+		import("#/server/workers-ai"),
 	]);
-	const keyed = new Set(keys.map((key) => key.provider));
+	const usable = new Set<ModelProvider>(keys.map((key) => key.provider));
+	if (offersWorkersAi()) usable.add("workers-ai");
 	return agents.map(
 		({ id, name, description, provider, model }): ChatAgent => ({
 			id,
@@ -59,7 +64,7 @@ async function chatAgents(registry: NonNullable<Awaited<ReturnType<typeof member
 			description,
 			provider,
 			model,
-			keyed: keyed.has(provider),
+			available: usable.has(provider),
 		}),
 	);
 }

@@ -1,4 +1,4 @@
-import { MODEL_PROVIDER_NAMES } from "@gateweave/agents-model";
+import { isKeyedProvider, MODEL_PROVIDER_NAMES, providerMissing } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, Trash2, Users } from "lucide-react";
 import { Suspense, useEffect, useMemo, useState } from "react";
@@ -53,8 +53,8 @@ function ChatPage() {
 				? `The lead of ${teamName} was removed, so the team cannot answer. ${admin ? "Choose another lead on the team's page." : "An owner or admin can choose another on the team's page."}`
 				: !agent
 					? "This agent was removed, so the conversation cannot go on."
-					: !agent.keyed
-						? `The workspace has no ${provider} key, so ${agent.name} cannot answer yet.${admin ? "" : " An owner or admin can add one in Settings."}`
+					: !agent.available
+						? `${providerMissing(agent.provider)}, so ${agent.name} cannot answer yet.${isKeyedProvider(agent.provider) && !admin ? " An owner or admin can add one in Settings." : ""}`
 						: null;
 
 	return (
@@ -130,7 +130,7 @@ function ChatPage() {
 			{blocked && (
 				<p className="border-b bg-amber-50 px-4 py-2 text-sm text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
 					{blocked}
-					{admin && agent && !agent.keyed && (
+					{admin && agent && !agent.available && isKeyedProvider(agent.provider) && (
 						<>
 							{" "}
 							<Link

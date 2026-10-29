@@ -17,6 +17,7 @@
 		"@ai-sdk/google": "4.0.106",
 		"@ai-sdk/mcp": "2.0.85",
 		"@ai-sdk/openai": "4.0.103",
+		"@ai-sdk/openai-compatible": "catalog:",
 		"@ai-sdk/provider": "catalog:",
 		"@cloudflare/ai-chat": "catalog:",
 		"@gateweave/agents-model": "workspace:*",

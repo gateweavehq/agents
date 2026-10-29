@@ -21,6 +21,9 @@ import {
 	envSecretInput,
 	envSetEditInput,
 	envSetInput,
+	isKeyedProvider,
+	KEYED_PROVIDERS,
+	type KeyedProvider,
 	type LibraryEditInput,
 	type LibraryEntry,
 	type LibraryTarget,
@@ -32,8 +35,6 @@ import {
 	type McpServerEntry,
 	type McpServerInput,
 	MODEL_PROVIDER_NAMES,
-	MODEL_PROVIDERS,
-	type ModelProvider,
 	mcpCheckResult,
 	mcpServerEditInput,
 	mcpServerInput,
@@ -51,6 +52,7 @@ import {
 	projectInput,
 	projectPatch,
 	providerKeyInput,
+	providerMissing,
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
@@ -101,7 +103,9 @@ import {
 	triggerPatch,
 	triggerSecret,
 	turnVia,
+	type WorkersAiSettings,
 	type WrittenAssetInput,
+	workersAiOffered,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
@@ -230,7 +234,8 @@ import {
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
-const modelProvider = z.enum(MODEL_PROVIDERS);
+// Keys exist only for the providers that have them; Workers AI has none to save, check or remove.
+const keyedProvider = z.enum(KEYED_PROVIDERS);
 const triggerHeaders = z.object({
 	id: z
 		.string()
@@ -813,16 +818,25 @@ export class RegistryDO extends DurableObject {
 		position: TeamPosition | null,
 		tools: boolean,
 	): Promise<Omit<ConversationTurn, "runId"> | ProviderRefusal> {
-		if (sealedKeyOf(this.#db, agent.provider) === null) {
+		const { provider } = agent;
+		if (isKeyedProvider(provider)) {
+			if (sealedKeyOf(this.#db, provider) === null) {
+				return refused(
+					`${providerMissing(provider)}, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
+				);
+			}
+		} else if (!workersAiOffered(this.env as WorkersAiSettings)) {
 			return refused(
-				`The workspace has no ${MODEL_PROVIDER_NAMES[agent.provider]} key, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
+				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
 			);
 		}
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
 		const servers = tools ? agentServers(this.#db, agent.agentId) : [];
 		const edges = tools && position ? turnEdges(this.#db, position) : [];
 		const [opened, environment] = await Promise.all([
-			this.#openKey(agent.provider),
+			// Workers AI has no key of the workspace's: the runtime uses the deployment's token, which
+			// never passes through here.
+			isKeyedProvider(provider) ? this.#openKey(provider) : { key: null },
 			servers.length > 0 ? this.resolveEnvironment(agent.agentId) : null,
 		]);
 		if ("status" in opened) return opened;
@@ -1062,13 +1076,13 @@ export class RegistryDO extends DurableObject {
 	}
 
 	removeProviderKey(provider: string): boolean {
-		const which = modelProvider.parse(provider);
+		const which = keyedProvider.parse(provider);
 		return this.#write(() => removeProviderKey(this.#db, which));
 	}
 
 	/** Tries the provider's key by listing its models, and records how that went. */
 	async checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal> {
-		const which = modelProvider.parse(provider);
+		const which = keyedProvider.parse(provider);
 		const opened = await this.#openKey(which);
 		if ("status" in opened) return opened;
 		const result = await listProviderModels(which, opened.key);
@@ -1085,7 +1099,7 @@ export class RegistryDO extends DurableObject {
 
 	/** The models the provider offers to the workspace's key, to choose an agent's model from. */
 	async listModels(provider: string): Promise<ProviderModel[] | ProviderRefusal> {
-		const which = modelProvider.parse(provider);
+		const which = keyedProvider.parse(provider);
 		const opened = await this.#openKey(which);
 		if ("status" in opened) return opened;
 		const result = await listProviderModels(which, opened.key);
@@ -1255,7 +1269,7 @@ export class RegistryDO extends DurableObject {
 
 	/** The workspace's key for the provider, opened, or why it cannot be. */
 	async #openKey(
-		provider: ModelProvider,
+		provider: KeyedProvider,
 	): Promise<{ key: string; sealed: string } | ProviderRefusal> {
 		const name = MODEL_PROVIDER_NAMES[provider];
 		const sealed = sealedKeyOf(this.#db, provider);

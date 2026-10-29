@@ -1,8 +1,8 @@
 /**
- * The workspace's model provider keys: stored sealed (see `secrets.ts`), shown by their last four
+ * The workspace's model provider keys, stored sealed (see `secrets.ts`), shown by their last four
  * characters, and checked by listing the provider's models, which proves a key works without
  * spending tokens. Listing goes straight to the provider; the runtime's model calls go through
- * AI Gateway.
+ * AI Gateway. Workers AI has no key here: the deployment pays for it.
  *
  * Provider APIs, checked 2026-10-28:
  * - https://platform.claude.com/docs/en/api/models/list (`GET /v1/models`, newest first, paged
@@ -13,9 +13,9 @@
  *   with `generateContent` can chat)
  */
 import {
+	KEYED_PROVIDERS,
+	type KeyedProvider,
 	MODEL_PROVIDER_NAMES,
-	MODEL_PROVIDERS,
-	type ModelProvider,
 	type ProviderKey,
 	type ProviderModel,
 } from "@gateweave/agents-model";
@@ -24,13 +24,13 @@ import { type ProviderKeyRow, providerKeys } from "./db/schema";
 import type { Db } from "./state";
 
 /** Where a provider's key is sealed, which ties the sealed value to its row. */
-export function keyPlace(provider: ModelProvider): string {
+export function keyPlace(provider: KeyedProvider): string {
 	return `provider-keys/${provider}`;
 }
 
 export function listProviderKeys(db: Db): ProviderKey[] {
 	const rows = db.select().from(providerKeys).all();
-	return MODEL_PROVIDERS.flatMap((provider) => {
+	return KEYED_PROVIDERS.flatMap((provider) => {
 		const row = rows.find((candidate) => candidate.provider === provider);
 		return row ? [toProviderKey(row)] : [];
 	});
@@ -39,7 +39,7 @@ export function listProviderKeys(db: Db): ProviderKey[] {
 /** Saves a key, replacing the provider's earlier one and forgetting its check. */
 export function saveProviderKey(
 	db: Db,
-	key: { provider: ModelProvider; sealed: string; hint: string; addedBy: string },
+	key: { provider: KeyedProvider; sealed: string; hint: string; addedBy: string },
 	now: number,
 ): ProviderKey {
 	const row = {
@@ -57,7 +57,7 @@ export function saveProviderKey(
 	return toProviderKey(row);
 }
 
-export function removeProviderKey(db: Db, provider: ModelProvider): boolean {
+export function removeProviderKey(db: Db, provider: KeyedProvider): boolean {
 	const removed = db
 		.delete(providerKeys)
 		.where(eq(providerKeys.provider, provider))
@@ -66,7 +66,7 @@ export function removeProviderKey(db: Db, provider: ModelProvider): boolean {
 	return removed !== undefined;
 }
 
-export function sealedKeyOf(db: Db, provider: ModelProvider): string | null {
+export function sealedKeyOf(db: Db, provider: KeyedProvider): string | null {
 	const row = db
 		.select({ sealed: providerKeys.sealed })
 		.from(providerKeys)
@@ -81,7 +81,7 @@ export function sealedKeyOf(db: Db, provider: ModelProvider): string | null {
  */
 export function recordProviderCheck(
 	db: Db,
-	provider: ModelProvider,
+	provider: KeyedProvider,
 	sealed: string,
 	result: ModelList,
 	now: number,
@@ -124,7 +124,7 @@ const TIMEOUT_MS = 10_000;
  * provider's error can quote part of the key.
  */
 export async function listProviderModels(
-	provider: ModelProvider,
+	provider: KeyedProvider,
 	key: string,
 	fetcher: typeof fetch = fetch,
 ): Promise<ModelList> {
