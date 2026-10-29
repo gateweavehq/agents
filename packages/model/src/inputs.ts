@@ -495,8 +495,8 @@ export const MAX_AGENT_MCP_SERVERS = 10;
 
 /**
  * An agent defined in the app and run by Gateweave: the model it calls with the workspace's key
- * for that provider (Workers AI needs none), and what it always reads, a library asset pinned to a version (one of
- * `INSTRUCTION_KINDS`).
+ * for that provider (Workers AI needs none), and what it always reads, a library asset pinned to
+ * a version (one of `INSTRUCTION_KINDS`).
  */
 export const agentDefinitionInput = projectInput.extend({
 	provider: z.enum(MODEL_PROVIDERS),

@@ -1,9 +1,9 @@
 /**
  * The model behind a turn: the agent's provider and model, called with the workspace's key for
- * that provider (Workers AI needs none: see below). When the deployment names an AI Gateway (`AI_GATEWAY_URL`), every call goes
- * through it, for its logs, caching and rate limits; the workspace's key still rides along on each
- * request, so the gateway needs no keys of its own. Without one, calls go straight to the
- * provider.
+ * that provider (Workers AI needs none: see below). When the deployment names an AI Gateway
+ * (`AI_GATEWAY_URL`), every call goes through it, for its logs, caching and rate limits; the
+ * workspace's key still rides along on each request, so the gateway needs no keys of its own.
+ * Without one, calls go straight to the provider.
  *
  * The gateway is reached by URL rather than through an `AI` binding: a binding is always remote,
  * so local development and tests would need a Cloudflare account to run at all.

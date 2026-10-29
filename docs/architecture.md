@@ -424,11 +424,12 @@ after a reconnect.
   shown nor logged.
 - **AI Gateway, when the deployment names one.** With `AI_GATEWAY_URL`
   (`https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`), every model request goes through
-  that gateway with the workspace's key (Workers AI: the deployment's token, see "Workers AI"), and `cf-aig-metadata` names the workspace, agent and
-  conversation so its logs and analytics split by workspace. `AI_GATEWAY_TOKEN` is for an
-  authenticated gateway. The gateway is reached by URL rather than through an `ai` binding,
-  because the binding always calls Cloudflare: local development and the tests would need a
-  Cloudflare login. Without the setting, requests go straight to the provider.
+  that gateway with the workspace's key (Workers AI: the deployment's token, see "Workers AI"),
+  and `cf-aig-metadata` names the workspace, agent and conversation so its logs and analytics
+  split by workspace. `AI_GATEWAY_TOKEN` is for an authenticated gateway. The gateway is reached
+  by URL rather than through an `ai` binding, because the binding always calls Cloudflare: local
+  development and the tests would need a Cloudflare login. Without the setting, requests go
+  straight to the provider.
 - **Replies are Markdown**, rendered with `react-markdown` and GitHub's extensions. An image in
   a reply shows as a link instead, so a reply cannot make the browser fetch an address it chose
   (which could carry the conversation away in its query).

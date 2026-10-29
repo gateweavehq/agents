@@ -18,8 +18,9 @@ import type { Db } from "./state";
 
 /**
  * What a turn needs: the agent as it is now, the workspace's key for its provider, opened (none
- * for Workers AI, which the runtime reaches with the deployment's own token), the agent's MCP servers with their headers' secrets, opened too, the edges it can take in a team,
- * and the run the registry opened for it.
+ * for Workers AI, which the runtime reaches with the deployment's own token), the agent's MCP
+ * servers with their headers' secrets, opened too, the edges it can take in a team, and the run
+ * the registry opened for it.
  */
 export interface ConversationTurn {
 	agent: AgentSnapshot;
