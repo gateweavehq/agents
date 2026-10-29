@@ -526,7 +526,10 @@ staging does, production and self-hosted deploys leave them off until their oper
     (`ConversationAgent.claudeCodeTools`) with a token made for the turn, which the sandbox never
     sees, and the conversation answers them with `createMcpHandler` from
     `@modelcontextprotocol/server`. So an MCP server's secret headers, the GitHub App and the team's
-    other conversations stay in the Worker. A call runs as the loop would run it and records its own
+    other conversations stay in the Worker. The server is `alwaysLoad`, so the model has the tools
+    in its first request, as in the loop: otherwise the CLI connects in the background and later
+    keeps them behind its tool search. It says the tools never change, so the CLI opens no
+    `subscriptions/listen` stream, which a handler made for each request could not keep. A call runs as the loop would run it and records its own
     span; the chat shows it under the tool's own name (`acme__search`, `open_pull_request`, an
     edge), so a pull request's card and a delegated answer look as they do in the loop. The
     server's `timeout` is the turn's hour, since an edge's nested turn can take longer than the 60
