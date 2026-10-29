@@ -498,8 +498,11 @@ staging does, production and self-hosted deploys leave them off until their oper
   - **Its events are the turn.** The conversation reads the CLI's events as they come
     (`ClaudeCodeTurn`): the main conversation's text goes to the chat, and its tool calls as
     `claude-code__<tool>`, their results clipped to 4,000 characters. Each model request becomes a
-    model span, with its tokens and cost from Anthropic's usage, cached input counted in the input;
-    each tool call becomes a tool span under the server name `claude-code`, a subagent's too. A
+    model span, with its tokens and cost from Anthropic's usage, cached input counted in the input.
+    An `assistant` event carries only the usage of the request's start, so the CLI also passes on the
+    API's streaming events (`--include-partial-messages`), whose `message_delta` has the request's
+    final output tokens, and whose `message_start` says how long the first token took. Each tool call
+    becomes a tool span under the server name `claude-code`, a subagent's too. A
     result that is an error fails the turn, in the same words as Gateweave's loop uses. A message
     the CLI writes itself (its model is `<synthetic>`, as for a refused key) is meant for a terminal:
     it is neither text in the chat nor a request in the trace, and only a failure the app has no

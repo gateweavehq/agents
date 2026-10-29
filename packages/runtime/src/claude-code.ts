@@ -18,6 +18,9 @@
  * - permission modes, and why not `bypassPermissions` (it refuses to run as root, as the sandbox's
  *   commands do): https://code.claude.com/docs/en/permission-modes
  * - the events' shapes: `SDKMessage` in `sdk.d.ts` of @anthropic-ai/claude-agent-sdk 0.3.312
+ * - which usage each event carries: Claude Code 2.1.308 against a fake Anthropic API. An
+ *   `assistant` event has the usage of the request's start, a `stream_event` with `message_delta`
+ *   its final usage (`--include-partial-messages`), and `result` the turn's totals
  */
 import {
 	type AgentSnapshot,
@@ -124,6 +127,8 @@ export function claudeCodeArguments(options: {
 		"--output-format",
 		"stream-json",
 		"--verbose",
+		// The only events with a request's final usage: an `assistant` event has its start's.
+		"--include-partial-messages",
 		"--model",
 		options.model,
 		"--permission-mode",
@@ -253,6 +258,8 @@ const usageSchema = z.object({
 	cache_read_input_tokens: z.number().nullish(),
 });
 
+type Usage = z.infer<typeof usageSchema>;
+
 const assistantEvent = z.object({
 	type: z.literal("assistant"),
 	parent_tool_use_id: z.string().nullish(),
@@ -269,6 +276,22 @@ const userEvent = z.object({
 	type: z.literal("user"),
 	parent_tool_use_id: z.string().nullish(),
 	message: z.object({ content: z.union([z.string(), z.array(z.unknown())]) }),
+});
+
+/**
+ * One of the API's own streaming events, as `--include-partial-messages` passes them on. Two
+ * matter: a request's start, with its id and how long its first token took, and its final usage,
+ * which names no request and comes after its blocks. The blocks the `assistant` events carry whole.
+ */
+const streamEvent = z.object({
+	type: z.literal("stream_event"),
+	parent_tool_use_id: z.string().nullish(),
+	ttft_ms: z.number().optional(),
+	event: z.object({
+		type: z.string(),
+		message: z.object({ id: z.string() }).optional(),
+		usage: usageSchema.nullish(),
+	}),
 });
 
 const resultEvent = z.object({
@@ -308,9 +331,10 @@ interface Request {
 	/** The tool call of a subagent it belongs to; null in the main conversation. */
 	parent: string | null;
 	model: string;
-	usage: z.infer<typeof usageSchema>;
+	usage: Usage;
 	toolCalls: boolean;
 	startedAt: number;
+	firstTokenMs: number | null;
 }
 
 /**
@@ -341,6 +365,11 @@ export class ClaudeCodeTurn {
 	#apiError: string | null = null;
 	/** What Claude Code last said itself, which a failure it has no name for quotes. */
 	#detail: string | null = null;
+	/**
+	 * The request each conversation is streaming, by its subagent's tool call ("" for the main
+	 * one), with how long its first token took. A conversation's requests come one at a time.
+	 */
+	readonly #streaming = new Map<string, { id: string; firstTokenMs: number | null }>();
 
 	constructor(sink: ChunkSink, run: RunRecorder, agent: AgentSnapshot) {
 		this.#sink = sink;
@@ -354,6 +383,13 @@ export class ClaudeCodeTurn {
 		try {
 			event = JSON.parse(line);
 		} catch {
+			return;
+		}
+		// Most lines are streaming events, a block's text a piece at a time: their type says so first.
+		const type = typeof event === "object" && event !== null && "type" in event ? event.type : null;
+		if (type === "stream_event") {
+			const stream = streamEvent.safeParse(event);
+			if (stream.success) this.#stream(stream.data);
 			return;
 		}
 		const assistant = assistantEvent.safeParse(event);
@@ -390,6 +426,23 @@ export class ClaudeCodeTurn {
 		return { status: "succeeded" };
 	}
 
+	#stream({
+		parent_tool_use_id: parent,
+		ttft_ms: firstToken,
+		event,
+	}: z.infer<typeof streamEvent>): void {
+		const conversation = parent ?? "";
+		if (event.type === "message_start" && event.message) {
+			const firstTokenMs = firstToken === undefined ? null : Math.round(firstToken);
+			this.#streaming.set(conversation, { id: event.message.id, firstTokenMs });
+			return;
+		}
+		if (event.type !== "message_delta" || !event.usage) return;
+		const id = this.#streaming.get(conversation)?.id;
+		const request = id === undefined ? undefined : this.#requests.get(id);
+		if (request) request.usage = latestUsage(request.usage, event.usage);
+	}
+
 	#assistant(event: z.infer<typeof assistantEvent>, now: number): void {
 		const { message } = event;
 		const parent = event.parent_tool_use_id ?? null;
@@ -407,6 +460,7 @@ export class ClaudeCodeTurn {
 		if (!request) {
 			// A new request means the one before it in the same conversation has answered.
 			this.#endRequests(parent, now);
+			const streaming = this.#streaming.get(parent ?? "");
 			request = {
 				step: this.#steps++,
 				parent,
@@ -414,6 +468,7 @@ export class ClaudeCodeTurn {
 				usage: {},
 				toolCalls: false,
 				startedAt: now,
+				firstTokenMs: streaming?.id === message.id ? streaming.firstTokenMs : null,
 			};
 			this.#requests.set(message.id, request);
 			this.#run.stepStarted(request.step, now);
@@ -423,7 +478,7 @@ export class ClaudeCodeTurn {
 				this.#stepOpen = true;
 			}
 		}
-		if (message.usage) request.usage = message.usage;
+		if (message.usage) request.usage = latestUsage(request.usage, message.usage);
 		for (const content of message.content) {
 			const text = textBlock.safeParse(content);
 			if (text.success && parent === null && text.data.text !== "") {
@@ -515,7 +570,7 @@ export class ClaudeCodeTurn {
 						cacheWrite,
 					},
 					finishReason: request.toolCalls ? "tool-calls" : "stop",
-					firstTokenMs: null,
+					firstTokenMs: request.firstTokenMs,
 					gatewayLogId: null,
 				},
 				now,
@@ -528,6 +583,24 @@ export class ClaudeCodeTurn {
 		this.#sink.write({ type: "finish-step" });
 		this.#stepOpen = false;
 	}
+}
+
+/**
+ * A request's usage as far as it is known: each count only grows while it runs, and the events
+ * that carry them need not come in order.
+ */
+function latestUsage(known: Usage, next: Usage): Usage {
+	const most = (a: number | null | undefined, b: number | null | undefined) =>
+		a == null ? (b ?? undefined) : b == null ? a : Math.max(a, b);
+	return {
+		input_tokens: most(known.input_tokens, next.input_tokens),
+		output_tokens: most(known.output_tokens, next.output_tokens),
+		cache_creation_input_tokens: most(
+			known.cache_creation_input_tokens,
+			next.cache_creation_input_tokens,
+		),
+		cache_read_input_tokens: most(known.cache_read_input_tokens, next.cache_read_input_tokens),
+	};
 }
 
 /** Why Claude Code's turn failed, in the same words as a turn of Gateweave's own loop. */
