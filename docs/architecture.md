@@ -410,8 +410,8 @@ staging does, production and self-hosted deploys leave them off until their oper
 - **Engines.** What takes an agent's turns is its engine. `gateweave`, the default, is Gateweave's
   own loop with the agent's tools (`packages/runtime/src/conversation-agent.ts`). `claude-code` runs
   Anthropic's Claude Code CLI in the agent's sandbox, so it reads the repository's own `CLAUDE.md`,
-  skills and settings as it would on a laptop. The registry enforces three rules for it: it needs a
-  sandbox, it calls Anthropic's models, and it uses no MCP servers yet. See **Claude Code** below.
+  skills and settings as it would on a laptop. The registry enforces two rules for it: it needs a
+  sandbox, and it calls Anthropic's models. See **Claude Code** below.
 - **One container per conversation.** `RunnerSandbox` (`packages/runtime/src/sandbox.ts`) is a
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
@@ -517,9 +517,21 @@ staging does, production and self-hosted deploys leave them off until their oper
     while the container has its transcript. A container that stopped starts a new session, which
     reads the conversation so far, the most recent 50,000 characters, before the new message.
     Stopping a turn sends Claude Code Ctrl+C's signal, and a kill 10 seconds later.
-  - **Not yet:** the agent's MCP servers, a team's edges and `open_pull_request` (the CLI is told
-    that git push does not work, and to say what it changed). They come to it as an MCP server the
-    Worker serves to the sandbox.
+  - **Gateweave's tools are one MCP server.** The turn's other tools, the agent's MCP servers,
+    `open_pull_request` and a team's edges, are the same as in Gateweave's loop. The CLI reaches
+    them as the MCP server `gateweave`, at `http://tools.gateweave.internal/mcp`
+    (`packages/runtime/src/claude-code-tools.ts`): `--mcp-config` names it, `--strict-mcp-config`
+    keeps any other server the repository configures out, and `mcp__gateweave` is allowed. That
+    host exists only inside the sandbox. `SandboxOutbound` hands its requests to the conversation
+    (`ConversationAgent.claudeCodeTools`) with a token made for the turn, which the sandbox never
+    sees, and the conversation answers them with `createMcpHandler` from
+    `@modelcontextprotocol/server`. So an MCP server's secret headers, the GitHub App and the team's
+    other conversations stay in the Worker. A call runs as the loop would run it and records its own
+    span; the chat shows it under the tool's own name (`acme__search`, `open_pull_request`, an
+    edge), so a pull request's card and a delegated answer look as they do in the loop. The
+    server's `timeout` is the turn's hour, since an edge's nested turn can take longer than the 60
+    seconds an HTTP server's request has otherwise, and calls are never moved to the background.
+    Once the turn ends, or is stopped, the host refuses and the calls under way are cancelled.
 
 ## Chat
 

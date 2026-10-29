@@ -8,6 +8,9 @@ catalog:
   "@ai-sdk/provider": 4.0.34
   "@cloudflare/ai-chat": 0.12.2
   "@cloudflare/vitest-plugin": 1.4.8
+  # An optional peer of agents. Every package with agents depends on it too, so that agents
+  # resolves once: two copies would not share their types, nor their code in the bundle.
+  "@modelcontextprotocol/server": 2.3.1
   agents: 0.31.0
   ai: 7.0.154
   drizzle-kit: 0.31.11

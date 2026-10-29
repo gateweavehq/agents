@@ -235,9 +235,8 @@ function repositoryProblem(repository: typeof repositories.$inferSelect): string
 }
 
 /**
- * What Claude Code needs, each rule in words the person can act on: the sandbox it runs in, an
- * Anthropic model, and no MCP servers yet (a later part brings them to it). Gateweave's loop has
- * no rules of its own.
+ * What Claude Code needs, each rule in words the person can act on: the sandbox it runs in, and an
+ * Anthropic model. Gateweave's loop has no rules of its own.
  */
 function checkEngine(input: Definition): void {
 	if (input.engine !== "claude-code") return;
@@ -246,9 +245,6 @@ function checkEngine(input: Definition): void {
 	}
 	if (input.provider !== "anthropic") {
 		throw new AgentError("Claude Code calls Anthropic's models: choose one of them");
-	}
-	if (input.mcpServers.length > 0) {
-		throw new AgentError("Claude Code does not use the agent's MCP servers yet");
 	}
 }
 

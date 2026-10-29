@@ -24,6 +24,7 @@
 		"@gateweave/agents-github": "workspace:*",
 		"@gateweave/agents-model": "workspace:*",
 		"@gateweave/agents-registry": "workspace:*",
+		"@modelcontextprotocol/server": "catalog:",
 		"agents": "catalog:",
 		"ai": "catalog:",
 		"zod": "catalog:"

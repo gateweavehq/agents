@@ -3,6 +3,7 @@ import { sharedApp } from "@gateweave/agents-github";
 import {
 	type AgentSnapshot,
 	conversationBranch,
+	PULL_REQUEST_TOOL,
 	type PullRequestOutcome,
 	providerMissing,
 	type RunSpan,
@@ -22,6 +23,7 @@ import {
 	createUIMessageStreamResponse,
 	stepCountIs,
 	streamText,
+	type ToolSet,
 	type UIMessage,
 } from "ai";
 import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
@@ -32,6 +34,7 @@ import {
 	historyOf,
 	linesOf,
 } from "./claude-code";
+import { serveClaudeCodeTools } from "./claude-code-tools";
 import { edgeTools } from "./edges";
 import {
 	describeFailure,
@@ -128,7 +131,8 @@ export function conversationName(workspaceId: string, conversationId: string): s
  * `open_pull_request` proposes the work from there (`./pull-requests.ts`).
  *
  * An agent whose engine is Claude Code takes its turns differently: Claude Code runs in the sandbox
- * with its own tools, and the turn passes on what it does (`./claude-code.ts`).
+ * with its own tools, and the turn passes on what it does (`./claude-code.ts`). The rest of the
+ * turn's tools reach it as an MCP server that this conversation answers (`./claude-code-tools.ts`).
  *
  * In a conversation with a team, the lead's turn also has the team's edges as tools
  * (`./edges.ts`). Taking one starts a nested turn in a new conversation of the same class, reached
@@ -149,6 +153,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	#stopNested: AbortController | null = null;
 	/** Why the turn under way failed, in the app's words; null while it has not. */
 	#failure: string | null = null;
+	/** The tools of the turn Claude Code is running, which its sandbox reaches with the token. */
+	#claudeCodeTools: { token: string; tools: ToolSet; signal: AbortSignal } | null = null;
 
 	override async onStart(): Promise<void> {
 		// A restart cut these runs short: they will not end on their own.
@@ -225,6 +231,19 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			console.error("A trigger's turn failed", failureForLogs(error)),
 		);
 		return { runId: turn.runId };
+	}
+
+	/**
+	 * Answers Claude Code's requests to Gateweave's tools, which `SandboxOutbound` hands on from
+	 * the conversation's sandbox while a turn runs. A request without the turn's token finds
+	 * nothing, as does any once the turn has ended.
+	 */
+	async claudeCodeTools(token: string, request: Request): Promise<Response> {
+		const turn = this.#claudeCodeTools;
+		if (!turn || typeof token !== "string" || token !== turn.token) {
+			return new Response(null, { status: 404 });
+		}
+		return serveClaudeCodeTools(turn.tools, request, turn.signal);
 	}
 
 	/**
@@ -331,17 +350,23 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 * A turn of an agent whose engine is Claude Code: it runs in the sandbox, on the repository
 	 * checked out first, with the workspace's key added to its requests on the way out. Its text and
 	 * tool calls come to the chat as it works, and the run's trace records each model request and
-	 * tool call. Stopping the turn stops Claude Code. It uses no MCP servers yet (the registry
-	 * refuses them), nor a team's edges.
+	 * tool call. The turn's other tools, its MCP servers, `open_pull_request` and a team's edges,
+	 * are the same as in Gateweave's loop, and reach Claude Code through `claudeCodeTools`. Stopping
+	 * the turn stops Claude Code and the calls under way.
 	 */
 	#claudeCodeTurn(
 		{
 			agent,
 			key,
+			mcpServers,
+			edges,
 			repository,
 			runId,
 			sandbox: sandboxed,
-		}: Pick<ConversationTurn, "agent" | "key" | "repository" | "runId" | "sandbox">,
+		}: Pick<
+			ConversationTurn,
+			"agent" | "key" | "mcpServers" | "edges" | "repository" | "runId" | "sandbox"
+		>,
 		run: RunRecorder,
 		signal: AbortSignal | undefined,
 	): Response {
@@ -363,24 +388,52 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
-				if (repository) {
-					const problem = await withCheckout(sandbox, repository, branch).ready();
-					if (problem !== null) {
-						writer.write({ type: "error", errorText: problem });
-						await end("failed", problem);
-						return;
-					}
+				const checkedOut = repository ? withCheckout(sandbox, repository, branch) : null;
+				const [problem, toolbox] = await Promise.all([
+					checkedOut ? checkedOut.ready() : null,
+					connectTools(mcpServers, run, signal),
+				]);
+				if (problem) {
+					await toolbox.close();
+					writer.write({ type: "error", errorText: problem });
+					await end("failed", problem);
+					return;
 				}
+				const github = repository ? this.#pullRequests(repository) : null;
+				const tools: ToolSet = {
+					...toolbox.tools,
+					...(checkedOut && repository && github
+						? pullRequestTools({
+								sandbox,
+								ready: checkedOut.ready,
+								github,
+								repository,
+								branch,
+								author: this.#commitAuthor(agent.name, repository),
+								record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
+								run,
+							})
+						: {}),
+					...edgeTools(edges, (edge, text, edgeSignal) =>
+						this.#takeEdge(run, edge, text, edgeSignal),
+					),
+				};
+				const offered = Object.keys(tools).length > 0;
+				const token = crypto.randomUUID();
+				const calls = new AbortController();
+				if (offered) this.#claudeCodeTools = { token, tools, signal: calls.signal };
 				const turn = new ClaudeCodeTurn(writer, run, agent);
 				const stop = () => {
+					calls.abort();
 					sandbox.stopClaudeCode().catch(() => {});
 				};
 				signal?.addEventListener("abort", stop, { once: true });
 				try {
+					const note = claudeCodeNote(repository, branch, PULL_REQUEST_TOOL in tools);
 					const events = await sandbox.startClaudeCode({
 						prompt: lastUserText(this.messages),
 						history: historyOf(this.messages, agent.name),
-						system: [agent.instructions, claudeCodeNote(repository, branch)]
+						system: [agent.instructions, note]
 							.filter((part) => typeof part === "string")
 							.join("\n\n"),
 						model: agent.model,
@@ -392,6 +445,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 								agent: agent.agentId,
 								conversation: conversationId,
 							},
+							tools: offered ? { conversation: this.name, token } : null,
 						},
 					});
 					for await (const line of linesOf(events)) turn.take(line);
@@ -399,6 +453,9 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 					console.error("Claude Code's turn failed", failureForLogs(error));
 				} finally {
 					signal?.removeEventListener("abort", stop);
+					if (this.#claudeCodeTools?.token === token) this.#claudeCodeTools = null;
+					calls.abort();
+					await toolbox.close();
 				}
 				const outcome = turn.end();
 				if (signal?.aborted) {

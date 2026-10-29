@@ -1,12 +1,16 @@
 import { env } from "cloudflare:workers";
+import { createMCPClient } from "@ai-sdk/mcp";
+import type { McpServerInput } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
-import { CLAUDE_CODE_PLACEHOLDER_KEY, linesOf } from "../src/claude-code";
+import { CLAUDE_CODE_PLACEHOLDER_KEY, claudeCodeArguments, linesOf } from "../src/claude-code";
+import { CLAUDE_CODE_TOOLS_URL, toolsRequest } from "../src/claude-code-tools";
 import { anthropicRequest } from "../src/models";
 import { decideOutbound } from "../src/outbound";
+import { FakeMcpServer } from "./fake-mcp";
 import type { FakeSandbox } from "./fake-sandbox";
-import { ask, connect, KEY } from "./support";
+import { ask, connect, fakeModel, KEY } from "./support";
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -22,8 +26,34 @@ const SITE = {
 	private: true,
 };
 
-/** A conversation with an agent whose engine is Claude Code, with a repository or not. */
-async function conversation({ repository = false }: { repository?: boolean } = {}) {
+const ACME: McpServerInput = {
+	name: "acme",
+	transport: "http",
+	url: "https://mcp.acme.dev/mcp",
+	headers: [],
+};
+
+const SEARCH = {
+	name: "search",
+	description: "Searches the tracker",
+	inputSchema: {
+		type: "object" as const,
+		properties: { query: { type: "string" } },
+		required: ["query"],
+	},
+};
+
+/**
+ * A conversation with an agent whose engine is Claude Code, with a repository or not, and the MCP
+ * servers it pins.
+ */
+async function conversation({
+	repository = false,
+	servers = [],
+}: {
+	repository?: boolean;
+	servers?: McpServerInput[];
+} = {}) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
 	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
@@ -33,6 +63,10 @@ async function conversation({ repository = false }: { repository?: boolean } = {
 		name: "rules",
 		text: "Be brief.\n",
 	});
+	const mcpServers = [];
+	for (const server of servers) {
+		mcpServers.push({ assetId: await registry.createMcpServer(server), version: 1, tools: null });
+	}
 	const agent = await registry.createAgent({
 		name: "Builder",
 		description: null,
@@ -42,6 +76,7 @@ async function conversation({ repository = false }: { repository?: boolean } = {
 		sandbox: true,
 		engine: "claude-code",
 		repositoryId,
+		mcpServers,
 	});
 	const conversationId = (await registry.startConversation(agent.id, "user-ada"))?.id ?? "";
 	const name = conversationName(workspaceId, conversationId);
@@ -339,6 +374,168 @@ describe("an agent whose engine is Claude Code", () => {
 
 		await vi.waitFor(async () => expect((await registry.listRuns())[0]?.status).toBe("stopped"));
 		expect((await machine.seen()).stops).toBe(1);
+	});
+
+	it("serves its MCP servers' tools to Claude Code while the turn runs, and only then", async () => {
+		const query = "the words a person typed";
+		const acme = new FakeMcpServer([SEARCH], (_name, input) => ({
+			content: [{ type: "text", text: `found for ${JSON.stringify(input)}` }],
+		}));
+		fakeModel(() => new Response(null, { status: 500 }), { "mcp.acme.dev": acme.handle });
+		const { registry, stub, machine, workspaceId, conversationId } = await conversation({
+			servers: [ACME],
+		});
+		await machine.scriptClaudeCode({ lines: [INIT], untilStopped: true });
+		const socket = await connect(stub);
+		const id = crypto.randomUUID();
+		const turn = ask(socket, "Which issues are flaky?", id);
+		await vi.waitFor(async () => expect((await machine.seen()).claudeCode).toHaveLength(1));
+
+		const [job] = (await machine.seen()).claudeCode;
+		// The sandbox's requests reach the conversation with a token made for the turn.
+		expect(job?.access.tools).toEqual({
+			conversation: conversationName(workspaceId, conversationId),
+			token: expect.any(String),
+		});
+		const token = job?.access.tools?.token ?? "";
+		// The client asks for `redirect: "error"`, which Workers refuse, as `fetchWithoutRedirects` says.
+		const answer = (secret: string) => (input: RequestInfo | URL, init?: RequestInit) =>
+			stub.claudeCodeTools(
+				secret,
+				toolsRequest(new Request(input, { ...init, redirect: "manual" })),
+			);
+		const client = await createMCPClient({
+			transport: { type: "http", url: CLAUDE_CODE_TOOLS_URL, fetch: answer(token) },
+		});
+		const { tools } = await client.listTools();
+		expect(tools).toMatchObject([
+			{
+				name: "acme__search",
+				description: "Searches the tracker",
+				inputSchema: { properties: { query: { type: "string" } }, required: ["query"] },
+			},
+		]);
+		const found = await client.callTool({ name: "acme__search", arguments: { query } });
+		expect(found).toMatchObject({
+			content: [{ type: "text", text: `found for ${JSON.stringify({ query })}` }],
+		});
+		expect(found.isError).toBeFalsy();
+		const invalid = await client.callTool({ name: "acme__search", arguments: { term: query } });
+		expect(invalid.isError).toBe(true);
+		await client.close();
+		// Without the turn's token there is nothing to reach.
+		const ping = () =>
+			new Request(CLAUDE_CODE_TOOLS_URL, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+			});
+		expect((await answer("not-the-token")(ping())).status).toBe(404);
+
+		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
+		await turn;
+		socket.close();
+		await vi.waitFor(async () => expect((await registry.listRuns())[0]?.status).toBe("stopped"));
+		// Nor once the turn has ended.
+		expect((await answer(token)(ping())).status).toBe(404);
+		// The call is a span of the server's, as in Gateweave's loop, and only the valid one ran.
+		const [run] = await registry.listRuns();
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([
+			{ status: "ok", server: "acme", tool: "search", error: null },
+		]);
+		expect(acme.requests.filter((request) => request.method === "tools/call")).toHaveLength(1);
+	});
+
+	it("shows Gateweave's tools in the chat under their own names, and leaves their spans to them", async () => {
+		const { registry, stub, machine } = await conversation();
+		const usage = { input_tokens: 10, output_tokens: 1 };
+		await machine.scriptClaudeCode({
+			lines: [
+				INIT,
+				assistant(
+					"msg_1",
+					{
+						type: "tool_use",
+						id: "toolu_search",
+						name: "mcp__gateweave__acme__search",
+						input: { query: "flaky" },
+					},
+					usage,
+				),
+				toolResult("toolu_search", JSON.stringify({ issues: ["TRK-1"] })),
+				assistant("msg_2", { type: "text", text: "TRK-1 is flaky." }, usage),
+				result(),
+			],
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Which issues are flaky?");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "TRK-1 is flaky.", error: null });
+		const raw = turn.raw.join("\n");
+		expect(raw).toContain("acme__search");
+		expect(raw).not.toContain("mcp__gateweave");
+		expect(raw).not.toContain("claude-code__");
+		const [run] = await registry.listRuns();
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "model")).toHaveLength(2);
+		expect(trace.filter((span) => span.kind === "tool")).toEqual([]);
+	});
+
+	it("offers Claude Code no MCP server when the turn has no tools", async () => {
+		const { stub, machine } = await conversation();
+		await machine.scriptClaudeCode({ lines: LISTING });
+		const socket = await connect(stub);
+		await ask(socket, "List the files");
+		socket.close();
+
+		expect((await machine.seen()).claudeCode[0]?.access.tools).toBeNull();
+	});
+});
+
+describe("Claude Code's command", () => {
+	const base = { model: "claude-sonnet-5-5", system: "", session: "s", resume: false };
+
+	it("names Gateweave's MCP server, and only it, when the turn has tools", () => {
+		const argv = claudeCodeArguments({ ...base, tools: true });
+		expect(argv).toContain("--strict-mcp-config");
+		const config = argv[argv.indexOf("--mcp-config") + 1] ?? "";
+		expect(JSON.parse(config)).toEqual({
+			mcpServers: {
+				gateweave: { type: "http", url: "http://tools.gateweave.internal/mcp", timeout: 3_600_000 },
+			},
+		});
+		expect(argv[argv.indexOf("--allowedTools") + 1]?.split(",")).toContain("mcp__gateweave");
+	});
+
+	it("names no MCP server, and takes none from the repository, when it has none", () => {
+		const argv = claudeCodeArguments({ ...base, tools: false });
+		expect(argv).toContain("--strict-mcp-config");
+		expect(argv).not.toContain("--mcp-config");
+		expect(argv[argv.indexOf("--allowedTools") + 1]).not.toContain("mcp__");
+	});
+});
+
+describe("Gateweave's tools from the sandbox", () => {
+	const tools = new URL(CLAUDE_CODE_TOOLS_URL);
+
+	it("are reachable only while a turn of Claude Code has them, and only at their address", () => {
+		expect(decideOutbound("POST", tools)).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", tools, null, true)).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", tools, null, true, true)).toEqual({
+			allow: true,
+			credentials: "tools",
+		});
+		for (const elsewhere of [
+			"http://tools.gateweave.internal/other",
+			"http://tools.gateweave.internal:8080/mcp",
+			"https://tools.gateweave.internal/mcp",
+		]) {
+			expect(decideOutbound("POST", new URL(elsewhere), null, true, true)).toMatchObject({
+				allow: false,
+			});
+		}
 	});
 });
 
