@@ -36,6 +36,15 @@ it("charges a long request the long-context rates for all of it", () => {
 	expect(requestCost("google", "gemini-2.5-pro", tokens(300_000, 0), NOW)).toBe(300_000 * 2.5);
 });
 
+it("charges tokens summed over several requests the standard rates, whatever their total", () => {
+	expect(requestCost("openai", "gpt-5.5", tokens(300_000, 1_000), NOW)).toBe(
+		300_000 * 10 + 1_000 * 45,
+	);
+	expect(requestCost("openai", "gpt-5.5", tokens(300_000, 1_000), NOW, true)).toBe(
+		300_000 * 5 + 1_000 * 30,
+	);
+});
+
 it("uses the prices of the day the request ran", () => {
 	expect(priceOf("google", "gemini-4-argon", day("2026-11-30"))?.input).toBe(2);
 	expect(priceOf("google", "gemini-4-argon", day("2026-12-01"))?.input).toBe(4);

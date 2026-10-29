@@ -72,7 +72,10 @@ sandboxes at once, and each stops after 15 minutes without use. An agent's sandb
 one of the workspace's repositories when the server is set up as a GitHub App (see above), and
 propose its work as a pull request. The Worker mints a token for that repository alone and adds it
 as the clone leaves, so the token never enters the sandbox. For the one push a pull request needs,
-it mints a token that writes, and only to the conversation's own branch.
+it mints a token that writes, and only to the conversation's own branch. An agent can also take its
+turns with Claude Code or Codex, which the image installs, in place of Gateweave's own loop. They
+run in its sandbox with the workspace's Anthropic or OpenAI key, which the Worker adds to their
+requests on the way out, so the key never enters the sandbox either.
 
 ## Contributing
 

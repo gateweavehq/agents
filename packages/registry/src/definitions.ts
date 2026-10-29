@@ -9,7 +9,10 @@ import {
 	type Agent,
 	type AgentSnapshot,
 	type agentDefinitionInput,
+	ENGINE_NAMES,
+	ENGINE_PROVIDERS,
 	INSTRUCTION_KINDS,
+	MODEL_PROVIDER_NAMES,
 	type SandboxRepository,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
@@ -235,16 +238,21 @@ function repositoryProblem(repository: typeof repositories.$inferSelect): string
 }
 
 /**
- * What Claude Code needs, each rule in words the person can act on: the sandbox it runs in, and an
- * Anthropic model. Gateweave's loop has no rules of its own.
+ * What an engine run in the sandbox needs, each rule in words the person can act on: the sandbox,
+ * and a model of its provider, such as Anthropic's for Claude Code. Gateweave's loop has no rules
+ * of its own.
  */
 function checkEngine(input: Definition): void {
-	if (input.engine !== "claude-code") return;
+	if (input.engine === "gateweave") return;
+	const name = ENGINE_NAMES[input.engine];
 	if (!input.sandbox) {
-		throw new AgentError("Claude Code runs in the agent's sandbox: turn the sandbox on");
+		throw new AgentError(`${name} runs in the agent's sandbox: turn the sandbox on`);
 	}
-	if (input.provider !== "anthropic") {
-		throw new AgentError("Claude Code calls Anthropic's models: choose one of them");
+	const provider = ENGINE_PROVIDERS[input.engine];
+	if (input.provider !== provider) {
+		throw new AgentError(
+			`${name} calls ${MODEL_PROVIDER_NAMES[provider]}'s models: choose one of them`,
+		);
 	}
 }
 

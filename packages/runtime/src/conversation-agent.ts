@@ -29,10 +29,12 @@ import {
 } from "ai";
 import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
 import { ClaudeCodeTurn } from "./claude-code";
+import { CodexTurn } from "./codex";
 import { edgeTools } from "./edges";
 import { serveEngineTools } from "./engine-tools";
 import {
 	type ChunkSink,
+	type EngineMemory,
 	type EnginePort,
 	type EngineTurn,
 	engineNote,
@@ -428,7 +430,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
 				if (offered) this.#engineTools = { token, tools, signal: calls.signal };
-				const turn = engineTurn(engine, writer, run, agent);
+				const turn = engineTurn(engine, writer, run, agent, this.ctx.storage.kv);
 				const stop = () => {
 					calls.abort();
 					sandbox.stopEngine().catch(() => {});
@@ -637,10 +639,13 @@ function engineTurn(
 	sink: ChunkSink,
 	run: RunRecorder,
 	agent: AgentSnapshot,
+	memory: EngineMemory,
 ): EngineTurn {
 	switch (engine) {
 		case "claude-code":
 			return new ClaudeCodeTurn(sink, run, agent);
+		case "codex":
+			return new CodexTurn(sink, run, agent, memory);
 	}
 }
 

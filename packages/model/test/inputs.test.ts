@@ -375,6 +375,7 @@ describe("agent engines", () => {
 	it("default to Gateweave's own loop, and refuse an unknown one", () => {
 		expect(definition({}).data?.engine).toBe("gateweave");
 		expect(definition({ engine: "claude-code" }).data?.engine).toBe("claude-code");
-		expect(definition({ engine: "codex" }).success).toBe(false);
+		expect(definition({ engine: "codex" }).data?.engine).toBe("codex");
+		expect(definition({ engine: "aider" }).success).toBe(false);
 	});
 });

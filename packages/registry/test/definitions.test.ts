@@ -277,6 +277,34 @@ describe("agents' engines", () => {
 		expect(await stub.listAgents()).toEqual([]);
 	});
 
+	it("take Codex with the sandbox and an OpenAI model, and refuse it otherwise", async () => {
+		const stub = registry();
+		const codex = (fields: Partial<AgentDefinitionInput> = {}) =>
+			reviewer(null, {
+				engine: "codex",
+				sandbox: true,
+				provider: "openai",
+				model: "gpt-5.5",
+				...fields,
+			});
+		await inside(stub, (instance) => {
+			expect(() => instance.createAgent(codex({ sandbox: false }))).toThrow(
+				"Codex runs in the agent's sandbox: turn the sandbox on",
+			);
+			expect(() =>
+				instance.createAgent(codex({ provider: "anthropic", model: "claude-sonnet-5-5" })),
+			).toThrow("Codex calls OpenAI's models: choose one of them");
+		});
+		expect(await stub.listAgents()).toEqual([]);
+
+		const agent = await stub.createAgent(codex());
+		expect(await stub.agentSnapshot(agent.id)).toMatchObject({
+			engine: "codex",
+			provider: "openai",
+			sandbox: true,
+		});
+	});
+
 	it("let Claude Code use the agent's MCP servers", async () => {
 		const stub = registry();
 		const acme = await stub.createMcpServer({
