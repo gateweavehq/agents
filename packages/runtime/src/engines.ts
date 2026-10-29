@@ -1,7 +1,7 @@
 /**
  * Vendor coding agents as an agent's engine (AGT-44). A turn of an agent whose engine is not
  * Gateweave's own loop runs the vendor's CLI in the conversation's sandbox: Claude Code
- * (`./claude-code.ts`). The CLI reads the repository's own instructions and settings as it would on
+ * (`./claude-code.ts`) or Codex (`./codex.ts`). The CLI reads the repository's own instructions and settings as it would on
  * a laptop and works with its own tools, and the turn passes on what it does as its events come:
  * its text and tool calls to the chat, and its model requests and tool calls to the run's trace.
  *
@@ -82,6 +82,12 @@ export interface ChunkSink {
 
 /** How a turn of an engine went. */
 export type EngineOutcome = { status: "succeeded" } | { status: "failed"; error: string };
+
+/** What a turn keeps for the conversation's next one: the conversation's own storage. */
+export interface EngineMemory {
+	get<T>(key: string): T | undefined;
+	put<T>(key: string, value: T): void;
+}
 
 /** Follows one turn of an engine, a line of its output at a time. */
 export interface EngineTurn {

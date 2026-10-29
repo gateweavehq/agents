@@ -54,6 +54,8 @@ export interface EndedRequest {
 	finishReason: string | null;
 	firstTokenMs: number | null;
 	gatewayLogId: string | null;
+	/** Whether the tokens are several requests' together, which `requestCost` prices apart. */
+	summed?: boolean;
 }
 
 /** AI Gateway's id for a request's log entry, on its response. */
@@ -148,8 +150,8 @@ export class RunRecorder {
 			outputTokens: tokens.output,
 			cachedInputTokens: tokens.cacheRead,
 			cost:
-				requestCost(provider, model, tokens, now) ??
-				requestCost(provider, this.#agent.model, tokens, now),
+				requestCost(provider, model, tokens, now, request.summed) ??
+				requestCost(provider, this.#agent.model, tokens, now, request.summed),
 			finishReason: request.finishReason,
 			firstTokenMs: request.firstTokenMs,
 			gatewayLogId: request.gatewayLogId,

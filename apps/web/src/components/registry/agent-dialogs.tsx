@@ -45,6 +45,14 @@ function message(error: unknown) {
 
 const SELECT = "h-9 w-full rounded-md border bg-transparent px-2 text-sm";
 
+const ENGINE_HINTS: Record<AgentEngine, string> = {
+	gateweave: "Gateweave's own loop, with the agent's tools.",
+	"claude-code":
+		"Runs Anthropic's Claude Code in the sandbox, with the repository's CLAUDE.md, skills and settings, and the agent's tools. It needs the sandbox and an Anthropic model.",
+	codex:
+		"Runs OpenAI's Codex in the sandbox, with the repository's AGENTS.md and the agent's tools. It needs the sandbox and an OpenAI model.",
+};
+
 /**
  * Defines a new agent run by Gateweave, or changes `agent`. Models are listed with the
  * workspace's key for the provider (for Workers AI, with the server's own token); any model id
@@ -386,8 +394,8 @@ export function AgentDialog({
 							onChange={(event) => {
 								const next = event.target.value as AgentEngine;
 								setEngine(next);
-								// Claude Code runs in the sandbox, so choosing it turns the sandbox on.
-								if (next === "claude-code") setSandbox(true);
+								// Claude Code and Codex run in the sandbox, so choosing one turns it on.
+								if (next !== "gateweave") setSandbox(true);
 							}}
 							className={SELECT}
 						>
@@ -397,11 +405,7 @@ export function AgentDialog({
 								</option>
 							))}
 						</select>
-						<p className="text-xs text-muted-foreground">
-							{engine === "claude-code"
-								? "Runs Anthropic's Claude Code in the sandbox, with the repository's CLAUDE.md, skills and settings, and the agent's tools. It needs the sandbox and an Anthropic model."
-								: "Gateweave's own loop, with the agent's tools."}
-						</p>
+						<p className="text-xs text-muted-foreground">{ENGINE_HINTS[engine]}</p>
 					</div>
 					<Label className="flex cursor-pointer items-start gap-3 font-normal has-disabled:cursor-not-allowed has-disabled:opacity-60">
 						<Checkbox

@@ -25,6 +25,7 @@ import {
 } from "@gateweave/agents-model";
 import type { CheckoutResult } from "./checkout";
 import { claudeCodeCommand } from "./claude-code";
+import { CODEX_SESSIONS, codexCommand } from "./codex";
 import { toolsRequest } from "./engine-tools";
 import {
 	ENGINE_SECONDS,
@@ -33,13 +34,20 @@ import {
 	type EnginePort,
 	type RunningEngine,
 } from "./engines";
-import { anthropicRequest, failureForLogs, type GatewaySettings, SettingsError } from "./models";
+import {
+	anthropicRequest,
+	failureForLogs,
+	type GatewaySettings,
+	openaiRequest,
+	SettingsError,
+} from "./models";
 import {
 	ANTHROPIC_API,
 	checkPush,
 	decideOutbound,
 	ENGINE_TOOLS_HOST,
 	type GitAccess,
+	OPENAI_API,
 	type PushWindow,
 	pushedRefs,
 	withGitHubToken,
@@ -94,6 +102,9 @@ const REPOSITORY_KEY = "repository";
 const PUSHED_KEY = "pushed";
 /** The conversation's Claude Code session, which its turns resume while the container has it. */
 const SESSION_KEY = "claude-code-session";
+
+/** The hosts whose requests depend on the engine running a turn, if any. */
+const ENGINE_HOSTS = new Set([ANTHROPIC_API, OPENAI_API, ENGINE_TOOLS_HOST]);
 
 /** How long an engine has to finish its turn when it is stopped, before it is killed. */
 const STOP_GRACE_MS = 10_000;
@@ -442,6 +453,16 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 				}
 				return claudeCodeCommand(job, session, resume);
 			}
+			case "codex": {
+				// The container holds this conversation's sessions alone, so its last is the one.
+				const found = await this.#exec(
+					container,
+					["find", CODEX_SESSIONS, "-name", "rollout-*.jsonl", "-print", "-quit"],
+					SANDBOX_ROOT,
+					30,
+				);
+				return codexCommand(job, found.exitCode === 0 && found.output.trim() !== "");
+			}
 		}
 	}
 
@@ -562,10 +583,7 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 	override async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		const access = url.hostname === "github.com" ? await this.#access() : null;
-		const running =
-			url.hostname === ANTHROPIC_API || url.hostname === ENGINE_TOOLS_HOST
-				? await this.#runningEngine()
-				: null;
+		const running = ENGINE_HOSTS.has(url.hostname) ? await this.#runningEngine() : null;
 		const tools = running?.access.tools ?? null;
 		const decision = decideOutbound(
 			request.method,
@@ -576,10 +594,11 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		);
 		if (!decision.allow) return refused(decision.reason, 403);
 		const env = this.env as unknown as OutboundEnv;
-		if (decision.credentials === "anthropic" && running) {
+		if ((decision.credentials === "anthropic" || decision.credentials === "openai") && running) {
 			const { key, metadata } = running.access;
+			const toModel = decision.credentials === "anthropic" ? anthropicRequest : openaiRequest;
 			try {
-				return await fetch(anthropicRequest(request, key, env, metadata));
+				return await fetch(toModel(request, key, env, metadata));
 			} catch (error) {
 				if (error instanceof SettingsError) return refused(error.message, 502);
 				throw error;

@@ -159,6 +159,34 @@ export function anthropicRequest(
 	});
 }
 
+/** A request Codex sent to OpenAI from a sandbox (`./codex.ts`), as `anthropicRequest` does. */
+export function openaiRequest(
+	request: Request,
+	key: string,
+	settings: GatewaySettings,
+	metadata: GatewayMetadata,
+): Request {
+	const url = new URL(request.url);
+	const headers = new Headers(request.headers);
+	headers.set("authorization", `Bearer ${key}`);
+	const parts = gatewayOf(settings);
+	if (parts) {
+		for (const [name, value] of Object.entries(gatewayHeadersOf(settings, metadata))) {
+			headers.set(name, value);
+		}
+	}
+	// The gateway's path for OpenAI stands for the API's /v1.
+	const target = parts
+		? `${parts.url}/openai${url.pathname.replace(/^\/v1(?=\/)/, "")}${url.search}`
+		: url.href;
+	return new Request(target, {
+		method: request.method,
+		headers,
+		body: request.body,
+		redirect: "manual",
+	});
+}
+
 /**
  * Why a turn failed, in words fit for whoever is chatting. Never the provider's own message: some
  * repeat part of the key.

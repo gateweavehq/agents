@@ -410,8 +410,10 @@ staging does, production and self-hosted deploys leave them off until their oper
 - **Engines.** What takes an agent's turns is its engine. `gateweave`, the default, is Gateweave's
   own loop with the agent's tools (`packages/runtime/src/conversation-agent.ts`). `claude-code` runs
   Anthropic's Claude Code CLI in the agent's sandbox, so it reads the repository's own `CLAUDE.md`,
-  skills and settings as it would on a laptop. The registry enforces two rules for it: it needs a
-  sandbox, and it calls Anthropic's models. See **Claude Code** below.
+  skills and settings as it would on a laptop, and `codex` runs OpenAI's Codex CLI there, which
+  reads its `AGENTS.md`. The registry enforces two rules for each: it needs a sandbox, and it calls
+  its own provider's models (`ENGINE_PROVIDERS`): Anthropic's for Claude Code, OpenAI's for Codex.
+  See **Claude Code** and **Codex** below.
 - **One container per conversation.** `RunnerSandbox` (`packages/runtime/src/sandbox.ts`) is a
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
@@ -443,7 +445,7 @@ staging does, production and self-hosted deploys leave them off until their oper
   that would make more than three of the workspace's conversations hold one at once
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
-  sandbox, unless the agent's engine is Claude Code, which runs only in one.
+  sandbox, unless the agent's engine is Claude Code or Codex, which run only in one.
 - **A repository in the sandbox** (AGT-41). An agent with a sandbox can choose a repository the
   workspace's GitHub App reaches (`agent_definitions.repository_id`). On the conversation's first
   tool call, `withCheckout` (`packages/runtime/src/checkout.ts`) asks the sandbox to clone it into
@@ -539,6 +541,40 @@ staging does, production and self-hosted deploys leave them off until their oper
     server's `timeout` is the turn's hour, since an edge's nested turn can take longer than the 60
     seconds an HTTP server's request has otherwise, and calls are never moved to the background.
     Once the turn ends, or is stopped, the host refuses and the calls under way are cancelled.
+- **Codex** (AGT-44). The image installs OpenAI's Codex CLI too, pinned (`CODEX_VERSION`), and a
+  turn of an agent whose engine is `codex` runs `codex exec --json` the same way
+  (`packages/runtime/src/codex.ts`), with approvals and Codex's own sandbox off, since the
+  container is the sandbox, and `--ignore-user-config`, so its settings are Gateweave's alone,
+  given as `-c` overrides. The agent's instructions and where it runs are its
+  `developer_instructions`.
+  - **Its own provider.** Codex's built-in OpenAI provider ignores `OPENAI_BASE_URL`, tries a
+    WebSocket first and lists models at chatgpt.com, so the turn names a provider of its own
+    (`model_providers.gateweave`): the Responses API at `https://api.openai.com/v1`, over HTTPS
+    only, its key a placeholder in `GATEWEAVE_OPENAI_KEY`. `decideOutbound` lets
+    `POST /v1/responses` to `api.openai.com` through while Codex runs a turn, compactions
+    included, and `SandboxOutbound` puts the workspace's key on it (`openaiRequest`), through AI
+    Gateway when the deployment names one. Update checks, analytics, feedback and web search are
+    off. Codex trusts the sandbox's certificate through `SSL_CERT_FILE`.
+  - **One span for the turn.** Codex's events name no model request, so the turn is one model
+    span: `turn.completed` carries the thread's usage so far, and the conversation keeps it
+    (`ctx.storage.kv`) to count the next turn of the same thread from it; OpenAI counts cached
+    input in the input already. The span is priced at the standard rates, since no one request's
+    size is known (`requestCost`'s `summed`). A turn that fails reports no usage, so its tokens
+    count with the next turn that completes. Metering each request where it leaves the sandbox
+    will replace this (AGT-45).
+  - **Its items are the chat.** An `agent_message` is text; a command (`codex__shell`), a patch
+    (`codex__apply_patch`) and another MCP server's call are tool calls with spans under the
+    server name `codex`; a call of Gateweave's `gateweave` server shows under its own name and
+    records its own span, as with Claude Code. A command that exits with an error shows as failed,
+    with its exit code. A failed turn's status (`unexpected status 401 …`, `last status: 429 …`)
+    is said in Gateweave's words; anything else Codex says is quoted with whatever looks like a key
+    taken out, since OpenAI's errors repeat part of it.
+  - **One thread per conversation.** A later turn resumes the thread (`exec resume --last --all`)
+    while the container has a session under `/root/.codex/sessions`; the container holds no other.
+    Otherwise it starts a new one with the conversation so far, as Claude Code does. Gateweave's
+    tools are the same MCP server, named with `omit_tools_from = ["deferred"]` so the model has
+    them in its first request rather than behind Codex's tool search, and `tool_timeout_sec` the
+    turn's hour. Codex speaks MCP's stateless 2025-06-18 revision, which the handler answers too.
 
 ## Chat
 

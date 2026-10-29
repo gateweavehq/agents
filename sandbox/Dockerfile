@@ -14,7 +14,12 @@ COPY --from=sandbox-tools /usr/local/bin/sandbox-shim /usr/local/bin/sandbox-shi
 # under its own terms; the image installs it when it is built, and pins it, since its auto-updater
 # is off in the sandbox.
 ARG CLAUDE_CODE_VERSION=2.1.308
-RUN npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+# Codex, for agents whose engine it is (packages/runtime/src/codex.ts). OpenAI's, under Apache-2.0;
+# pinned for the same reason, and its settings there take for granted what this version reads.
+ARG CODEX_VERSION=0.165.0
+RUN npm install --global \
+    "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    "@openai/codex@${CODEX_VERSION}" \
   && npm cache clean --force
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

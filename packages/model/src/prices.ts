@@ -192,16 +192,19 @@ export function priceOf(provider: ModelProvider, model: string, at: number): Mod
 /**
  * What one model request cost, in millionths of a dollar, or null when the model has no prices
  * here. A request over a model's long-context threshold pays the higher rates for all of it.
+ * Tokens `summed` over several requests pay the standard rates, since no one request's size is
+ * known: a whole turn of Codex, whose events report no request of their own.
  */
 export function requestCost(
 	provider: ModelProvider,
 	model: string,
 	tokens: RequestTokens,
 	at: number,
+	summed = false,
 ): number | null {
 	const price = priceOf(provider, model, at);
 	if (!price) return null;
-	const rates = price.long && tokens.input > price.long.above ? price.long : price;
+	const rates = !summed && price.long && tokens.input > price.long.above ? price.long : price;
 	const uncached = Math.max(0, tokens.input - tokens.cacheRead - tokens.cacheWrite);
 	// Dollars per million tokens are millionths of a dollar per token.
 	return Math.round(

@@ -32,6 +32,15 @@ export const ANTHROPIC_API = "api.anthropic.com";
 /** The paths of Anthropic's API that Claude Code's requests for the model use. */
 const ANTHROPIC_PATHS = new Set(["/v1/messages", "/v1/messages/count_tokens"]);
 
+/** Where Codex sends its requests for the model. */
+export const OPENAI_API = "api.openai.com";
+
+/**
+ * The path of OpenAI's API that Codex's requests for the model use, compactions included: the
+ * Responses API, over HTTPS (`./codex.ts` turns its WebSocket off).
+ */
+const OPENAI_PATHS = new Set(["/v1/responses"]);
+
 /**
  * Where an engine finds Gateweave's tools. No such host exists outside the sandbox: the Worker
  * answers it, under a name no one can register.
@@ -69,7 +78,11 @@ export interface GitAccess {
  * reads, or one that writes for a push, whose ref updates the Worker checks against `push` first.
  */
 export type OutboundDecision =
-	| { allow: true; credentials?: "read" | "write" | "anthropic" | "tools"; push?: PushWindow }
+	| {
+			allow: true;
+			credentials?: "read" | "write" | "anthropic" | "openai" | "tools";
+			push?: PushWindow;
+	  }
 	| { allow: false; reason: string };
 
 /**
@@ -101,6 +114,14 @@ export function decideOutbound(
 		return method === "POST" && ANTHROPIC_PATHS.has(url.pathname)
 			? { allow: true, credentials: "anthropic" }
 			: refuse(`${host} takes only Claude Code's requests for the model from this sandbox`);
+	}
+	if (host === OPENAI_API && url.port === "") {
+		if (engine !== "codex") {
+			return refuse(`${host} is reachable from this sandbox only while Codex runs a turn`);
+		}
+		return method === "POST" && OPENAI_PATHS.has(url.pathname)
+			? { allow: true, credentials: "openai" }
+			: refuse(`${host} takes only Codex's requests for the model from this sandbox`);
 	}
 	if (!PACKAGE_REGISTRIES.includes(host) || url.port !== "") {
 		return refuse(`${host} is not reachable from this sandbox: only package registries are`);
