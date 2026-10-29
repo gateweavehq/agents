@@ -127,7 +127,9 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			return outcome;
 		},
 	});
-	return { [PULL_REQUEST_TOOL]: traced(open, SANDBOX_SERVER, PULL_REQUEST_TOOL, run) };
+	return {
+		[PULL_REQUEST_TOOL]: traced(open, SANDBOX_SERVER, PULL_REQUEST_TOOL, run, { showErrors: true }),
+	};
 }
 
 /** Why GitHub made no pull request, in words the model reads; the work is pushed either way. */
