@@ -457,8 +457,11 @@ staging does, production and self-hosted deploys leave them off until their oper
   when the server is not set up as a GitHub App.
 - **Pull requests from the sandbox** (AGT-42). A turn whose sandbox has a repository also has
   `open_pull_request {title, body}` (`packages/runtime/src/pull-requests.ts`). The sandbox commits
-  every change with the title as the message, by the agent at `noreply@gateweave.com`, with the
-  repository's own hooks. It refuses when the work has no commit the default branch lacks, then
+  every change with the title as the message, with the repository's own hooks. Its author is the
+  agent's name with the address of the GitHub App's bot account
+  (`<id>+<slug>[bot]@users.noreply.github.com`, read once per installation with
+  `GitHubApp.botIdentity`), so GitHub links the commit to the app and a CLA check can read it.
+  Without the app, or when that lookup fails, it is the agent at `noreply@gateweave.com`. It refuses when the work has no commit the default branch lacks, then
   runs `git push` of `gateweave/<conversation>` (`RunnerSandbox.push`). The Worker then opens a
   pull request against the default branch with a token for `pull_requests: write` and
   `contents: read`, or updates the one the branch has open; the sandbox never makes it. GitHub

@@ -49,7 +49,7 @@ describe("a failed tool call in the trace", () => {
 				defaultBranch: "main",
 			},
 			branch: "gateweave/conversation-1",
-			author: { name: "Builder", email: "noreply@gateweave.com" },
+			author: async () => ({ name: "Builder", email: "noreply@gateweave.com" }),
 			record: async () => {},
 			run,
 		});

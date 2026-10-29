@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
+import { commitEnvironment } from "../src/sandbox";
 import type { FakeSandbox } from "./fake-sandbox";
 import { anthropicStream, anthropicToolCall, ask, connect, fakeModel, KEY } from "./support";
 
@@ -25,14 +26,18 @@ const SITE = {
 async function conversation({
 	sandbox,
 	repository = false,
+	installationId = SITE.installationId,
 }: {
 	sandbox: boolean;
 	repository?: boolean;
+	installationId?: string;
 }) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
 	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
-	const [repositoryId = null] = repository ? await registry.syncRepositories([SITE]) : [];
+	const [repositoryId = null] = repository
+		? await registry.syncRepositories([{ ...SITE, installationId }])
+		: [];
 	const agent = await registry.createAgent({
 		name: "Builder",
 		description: null,
@@ -47,6 +52,50 @@ async function conversation({
 	const stub = await getAgentByName(env.CONVERSATIONS, name);
 	const machine = (env.SANDBOX as unknown as DurableObjectNamespace<FakeSandbox>).getByName(name);
 	return { registry, stub, machine, conversationId };
+}
+
+/**
+ * GitHub for the pull request tests, which records each request. The app's bot account is read
+ * from `/app` and `/users/...`; `botLookup: "down"` fails the first of those, as GitHub might.
+ */
+function pullRequestGitHub(
+	github: { route: string; body: unknown }[],
+	botLookup: "up" | "down" = "up",
+) {
+	return async (request: Request) => {
+		const url = new URL(request.url);
+		const text = await request.text();
+		github.push({
+			route: `${request.method} ${url.pathname}${url.search}`,
+			body: text === "" ? null : JSON.parse(text),
+		});
+		if (url.pathname === "/app") {
+			return botLookup === "up"
+				? Response.json({ slug: "gateweave-agents" })
+				: Response.json({ message: "Service Unavailable" }, { status: 503 });
+		}
+		if (url.pathname.startsWith("/users/")) {
+			return Response.json({ id: 141_234, login: "gateweave-agents[bot]" });
+		}
+		if (url.pathname.endsWith("/access_tokens")) {
+			const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+			return Response.json({ token: "ghs_pulls", expires_at: expiresAt }, { status: 201 });
+		}
+		if (request.headers.get("authorization") !== "Bearer ghs_pulls") {
+			return Response.json({ message: "Bad credentials" }, { status: 401 });
+		}
+		if (request.method === "GET") return Response.json([]);
+		return Response.json(
+			{
+				number: 12,
+				html_url: "https://github.com/acme/site/pull/12",
+				state: "open",
+				merged_at: null,
+				head: { sha: "1".repeat(40) },
+			},
+			{ status: 201 },
+		);
+	};
 }
 
 /** Instructions of the agent's, which the model reads before anything about a repository. */
@@ -147,31 +196,7 @@ describe("a conversation with a sandbox", () => {
 						})
 					: anthropicStream("It is up for review."),
 			{
-				"api.github.com": async (request) => {
-					const url = new URL(request.url);
-					github.push({
-						route: `${request.method} ${url.pathname}${url.search}`,
-						body: request.method === "GET" ? null : await request.json(),
-					});
-					if (url.pathname.endsWith("/access_tokens")) {
-						const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
-						return Response.json({ token: "ghs_pulls", expires_at: expiresAt }, { status: 201 });
-					}
-					if (request.headers.get("authorization") !== "Bearer ghs_pulls") {
-						return Response.json({ message: "Bad credentials" }, { status: 401 });
-					}
-					if (request.method === "GET") return Response.json([]);
-					return Response.json(
-						{
-							number: 12,
-							html_url: "https://github.com/acme/site/pull/12",
-							state: "open",
-							merged_at: null,
-							head: { sha: "1".repeat(40) },
-						},
-						{ status: 201 },
-					);
-				},
+				"api.github.com": pullRequestGitHub(github),
 			},
 		);
 		const { registry, stub, machine, conversationId } = await conversation({
@@ -189,17 +214,24 @@ describe("a conversation with a sandbox", () => {
 		expect(JSON.stringify(requests[0]?.body.system)).toContain(
 			"open_pull_request proposes it as a pull request",
 		);
-		// The sandbox commits and pushes; the Worker opens the pull request with its own token.
+		// The sandbox commits as the app's bot, which GitHub links to the commit, and pushes; the
+		// Worker opens the pull request with its own token.
 		expect(await machine.seen()).toMatchObject({
 			pushes: [
 				{
 					branch,
 					message: "Fix the cart",
-					author: { name: "Builder", email: "noreply@gateweave.com" },
+					author: {
+						name: "Builder",
+						email: "141234+gateweave-agents[bot]@users.noreply.github.com",
+					},
 				},
 			],
 		});
 		expect(github).toEqual([
+			{ route: "GET /app", body: null },
+			{ route: "POST /app/installations/99/access_tokens", body: null },
+			{ route: "GET /users/gateweave-agents%5Bbot%5D", body: null },
 			{
 				route: "POST /app/installations/99/access_tokens",
 				body: {
@@ -232,6 +264,40 @@ describe("a conversation with a sandbox", () => {
 		]);
 	});
 
+	it("commits as the agent's own address when the app's bot cannot be read, and still opens the pull request", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const github: { route: string; body: unknown }[] = [];
+		const requests = fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("open_pull_request", { title: "Fix the cart", body: "Done." })
+					: anthropicStream("It is up for review."),
+			{ "api.github.com": pullRequestGitHub(github, "down") },
+		);
+		// Its own installation, so no bot account it read in another test answers for it.
+		const { machine, stub, conversationId } = await conversation({
+			sandbox: true,
+			repository: true,
+			installationId: "98",
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Fix the cart and propose it");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "It is up for review.", error: null });
+		expect(requests).toHaveLength(2);
+		expect(await machine.seen()).toMatchObject({
+			pushes: [
+				{
+					branch: `gateweave/${conversationId}`,
+					author: { name: "Builder", email: "noreply@gateweave.com" },
+				},
+			],
+		});
+		expect(github.map((request) => request.route)).toContain("POST /repos/acme/site/pulls");
+		expect(error).toHaveBeenCalledWith("A commit's author was not looked up", expect.anything());
+	});
+
 	it("goes when the conversation is deleted", async () => {
 		const { stub, machine } = await conversation({ sandbox: true });
 		await stub.destroy();
@@ -255,6 +321,17 @@ describe("a conversation without a sandbox", () => {
 			checkouts: [],
 			pushes: [],
 			destroyed: false,
+		});
+	});
+});
+
+describe("commitEnvironment", () => {
+	it("makes a commit by its author, and committed by the same one", () => {
+		expect(commitEnvironment({ name: "Builder", email: "bot@users.noreply.github.com" })).toEqual({
+			GIT_AUTHOR_NAME: "Builder",
+			GIT_AUTHOR_EMAIL: "bot@users.noreply.github.com",
+			GIT_COMMITTER_NAME: "Builder",
+			GIT_COMMITTER_EMAIL: "bot@users.noreply.github.com",
 		});
 	});
 });

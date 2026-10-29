@@ -84,6 +84,16 @@ const PUSHED_KEY = "pushed";
 /** `timeout`'s exit codes for a command it stopped, and one it had to kill. */
 const TIMED_OUT = new Set([124, 137]);
 
+/** The environment a commit is made with: the author, as both its author and its committer. */
+export function commitEnvironment(author: CommitAuthor): Record<string, string> {
+	return {
+		GIT_AUTHOR_NAME: author.name,
+		GIT_AUTHOR_EMAIL: author.email,
+		GIT_COMMITTER_NAME: author.name,
+		GIT_COMMITTER_EMAIL: author.email,
+	};
+}
+
 /** What `SandboxOutbound` is made with: the sandbox whose requests it decides on. */
 interface OutboundProps {
 	sandbox?: string;
@@ -229,14 +239,12 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 		// Exits 1 when something is staged.
 		const staged = await git(["diff", "--cached", "--quiet"]);
 		if (staged.exitCode === 1) {
-			const identity = {
-				GIT_AUTHOR_NAME: author.name,
-				GIT_AUTHOR_EMAIL: author.email,
-				GIT_COMMITTER_NAME: author.name,
-				GIT_COMMITTER_EMAIL: author.email,
-			};
 			// The repository's own hooks run, as they would for a person.
-			const committed = await git(["commit", "--quiet", "--message", message], 120, identity);
+			const committed = await git(
+				["commit", "--quiet", "--message", message],
+				120,
+				commitEnvironment(author),
+			);
 			if (committed.exitCode !== 0) {
 				return { error: `The changes could not be committed.\n${committed.output}` };
 			}
