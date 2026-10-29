@@ -245,7 +245,8 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 								>
 									{definition.repository.owner}/{definition.repository.name}
 								</Link>{" "}
-								at <code>{SANDBOX_REPOSITORY_PATH}</code>, on a branch of its own.
+								at <code>{SANDBOX_REPOSITORY_PATH}</code>, on a branch of its own, and proposes its
+								work there as a pull request.
 							</>
 						)}
 					</p>

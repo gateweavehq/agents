@@ -136,6 +136,99 @@ describe("a conversation with a sandbox", () => {
 		expect(system.indexOf("Be brief.")).toBeLessThan(system.indexOf("acme/site"));
 	});
 
+	it("opens a pull request from the conversation's branch, and puts it on the run", async () => {
+		const github: { route: string; body: unknown }[] = [];
+		const requests = fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("open_pull_request", {
+							title: "Fix the cart",
+							body: "It ignored codes.",
+						})
+					: anthropicStream("It is up for review."),
+			{
+				"api.github.com": async (request) => {
+					const url = new URL(request.url);
+					github.push({
+						route: `${request.method} ${url.pathname}${url.search}`,
+						body: request.method === "GET" ? null : await request.json(),
+					});
+					if (url.pathname.endsWith("/access_tokens")) {
+						const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+						return Response.json({ token: "ghs_pulls", expires_at: expiresAt }, { status: 201 });
+					}
+					if (request.headers.get("authorization") !== "Bearer ghs_pulls") {
+						return Response.json({ message: "Bad credentials" }, { status: 401 });
+					}
+					if (request.method === "GET") return Response.json([]);
+					return Response.json(
+						{
+							number: 12,
+							html_url: "https://github.com/acme/site/pull/12",
+							state: "open",
+							merged_at: null,
+							head: { sha: "1".repeat(40) },
+						},
+						{ status: 201 },
+					);
+				},
+			},
+		);
+		const { registry, stub, machine, conversationId } = await conversation({
+			sandbox: true,
+			repository: true,
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Fix the cart and propose it");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "It is up for review.", error: null });
+		const branch = `gateweave/${conversationId}`;
+		const names = ((requests[0]?.body.tools ?? []) as { name: string }[]).map((tool) => tool.name);
+		expect(names).toContain("open_pull_request");
+		expect(JSON.stringify(requests[0]?.body.system)).toContain(
+			"open_pull_request proposes it as a pull request",
+		);
+		// The sandbox commits and pushes; the Worker opens the pull request with its own token.
+		expect(await machine.seen()).toMatchObject({
+			pushes: [
+				{
+					branch,
+					message: "Fix the cart",
+					author: { name: "Builder", email: "noreply@gateweave.com" },
+				},
+			],
+		});
+		expect(github).toEqual([
+			{
+				route: "POST /app/installations/99/access_tokens",
+				body: { repository_ids: [7], permissions: { pull_requests: "write" } },
+			},
+			{
+				route: `GET /repos/acme/site/pulls?head=acme%3Agateweave%2F${conversationId}&state=open&per_page=1`,
+				body: null,
+			},
+			{
+				route: "POST /repos/acme/site/pulls",
+				body: { title: "Fix the cart", body: "It ignored codes.", head: branch, base: "main" },
+			},
+		]);
+		expect(JSON.stringify(requests[1]?.body.messages)).toContain(
+			"https://github.com/acme/site/pull/12",
+		);
+
+		const [run] = await registry.listRuns();
+		expect(run?.pullRequest).toEqual({
+			repository: "acme/site",
+			number: 12,
+			url: "https://github.com/acme/site/pull/12",
+		});
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([
+			{ status: "ok", server: "sandbox", tool: "open_pull_request", error: null },
+		]);
+	});
+
 	it("goes when the conversation is deleted", async () => {
 		const { stub, machine } = await conversation({ sandbox: true });
 		await stub.destroy();
@@ -157,6 +250,7 @@ describe("a conversation without a sandbox", () => {
 			files: {},
 			commands: [],
 			checkouts: [],
+			pushes: [],
 			destroyed: false,
 		});
 	});

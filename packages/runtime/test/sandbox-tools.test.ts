@@ -1,7 +1,16 @@
+import { GitHubError } from "@gateweave/agents-github";
+import type { PullRequestOutcome } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import { repositoryNote, withCheckout } from "../src/checkout";
-import { decideOutbound, withGitHubToken } from "../src/outbound";
+import {
+	checkPush,
+	decideOutbound,
+	type PushWindow,
+	pushedRefs,
+	withGitHubToken,
+} from "../src/outbound";
 import { clipOutput } from "../src/output";
+import { type PullRequestPort, pullRequestTools } from "../src/pull-requests";
 import { SANDBOX_LIMITS, sandboxPath, sandboxTools } from "../src/sandbox-tools";
 import type { RunRecorder } from "../src/trace";
 import { MemorySandbox } from "./fake-sandbox";
@@ -211,22 +220,44 @@ describe("a sandbox's way out", () => {
 
 	describe("to GitHub", () => {
 		const repository = { owner: "acme", name: "Site" };
-		const git = (method: string, url: string) => decideOutbound(method, new URL(url), repository);
+		const git = (method: string, url: string, push: PushWindow | null = null) =>
+			decideOutbound(method, new URL(url), { repository, push });
 		const only = {
 			allow: false,
 			reason: "github.com is reachable from this sandbox only to fetch acme/Site",
 		};
 
 		it("lets git fetch the agent's repository, with a token the Worker adds", () => {
-			const allowed = { allow: true, credentials: "github" };
+			const allowed = { allow: true, credentials: "read" };
 			expect(
 				git("GET", "https://github.com/acme/site.git/info/refs?service=git-upload-pack"),
 			).toEqual(allowed);
 			expect(git("POST", "https://github.com/ACME/Site/git-upload-pack")).toEqual(allowed);
 		});
 
+		it("lets the push open_pull_request makes through, with a token that writes", () => {
+			const push = { branch: "gateweave/c-1", from: null };
+			expect(
+				git("GET", "https://github.com/acme/site.git/info/refs?service=git-receive-pack", push),
+			).toEqual({ allow: true, credentials: "write" });
+			// The pack goes out only once the Worker has checked what it updates.
+			expect(git("POST", "https://github.com/acme/site.git/git-receive-pack", push)).toEqual({
+				allow: true,
+				credentials: "write",
+				push,
+			});
+			expect(git("GET", "https://github.com/acme/site.git/git-receive-pack", push)).toEqual(only);
+			expect(git("POST", "https://github.com/other/site.git/git-receive-pack", push)).toEqual({
+				allow: false,
+				reason: "github.com is reachable from this sandbox only to fetch acme/Site",
+			});
+		});
+
 		it("refuses pushing, other repositories and anything else on github.com", () => {
-			const push = { allow: false, reason: "This sandbox cannot push to github.com" };
+			const push = {
+				allow: false,
+				reason: "This sandbox cannot push to github.com: open_pull_request pushes the work",
+			};
 			expect(
 				git("GET", "https://github.com/acme/site.git/info/refs?service=git-receive-pack"),
 			).toEqual(push);
@@ -263,6 +294,62 @@ describe("a sandbox's way out", () => {
 			});
 		});
 
+		it("reads the ref updates a push starts with", () => {
+			const updates = pushedRefs(
+				pushBody([
+					`${ZERO} ${sha("b")} refs/heads/gateweave/c-1\0 report-status side-band-64k agent=git/2.47.3`,
+					`${sha("c")} ${sha("d")} refs/heads/main`,
+				]),
+			);
+			expect(updates).toEqual([
+				{ ref: "refs/heads/gateweave/c-1", from: ZERO, to: sha("b") },
+				{ ref: "refs/heads/main", from: sha("c"), to: sha("d") },
+			]);
+			// Anything else before the pack, or a body that is not a push's, has no updates to trust.
+			const certificate = pushBody(["push-cert\0 report-status", "certificate version 0.1"]);
+			for (const body of [
+				certificate,
+				pushBody([]),
+				new TextEncoder().encode("0032want "),
+				new TextEncoder().encode("zzzz"),
+				new TextEncoder().encode(`00a0${ZERO} ${sha("b")} refs/heads/x`),
+			]) {
+				expect(pushedRefs(body)).toBeNull();
+			}
+		});
+
+		it("lets a push make or move the conversation's branch, and nothing else", () => {
+			const branch = "gateweave/c-1";
+			const update = (ref: string, from: string, to: string) => [{ ref, from, to }];
+			const first: PushWindow = { branch, from: null };
+			const again: PushWindow = { branch, from: sha("b") };
+			expect(checkPush(update(`refs/heads/${branch}`, ZERO, sha("b")), first)).toBeNull();
+			expect(checkPush(update(`refs/heads/${branch}`, sha("b"), sha("c")), again)).toBeNull();
+			// A branch GitHub deleted, as a merged pull request's, is made again.
+			expect(checkPush(update(`refs/heads/${branch}`, ZERO, sha("c")), again)).toBeNull();
+
+			const only = "This sandbox pushes only to gateweave/c-1";
+			expect(checkPush(update("refs/heads/main", sha("a"), sha("b")), first)).toBe(only);
+			expect(checkPush(update(`refs/tags/${branch}`, ZERO, sha("b")), first)).toBe(only);
+			expect(checkPush(null, first)).toBe(only);
+			expect(
+				checkPush(
+					[
+						...update(`refs/heads/${branch}`, ZERO, sha("b")),
+						...update("refs/heads/x", ZERO, sha("b")),
+					],
+					first,
+				),
+			).toBe(only);
+			expect(checkPush(update(`refs/heads/${branch}`, sha("b"), ZERO), again)).toBe(
+				"This sandbox does not delete gateweave/c-1",
+			);
+			const theirs =
+				"Someone else pushed to gateweave/c-1, and this sandbox does not push over their commits";
+			expect(checkPush(update(`refs/heads/${branch}`, sha("e"), sha("c")), again)).toBe(theirs);
+			expect(checkPush(update(`refs/heads/${branch}`, sha("e"), sha("c")), first)).toBe(theirs);
+		});
+
 		it("carries the token as GitHub takes it, and the request as git sent it", async () => {
 			const sent = new Request("https://github.com/acme/site.git/git-upload-pack", {
 				method: "POST",
@@ -280,6 +367,22 @@ describe("a sandbox's way out", () => {
 		});
 	});
 });
+
+const ZERO = "0".repeat(40);
+
+function sha(letter: string): string {
+	return letter.repeat(40);
+}
+
+/** A push's request as git sends it: each command a pkt-line, a flush, then the pack. */
+function pushBody(commands: string[]): Uint8Array {
+	const lines = commands.map((command) => {
+		const line = `${command}\n`;
+		const length = new TextEncoder().encode(line).length + 4;
+		return `${length.toString(16).padStart(4, "0")}${line}`;
+	});
+	return new TextEncoder().encode(`${lines.join("")}0000PACK\u0000\u0000\u0000\u0002`);
+}
 
 describe("a repository in the sandbox", () => {
 	const repository = {
@@ -321,7 +424,117 @@ describe("a repository in the sandbox", () => {
 
 	it("is described to the model with where it is and the branch it works on", () => {
 		expect(repositoryNote(repository, BRANCH)).toBe(
-			"Your sandbox has the repository acme/site at /workspace/repo, on the branch gateweave/conversation-1, made from main. Read its AGENTS.md or CLAUDE.md, if it has one, before you change it. Its files are checked out when you first use a tool.",
+			"Your sandbox has the repository acme/site at /workspace/repo, on the branch gateweave/conversation-1, made from main. Read its AGENTS.md or CLAUDE.md, if it has one, before you change it. Its files are checked out when you first use a tool. When the work is done and checked, open_pull_request proposes it as a pull request; git push does not work in the sandbox.",
+		);
+	});
+});
+
+describe("pull requests from the sandbox", () => {
+	const repository = {
+		owner: "acme",
+		name: "site",
+		externalId: "7",
+		installationId: "99",
+		defaultBranch: "main",
+	};
+	const BRANCH = "gateweave/conversation-1";
+	const AUTHOR = { name: "Builder", email: "noreply@gateweave.com" };
+
+	/** `open_pull_request` over a sandbox in memory and a GitHub that answers with `pulls`. */
+	function setup(options: { ready?: () => Promise<string | null>; github?: PullRequestPort } = {}) {
+		const sandbox = new MemorySandbox();
+		const proposed: { branch: string; title: string; body: string }[] = [];
+		const recorded: PullRequestOutcome[] = [];
+		let open: number | null = null;
+		const github: PullRequestPort = options.github ?? {
+			async propose(input) {
+				proposed.push(input);
+				const opened = open === null;
+				open ??= 12;
+				return { number: open, url: `https://github.com/acme/site/pull/${open}`, opened };
+			},
+		};
+		const run = { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder;
+		const tools = pullRequestTools({
+			sandbox,
+			ready: options.ready ?? (async () => null),
+			github,
+			repository,
+			branch: BRANCH,
+			author: AUTHOR,
+			record: async (outcome) => {
+				recorded.push(outcome);
+			},
+			run,
+		});
+		const call = (input: object) => {
+			const execute = tools.open_pull_request?.execute as
+				| ((input: object, options: { toolCallId: string; messages: [] }) => Promise<unknown>)
+				| undefined;
+			if (!execute) throw new Error("No open_pull_request");
+			return execute(input, { toolCallId: "call-1", messages: [] });
+		};
+		return { sandbox, proposed, recorded, call };
+	}
+
+	it("pushes the branch and opens a pull request, then pushes to the same one", async () => {
+		const { sandbox, proposed, recorded, call } = setup();
+		const first = await call({ title: "Fix the cart", body: "It ignored codes." });
+		expect(first).toEqual({
+			repository: "acme/site",
+			number: 12,
+			url: "https://github.com/acme/site/pull/12",
+			opened: true,
+			head: "1".repeat(40),
+		});
+		const second = await call({ title: "Fix the cart, and test it", body: "With a test." });
+		expect(second).toMatchObject({ number: 12, opened: false, head: "2".repeat(40) });
+
+		expect(sandbox.pushes).toEqual([
+			{ branch: BRANCH, message: "Fix the cart", author: AUTHOR },
+			{ branch: BRANCH, message: "Fix the cart, and test it", author: AUTHOR },
+		]);
+		expect(proposed).toEqual([
+			{ branch: BRANCH, title: "Fix the cart", body: "It ignored codes." },
+			{ branch: BRANCH, title: "Fix the cart, and test it", body: "With a test." },
+		]);
+		expect(recorded).toEqual([first, second]);
+	});
+
+	it("checks the repository out first, and opens nothing when that fails", async () => {
+		const { sandbox, proposed, call } = setup({
+			ready: async () => "acme/site could not be checked out.",
+		});
+		await expect(call({ title: "T", body: "" })).rejects.toThrow(
+			"acme/site could not be checked out.",
+		);
+		expect(sandbox.pushes).toEqual([]);
+		expect(proposed).toEqual([]);
+	});
+
+	it("opens nothing when there is nothing to push, or the push is refused", async () => {
+		const { sandbox, proposed, recorded, call } = setup();
+		sandbox.pushAnswers.push(
+			{ error: "There is nothing to propose: the work has no commit that main does not." },
+			{ error: "Someone else pushed to gateweave/conversation-1 since this conversation did." },
+		);
+		await expect(call({ title: "T", body: "" })).rejects.toThrow("There is nothing to propose");
+		await expect(call({ title: "T", body: "" })).rejects.toThrow("Someone else pushed");
+		expect(proposed).toEqual([]);
+		expect(recorded).toEqual([]);
+	});
+
+	it("says the work is pushed when GitHub makes no pull request, and why", async () => {
+		const refusing = (status: number): PullRequestPort => ({
+			propose: async () => {
+				throw new GitHubError(status, `GitHub answered ${status}: {}`);
+			},
+		});
+		await expect(setup({ github: refusing(403) }).call({ title: "T", body: "" })).rejects.toThrow(
+			"gateweave/conversation-1 is pushed, but the workspace's GitHub App may not open pull requests on acme/site. An owner or admin can give it the Pull requests permission.",
+		);
+		await expect(setup({ github: refusing(404) }).call({ title: "T", body: "" })).rejects.toThrow(
+			"gateweave/conversation-1 is pushed, but the workspace's GitHub App no longer reaches acme/site.",
 		);
 	});
 });

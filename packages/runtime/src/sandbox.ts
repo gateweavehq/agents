@@ -5,10 +5,10 @@
  *
  * The container starts on the first call and stops after `IDLE_MINUTES` without one, and its disk
  * goes with it. It has no internet: every HTTP and HTTPS request it makes comes to
- * `SandboxOutbound`, which lets downloads from package registries through, and git's fetches of
- * the repository the conversation checked out, and nothing else (`./outbound.ts`). It holds no
- * secret of the workspace's, so a command has none to leak: the token for that repository is
- * added on the way out.
+ * `SandboxOutbound`, which lets downloads from package registries through, git's fetches of the
+ * repository the conversation checked out, and the push of the conversation's branch that `push`
+ * makes, and nothing else (`./outbound.ts`). It holds no secret of the workspace's, so a command
+ * has none to leak: the token for that repository is added on the way out.
  *
  * A deployment offers sandboxes by binding this class as `SANDBOX` with a container (see
  * `wrangler.jsonc`); its image is `sandbox/Dockerfile`.
@@ -24,8 +24,16 @@ import {
 } from "@gateweave/agents-model";
 import type { CheckoutResult } from "./checkout";
 import { failureForLogs } from "./models";
-import { decideOutbound, withGitHubToken } from "./outbound";
+import {
+	checkPush,
+	decideOutbound,
+	type GitAccess,
+	type PushWindow,
+	pushedRefs,
+	withGitHubToken,
+} from "./outbound";
 import { clipOutput } from "./output";
+import type { CommitAuthor, PushResult } from "./pull-requests";
 import {
 	type CommandResult,
 	IDLE_MINUTES,
@@ -62,10 +70,16 @@ const COMMAND_ENV = {
 	NPM_CONFIG_UPDATE_NOTIFIER: "false",
 };
 
-/** How long a clone may take before the checkout gives up. */
+/** How long a clone may take before the checkout gives up, and a push. */
 const CLONE_SECONDS = 300;
+const PUSH_SECONDS = 300;
+
+/** The largest push the Worker reads to check its ref updates; bigger work stays unpushed. */
+export const MAX_PUSH_BYTES = 50_000_000;
 
 const REPOSITORY_KEY = "repository";
+/** The commit the conversation last pushed to its branch. */
+const PUSHED_KEY = "pushed";
 
 /** `timeout`'s exit codes for a command it stopped, and one it had to kill. */
 const TIMED_OUT = new Set([124, 137]);
@@ -87,6 +101,11 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 	readonly #outbound: Fetcher;
 	/** The container's start under way, which every call waits for. */
 	#starting: Promise<void> | undefined;
+	/**
+	 * The push `push` is making, which `SandboxOutbound` lets through. In memory alone, so it ends
+	 * with this instance if the push never does.
+	 */
+	#push: PushWindow | null = null;
 
 	constructor(ctx: SandboxState, env: Cloudflare.Env) {
 		super(ctx, env);
@@ -158,9 +177,84 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 		return { checkedOut: true };
 	}
 
-	/** The repository the conversation checked out, which `SandboxOutbound` lets git fetch. */
-	repository(): SandboxRepository | null {
-		return this.#repository();
+	/**
+	 * Commits every change in the checkout with `message`, unless there are none to commit, and
+	 * pushes the work to `branch`, unless the branch has it already. Refuses when the work has no
+	 * commit the default branch does not. Git's push leaves through `SandboxOutbound` like every
+	 * request, which lets it through while this lasts.
+	 */
+	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
+		const repository = this.#repository();
+		if (!repository) return { error: "This sandbox has no repository checked out." };
+		const container = await this.#ready();
+		if (!(await this.#isGitCheckout(container))) {
+			return {
+				error: `${repository.owner}/${repository.name} is not checked out in this sandbox.`,
+			};
+		}
+		const git = (args: string[], seconds = 60, env: Record<string, string> = {}) =>
+			this.#exec(container, ["git", ...args], SANDBOX_REPOSITORY_PATH, seconds, env);
+		const added = await git(["add", "--all"]);
+		if (added.exitCode !== 0) return { error: `The changes could not be added.\n${added.output}` };
+		// Exits 1 when something is staged.
+		const staged = await git(["diff", "--cached", "--quiet"]);
+		if (staged.exitCode === 1) {
+			const identity = {
+				GIT_AUTHOR_NAME: author.name,
+				GIT_AUTHOR_EMAIL: author.email,
+				GIT_COMMITTER_NAME: author.name,
+				GIT_COMMITTER_EMAIL: author.email,
+			};
+			// The repository's own hooks run, as they would for a person.
+			const committed = await git(["commit", "--quiet", "--message", message], 120, identity);
+			if (committed.exitCode !== 0) {
+				return { error: `The changes could not be committed.\n${committed.output}` };
+			}
+		} else if (staged.exitCode !== 0) {
+			return { error: `The changes could not be read.\n${staged.output}` };
+		}
+		const base = `origin/${repository.defaultBranch}`;
+		const ahead = await git(["rev-list", "--count", `${base}..HEAD`]);
+		if (ahead.exitCode !== 0) {
+			return { error: `The work could not be compared with ${base}.\n${ahead.output}` };
+		}
+		if (Number.parseInt(ahead.output.trim(), 10) === 0) {
+			return {
+				error: `There is nothing to propose: the work has no commit that ${repository.defaultBranch} does not.`,
+			};
+		}
+		const head = (await git(["rev-parse", "HEAD"])).output.trim();
+		const pushed = this.ctx.storage.kv.get<string>(PUSHED_KEY) ?? null;
+		if (head === pushed) return { head, pushed: false };
+		this.#push = { branch, from: pushed };
+		let result: CommandResult;
+		try {
+			result = await git(
+				["push", "--porcelain", "origin", `HEAD:refs/heads/${branch}`],
+				PUSH_SECONDS,
+			);
+		} finally {
+			this.#push = null;
+		}
+		if (result.exitCode !== 0) {
+			if (/\[rejected\]|non-fast-forward|fetch first/.test(result.output)) {
+				return {
+					error: `Someone else pushed to ${branch} since this conversation did, and their commits are not in the work, so it was not pushed over them.\n${result.output}`,
+				};
+			}
+			return { error: `${branch} could not be pushed.\n${result.output}` };
+		}
+		this.ctx.storage.kv.put(PUSHED_KEY, head);
+		return { head, pushed: true };
+	}
+
+	/**
+	 * What `SandboxOutbound` lets git reach: the repository the conversation checked out, to fetch,
+	 * and the push `push` is making, if any.
+	 */
+	access(): (GitAccess & { repository: SandboxRepository }) | null {
+		const repository = this.#repository();
+		return repository ? { repository, push: this.#push } : null;
 	}
 
 	async readFile(path: string): Promise<ReadResult> {
@@ -221,10 +315,11 @@ export class RunnerSandbox extends DurableObject implements SandboxPort {
 		argv: string[],
 		cwd: string,
 		timeoutSeconds: number,
+		env: Record<string, string> = {},
 	): Promise<CommandResult> {
 		const process = await container.exec(
 			["timeout", "--kill-after=5s", `${timeoutSeconds}s`, ...argv],
-			{ cwd, env: COMMAND_ENV, stdout: "pipe", stderr: "combined" },
+			{ cwd, env: { ...COMMAND_ENV, ...env }, stdout: "pipe", stderr: "combined" },
 		);
 		const [output, exitCode] = await Promise.all([clipOutput(process.stdout), process.exitCode]);
 		return { exitCode, output: output.text, timedOut: TIMED_OUT.has(exitCode) };
@@ -280,35 +375,55 @@ interface OutboundEnv {
 /**
  * Where the container's HTTP and HTTPS requests come out: those `decideOutbound` allows go on from
  * the Worker, and the rest get a 403 whose text says why, which the command prints. A fetch of the
- * conversation's repository goes out with a token minted for that repository alone, to read it.
+ * conversation's repository goes out with a token minted for that repository alone, to read it,
+ * and the push `RunnerSandbox.push` makes with one that writes, once its ref updates are checked.
  */
 export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundProps> {
 	override async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		const repository = url.hostname === "github.com" ? await this.#repository() : null;
-		const decision = decideOutbound(request.method, url, repository);
-		if (!decision.allow) return new Response(`${decision.reason}\n`, { status: 403 });
+		const access = url.hostname === "github.com" ? await this.#access() : null;
+		const decision = decideOutbound(request.method, url, access);
+		if (!decision.allow) return refused(decision.reason, 403);
 		let outgoing = request;
-		if (decision.credentials === "github" && repository) {
-			const token = await this.#token(repository);
-			if (token === null) {
-				const reason = "GitHub gave this sandbox no token to read the repository with";
-				return new Response(`${reason}\n`, { status: 502 });
+		if (decision.push) {
+			// Git sends a push as it is. One encoded otherwise could hide its ref updates.
+			if (request.headers.has("content-encoding")) {
+				return refused("This sandbox sends a push only as git makes it", 403);
 			}
-			outgoing = withGitHubToken(request, token);
+			const body = await readAtMost(request, MAX_PUSH_BYTES);
+			if (body === null) {
+				return refused(
+					`The push is bigger than ${MAX_PUSH_BYTES / 1_000_000} MB, more than this sandbox sends. Keep large files out of the work.`,
+					413,
+				);
+			}
+			const problem = checkPush(pushedRefs(body), decision.push);
+			if (problem) return refused(problem, 403);
+			const headers = new Headers(request.headers);
+			headers.delete("content-length");
+			headers.delete("transfer-encoding");
+			outgoing = new Request(request, { headers, body });
+		}
+		if (decision.credentials && access) {
+			const token = await this.#token(access.repository, decision.credentials);
+			if (token === null) {
+				const reason = `GitHub gave this sandbox no token to ${decision.credentials} the repository with`;
+				return refused(reason, 502);
+			}
+			outgoing = withGitHubToken(outgoing, token);
 		}
 		// A redirect is the client's to follow, so that each address it leads to is asked about too.
 		return fetch(outgoing, { redirect: "manual" });
 	}
 
-	async #repository(): Promise<SandboxRepository | null> {
+	async #access() {
 		const env = this.env as unknown as OutboundEnv;
 		const { sandbox } = this.ctx.props;
 		if (!env.SANDBOX || !sandbox) return null;
-		return env.SANDBOX.get(env.SANDBOX.idFromString(sandbox)).repository();
+		return env.SANDBOX.get(env.SANDBOX.idFromString(sandbox)).access();
 	}
 
-	async #token(repository: SandboxRepository): Promise<string | null> {
+	async #token(repository: SandboxRepository, use: "read" | "write"): Promise<string | null> {
 		const env = this.env as unknown as OutboundEnv;
 		const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
 		if (!appId || !privateKey) return null;
@@ -316,13 +431,45 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 			return await sharedApp({ appId, privateKey }).repositoryToken(
 				repository.installationId,
 				repository.externalId,
-				{ contents: "read" },
+				{ contents: use },
 			);
 		} catch (error) {
 			console.error("A sandbox's GitHub token was not minted", failureForLogs(error));
 			return null;
 		}
 	}
+}
+
+function refused(reason: string, status: number): Response {
+	return new Response(`${reason}\n`, { status });
+}
+
+/** The request's body, or null when it is longer than `max` bytes. */
+async function readAtMost(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
+	const declared = Number(request.headers.get("content-length") ?? 0);
+	if (declared > max) return null;
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	if (request.body) {
+		const reader = request.body.getReader();
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			size += value.length;
+			if (size > max) {
+				await reader.cancel();
+				return null;
+			}
+			chunks.push(value);
+		}
+	}
+	const body = new Uint8Array(size);
+	let at = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, at);
+		at += chunk.length;
+	}
+	return body;
 }
 
 /** A file operation's failure in words the model reads. */

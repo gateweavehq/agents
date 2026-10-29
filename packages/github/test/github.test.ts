@@ -10,6 +10,7 @@ import {
 	importAppKey,
 	moveBranch,
 	openPullRequest,
+	openPullRequestFrom,
 	pkcePair,
 	pullRequest,
 	readTexts,
@@ -270,6 +271,33 @@ describe("repository writes", () => {
 			head: "gateweave/setup-x",
 			base: "main",
 		});
+	});
+
+	it("finds the open pull request from one of the repository's own branches", async () => {
+		const calls = github(
+			Response.json([
+				{
+					number: 12,
+					html_url: "https://github.com/acme/site/pull/12",
+					state: "open",
+					merged_at: null,
+					head: { ref: "gateweave/c-1", sha: sha("e") },
+				},
+			]),
+			Response.json([]),
+		);
+
+		expect(await openPullRequestFrom("ghs_x", repository, "gateweave/c-1")).toEqual({
+			number: 12,
+			url: "https://github.com/acme/site/pull/12",
+			state: "open",
+			head: sha("e"),
+		});
+		expect(await openPullRequestFrom("ghs_x", repository, "gateweave/c-2")).toBeNull();
+		expect(calls.map((call) => call.route)).toEqual([
+			"GET /repos/acme/site/pulls?head=acme%3Agateweave%2Fc-1&state=open&per_page=1",
+			"GET /repos/acme/site/pulls?head=acme%3Agateweave%2Fc-2&state=open&per_page=1",
+		]);
 	});
 
 	it("passes on GitHub's refusals with their status", async () => {

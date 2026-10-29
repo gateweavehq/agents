@@ -6,6 +6,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
+import type { CommitAuthor, PushPort, PushResult } from "../src/pull-requests";
 import type { CommandResult, ReadResult, WriteResult } from "../src/sandbox-tools";
 
 export interface RanCommand {
@@ -19,7 +20,13 @@ export interface Checkout {
 	branch: string;
 }
 
-export class MemorySandbox implements CheckoutPort {
+export interface Push {
+	branch: string;
+	message: string;
+	author: CommitAuthor;
+}
+
+export class MemorySandbox implements CheckoutPort, PushPort {
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
 	readonly checkouts: Checkout[] = [];
@@ -27,6 +34,9 @@ export class MemorySandbox implements CheckoutPort {
 	readonly answers: CommandResult[] = [];
 	/** What the next checkouts answer, in order; then each checks out. */
 	readonly checkoutAnswers: CheckoutResult[] = [];
+	readonly pushes: Push[] = [];
+	/** What the next pushes answer, in order; then each pushes a new commit. */
+	readonly pushAnswers: PushResult[] = [];
 
 	async run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult> {
 		this.commands.push({ command, cwd, timeoutSeconds });
@@ -47,9 +57,15 @@ export class MemorySandbox implements CheckoutPort {
 		this.checkouts.push({ repository, branch });
 		return this.checkoutAnswers.shift() ?? { checkedOut: true };
 	}
+
+	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
+		this.pushes.push({ branch, message, author });
+		const head = String(this.pushes.length).repeat(40).slice(0, 40);
+		return this.pushAnswers.shift() ?? { head, pushed: true };
+	}
 }
 
-export class FakeSandbox extends DurableObject implements CheckoutPort {
+export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort {
 	readonly #memory = new MemorySandbox();
 	#destroyed = false;
 
@@ -69,16 +85,24 @@ export class FakeSandbox extends DurableObject implements CheckoutPort {
 		return this.#memory.checkout(repository, branch);
 	}
 
+	push(branch: string, message: string, author: CommitAuthor) {
+		return this.#memory.push(branch, message, author);
+	}
+
 	destroy(): void {
 		this.#destroyed = true;
 	}
 
-	/** What the tests check: files, commands, checkouts, and whether the conversation destroyed it. */
+	/**
+	 * What the tests check: files, commands, checkouts, pushes, and whether the conversation
+	 * destroyed it.
+	 */
 	seen() {
 		return {
 			files: Object.fromEntries(this.#memory.files),
 			commands: this.#memory.commands,
 			checkouts: this.#memory.checkouts,
+			pushes: this.#memory.pushes,
 			destroyed: this.#destroyed,
 		};
 	}

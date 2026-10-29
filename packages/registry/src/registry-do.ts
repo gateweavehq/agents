@@ -62,10 +62,12 @@ import {
 	type RunCursor,
 	type RunFinish,
 	type RunnableAgent,
+	type RunPullRequestInput,
 	type RunUsage,
 	repositoryInput,
 	runCursor,
 	runFinish,
+	runPullRequest,
 	SANDBOX_IDLE_MINUTES,
 	SANDBOX_NOT_OFFERED,
 	type SandboxSettings,
@@ -199,6 +201,7 @@ import {
 	getRun,
 	listNestedRuns,
 	listRuns,
+	recordRunPullRequest,
 	runUsage,
 	sandboxesInUse,
 } from "./runs";
@@ -893,6 +896,16 @@ export class RegistryDO extends DurableObject {
 		const run = id.parse(runId);
 		const data = runFinish.parse(finish);
 		return this.#write(() => finishRun(this.#db, run, data));
+	}
+
+	/**
+	 * Puts on a run the pull request its turn opened or pushed to from the sandbox, for the Runs
+	 * page. False when the run is not going.
+	 */
+	recordRunPullRequest(runId: string, pullRequest: RunPullRequestInput): boolean {
+		const run = id.parse(runId);
+		const data = runPullRequest.parse(pullRequest);
+		return this.#write(() => recordRunPullRequest(this.#db, run, data));
 	}
 
 	// Runs, for the Runs page and the Overview. Runs cut short and never reported are closed first.

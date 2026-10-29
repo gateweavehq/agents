@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { GitPullRequestArrow } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
@@ -100,6 +101,13 @@ function RunsPage() {
 								<span className="block truncate text-xs text-muted-foreground">
 									{data?.everyone && `${run.startedByName} · `}
 									<span title={formatDateTime(run.startedAt)}>{formatRelative(run.startedAt)}</span>
+									{run.pullRequest && (
+										<>
+											{" · "}
+											<GitPullRequestArrow aria-hidden className="inline size-3 align-[-2px]" />{" "}
+											{run.pullRequest.repository}#{run.pullRequest.number}
+										</>
+									)}
 								</span>
 							</span>
 							<span className="text-xs text-muted-foreground tabular-nums">

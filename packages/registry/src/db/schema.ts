@@ -16,6 +16,7 @@ import {
 	REPOSITORY_PROVIDERS,
 	type RepositoryRuntime,
 	RUN_STATUSES,
+	type RunPullRequest,
 	type ScanProblem,
 	TEAM_EDGE_KINDS,
 	TEAM_MEMBER_KINDS,
@@ -508,6 +509,8 @@ export const runs = sqliteTable(
 		triggerId: text("trigger_id"),
 		/** Whether the turn had its conversation's sandbox, which counts against the workspace's. */
 		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
+		/** The pull request the run opened or pushed to from its sandbox. */
+		pullRequest: text("pull_request", { mode: "json" }).$type<RunPullRequest>(),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),

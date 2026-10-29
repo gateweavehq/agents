@@ -550,6 +550,16 @@ export interface Run {
 	triggerId: string | null;
 	/** That trigger's name; null once it was deleted, and for a run a person started. */
 	triggerName: string | null;
+	/** The pull request the run opened or pushed to from its sandbox; null when it made none. */
+	pullRequest: RunPullRequest | null;
+}
+
+/** A pull request on GitHub that a run opened or pushed to. */
+export interface RunPullRequest {
+	/** `owner/name`. */
+	repository: string;
+	number: number;
+	url: string;
 }
 
 /** What runs used over a period. */

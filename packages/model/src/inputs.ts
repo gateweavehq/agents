@@ -711,6 +711,29 @@ export const runFinish = z.object({
 });
 export type RunFinish = z.input<typeof runFinish>;
 
+// GitHub's names: letters, digits, `-`, `_` and `.`, but never `.` or `..` alone.
+const repositorySegment = /^(?!\.\.?$)[A-Za-z0-9_.-]{1,100}$/;
+
+/** The pull request a run opened or pushed to, as the runtime reports it to the registry. */
+export const runPullRequest = z
+	.object({
+		repository: z
+			.string()
+			.max(201)
+			.refine((value) => {
+				const [owner = "", name = "", ...rest] = value.split("/");
+				return rest.length === 0 && repositorySegment.test(owner) && repositorySegment.test(name);
+			}, "Not a repository's owner/name"),
+		number: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+		url: z.string().max(400),
+	})
+	// The app links to it, so it must be the pull request's page on GitHub and nothing else.
+	.refine(
+		({ repository, number, url }) => url === `https://github.com/${repository}/pull/${number}`,
+		"Not the pull request's page on GitHub",
+	);
+export type RunPullRequestInput = z.input<typeof runPullRequest>;
+
 /** Most runs one page of the Runs list shows. */
 export const RUNS_PER_PAGE = 50;
 
