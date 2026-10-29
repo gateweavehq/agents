@@ -39,6 +39,9 @@ export type NestedTurnOutcome =
 	| { runId: string; answer: string | null }
 	| { runId: string | null; error: string };
 
+/** How a trigger's turn began: its run, or why it could not. */
+export type TriggerTurnOutcome = { runId: string } | { runId: null; error: string };
+
 /**
  * What a conversation reaches of another over RPC. Narrower than the class's own stub, whose type
  * TypeScript cannot work out from inside the class.
@@ -72,14 +75,17 @@ export function conversationName(workspaceId: string, conversationId: string): s
  * (`./edges.ts`). Taking one starts a nested turn in a new conversation of the same class, reached
  * over RPC alone (`nestedTurn`); it begins with the edge it came through, which the registry
  * checks, and never takes another message.
+ *
+ * A trigger's delivery starts a turn the same way, over RPC from the app's gateway
+ * (`triggerTurn`), in a conversation the registry opened for that delivery alone.
  */
 export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	// The name holds the workspace's id, which the page has no use for.
 	static override options = { sendIdentityOnConnect: false };
 
 	#traceTables = false;
-	/** The turn `nestedTurn` began, which the next `onChatMessage` takes up. */
-	#nested: ConversationTurn | null = null;
+	/** The turn `nestedTurn` or `triggerTurn` began, which the next `onChatMessage` takes up. */
+	#begun: ConversationTurn | null = null;
 	/** Stops the nested turn under way, when the turn waiting for it stops. */
 	#stopNested: AbortController | null = null;
 	/** Why the turn under way failed, in the app's words; null while it has not. */
@@ -110,7 +116,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		const { conversationId, registry } = this.#parties();
 		const turn = await registry.beginTurn(conversationId, text, via);
 		if ("status" in turn) return { runId: null, error: turn.message };
-		this.#nested = turn;
+		this.#begun = turn;
 		const stop = new AbortController();
 		this.#stopNested = stop;
 		const message: UIMessage = {
@@ -140,16 +146,47 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		this.#stopNested?.abort();
 	}
 
+	/**
+	 * Takes the one turn a trigger's delivery opened this conversation for, with the trigger's
+	 * message. The registry checks the conversation and begins the run. Nobody waits for the
+	 * answer, so the conversation stays awake until the turn ends.
+	 */
+	async triggerTurn(text: string): Promise<TriggerTurnOutcome> {
+		const { conversationId, registry } = this.#parties();
+		const turn = await registry.beginTriggerTurn(conversationId, text);
+		if ("status" in turn) return { runId: null, error: turn.message };
+		this.#begun = turn;
+		const message: UIMessage = {
+			id: crypto.randomUUID(),
+			role: "user",
+			parts: [{ type: "text", text }],
+		};
+		const done = this.saveMessages((messages) => [...messages, message]);
+		this.keepAliveWhile(() => done).catch((error: unknown) =>
+			console.error("A trigger's turn failed", failureForLogs(error)),
+		);
+		return { runId: turn.runId };
+	}
+
+	/**
+	 * The conversation's messages as JSON, for an owner or admin reading a trigger's run: no person
+	 * had that conversation, so nobody opens it in Chat. JSON, since what their tools took and gave
+	 * back can be anything, which RPC's types do not carry.
+	 */
+	transcript(): string {
+		return JSON.stringify(this.messages);
+	}
+
 	override async onChatMessage(
 		_onFinish: unknown,
 		options?: OnChatMessageOptions,
 	): Promise<Response> {
 		const env = this.env as unknown as RuntimeEnv;
 		const { workspaceId, conversationId, registry } = this.#parties();
-		const nested = this.#nested;
-		this.#nested = null;
+		const begun = this.#begun;
+		this.#begun = null;
 		this.#failure = null;
-		const turn = nested ?? (await registry.beginTurn(conversationId, lastUserText(this.messages)));
+		const turn = begun ?? (await registry.beginTurn(conversationId, lastUserText(this.messages)));
 		if ("status" in turn) return failed(turn.message);
 		const { agent, key, mcpServers, edges, runId } = turn;
 		const run = new RunRecorder(this.#sql, runId, agent);

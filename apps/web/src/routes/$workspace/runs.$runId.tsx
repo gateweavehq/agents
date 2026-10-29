@@ -1,7 +1,9 @@
 import { MODEL_PROVIDER_NAMES, type RunSpan, type TeamEdgeKind } from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ChevronRight, MessagesSquare } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import type { UIMessage } from "ai";
+import { ChevronRight, MessagesSquare, Webhook } from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { Transcript } from "#/components/chat/conversation-view";
 import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
@@ -26,7 +28,7 @@ function RunPage() {
 	useRefreshWhile(data?.run.status === "running" || (data?.run.total.running ?? 0) > 0);
 
 	if (!data) return <Notice title="Run not found" />;
-	const { run, trace, nested, conversation } = data;
+	const { run, trace, nested, conversation, transcript } = data;
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -36,7 +38,8 @@ function RunPage() {
 						<h1 className="text-xl font-semibold tracking-tight">{run.agentName}</h1>
 						<RunStatusBadge status={run.status} />
 					</div>
-					<p className="text-sm text-muted-foreground">
+					<p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+						{run.triggerId !== null && <Webhook aria-hidden className="size-3.5 shrink-0" />}
 						Started by {run.startedByName} on {formatDateTime(run.startedAt)}
 					</p>
 					{run.parentRunId && run.edge && (
@@ -84,7 +87,46 @@ function RunPage() {
 				<h2 className="text-sm font-medium">Trace</h2>
 				<Trace run={run} trace={trace} nested={nested} />
 			</section>
+			{transcript !== null && (
+				<TriggerTranscript transcript={transcript} run={run} nested={nested} />
+			)}
 		</div>
+	);
+}
+
+/**
+ * The conversation of a trigger's run: the message its delivery made and the agent's answer. No
+ * person had it, so it is read here instead of in Chat.
+ */
+function TriggerTranscript({
+	transcript,
+	run,
+	nested,
+}: {
+	transcript: string;
+	run: RunEntry;
+	nested: RunEntry[];
+}) {
+	// Our own server wrote it, from the conversation's stored messages.
+	const messages = useMemo(() => JSON.parse(transcript) as UIMessage[], [transcript]);
+	// The members its team's lead called, to show each call by the member it went to.
+	const members = useMemo(
+		() => (run.teamPath === null ? null : [...new Set(nested.map((each) => each.agentName))]),
+		[run.teamPath, nested],
+	);
+	return (
+		<section className="space-y-3">
+			<h2 className="text-sm font-medium">Conversation</h2>
+			{messages.length === 0 ? (
+				<p className="rounded-lg border p-6 text-sm text-muted-foreground">
+					Nothing was said: the run ended before its first message was kept.
+				</p>
+			) : (
+				<div className="rounded-lg border p-4">
+					<Transcript messages={messages} agentName={run.agentName} members={members} />
+				</div>
+			)}
+		</section>
 	);
 }
 

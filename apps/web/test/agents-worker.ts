@@ -43,6 +43,12 @@ import type {
 	Team,
 	TeamGraphInput,
 	TotaledRun,
+	Trigger,
+	TriggerEntry,
+	TriggerInput,
+	TriggerPatch,
+	TriggerRefusal,
+	TriggerTarget,
 	TurnMcpServer,
 	WrittenAssetInput,
 } from "@gateweave/agents-model";
@@ -124,6 +130,12 @@ export interface RegistryStub {
 	getRun(runId: string): Promise<TotaledRun | null>;
 	listNestedRuns(runId: string): Promise<TotaledRun[]>;
 	runUsage(since: number): Promise<RunUsage>;
+	createTrigger(
+		input: TriggerInput,
+		createdBy: string,
+	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal>;
+	updateTrigger(triggerId: string, patch: TriggerPatch): Promise<Trigger | null>;
+	listTriggers(target?: TriggerTarget): Promise<TriggerEntry[]>;
 }
 
 /** The address Agents sends from in tests. */

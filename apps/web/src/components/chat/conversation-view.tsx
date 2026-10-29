@@ -150,6 +150,28 @@ export function ConversationView({
 	);
 }
 
+/**
+ * A conversation's messages as it stored them, with nothing to write: a trigger's run is read on
+ * its page, since no person had its conversation.
+ */
+export function Transcript({
+	messages,
+	agentName,
+	members,
+}: {
+	messages: readonly UIMessage[];
+	agentName: string;
+	members: readonly string[] | null;
+}) {
+	return (
+		<div className="space-y-6">
+			{messages.map((message) => (
+				<Message key={message.id} message={message} agentName={agentName} members={members} />
+			))}
+		</div>
+	);
+}
+
 function Message({
 	message,
 	agentName,

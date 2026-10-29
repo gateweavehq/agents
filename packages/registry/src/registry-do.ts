@@ -80,10 +80,23 @@ import {
 	type TeamGraphInput,
 	type TeamInput,
 	type TotaledRun,
+	TRIGGER_LIMITS,
+	type Trigger,
+	type TriggerEntry,
+	type TriggerHeaders,
+	type TriggerInput,
+	type TriggerPatch,
+	type TriggerReceipt,
+	type TriggerRefusal,
+	type TriggerTarget,
 	type TurnMcpServer,
 	type TurnVia,
 	teamGraphInput,
 	teamInput,
+	triggerInput,
+	triggerMessage,
+	triggerPatch,
+	triggerSecret,
 	turnVia,
 	type WrittenAssetInput,
 	writtenAssetInput,
@@ -194,10 +207,35 @@ import {
 	turnEdges,
 	updateTeam,
 } from "./teams";
+import {
+	admitDelivery,
+	deleteTeamTriggers,
+	deleteTrigger,
+	deliveryOf,
+	insertTrigger,
+	listTriggers,
+	newTriggerSecret,
+	replaceSecret,
+	secretStartOf,
+	settleDelivery,
+	triggerPlace,
+	triggerRow,
+	updateTrigger,
+	verifyDelivery,
+} from "./triggers";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
 const modelProvider = z.enum(MODEL_PROVIDERS);
+const triggerHeaders = z.object({
+	id: z
+		.string()
+		.min(1)
+		.max(256)
+		.regex(/^[\x21-\x7e]+$/),
+	timestamp: z.string().min(1).max(20),
+	signature: z.string().min(1).max(2000),
+});
 
 /**
  * Scans per alarm. Each takes a few requests to GitHub; three stay well inside the 50
@@ -445,8 +483,14 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => updateTeam(this.#db, id.parse(teamId), data, Date.now()));
 	}
 
+	/** Deletes a team with its triggers. */
 	deleteTeam(teamId: string): boolean {
-		return this.#write(() => deleteTeam(this.#db, id.parse(teamId)));
+		const team = id.parse(teamId);
+		return this.#write(() => {
+			const deleted = deleteTeam(this.#db, team);
+			if (deleted) deleteTeamTriggers(this.#db, team);
+			return deleted;
+		});
 	}
 
 	/** Gives a team these members, edges and lead, checked against the rules in `teams.ts`. */
@@ -624,14 +668,13 @@ export class RegistryDO extends DurableObject {
 		if (parties.rootId !== null) {
 			return refused("This conversation was a turn of a team's agent, so it cannot go on");
 		}
+		if (parties.triggerId !== null) {
+			return refused("This conversation was started by a trigger, so it cannot go on");
+		}
 		this.#write(() => noteTurn(this.#db, conversation, message, Date.now()));
-		const plan =
-			parties.teamId === null
-				? { agent: agentSnapshot(this.#db, parties.agentId), position: null }
-				: teamTurnPlan(this.#db, parties.teamId);
-		if ("refused" in plan) return refused(plan.refused);
+		const plan = this.#planTurn(parties);
+		if ("status" in plan) return plan;
 		const { agent, position } = plan;
-		if (!agent) return refused("This agent was removed, so the conversation cannot go on");
 		const prepared = await this.#prepareTurn(agent, position, true);
 		if ("status" in prepared) return prepared;
 		const runId = this.#write(() =>
@@ -647,6 +690,68 @@ export class RegistryDO extends DurableObject {
 			),
 		);
 		return { ...prepared, runId };
+	}
+
+	/**
+	 * Begins the run of a trigger's delivery, for the runtime alone, in the conversation
+	 * `receiveTrigger` opened for it. It is that conversation's only turn, and its message is the
+	 * trigger's, not a person's.
+	 */
+	async beginTriggerTurn(
+		conversationId: string,
+		text: string,
+	): Promise<ConversationTurn | ProviderRefusal> {
+		const conversation = id.parse(conversationId);
+		const message = z.string().max(100_000).parse(text);
+		const parties = conversationParties(this.#db, conversation);
+		const delivery = deliveryOf(this.#db, conversation);
+		if (!parties || parties.triggerId === null || !delivery) {
+			return refused("This conversation was not opened by a trigger");
+		}
+		if (delivery.status !== "accepted") return refused("This delivery has had its run already");
+		const settle = (refusal: ProviderRefusal) => {
+			this.#write(() => settleDelivery(this.#db, conversation, { error: refusal.message }));
+			return refusal;
+		};
+		const plan = this.#planTurn(parties);
+		if ("status" in plan) return settle(plan);
+		const prepared = await this.#prepareTurn(plan.agent, plan.position, true);
+		if ("status" in prepared) return settle(prepared);
+		const { startedBy } = parties;
+		return this.#write(() => {
+			// A retry may have taken the delivery over while the key was opened.
+			if (deliveryOf(this.#db, conversation)?.status !== "accepted") {
+				return refused("This delivery has had its run already");
+			}
+			const now = Date.now();
+			noteTurn(this.#db, conversation, message, now);
+			const runId = beginRun(
+				this.#db,
+				{
+					agent: plan.agent,
+					conversationId: conversation,
+					startedBy,
+					teamPath: plan.position?.path ?? null,
+				},
+				now,
+			);
+			settleDelivery(this.#db, conversation, { runId });
+			return { ...prepared, runId };
+		});
+	}
+
+	/** Who answers a conversation's turn: its agent, or its team's lead, as they are now. */
+	#planTurn(parties: {
+		agentId: string;
+		teamId: string | null;
+	}): { agent: AgentSnapshot; position: TeamPosition | null } | ProviderRefusal {
+		const plan =
+			parties.teamId === null
+				? { agent: agentSnapshot(this.#db, parties.agentId), position: null }
+				: teamTurnPlan(this.#db, parties.teamId);
+		if ("refused" in plan) return refused(plan.refused);
+		if (!plan.agent) return refused("This agent was removed, so the conversation cannot go on");
+		return { agent: plan.agent, position: plan.position };
 	}
 
 	async #beginNestedTurn(
@@ -772,6 +877,121 @@ export class RegistryDO extends DurableObject {
 		const from = z.number().int().min(0).parse(since);
 		this.#write(() => expireRuns(this.#db, Date.now()));
 		return runUsage(this.#db, from);
+	}
+
+	// Triggers, which owners and admins manage. A secret goes in sealed and comes out once, when it
+	// is made; deliveries come through the app's gateway, which knows nothing of who sent them.
+
+	/** The workspace's triggers with their latest deliveries; with `target`, one agent's or team's. */
+	listTriggers(target?: TriggerTarget): TriggerEntry[] {
+		const parsed = target === undefined ? undefined : triggerInput.shape.target.parse(target);
+		return listTriggers(this.#db, parsed);
+	}
+
+	/** Adds a trigger, and hands back its secret, which is not shown again. */
+	async createTrigger(
+		input: TriggerInput,
+		createdBy: string,
+	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal> {
+		const data = triggerInput.parse(input);
+		const member = id.parse(createdBy);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const triggerId = crypto.randomUUID();
+		const secret = newTriggerSecret();
+		const sealed = await sealer.seal(triggerPlace(triggerId), secret);
+		const made = this.#write(() =>
+			insertTrigger(
+				this.#db,
+				{ id: triggerId, ...data, sealed, secretStart: secretStartOf(secret), createdBy: member },
+				Date.now(),
+			),
+		);
+		if ("refused" in made) return refused(made.refused);
+		return { trigger: made, secret };
+	}
+
+	/** Renames, rewords, limits, pauses or resumes a trigger. Null when there is no such trigger. */
+	updateTrigger(triggerId: string, patch: TriggerPatch): Trigger | null {
+		const trigger = id.parse(triggerId);
+		const data = triggerPatch.parse(patch);
+		return this.#write(() => updateTrigger(this.#db, trigger, data, Date.now()));
+	}
+
+	/** Deletes a trigger and its deliveries. Its conversations and runs stay. */
+	deleteTrigger(triggerId: string): boolean {
+		return this.#write(() => deleteTrigger(this.#db, id.parse(triggerId)));
+	}
+
+	/**
+	 * Gives a trigger a new secret: one made here, or the sender's own, pasted. Deliveries signed
+	 * with the old one are refused from then on. Null when there is no such trigger.
+	 */
+	async replaceTriggerSecret(
+		triggerId: string,
+		secret?: string,
+	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal | null> {
+		const trigger = id.parse(triggerId);
+		const next = secret === undefined ? newTriggerSecret() : triggerSecret.parse(secret);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const sealed = await sealer.seal(triggerPlace(trigger), next);
+		const replaced = this.#write(() =>
+			replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now()),
+		);
+		return replaced && { trigger: replaced, secret: next };
+	}
+
+	/**
+	 * Takes a delivery to a trigger from the app's gateway: checks its signature with the trigger's
+	 * secret, records it, and opens the conversation its run begins in, unless it repeats one, the
+	 * trigger is paused, or it is over a limit. The runtime then begins the run with
+	 * `beginTriggerTurn`.
+	 */
+	async receiveTrigger(
+		triggerId: string,
+		headers: TriggerHeaders,
+		body: string,
+	): Promise<TriggerReceipt> {
+		const parsed = z
+			.object({
+				triggerId: id,
+				headers: triggerHeaders,
+				body: z.string().max(TRIGGER_LIMITS.bodyBytes),
+			})
+			.safeParse({ triggerId, headers, body });
+		if (!parsed.success) return { status: "unauthorized" };
+		const delivery = parsed.data;
+		const trigger = triggerRow(this.#db, delivery.triggerId);
+		if (!trigger) return { status: "not_found" };
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
+		let secret: string;
+		try {
+			secret = await sealer.open(triggerPlace(trigger.id), trigger.sealed);
+		} catch {
+			return {
+				status: "refused",
+				message: "The trigger's secret cannot be opened on this server; replace it",
+			};
+		}
+		if (!(await verifyDelivery(secret, delivery.headers, delivery.body, Date.now()))) {
+			return { status: "unauthorized" };
+		}
+		return this.#write((): TriggerReceipt => {
+			// The trigger as it is now: it, or its secret, may have changed while that was opened.
+			const current = triggerRow(this.#db, trigger.id);
+			if (!current) return { status: "not_found" };
+			if (current.sealed !== trigger.sealed) return { status: "unauthorized" };
+			const admitted = admitDelivery(
+				this.#db,
+				current,
+				{ id: delivery.headers.id, body: delivery.body },
+				Date.now(),
+			);
+			if (admitted.status !== "start") return admitted;
+			return { ...admitted, text: triggerMessage(current.prompt, delivery.body) };
+		});
 	}
 
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the

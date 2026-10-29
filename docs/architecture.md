@@ -483,6 +483,50 @@ lead as it is then (`packages/registry/src/team-turns.ts`, `packages/runtime/src
   by the registry, so the chat gateway sends 404 for it. A turn there without an edge is refused.
   Deleting the person's conversation deletes the nested ones with it, Durable Objects included.
 
+## Triggers
+
+A trigger starts a run of an agent run by Gateweave, or of a team's lead, when another service
+posts a webhook to it (`packages/registry/src/triggers.ts`, `apps/web/src/server/triggers.ts`).
+Owners and admins make them on the agent's or team's page, each with a name, a prompt and how
+many runs it may start a day.
+
+- **Standard Webhooks.** Each trigger has a secret, `whsec_` and 32 random bytes in base64, sealed
+  in the registry like a provider key and shown once, when it is made or replaced. A delivery
+  carries `webhook-id`, `webhook-timestamp` and `webhook-signature`: an HMAC-SHA256 of
+  `id.timestamp.body` under the secret, compared with WebCrypto's `verify` in constant time,
+  within five minutes of now. Several `v1,` signatures may come at once, as from a sender
+  rotating its secret. A sender that makes its own secret and signs with it, as a Gateweave
+  Track webhook does, is pasted in place of the trigger's ("Use the sender's secret").
+- **The gateway is the only public way in.** `POST /api/triggers/<workspace id>/<trigger id>`
+  counts each client's posts in the isolate, caps the body at 64 KB while reading it, requires
+  the three headers, and checks in D1 that the workspace exists before it reaches the registry,
+  so no registry is made for a made-up id. Only then does the registry check the signature: the
+  gateway trusts nothing about the sender, and a member's session plays no part.
+- **One run per event.** The registry keeps each delivery by its `webhook-id` for seven days
+  (`trigger_deliveries`). A retry of one that started a run or was skipped gets `202` with that
+  run and starts nothing. A retry while its run is starting gets `409` with `Retry-After`, since
+  that run may yet fail to begin. One that was over a limit or could not begin is taken again;
+  one left starting for a minute, as when the Worker stopped in between, too.
+- **Limits.** A trigger starts at most 10 runs a minute and its own number a day (50 unless set,
+  up to 1,000), counting the runs that began and those about to, in the write that admits the
+  delivery. Past either, the sender gets `429` with `Retry-After`. A workspace has at most 50
+  triggers. A paused trigger answers `202` and starts nothing.
+- **Its own conversation.** An admitted delivery opens a conversation for its run alone, started
+  by `trigger:<id>` rather than a member (`conversations.trigger_id`), titled after the trigger
+  and the event's `type`. The gateway then calls `triggerTurn` on its `ConversationAgent` over
+  RPC, which asks the registry to begin the run (`beginTriggerTurn`) and stays awake until the
+  turn ends, as a report's does. The message is the prompt, with each `{{path}}` filled in from
+  the event's JSON, and the event after it. A team's trigger starts the lead with the team's
+  edges, like a person's message to the team.
+- **Nobody's conversation.** No member lists it, opens it in Chat or goes on with it, and
+  `beginTurn` refuses it. Its runs (`runs.trigger_id`, nested ones too) belong to the trigger, so
+  owners and admins see them and members do not, and the run's page shows its conversation,
+  which the server reads from the Durable Object for that page alone.
+- **What came lately** shows under each trigger: its last ten deliveries, whether each started a
+  run, was skipped, went over a limit or failed, and why.
+- **Deleting a trigger** deletes its deliveries; the conversations and runs it started stay. A
+  team's triggers go with the team.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -517,7 +561,8 @@ workspace.
 - **Agents** lists every agent and subagent by runtime, and owners and admins define agents run
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its
-  pinned instructions with their text, its environment set and its MCP servers.
+  pinned instructions with their text, its environment set and its MCP servers. Owners and
+  admins also see its triggers there, as they do on a team's page.
 - **Teams** lists the teams with their leads. A team's page draws its graph top-down from the
   lead (`apps/web/src/lib/team-layout.ts`, inline SVG, no graph library): each member one row
   below the nearest member that reaches it, every kind of edge in its own color and dashes. Below
@@ -538,7 +583,7 @@ workspace.
   - **Each call over an edge** shows as its kind and the member it went to, read back from the
     tool's name with the team's member names (`readEdgeToolName` in the model package, next to the
     naming the runtime uses).
-- **Runs** lists the runs people's messages started, the latest first, fifty at a time
+- **Runs** lists the runs people's messages and triggers started, the latest first, fifty at a time
   (`apps/web/src/lib/runs.ts`): owners and admins see everyone's, since they answer for what runs
   spend, and members see their own. Each shows its total: the tokens and cost of the run and of
   every run its team's edges led to, added up from the runs of the same message. A run's page
@@ -546,7 +591,7 @@ workspace.
   calls and calls over a team's edges. Each call shows the run it started inside the timeline,
   which opens to that run's own trace there, fetched when opened, or on its own page. The page
   links the conversation only for the member who started it; a nested run links the run that
-  called it. The Overview sums the last 30 days of runs, nested ones included.
+  called it, and a trigger's run shows its conversation on the page. The Overview sums the last 30 days of runs, nested ones included.
 - **Environment** lists the environment sets with their variables, their secrets as set or
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
@@ -582,7 +627,8 @@ provider keys.
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
 - **Agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8): agents as workspace
-  members acting in Track, starting with issue triage.
+  members acting in Track, starting with issue triage, set up in one click from a trigger, a
+  Track webhook and Track's MCP server (AGT-38).
 - **Workers AI** as a model provider (AGT-36), once it is settled who pays for its runs on
   Gateweave Cloud.
 - **Cloud runners** (phase 5, AGT-9): coding agents in Sandboxes, which also run the MCP servers

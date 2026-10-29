@@ -7,6 +7,9 @@
  * A turn a team's agent takes over an edge runs in a conversation of its own, which goes with the
  * conversation the person started (`root_id`). Those are not listed or opened here, and go when
  * that conversation goes.
+ *
+ * A trigger's delivery runs in a conversation with no person in it (`./triggers.ts`), which
+ * `started_by` names the trigger in, so it is nobody's to list, open or go on with.
  */
 import type { AgentSnapshot, Conversation, TurnEdge, TurnMcpServer } from "@gateweave/agents-model";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
@@ -134,7 +137,13 @@ export function getConversation(db: Db, id: string, startedBy: string): Conversa
 export function conversationParties(
 	db: Db,
 	id: string,
-): { agentId: string; startedBy: string; teamId: string | null; rootId: string | null } | null {
+): {
+	agentId: string;
+	startedBy: string;
+	teamId: string | null;
+	rootId: string | null;
+	triggerId: string | null;
+} | null {
 	return (
 		db
 			.select({
@@ -142,6 +151,7 @@ export function conversationParties(
 				startedBy: conversations.startedBy,
 				teamId: conversations.teamId,
 				rootId: conversations.rootId,
+				triggerId: conversations.triggerId,
 			})
 			.from(conversations)
 			.where(eq(conversations.id, id))
@@ -205,6 +215,7 @@ function newRow(
 		title: null,
 		teamId: null,
 		rootId: null,
+		triggerId: null,
 		...parties,
 		createdAt: now,
 		updatedAt: now,

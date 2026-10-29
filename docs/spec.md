@@ -49,6 +49,7 @@ with a hosted version in Gateweave Cloud.
 | Setup      | A bundle of assets for one or more agents that can be applied to repositories                                   |
 | Team       | A graph of agents with roles (lead, member, reviewer) and allowed communication; teams nest                     |
 | Run        | One execution of an agent or team: messages, delegations, tool calls, tokens, cost and result                   |
+| Trigger    | A signed webhook URL that starts a run of an agent or team for each event another service sends                 |
 | Connection | An integration: the GitHub app, model providers, MCP servers                                                    |
 
 Assets are versioned, and agents and setups pin versions, so a change to a shared skill is a

@@ -45,6 +45,7 @@ import { Route as ApiGithubCallbackRouteImport } from './routes/api/github/callb
 import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
 import { Route as ApiGithubSetupRouteImport } from './routes/api/github/setup'
 import { Route as ApiGithubWebhooksRouteImport } from './routes/api/github/webhooks'
+import { Route as ApiTriggersWorkspaceIdTriggerIdRouteImport } from './routes/api/triggers/$workspaceId.$triggerId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -231,6 +232,12 @@ const ApiGithubWebhooksRoute = ApiGithubWebhooksRouteImport.update({
   path: '/api/github/webhooks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTriggersWorkspaceIdTriggerIdRoute =
+  ApiTriggersWorkspaceIdTriggerIdRouteImport.update({
+    id: '/api/triggers/$workspaceId/$triggerId',
+    path: '/api/triggers/$workspaceId/$triggerId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -269,6 +276,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
+  '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -304,6 +312,7 @@ export interface FileRoutesByTo {
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams': typeof WorkspaceTeamsIndexRoute
+  '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -343,6 +352,7 @@ export interface FileRoutesById {
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
+  '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -383,6 +393,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/'
     | '/$workspace/setups/'
     | '/$workspace/teams/'
+    | '/api/triggers/$workspaceId/$triggerId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -418,6 +429,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings'
     | '/$workspace/setups'
     | '/$workspace/teams'
+    | '/api/triggers/$workspaceId/$triggerId'
   id:
     | '__root__'
     | '/'
@@ -456,6 +468,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/'
     | '/$workspace/setups/'
     | '/$workspace/teams/'
+    | '/api/triggers/$workspaceId/$triggerId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -470,6 +483,7 @@ export interface RootRouteChildren {
   ApiGithubInstallRoute: typeof ApiGithubInstallRoute
   ApiGithubSetupRoute: typeof ApiGithubSetupRoute
   ApiGithubWebhooksRoute: typeof ApiGithubWebhooksRoute
+  ApiTriggersWorkspaceIdTriggerIdRoute: typeof ApiTriggersWorkspaceIdTriggerIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -726,6 +740,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGithubWebhooksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/triggers/$workspaceId/$triggerId': {
+      id: '/api/triggers/$workspaceId/$triggerId'
+      path: '/api/triggers/$workspaceId/$triggerId'
+      fullPath: '/api/triggers/$workspaceId/$triggerId'
+      preLoaderRoute: typeof ApiTriggersWorkspaceIdTriggerIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -821,6 +842,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiGithubInstallRoute: ApiGithubInstallRoute,
   ApiGithubSetupRoute: ApiGithubSetupRoute,
   ApiGithubWebhooksRoute: ApiGithubWebhooksRoute,
+  ApiTriggersWorkspaceIdTriggerIdRoute: ApiTriggersWorkspaceIdTriggerIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
