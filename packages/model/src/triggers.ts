@@ -86,6 +86,11 @@ export interface Trigger {
 	perDay: number;
 	/** The event types it starts runs for, by the `type` in the event's body; null is every event. */
 	events: string[] | null;
+	/**
+	 * The issue label it starts runs for, by name: only issues that carry it, and on `issue.updated`
+	 * only when it was just added (`labelSkip`). Null is no label filter.
+	 */
+	label: string | null;
 	/** When it starts runs on its own; null for a trigger that starts on webhooks. */
 	schedule: TriggerSchedule | null;
 	/** When its schedule starts the next run, while it is active; null otherwise. */
@@ -209,6 +214,20 @@ const ONE_KIND = {
 	path: ["events"],
 };
 
+/** An issue label a trigger starts runs for, as Gateweave Track names it. */
+export const triggerLabel = z
+	.string()
+	.trim()
+	.min(1, "A label is at least one character")
+	.max(100, "A label is at most 100 characters")
+	.nullable();
+
+/** Only webhooks have labels, as they have event types: a schedule's runs all start alike. */
+const NO_LABEL = {
+	message: "A scheduled trigger starts on its schedule, not on labels",
+	path: ["label"],
+};
+
 export const triggerInput = z
 	.object({
 		name,
@@ -219,9 +238,11 @@ export const triggerInput = z
 		]),
 		perDay: perDay.default(TRIGGER_LIMITS.defaultPerDay),
 		events: triggerEvents.default(null),
+		label: triggerLabel.default(null),
 		schedule: triggerSchedule.nullable().default(null),
 	})
-	.refine((input) => input.schedule === null || input.events === null, ONE_KIND);
+	.refine((input) => input.schedule === null || input.events === null, ONE_KIND)
+	.refine((input) => input.schedule === null || input.label === null, NO_LABEL);
 export type TriggerInput = z.input<typeof triggerInput>;
 
 /**
@@ -234,10 +255,12 @@ export const triggerPatch = z
 		prompt: prompt.optional(),
 		perDay: perDay.optional(),
 		events: triggerEvents.optional(),
+		label: triggerLabel.optional(),
 		schedule: triggerSchedule.nullable().optional(),
 		active: z.boolean().optional(),
 	})
-	.refine((patch) => !patch.schedule || !patch.events, ONE_KIND);
+	.refine((patch) => !patch.schedule || !patch.events, ONE_KIND)
+	.refine((patch) => !patch.schedule || !patch.label, NO_LABEL);
 export type TriggerPatch = z.input<typeof triggerPatch>;
 
 /**
@@ -304,6 +327,35 @@ export function scheduleProblem(schedule: TriggerSchedule, now = Date.now()): st
 }
 
 /**
+ * Why an event does not start a run of a trigger that takes only issues with `label`, in words a
+ * person reads; null when it does. Labels are compared trimmed and ignoring case. On `issue.updated`
+ * the label must have just been added: `updatedFrom.labelIds` lists the labels before the change,
+ * so an edit of a labeled issue that kept the label starts nothing. The body is whatever the
+ * sender sent, so every field is checked before it is used.
+ */
+export function labelSkip(label: string, body: string): string | null {
+	const wanted = label.trim().toLowerCase();
+	const event = recordOf(parseJson(body));
+	const issue = recordOf(recordOf(event?.data)?.issue);
+	if (!issue) {
+		return `It starts runs only on issues labeled ${label}, and the event is not about an issue`;
+	}
+	const matching = (Array.isArray(issue.labels) ? issue.labels : []).flatMap((entry) => {
+		const found = recordOf(entry);
+		if (typeof found?.id !== "string" || typeof found.name !== "string") return [];
+		return found.name.trim().toLowerCase() === wanted ? [found.id] : [];
+	});
+	if (matching.length === 0) return `It starts runs only on issues labeled ${label}`;
+	if (event?.type === "issue.updated") {
+		const before = recordOf(recordOf(event.data)?.updatedFrom)?.labelIds;
+		// Added when some label of that name was not on the issue before the change.
+		const added = Array.isArray(before) && matching.some((id) => !before.includes(id));
+		if (!added) return `The label ${label} was on the issue already`;
+	}
+	return null;
+}
+
+/**
  * The event a schedule's run starts with, in place of a webhook's body, so a prompt can say
  * `{{data.scheduledFor}}`.
  */
@@ -329,6 +381,20 @@ export function eventType(body: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+function parseJson(body: string): unknown {
+	try {
+		return JSON.parse(body);
+	} catch {
+		return undefined;
+	}
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+	return value !== null && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
 }
 
 function textAt(value: unknown, path: string): string {

@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
 	eventType,
+	labelSkip,
 	nextScheduledRun,
 	scheduleEvent,
 	scheduleProblem,
@@ -138,4 +139,74 @@ it("gives a schedule's run an event a prompt can read", () => {
 	expect(triggerMessage("Standup for {{data.scheduledFor}}", event)).toMatch(
 		/^Standup for 2026-10-30T06:00:00\.000Z\n/,
 	);
+});
+
+const AGENT = { id: "label-agent", name: "agent" };
+const NOT_ABOUT_AN_ISSUE =
+	"It starts runs only on issues labeled agent, and the event is not about an issue";
+
+/** A Gateweave Track webhook body about one issue, with the issue's labels as of the event. */
+function about(type: string, labels: unknown[], rest: Record<string, unknown> = {}): string {
+	return JSON.stringify({
+		type,
+		timestamp: "2026-10-29T12:00:00.000Z",
+		data: { issue: { id: "TRK-1", title: "Login fails", labels }, ...rest },
+	});
+}
+
+it("starts runs on issues with the label, in any case, and says why it skips the rest", () => {
+	expect(labelSkip("agent", about("issue.created", [AGENT]))).toBeNull();
+	expect(labelSkip(" Agent ", about("issue.created", [{ id: "x", name: "AGENT" }]))).toBeNull();
+	expect(labelSkip("agent", about("issue.created", [{ id: "bug", name: "bug" }]))).toBe(
+		"It starts runs only on issues labeled agent",
+	);
+	expect(labelSkip("agent", about("issue.created", []))).toBe(
+		"It starts runs only on issues labeled agent",
+	);
+});
+
+it("on issue.updated, starts only when the label was just added", () => {
+	const added = about("issue.updated", [{ id: "bug", name: "bug" }, AGENT], {
+		updatedFrom: { labelIds: ["bug"] },
+	});
+	expect(labelSkip("agent", added)).toBeNull();
+
+	const kept = about("issue.updated", [AGENT], { updatedFrom: { labelIds: ["label-agent"] } });
+	expect(labelSkip("agent", kept)).toBe("The label agent was on the issue already");
+
+	// Only the title changed: no labels were touched, so nothing is added.
+	const title = about("issue.updated", [AGENT], { updatedFrom: { title: "Login" } });
+	expect(labelSkip("agent", title)).toBe("The label agent was on the issue already");
+});
+
+it("starts on a comment on a labeled issue, and skips an event that is not about an issue", () => {
+	expect(labelSkip("agent", about("comment.created", [AGENT]))).toBeNull();
+	expect(labelSkip("agent", JSON.stringify({ type: "proposal.created", data: {} }))).toBe(
+		NOT_ABOUT_AN_ISSUE,
+	);
+	expect(labelSkip("agent", "not json")).toBe(NOT_ABOUT_AN_ISSUE);
+	// Whatever the sender sent is checked before it is used.
+	expect(labelSkip("agent", about("issue.created", ["agent"]))).toBe(
+		"It starts runs only on issues labeled agent",
+	);
+	expect(labelSkip("agent", JSON.stringify({ data: { issue: null } }))).toBe(NOT_ABOUT_AN_ISSUE);
+});
+
+it("trims a trigger's label, refuses an empty one, and refuses one on a schedule", () => {
+	const schedule = { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" };
+	const base = { name: "Agent issues", prompt: "Work on it", target };
+	expect(triggerInput.parse({ ...base, label: " agent " })).toMatchObject({ label: "agent" });
+	expect(triggerInput.parse(base).label).toBeNull();
+	expect(triggerInput.safeParse({ ...base, label: "   " }).success).toBe(false);
+	expect(triggerInput.safeParse({ ...base, label: "x".repeat(101) }).success).toBe(false);
+	expect(
+		triggerInput.safeParse({ ...base, schedule, label: "agent" }).error?.issues[0],
+	).toMatchObject({
+		path: ["label"],
+		message: "A scheduled trigger starts on its schedule, not on labels",
+	});
+	expect(triggerPatch.parse({ label: " agent " }).label).toBe("agent");
+	expect(triggerPatch.parse({ label: null }).label).toBeNull();
+	expect(triggerPatch.safeParse({ schedule, label: "agent" }).success).toBe(false);
+	expect(triggerPatch.safeParse({ schedule, label: null }).success).toBe(true);
 });

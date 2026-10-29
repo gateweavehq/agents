@@ -182,6 +182,12 @@ function TriggerRow({
 									</>
 								) : (
 									"on every event"
+								)}
+								{trigger.label && (
+									<>
+										{" "}
+										· on issues labeled <code>{trigger.label}</code>
+									</>
 								)}{" "}
 								· signed with <code>{trigger.secretStart}…</code>
 							</>
@@ -358,12 +364,13 @@ function Deliveries({ deliveries }: { deliveries: TriggerDelivery[] }) {
 	);
 }
 
-/** What the trigger dialog saves: a webhook's events, or a schedule. */
+/** What the trigger dialog saves: a webhook's events and label, or a schedule. */
 interface TriggerFields {
 	name: string;
 	prompt: string;
 	perDay: number;
 	events: string[] | null;
+	label: string | null;
 	schedule: TriggerSchedule | null;
 }
 
@@ -412,6 +419,7 @@ function TriggerDialog({
 	const [prompt, setPrompt] = useState(trigger?.prompt ?? "");
 	const [perDay, setPerDay] = useState(String(trigger?.perDay ?? TRIGGER_LIMITS.defaultPerDay));
 	const [events, setEvents] = useState(trigger?.events?.join(", ") ?? "");
+	const [label, setLabel] = useState(trigger?.label ?? "");
 	const [cron, setCron] = useState(trigger?.schedule?.cron ?? FIRST_SCHEDULE);
 	const [timeZone, setTimeZone] = useState(
 		() => trigger?.schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -434,6 +442,7 @@ function TriggerDialog({
 				prompt: prompt.trim(),
 				perDay: Number(perDay),
 				events: !scheduled && types.length > 0 ? types : null,
+				label: !scheduled && label.trim() ? label.trim() : null,
 				schedule: scheduled ? schedule : null,
 			});
 			onClose();
@@ -588,6 +597,25 @@ function TriggerDialog({
 								The event types to start a run on, as the sender names them in the event's{" "}
 								<code>type</code>, separated by commas: <code>issue.created</code>. Others are
 								skipped. Leave it empty for every event.
+							</p>
+						</div>
+					)}
+					{!scheduled && (
+						<div className="space-y-2">
+							<Label htmlFor="trigger-label">Label</Label>
+							<Input
+								id="trigger-label"
+								value={label}
+								onChange={(event) => setLabel(event.target.value)}
+								maxLength={100}
+								placeholder="No label"
+								spellCheck={false}
+								className="w-48"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Start a run only for issues with this label, such as <code>agent</code>. On{" "}
+								<code>issue.updated</code> only when the label was just added. Leave it empty for no
+								label filter.
 							</p>
 						</div>
 					)}
