@@ -562,7 +562,7 @@ staging does, production and self-hosted deploys leave them off until their oper
     input in the input already. The span is priced at the standard rates, since no one request's
     size is known (`requestCost`'s `summed`). A turn that fails reports no usage, so its tokens
     count with the next turn that completes. Metering each request where it leaves the sandbox
-    will replace this (AGT-45).
+    will replace this (AGT-49).
   - **Its items are the chat.** An `agent_message` is text; a command (`codex__shell`), a patch
     (`codex__apply_patch`) and another MCP server's call are tool calls with spans under the
     server name `codex`; a call of Gateweave's `gateweave` server shows under its own name and
