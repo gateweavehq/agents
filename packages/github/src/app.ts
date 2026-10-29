@@ -41,6 +41,16 @@ const repositorySchema = z.object({
 
 const tokenSchema = z.object({ token: z.string(), expires_at: z.string() });
 
+const appSchema = z.object({ slug: z.string() });
+
+const botSchema = z.object({ id: z.number().int(), login: z.string() });
+
+/** The account a GitHub App's commits are by: GitHub links a commit with this address to it. */
+export interface BotIdentity {
+	login: string;
+	email: string;
+}
+
 /** Installation tokens last an hour; one is reused until a few minutes before it runs out. */
 const TOKEN_MARGIN_MS = 5 * 60 * 1000;
 
@@ -52,6 +62,7 @@ export class GitHubApp {
 	readonly #appId: string;
 	readonly #key: Promise<CryptoKey>;
 	readonly #tokens = new Map<string, { token: string; expiresAt: number }>();
+	readonly #bots = new Map<string, Promise<BotIdentity>>();
 
 	constructor(config: GitHubAppConfig) {
 		this.#appId = config.appId;
@@ -89,6 +100,32 @@ export class GitHubApp {
 			}
 			if (repositories.length < 100 || found.length >= total_count) return found;
 		}
+	}
+
+	/**
+	 * The bot account of the app, which commits made for it are by. Asked of GitHub once per
+	 * installation and kept; a failed lookup is not kept, so the next call asks again.
+	 */
+	botIdentity(installationId: string): Promise<BotIdentity> {
+		let pending = this.#bots.get(installationId);
+		if (!pending) {
+			pending = this.#lookupBot(installationId);
+			this.#bots.set(installationId, pending);
+			pending.catch(() => {
+				if (this.#bots.get(installationId) === pending) this.#bots.delete(installationId);
+			});
+		}
+		return pending;
+	}
+
+	async #lookupBot(installationId: string): Promise<BotIdentity> {
+		const jwt = await appJwt(this.#appId, await this.#key);
+		const app = appSchema.parse(await request("/app", jwt));
+		const token = await this.installationToken(installationId);
+		const bot = botSchema.parse(
+			await request(`/users/${encodeURIComponent(`${app.slug}[bot]`)}`, token),
+		);
+		return { login: bot.login, email: `${bot.id}+${app.slug}[bot]@users.noreply.github.com` };
 	}
 
 	async installationToken(installationId: string): Promise<string> {

@@ -86,7 +86,8 @@ export interface PullRequestToolOptions {
 	github: PullRequestPort;
 	repository: SandboxRepository;
 	branch: string;
-	author: CommitAuthor;
+	/** Who the commit is by. Asked only when a push happens, since it may take a lookup. */
+	author: () => Promise<CommitAuthor>;
 	/** Puts the pull request on the run. */
 	record: (outcome: PullRequestOutcome) => Promise<void>;
 	run: RunRecorder;
@@ -113,7 +114,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		execute: async ({ title, body }): Promise<PullRequestOutcome> => {
 			const problem = await ready();
 			if (problem !== null) throw new Error(problem);
-			const pushed = await sandbox.push(branch, title, author);
+			const pushed = await sandbox.push(branch, title, await author());
 			if ("error" in pushed) throw new Error(pushed.error);
 			let made: Awaited<ReturnType<PullRequestPort["propose"]>>;
 			try {

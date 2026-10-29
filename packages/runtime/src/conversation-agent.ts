@@ -25,6 +25,7 @@ import { edgeTools } from "./edges";
 import { describeFailure, failureForLogs, type GatewaySettings, languageModel } from "./models";
 import {
 	COMMIT_EMAIL,
+	type CommitAuthor,
 	gitHubPullRequests,
 	type PullRequestPort,
 	type PushPort,
@@ -244,7 +245,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 						github,
 						repository,
 						branch,
-						author: { name: agent.name, email: COMMIT_EMAIL },
+						author: this.#commitAuthor(agent.name, repository),
 						record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
 						run,
 					})
@@ -356,6 +357,28 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
 		if (!appId || !privateKey) return null;
 		return gitHubPullRequests(sharedApp({ appId, privateKey }), repository);
+	}
+
+	/**
+	 * Who a sandbox's commits are by: the GitHub App's bot, which GitHub links to its commits, so a
+	 * repository's CLA check can read them. The agent's name stays on them. Falls back to the
+	 * agent's address when the app is not set up or the lookup fails, which must not fail the push.
+	 */
+	#commitAuthor(name: string, repository: SandboxRepository): () => Promise<CommitAuthor> {
+		const env = this.env as unknown as RuntimeEnv;
+		const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
+		const fallback = { name, email: COMMIT_EMAIL };
+		if (!appId || !privateKey) return async () => fallback;
+		const app = sharedApp({ appId, privateKey });
+		return async () => {
+			try {
+				const bot = await app.botIdentity(repository.installationId);
+				return { name, email: bot.email };
+			} catch (error) {
+				console.error("A commit's author was not looked up", failureForLogs(error));
+				return fallback;
+			}
+		};
 	}
 
 	/** Puts the pull request on the run. A failure is logged: the pull request is made anyway. */

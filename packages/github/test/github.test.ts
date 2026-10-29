@@ -378,4 +378,61 @@ describe("GitHubApp", () => {
 			null,
 		]);
 	});
+
+	it("reads the bot account of the app once, and builds its commit address from the slug and id", async () => {
+		const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+		const calls: string[] = [];
+		vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+			calls.push(`${init?.method ?? "GET"} ${input}`);
+			const auth = new Headers(init?.headers).get("authorization") ?? "";
+			if (input === "https://api.github.com/app") {
+				expect(auth).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
+				return Response.json({ slug: "gateweave-agents", name: "Gateweave Agents" });
+			}
+			if (input.endsWith("/access_tokens")) {
+				return Response.json({ token: "ghs_bot", expires_at: expiresAt }, { status: 201 });
+			}
+			// The bot is a user, which the app's own JWT cannot read.
+			expect(input).toBe("https://api.github.com/users/gateweave-agents%5Bbot%5D");
+			expect(auth).toBe("Bearer ghs_bot");
+			return Response.json({ id: 141_234, login: "gateweave-agents[bot]" });
+		});
+		const app = new GitHubApp({ appId: "1", privateKey: pkcs1 });
+
+		const expected = {
+			login: "gateweave-agents[bot]",
+			email: "141234+gateweave-agents[bot]@users.noreply.github.com",
+		};
+		expect(await app.botIdentity("99")).toEqual(expected);
+		expect(await app.botIdentity("99")).toEqual(expected);
+		expect(await app.botIdentity("99")).toEqual(expected);
+		expect(calls).toEqual([
+			"GET https://api.github.com/app",
+			"POST https://api.github.com/app/installations/99/access_tokens",
+			"GET https://api.github.com/users/gateweave-agents%5Bbot%5D",
+		]);
+	});
+
+	it("does not keep a failed lookup, so the next call asks GitHub again", async () => {
+		const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+		let answerWithBot = false;
+		vi.stubGlobal("fetch", async (input: string) => {
+			if (input === "https://api.github.com/app") {
+				return Response.json({ slug: "gateweave-agents" });
+			}
+			if (input.endsWith("/access_tokens")) {
+				return Response.json({ token: "ghs_x", expires_at: expiresAt }, { status: 201 });
+			}
+			if (!answerWithBot) return Response.json({ message: "Not Found" }, { status: 404 });
+			return Response.json({ id: 5, login: "gateweave-agents[bot]" });
+		});
+		const app = new GitHubApp({ appId: "1", privateKey: pkcs1 });
+
+		await expect(app.botIdentity("99")).rejects.toMatchObject({ status: 404 });
+		answerWithBot = true;
+		expect(await app.botIdentity("99")).toEqual({
+			login: "gateweave-agents[bot]",
+			email: "5+gateweave-agents[bot]@users.noreply.github.com",
+		});
+	});
 });

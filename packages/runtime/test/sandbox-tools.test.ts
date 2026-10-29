@@ -461,7 +461,7 @@ describe("pull requests from the sandbox", () => {
 			github,
 			repository,
 			branch: BRANCH,
-			author: AUTHOR,
+			author: async () => AUTHOR,
 			record: async (outcome) => {
 				recorded.push(outcome);
 			},

@@ -121,6 +121,11 @@ GitHub. Choose the repositories on GitHub with that in mind.
 After that, a push to a repository's default branch has the workspace read its agent files
 again; only the files the push changed are downloaded.
 
+Commits an agent makes in a sandbox (see [Pull requests from the sandbox](architecture.md#sandboxes))
+are by the app's bot account, `gateweave-agents[bot]` for an app with that name, for a member of
+the workspace who asked for them. A repository with a CLA check can allowlist that bot, since
+those commits are the agent's work and not a contributor's.
+
 ## Applying a setup
 
 An owner or admin chooses **Apply** on a setup's page and picks a repository. The workspace reads

@@ -1,5 +1,6 @@
 export {
 	API_URL,
+	type BotIdentity,
 	GitHubApp,
 	type GitHubAppConfig,
 	GitHubError,
