@@ -443,7 +443,7 @@ staging does, production and self-hosted deploys leave them off until their oper
   that would make more than three of the workspace's conversations hold one at once
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
-  sandbox.
+  sandbox, unless the agent's engine is Claude Code, which runs only in one.
 - **A repository in the sandbox** (AGT-41). An agent with a sandbox can choose a repository the
   workspace's GitHub App reaches (`agent_definitions.repository_id`). On the conversation's first
   tool call, `withCheckout` (`packages/runtime/src/checkout.ts`) asks the sandbox to clone it into
