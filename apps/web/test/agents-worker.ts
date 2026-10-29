@@ -43,6 +43,7 @@ import type {
 	Team,
 	TeamGraphInput,
 	TotaledRun,
+	TrackTriagePlan,
 	Trigger,
 	TriggerEntry,
 	TriggerInput,
@@ -136,6 +137,15 @@ export interface RegistryStub {
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal>;
 	updateTrigger(triggerId: string, patch: TriggerPatch): Promise<Trigger | null>;
 	listTriggers(target?: TriggerTarget): Promise<TriggerEntry[]>;
+	replaceTriggerSecret(
+		triggerId: string,
+		secret?: string,
+	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal | null>;
+	setUpTrackTriage(
+		input: TrackTriagePlan,
+		createdBy: string,
+		setBy: string,
+	): Promise<{ agent: Agent; trigger: Trigger; mcpServerId: string } | TriggerRefusal>;
 }
 
 /** The address Agents sends from in tests. */
@@ -181,7 +191,8 @@ function builtModules(): V4ModuleDefinition[] {
  *
  * With `github`, the Worker is set up as that GitHub App, and its requests to github.com and
  * api.github.com reach the fake instead of failing. With `models`, its requests to the model
- * providers' APIs reach that fake. It has a `SECRETS_KEY` unless `secrets` is false.
+ * providers' APIs reach that fake. Requests to a host in `hosts` reach its handler, as an MCP
+ * server elsewhere would be reached. It has a `SECRETS_KEY` unless `secrets` is false.
  */
 export async function startAgents(
 	origin: string,
@@ -189,8 +200,15 @@ export async function startAgents(
 		isolates = 1,
 		github,
 		models,
+		hosts = {},
 		secrets = true,
-	}: { isolates?: number; github?: FakeGitHub; models?: FakeModels; secrets?: boolean } = {},
+	}: {
+		isolates?: number;
+		github?: FakeGitHub;
+		models?: FakeModels;
+		hosts?: Record<string, (request: Request) => Response | Promise<Response>>;
+		secrets?: boolean;
+	} = {},
 ) {
 	const config = JSON.parse(readFileSync(join(serverDir, "wrangler.json"), "utf8")) as BuiltConfig;
 	const outbound: string[] = [];
@@ -244,6 +262,8 @@ export async function startAgents(
 							return github.handle(request);
 						}
 						if (models && host in MODEL_HOSTS) return models.handle(request);
+						const handler = hosts[host];
+						if (handler) return handler(request);
 						return new Response("Outbound requests are blocked in this test", { status: 502 });
 					},
 				})),

@@ -56,8 +56,16 @@ function parseEnvironment(text: string | null): EnvSetContent {
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-/** Creates a set: version 1 of a library asset of kind `env-set`. Returns its id. */
-export function createEnvSet(db: Db, input: z.output<typeof envSetInput>, now: number): string {
+/**
+ * Creates a set: version 1 of a library asset of kind `env-set`. Returns its id, which a caller
+ * that seals the set's secrets before the write chooses itself.
+ */
+export function createEnvSet(
+	db: Db,
+	input: z.output<typeof envSetInput>,
+	now: number,
+	id: string = crypto.randomUUID(),
+): string {
 	const key = libraryKey("env-set", input.name);
 	const taken = db
 		.select({ id: assets.id })
@@ -68,7 +76,6 @@ export function createEnvSet(db: Db, input: z.output<typeof envSetInput>, now: n
 		throw new EnvironmentError(`The library already has an environment set named ${input.name}`);
 	const files = [fileOf(db, input)];
 	const hash = assetHash(files);
-	const id = crypto.randomUUID();
 	db.insert(assets)
 		.values({
 			id,
