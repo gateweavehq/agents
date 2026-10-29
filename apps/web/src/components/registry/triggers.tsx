@@ -598,6 +598,10 @@ function TriggerDialog({
 								<code>type</code>, separated by commas: <code>issue.created</code>. Others are
 								skipped. Leave it empty for every event.
 							</p>
+						</div>
+					)}
+					{!scheduled && (
+						<div className="space-y-2">
 							<Label htmlFor="trigger-label">Label</Label>
 							<Input
 								id="trigger-label"
