@@ -20,7 +20,10 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > the library, an environment set and MCP servers. Agents work in teams, delegating to, asking
 > and reporting to each other along the edges of a graph. Members chat with an agent or a team,
 > and every answer is a run with its trace and estimated cost, the runs a team's agents led to
-> nested inside it. See [docs/spec.md](docs/spec.md) for the plan.
+> nested inside it. Triggers start an agent's runs from another service's signed webhooks or on a
+> schedule, if wanted only for issues with a label, and an agent with a sandbox works in a
+> checkout of its repository and proposes its work as a pull request. See
+> [docs/spec.md](docs/spec.md) for the plan.
 
 ## Tech stack
 
