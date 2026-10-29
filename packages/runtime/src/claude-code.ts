@@ -1,56 +1,60 @@
 /**
- * Claude Code as an agent's engine (AGT-44). A turn of an agent whose engine is `claude-code` runs
- * Anthropic's Claude Code CLI in the conversation's sandbox, in place of Gateweave's own loop. It
- * reads the repository's CLAUDE.md, skills and settings as it would on a laptop, works with its own
- * tools, and the turn passes on what it does as its events come: its text and tool calls to the
- * chat, and each model request and tool call to the run's trace.
+ * Claude Code as an agent's engine (`./engines.ts`): Anthropic's Claude Code CLI, run in the
+ * conversation's sandbox in place of Gateweave's own loop. It reads the repository's CLAUDE.md,
+ * skills and settings as it would on a laptop. Each model request becomes a model span, and each
+ * of its tool calls a tool span. One conversation is one Claude Code session, whose id the sandbox
+ * chooses.
  *
- * The CLI holds no key. It sends a placeholder, and `SandboxOutbound` puts the workspace's
- * Anthropic key on its requests to Anthropic on the way out, while the turn runs (`./outbound.ts`).
- * One conversation is one Claude Code session, which each turn resumes while the sandbox has it.
- *
- * The turn's other tools, its MCP servers, `open_pull_request` and a team's edges, reach the CLI
- * as one MCP server, `gateweave`, which the conversation answers (`./claude-code-tools.ts`). Their
- * calls come to the chat under their own names, and record their own spans, as in Gateweave's loop.
+ * Gateweave's tools reach it as the MCP server `gateweave` (`./engine-tools.ts`), whose tools it
+ * calls `mcp__gateweave__<tool>`. Their calls come to the chat under their own names, and record
+ * their own spans, as in Gateweave's loop.
  *
  * Checked 2026-10-29:
  * - headless runs and their flags: https://code.claude.com/docs/en/headless
  * - permission modes, and why not `bypassPermissions` (it refuses to run as root, as the sandbox's
  *   commands do): https://code.claude.com/docs/en/permission-modes
+ * - `--mcp-config`, `--strict-mcp-config`, a server's `timeout` and `alwaysLoad`, and
+ *   `mcp__<server>` in allowed tools: https://code.claude.com/docs/en/cli-reference and
+ *   https://code.claude.com/docs/en/mcp
+ * - per-request limits of HTTP servers and automatic backgrounding:
+ *   https://code.claude.com/docs/en/env-vars (`MCP_TOOL_TIMEOUT`,
+ *   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`)
  * - the events' shapes: `SDKMessage` in `sdk.d.ts` of @anthropic-ai/claude-agent-sdk 0.3.312
  * - which usage each event carries: Claude Code 2.1.308 against a fake Anthropic API. An
  *   `assistant` event has the usage of the request's start, a `stream_event` with `message_delta`
  *   its final usage (`--include-partial-messages`), and `result` the turn's totals
  */
-import {
-	type AgentSnapshot,
-	MODEL_PROVIDER_NAMES,
-	PULL_REQUEST_TOOL,
-	SANDBOX_REPOSITORY_PATH,
-	type SandboxRepository,
-} from "@gateweave/agents-model";
-import type { UIMessage, UIMessageChunk } from "ai";
+import { type AgentSnapshot, MODEL_PROVIDER_NAMES } from "@gateweave/agents-model";
 import { z } from "zod";
+import { ENGINE_TOOLS_SERVER, ENGINE_TOOLS_URL } from "./engine-tools";
 import {
-	CLAUDE_CODE_TOOL_PREFIX,
-	CLAUDE_CODE_TOOLS_SERVER,
-	type ClaudeCodeToolsAccess,
-	claudeCodeMcpConfig,
-} from "./claude-code-tools";
-import type { GatewayMetadata } from "./models";
+	byteSize,
+	type ChunkSink,
+	clip,
+	contentText,
+	ENGINE_SECONDS,
+	type EngineCommand,
+	type EngineJob,
+	type EngineOutcome,
+	type EngineTurn,
+	enginePrompt,
+	failed,
+	MAX_CHAT_OUTPUT,
+	outputOf,
+} from "./engines";
 import type { RunRecorder } from "./trace";
 
 /** The server the trace and the chat name for Claude Code's own tools. */
 export const CLAUDE_CODE_SERVER = "claude-code";
+
+/** What Claude Code calls Gateweave's tools, before their own names. */
+export const CLAUDE_CODE_TOOL_PREFIX = `mcp__${ENGINE_TOOLS_SERVER}__`;
 
 /** What the CLI sends as its key, which `SandboxOutbound` replaces with the workspace's. */
 export const CLAUDE_CODE_PLACEHOLDER_KEY = "sk-ant-gateweave-sandbox-placeholder";
 
 /** The agentic turns one message may take, each a model request and the tools it calls. */
 export const CLAUDE_CODE_TURNS = 100;
-
-/** How long one turn may run before the sandbox stops it. */
-export const CLAUDE_CODE_SECONDS = 60 * 60;
 
 /**
  * The tools that would otherwise ask for a person's approval, which nobody is there to give.
@@ -77,35 +81,23 @@ export const CLAUDE_CODE_ENV: Record<string, string> = {
 };
 
 /**
- * What the turn's requests out of the sandbox go with: the workspace's key and what AI Gateway
- * logs about its requests to Anthropic, and the way to Gateweave's tools, if the turn has any.
+ * The `--mcp-config` that names Gateweave's tools server. Its `timeout`, the turn's own limit,
+ * lifts the 60 seconds an HTTP server's request may take otherwise: a delegated task can take that
+ * long. `alwaysLoad` gives the model the tools in its first request, as Gateweave's loop does.
+ * Otherwise the CLI connects in the background, sends the first request without them, and later
+ * keeps them behind its tool search, a step the model would have to take first.
  */
-export interface ClaudeCodeAccess {
-	key: string;
-	metadata: GatewayMetadata;
-	tools: ClaudeCodeToolsAccess | null;
-}
-
-/** A turn for Claude Code, as the conversation hands it to its sandbox. */
-export interface ClaudeCodeJob {
-	/** The person's message. */
-	prompt: string;
-	/** The conversation so far, for a sandbox that no longer has its session; null for none. */
-	history: string | null;
-	/** What Claude Code reads after its own system prompt. */
-	system: string;
-	model: string;
-	/** Where it works: the repository's checkout, or the sandbox's root. */
-	cwd: string;
-	access: ClaudeCodeAccess;
-}
-
-/** What a conversation reaches of its sandbox to run Claude Code. */
-export interface ClaudeCodePort {
-	/** Starts the turn. Its events, one JSON object a line, as Claude Code writes them. */
-	startClaudeCode(job: ClaudeCodeJob): Promise<ReadableStream<Uint8Array>>;
-	/** Ends the turn under way: Claude Code finishes it as it would on Ctrl+C, or is killed. */
-	stopClaudeCode(): Promise<void>;
+export function claudeCodeMcpConfig(timeoutMs: number): string {
+	return JSON.stringify({
+		mcpServers: {
+			[ENGINE_TOOLS_SERVER]: {
+				type: "http",
+				url: ENGINE_TOOLS_URL,
+				timeout: timeoutMs,
+				alwaysLoad: true,
+			},
+		},
+	});
 }
 
 /**
@@ -119,9 +111,7 @@ export function claudeCodeArguments(options: {
 	resume: boolean;
 	tools: boolean;
 }): string[] {
-	const allowed = options.tools
-		? [...ALLOWED_TOOLS, `mcp__${CLAUDE_CODE_TOOLS_SERVER}`]
-		: ALLOWED_TOOLS;
+	const allowed = options.tools ? [...ALLOWED_TOOLS, `mcp__${ENGINE_TOOLS_SERVER}`] : ALLOWED_TOOLS;
 	return [
 		"-p",
 		"--output-format",
@@ -140,104 +130,28 @@ export function claudeCodeArguments(options: {
 		"--max-turns",
 		String(CLAUDE_CODE_TURNS),
 		"--strict-mcp-config",
-		...(options.tools ? ["--mcp-config", claudeCodeMcpConfig(CLAUDE_CODE_SECONDS * 1000)] : []),
+		...(options.tools ? ["--mcp-config", claudeCodeMcpConfig(ENGINE_SECONDS * 1000)] : []),
 		...(options.system === "" ? [] : ["--append-system-prompt", options.system]),
 		...(options.resume ? ["--resume", options.session] : ["--session-id", options.session]),
 	];
 }
 
-/** What Claude Code reads first: the message, after the conversation so far when it lost that. */
-export function claudeCodePrompt(job: ClaudeCodeJob, resumed: boolean): string {
-	if (resumed || job.history === null) return job.prompt;
-	return [
-		"This conversation began in a sandbox that has stopped since, so you do not have it. What was said so far:",
-		job.history,
-		"The person's new message:",
-		job.prompt,
-	].join("\n\n");
-}
-
-/** Most characters of the conversation so far that a new session reads. */
-export const MAX_HISTORY = 50_000;
-
 /**
- * The conversation before its last message, as text, for a session that starts over: what the
- * person said and what the agent answered, the most recent kept when it is long. Null when the
- * last message is the first.
+ * How the sandbox runs a turn of Claude Code: in the session `session`, resumed when the sandbox
+ * still has its transcript, with the message on its input.
  */
-export function historyOf(messages: UIMessage[], name: string): string | null {
-	const earlier = messages.slice(
-		0,
-		messages.findLastIndex((message) => message.role === "user"),
-	);
-	const said = earlier.flatMap((message) => {
-		const text = message.parts
-			.flatMap((part) => (part.type === "text" ? [part.text] : []))
-			.join("\n\n")
-			.trim();
-		if (text === "") return [];
-		return [`${message.role === "user" ? "The person" : name}: ${text}`];
-	});
-	if (said.length === 0) return null;
-	const text = said.join("\n\n");
-	return text.length <= MAX_HISTORY ? text : `[…]\n${text.slice(-MAX_HISTORY)}`;
+export function claudeCodeCommand(job: EngineJob, session: string, resume: boolean): EngineCommand {
+	const tools = job.access.tools !== null;
+	return {
+		argv: [
+			"claude",
+			...claudeCodeArguments({ model: job.model, system: job.system, session, resume, tools }),
+		],
+		env: CLAUDE_CODE_ENV,
+		input: enginePrompt(job, resume),
+		log: CLAUDE_CODE_LOG,
+	};
 }
-
-/**
- * What Claude Code is told of where it runs, after the agent's instructions. With `pullRequests`,
- * it proposes its work with Gateweave's `open_pull_request`; without, it says what it changed.
- */
-export function claudeCodeNote(
-	repository: SandboxRepository | null,
-	branch: string,
-	pullRequests: boolean,
-): string {
-	const sandbox =
-		"You run in a Linux sandbox that reaches no website: package registries such as npm and PyPI work, the rest of the internet does not.";
-	if (!repository) return sandbox;
-	const name = `${repository.owner}/${repository.name}`;
-	return [
-		sandbox,
-		`The repository ${name} is checked out at ${SANDBOX_REPOSITORY_PATH}, on the branch ${branch}, made from ${repository.defaultBranch}.`,
-		pullRequests
-			? `git push does not work from the sandbox. To propose your work, call ${PULL_REQUEST_TOOL} (a tool of the ${CLAUDE_CODE_TOOLS_SERVER} MCP server): it commits what you changed in the checkout and opens a pull request, or updates the one the branch has.`
-			: "git push does not work from the sandbox. Leave your work in the checkout and say in your answer what you changed.",
-	].join(" ");
-}
-
-/** Splits a stream into its lines, skipping empty ones and any longer than `MAX_LINE`. */
-export async function* linesOf(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-	const reader = stream.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-	// Inside a line too long to keep, until it ends.
-	let skipping = false;
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
-		let end = buffer.indexOf("\n");
-		while (end !== -1) {
-			const line = buffer.slice(0, end);
-			buffer = buffer.slice(end + 1);
-			if (!skipping && line.trim() !== "") yield line;
-			skipping = false;
-			end = buffer.indexOf("\n");
-		}
-		if (buffer.length > MAX_LINE) {
-			buffer = "";
-			skipping = true;
-		}
-	}
-	buffer += decoder.decode();
-	if (!skipping && buffer.trim() !== "") yield buffer;
-}
-
-/** The longest event kept: a tool's result can be a whole file, which the trace needs no more of. */
-export const MAX_LINE = 8_000_000;
-
-/** Most characters of a tool's result the chat keeps: Claude Code has the whole of it. */
-export const MAX_CHAT_OUTPUT = 4_000;
 
 /** The longest failure of a tool the trace records. */
 const TRACE_ERROR_LIMIT = 500;
@@ -317,14 +231,6 @@ const toolResultBlock = z.object({
 	content: z.unknown(),
 });
 
-/** Where a turn's chat chunks go: the stream the conversation answers with. */
-export interface ChunkSink {
-	write(chunk: UIMessageChunk): void;
-}
-
-/** How a turn of Claude Code went. */
-export type ClaudeCodeOutcome = { status: "succeeded" } | { status: "failed"; error: string };
-
 /** A model request of the turn, which Claude Code sends block by block, with the usage so far. */
 interface Request {
 	step: number;
@@ -351,7 +257,7 @@ interface ToolCall {
  * Follows one turn of Claude Code, an event at a time. The main conversation's text and tool calls
  * go to the chat, a subagent's only to the trace, which records every model request and tool call.
  */
-export class ClaudeCodeTurn {
+export class ClaudeCodeTurn implements EngineTurn {
 	readonly #sink: ChunkSink;
 	readonly #run: RunRecorder;
 	readonly #agent: AgentSnapshot;
@@ -410,7 +316,7 @@ export class ClaudeCodeTurn {
 	}
 
 	/** Ends what is still open and says how the turn went. */
-	end(now = Date.now()): ClaudeCodeOutcome {
+	end(now = Date.now()): EngineOutcome {
 		this.#endRequests(undefined, now);
 		this.#closeStep();
 		const result = this.#result;
@@ -522,7 +428,7 @@ export class ClaudeCodeTurn {
 			const call = this.#tools.get(result.data.tool_use_id);
 			if (!call) continue;
 			this.#tools.delete(result.data.tool_use_id);
-			const text = resultText(result.data.content);
+			const text = contentText(result.data.content);
 			if (call.span !== null && result.data.is_error) {
 				this.#run.toolEnded(call.span, { error: clip(text, TRACE_ERROR_LIMIT) }, now);
 			} else if (call.span !== null) {
@@ -627,43 +533,4 @@ function describeApiError(
 				? `Claude Code could not finish: ${clip(detail, FAILURE_DETAIL_LIMIT)}`
 				: "Claude Code could not finish.";
 	}
-}
-
-/**
- * The output of one of Gateweave's tools, which its server sent as JSON text, as the chat shows it
- * in Gateweave's loop; null for text that is not a JSON object, or too long for the chat.
- */
-function outputOf(text: string): object | null {
-	if (text.length > MAX_CHAT_OUTPUT) return null;
-	try {
-		const output: unknown = JSON.parse(text);
-		return typeof output === "object" && output !== null ? output : null;
-	} catch {
-		return null;
-	}
-}
-
-/** A tool's result as text: Claude Code sends it as a string or as content blocks. */
-function resultText(content: unknown): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.flatMap((block) => {
-			const text = textBlock.safeParse(block);
-			return text.success ? [text.data.text] : [];
-		})
-		.join("\n");
-}
-
-function clip(text: string, limit: number): string {
-	return text.length <= limit ? text : `${text.slice(0, limit)}…`;
-}
-
-function byteSize(value: unknown): number {
-	return new TextEncoder().encode(typeof value === "string" ? value : (JSON.stringify(value) ?? ""))
-		.length;
-}
-
-function failed(error: string): ClaudeCodeOutcome {
-	return { status: "failed", error };
 }

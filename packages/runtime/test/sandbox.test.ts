@@ -320,7 +320,7 @@ describe("a conversation without a sandbox", () => {
 			commands: [],
 			checkouts: [],
 			pushes: [],
-			claudeCode: [],
+			engine: [],
 			stops: 0,
 			destroyed: false,
 		});
