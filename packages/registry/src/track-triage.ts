@@ -108,6 +108,7 @@ export function setUpTrackTriage(
 			perDay: 50,
 			// Track sends what its webhook was set to send; only a new issue is triage's.
 			events: [TRACK_TRIAGE_EVENT],
+			schedule: null,
 			sealed: plan.sealedSecret,
 			secretStart: plan.secretStart,
 			createdBy: plan.createdBy,

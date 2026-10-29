@@ -1,8 +1,10 @@
 /**
  * Triggers: inbound webhooks that start a run of an agent run by Gateweave, or of a team, with no
  * person in the conversation. Each has its own URL and secret, and checks Standard Webhooks
- * signatures (https://www.standardwebhooks.com), which is what Gateweave Track sends.
+ * signatures (https://www.standardwebhooks.com), which is what Gateweave Track sends. A trigger
+ * can instead start runs on a schedule, and then takes no webhooks.
  */
+import { Cron } from "croner";
 import { z } from "zod";
 
 /** How a delivery to a trigger went. */
@@ -40,6 +42,8 @@ export const TRIGGER_LIMITS = {
 	toleranceSeconds: 5 * 60,
 	/** Deliveries each trigger shows. */
 	shownDeliveries: 10,
+	/** The shortest time between two runs of a schedule, in minutes. */
+	scheduleMinutes: 5,
 } as const;
 
 /** A trigger's secret: `whsec_` and the base64 of its key, as Standard Webhooks writes them. */
@@ -59,6 +63,16 @@ export function triggerOf(startedBy: string): string | null {
 
 export type TriggerTarget = { kind: "agent"; agentId: string } | { kind: "team"; teamId: string };
 
+/**
+ * When a scheduled trigger starts a run: a cron expression of five fields (minute, hour, day of
+ * the month, month, day of the week), read in an IANA time zone, so `0 9 * * 1-5` is 9:00 on
+ * weekdays there, summer time or not.
+ */
+export interface TriggerSchedule {
+	cron: string;
+	timeZone: string;
+}
+
 export interface Trigger {
 	id: string;
 	name: string;
@@ -72,6 +86,10 @@ export interface Trigger {
 	perDay: number;
 	/** The event types it starts runs for, by the `type` in the event's body; null is every event. */
 	events: string[] | null;
+	/** When it starts runs on its own; null for a trigger that starts on webhooks. */
+	schedule: TriggerSchedule | null;
+	/** When its schedule starts the next run, while it is active; null otherwise. */
+	nextRunAt: number | null;
 	/** The start of its secret, to tell secrets apart. */
 	secretStart: string;
 	createdAt: number;
@@ -90,6 +108,12 @@ export interface TriggerDelivery {
 	error: string | null;
 	receivedAt: number;
 }
+
+/** How beginning a trigger's run went: its run, or why it could not begin. */
+export type TriggerTurnOutcome = { runId: string } | { runId: null; error: string };
+
+/** The `type` of the event a schedule's run starts with (`scheduleEvent`). */
+export const SCHEDULE_EVENT = "schedule";
 
 /** A trigger with its latest deliveries, the newest first. */
 export interface TriggerEntry extends Trigger {
@@ -164,26 +188,56 @@ export const triggerEvents = z
 	.refine((events) => new Set(events).size === events.length, "An event type is listed twice")
 	.nullable();
 
-export const triggerInput = z.object({
-	name,
-	prompt,
-	target: z.discriminatedUnion("kind", [
-		z.object({ kind: z.literal("agent"), agentId: id }),
-		z.object({ kind: z.literal("team"), teamId: id }),
-	]),
-	perDay: perDay.default(TRIGGER_LIMITS.defaultPerDay),
-	events: triggerEvents.default(null),
-});
+/** A schedule a trigger can have: one that runs, in a real time zone, and not too often. */
+export const triggerSchedule = z
+	.object({
+		cron: z
+			.string()
+			.trim()
+			.min(1, "Write the schedule as a cron expression, such as 0 9 * * 1-5")
+			.max(100, "Keep the cron expression under 100 characters"),
+		timeZone: z.string().trim().min(1, "Choose a time zone").max(64),
+	})
+	.superRefine((schedule, ctx) => {
+		const problem = scheduleProblem(schedule);
+		if (problem) ctx.addIssue({ code: "custom", path: ["cron"], message: problem });
+	});
+
+/** Only webhooks have event types: a schedule's runs all start the same way. */
+const ONE_KIND = {
+	message: "A scheduled trigger starts on its schedule, not on event types",
+	path: ["events"],
+};
+
+export const triggerInput = z
+	.object({
+		name,
+		prompt,
+		target: z.discriminatedUnion("kind", [
+			z.object({ kind: z.literal("agent"), agentId: id }),
+			z.object({ kind: z.literal("team"), teamId: id }),
+		]),
+		perDay: perDay.default(TRIGGER_LIMITS.defaultPerDay),
+		events: triggerEvents.default(null),
+		schedule: triggerSchedule.nullable().default(null),
+	})
+	.refine((input) => input.schedule === null || input.events === null, ONE_KIND);
 export type TriggerInput = z.input<typeof triggerInput>;
 
-/** A trigger keeps its target: another agent or team gets a trigger of its own. */
-export const triggerPatch = z.object({
-	name: name.optional(),
-	prompt: prompt.optional(),
-	perDay: perDay.optional(),
-	events: triggerEvents.optional(),
-	active: z.boolean().optional(),
-});
+/**
+ * A trigger keeps its target: another agent or team gets a trigger of its own. A schedule given
+ * or taken away makes it a scheduled trigger or a webhook's.
+ */
+export const triggerPatch = z
+	.object({
+		name: name.optional(),
+		prompt: prompt.optional(),
+		perDay: perDay.optional(),
+		events: triggerEvents.optional(),
+		schedule: triggerSchedule.nullable().optional(),
+		active: z.boolean().optional(),
+	})
+	.refine((patch) => !patch.schedule || !patch.events, ONE_KIND);
 export type TriggerPatch = z.input<typeof triggerPatch>;
 
 /**
@@ -214,6 +268,57 @@ export function triggerMessage(promptText: string, body: string): string {
 	);
 	const fence = event === undefined ? "text" : "json";
 	return `${filled}\n\nThe event, as it was sent:\n\n\`\`\`${fence}\n${body}\n\`\`\``;
+}
+
+/**
+ * The first time after `after` that the schedule starts a run, in milliseconds; null if it never
+ * does again.
+ */
+export function nextScheduledRun(schedule: TriggerSchedule, after: number): number | null {
+	return cronOf(schedule).nextRun(new Date(after))?.getTime() ?? null;
+}
+
+/** Why a trigger cannot have this schedule, in words a person reads; null when it can. */
+export function scheduleProblem(schedule: TriggerSchedule, now = Date.now()): string | null {
+	try {
+		new Intl.DateTimeFormat("en-US", { timeZone: schedule.timeZone });
+	} catch {
+		return `${schedule.timeZone} is not a time zone. Name one as Europe/Istanbul or UTC are named`;
+	}
+	let runs: Date[];
+	try {
+		runs = cronOf(schedule).nextRuns(13, new Date(now));
+	} catch (error) {
+		const reason = error instanceof Error ? error.message.replace(/^CronPattern: /, "") : "";
+		return `Write the schedule as a cron expression of five fields, such as 0 9 * * 1-5 (${reason})`;
+	}
+	if (runs.length === 0) return "This schedule never runs";
+	const shortest = TRIGGER_LIMITS.scheduleMinutes * 60_000;
+	for (let index = 1; index < runs.length; index++) {
+		const gap = (runs[index]?.getTime() ?? 0) - (runs[index - 1]?.getTime() ?? 0);
+		if (gap < shortest) {
+			return `A schedule can run at most every ${TRIGGER_LIMITS.scheduleMinutes} minutes`;
+		}
+	}
+	return null;
+}
+
+/**
+ * The event a schedule's run starts with, in place of a webhook's body, so a prompt can say
+ * `{{data.scheduledFor}}`.
+ */
+export function scheduleEvent(schedule: TriggerSchedule, at: number): string {
+	const time = new Date(at).toISOString();
+	return JSON.stringify({
+		type: SCHEDULE_EVENT,
+		timestamp: time,
+		data: { scheduledFor: time, ...schedule },
+	});
+}
+
+/** Paused, and without a callback, so it only reads the pattern and starts no timer. */
+function cronOf({ cron, timeZone }: TriggerSchedule): Cron {
+	return new Cron(cron, { timezone: timeZone, mode: "5-part", paused: true });
 }
 
 /** The event's `type`, as Standard Webhooks payloads carry it; null when it has none. */

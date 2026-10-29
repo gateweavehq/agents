@@ -1,11 +1,14 @@
 import {
+	nextScheduledRun,
+	scheduleProblem,
 	TRIGGER_LIMITS,
 	type TriggerDelivery,
 	type TriggerDeliveryStatus,
+	type TriggerSchedule,
 	type TriggerTarget,
 } from "@gateweave/agents-model";
 import { Link, useRouter } from "@tanstack/react-router";
-import { Copy, Ellipsis, Plus, Webhook } from "lucide-react";
+import { Clock, Copy, Ellipsis, Plus, Webhook } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
@@ -29,7 +32,7 @@ import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { useWorkspace } from "#/components/workspace/context";
-import { formatDateTime, formatRelative } from "#/lib/dates";
+import { formatDateTime, formatInZone, formatRelative } from "#/lib/dates";
 import {
 	createTrigger,
 	deleteTrigger,
@@ -55,8 +58,8 @@ async function copy(text: string, what: string) {
 
 /**
  * An agent's or a team's triggers, for owners and admins: each is a URL another service posts its
- * webhooks to, and every event it signs starts a run with the trigger's prompt. Its secret is shown
- * once, when it is made or replaced.
+ * webhooks to, and every event it signs starts a run with the trigger's prompt, or a schedule that
+ * starts runs on its own. A webhook's secret is shown once, when it is made or replaced.
  */
 export function Triggers({
 	target,
@@ -86,7 +89,8 @@ export function Triggers({
 			{triggers.length === 0 ? (
 				<p className="rounded-lg border p-6 text-sm text-muted-foreground">
 					No triggers: {targetName} answers only people in Chat. A trigger gives another service a
-					URL to post its webhooks to, and each event it signs starts a run of {targetName}.
+					URL to post its webhooks to, and each event it signs starts a run of {targetName}. Or it
+					starts runs on a schedule, such as at 9:00 on weekdays.
 				</p>
 			) : (
 				<ul className="divide-y rounded-lg border text-sm">
@@ -103,7 +107,9 @@ export function Triggers({
 					targetName={targetName}
 					onSave={async (input) => {
 						const made = await createTrigger({ data: { slug, trigger: { ...input, target } } });
-						setShown(made);
+						// A schedule takes no webhooks, so its secret is of no use to anyone.
+						if (made.trigger.schedule) toast.success(`${made.trigger.name} is scheduled`);
+						else setShown(made);
 						await router.invalidate();
 					}}
 					onClose={() => setCreating(false)}
@@ -125,6 +131,7 @@ function TriggerRow({
 	const router = useRouter();
 	const [open, setOpen] = useState<"edit" | "rotate" | "paste" | "delete" | null>(null);
 	const close = () => setOpen(null);
+	const { schedule } = trigger;
 
 	async function setActive(active: boolean) {
 		try {
@@ -149,7 +156,11 @@ function TriggerRow({
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0 space-y-1">
 					<p className="flex flex-wrap items-center gap-2 font-medium">
-						<Webhook aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+						{schedule ? (
+							<Clock aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+						) : (
+							<Webhook aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+						)}
 						{trigger.name}
 						{!trigger.active && (
 							<span className="rounded-md border px-1.5 py-0.5 text-xs font-normal text-muted-foreground">
@@ -159,14 +170,22 @@ function TriggerRow({
 					</p>
 					<p className="text-xs text-muted-foreground">
 						Up to {trigger.perDay} {trigger.perDay === 1 ? "run" : "runs"} a day ·{" "}
-						{trigger.events ? (
+						{schedule ? (
 							<>
-								on <code>{trigger.events.join(", ")}</code> only
+								<code>{schedule.cron}</code> in {schedule.timeZone}
 							</>
 						) : (
-							"on every event"
-						)}{" "}
-						· signed with <code>{trigger.secretStart}…</code>
+							<>
+								{trigger.events ? (
+									<>
+										on <code>{trigger.events.join(", ")}</code> only
+									</>
+								) : (
+									"on every event"
+								)}{" "}
+								· signed with <code>{trigger.secretStart}…</code>
+							</>
+						)}
 					</p>
 				</div>
 				<DropdownMenu>
@@ -181,11 +200,15 @@ function TriggerRow({
 							{trigger.active ? "Pause" : "Turn on"}
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => setOpen("rotate")}>New secret</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => setOpen("paste")}>
-							Use the sender's secret
-						</DropdownMenuItem>
-						<DropdownMenuSeparator />
+						{!schedule && (
+							<>
+								<DropdownMenuItem onSelect={() => setOpen("rotate")}>New secret</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => setOpen("paste")}>
+									Use the sender's secret
+								</DropdownMenuItem>
+								<DropdownMenuSeparator />
+							</>
+						)}
 						<DropdownMenuItem
 							className="text-destructive focus:text-destructive"
 							onSelect={() => setOpen("delete")}
@@ -195,20 +218,36 @@ function TriggerRow({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			<div className="flex items-center gap-2">
-				<code className="min-w-0 flex-1 truncate rounded-md bg-muted/60 px-2 py-1 text-xs">
-					{trigger.url}
-				</code>
-				<Button
-					variant="ghost"
-					size="icon"
-					className="size-7"
-					aria-label="Copy the URL"
-					onClick={() => copy(trigger.url, "URL")}
-				>
-					<Copy />
-				</Button>
-			</div>
+			{schedule ? (
+				<p className="text-xs">
+					{trigger.nextRunAt === null ? (
+						<span className="text-muted-foreground">No run is coming while it is paused.</span>
+					) : (
+						<>
+							Next run{" "}
+							<span title={formatDateTime(trigger.nextRunAt)}>
+								{formatRelative(trigger.nextRunAt)}
+							</span>
+							, at {formatInZone(trigger.nextRunAt, schedule.timeZone)}
+						</>
+					)}
+				</p>
+			) : (
+				<div className="flex items-center gap-2">
+					<code className="min-w-0 flex-1 truncate rounded-md bg-muted/60 px-2 py-1 text-xs">
+						{trigger.url}
+					</code>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-7"
+						aria-label="Copy the URL"
+						onClick={() => copy(trigger.url, "URL")}
+					>
+						<Copy />
+					</Button>
+				</div>
+			)}
 			<Deliveries deliveries={trigger.deliveries} />
 			{open === "edit" && (
 				<TriggerDialog
@@ -263,7 +302,8 @@ function TriggerRow({
 					}}
 					onClose={close}
 				>
-					Its URL stops starting runs. The runs it started stay.
+					{schedule ? "It starts no more runs." : "Its URL stops starting runs."} The runs it
+					started stay.
 				</ConfirmDialog>
 			)}
 		</li>
@@ -318,9 +358,41 @@ function Deliveries({ deliveries }: { deliveries: TriggerDelivery[] }) {
 	);
 }
 
+/** What the trigger dialog saves: a webhook's events, or a schedule. */
+interface TriggerFields {
+	name: string;
+	prompt: string;
+	perDay: number;
+	events: string[] | null;
+	schedule: TriggerSchedule | null;
+}
+
+const FIRST_SCHEDULE = "0 9 * * 1-5";
+
+let zones: string[] | undefined;
+
+/** The time zones this browser knows, for the time zone field to suggest. */
+function timeZones(): string[] {
+	zones ??= ["UTC", ...Intl.supportedValuesOf("timeZone").filter((zone) => zone !== "UTC")];
+	return zones;
+}
+
+/** The schedule's next few runs, or why it cannot be one. */
+function schedulePreview(schedule: TriggerSchedule): { problem: string } | { runs: number[] } {
+	const problem = scheduleProblem(schedule);
+	if (problem) return { problem };
+	const runs: number[] = [];
+	let at: number | null = Date.now();
+	while (runs.length < 3 && at !== null) {
+		at = nextScheduledRun(schedule, at);
+		if (at !== null) runs.push(at);
+	}
+	return { runs };
+}
+
 /**
- * Makes a trigger, or edits `trigger`: its name, its prompt, the events it starts on and how many
- * runs it may start.
+ * Makes a trigger, or edits `trigger`: its name, its prompt, the events or the schedule it starts
+ * on and how many runs it may start. A trigger keeps the kind it was made with.
  */
 function TriggerDialog({
 	trigger,
@@ -330,20 +402,26 @@ function TriggerDialog({
 }: {
 	trigger?: TriggerView;
 	targetName: string;
-	onSave: (input: {
-		name: string;
-		prompt: string;
-		perDay: number;
-		events: string[] | null;
-	}) => Promise<void>;
+	onSave: (input: TriggerFields) => Promise<void>;
 	onClose: () => void;
 }) {
+	const [kind, setKind] = useState<"webhook" | "schedule">(
+		trigger?.schedule ? "schedule" : "webhook",
+	);
 	const [name, setName] = useState(trigger?.name ?? "");
 	const [prompt, setPrompt] = useState(trigger?.prompt ?? "");
 	const [perDay, setPerDay] = useState(String(trigger?.perDay ?? TRIGGER_LIMITS.defaultPerDay));
 	const [events, setEvents] = useState(trigger?.events?.join(", ") ?? "");
+	const [cron, setCron] = useState(trigger?.schedule?.cron ?? FIRST_SCHEDULE);
+	const [timeZone, setTimeZone] = useState(
+		() => trigger?.schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+	);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const scheduled = kind === "schedule";
+	const schedule = { cron: cron.trim(), timeZone: timeZone.trim() };
+	const preview =
+		scheduled && schedule.cron && schedule.timeZone ? schedulePreview(schedule) : null;
 
 	async function onSubmit(event: FormEvent) {
 		event.preventDefault();
@@ -355,7 +433,8 @@ function TriggerDialog({
 				name: name.trim(),
 				prompt: prompt.trim(),
 				perDay: Number(perDay),
-				events: types.length > 0 ? types : null,
+				events: !scheduled && types.length > 0 ? types : null,
+				schedule: scheduled ? schedule : null,
 			});
 			onClose();
 		} catch (failure) {
@@ -372,10 +451,35 @@ function TriggerDialog({
 					<DialogHeader>
 						<DialogTitle>{trigger ? `Edit ${trigger.name}` : "New trigger"}</DialogTitle>
 						<DialogDescription>
-							Each event the sender signs starts a run of {targetName}, with this prompt and the
-							event after it. Runs spend the workspace's model keys.
+							{scheduled
+								? `Each time the schedule comes round, a run of ${targetName} starts with this prompt.`
+								: `Each event the sender signs starts a run of ${targetName}, with this prompt and the event after it.`}{" "}
+							Runs spend the workspace's model keys.
 						</DialogDescription>
 					</DialogHeader>
+					{!trigger && (
+						<fieldset className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+							<legend className="sr-only">What starts its runs</legend>
+							<Label className="flex items-center gap-2 font-normal">
+								<input
+									type="radio"
+									name="trigger-kind"
+									checked={!scheduled}
+									onChange={() => setKind("webhook")}
+								/>
+								Webhook events
+							</Label>
+							<Label className="flex items-center gap-2 font-normal">
+								<input
+									type="radio"
+									name="trigger-kind"
+									checked={scheduled}
+									onChange={() => setKind("schedule")}
+								/>
+								A schedule
+							</Label>
+						</fieldset>
+					)}
 					<div className="space-y-2">
 						<Label htmlFor="trigger-name">Name</Label>
 						<Input
@@ -383,7 +487,7 @@ function TriggerDialog({
 							value={name}
 							onChange={(event) => setName(event.target.value)}
 							maxLength={80}
-							placeholder="New issues"
+							placeholder={scheduled ? "Standup" : "New issues"}
 							autoFocus
 							required
 						/>
@@ -396,31 +500,97 @@ function TriggerDialog({
 							onChange={(event) => setPrompt(event.target.value)}
 							rows={6}
 							maxLength={10_000}
-							placeholder="Triage this issue: {{data.title}}"
+							placeholder={
+								scheduled
+									? "Sum up what changed in the repository since yesterday"
+									: "Triage this issue: {{data.title}}"
+							}
 							required
 						/>
 						<p className="text-xs text-muted-foreground">
-							Write <code>{"{{path}}"}</code> to put in a value from the event, such as{" "}
-							<code>{"{{data.title}}"}</code>.
+							{scheduled ? (
+								<>
+									Write <code>{"{{data.scheduledFor}}"}</code> to put in the time the run was due.
+								</>
+							) : (
+								<>
+									Write <code>{"{{path}}"}</code> to put in a value from the event, such as{" "}
+									<code>{"{{data.title}}"}</code>.
+								</>
+							)}
 						</p>
 					</div>
-					<div className="space-y-2">
-						<Label htmlFor="trigger-events">Events</Label>
-						<Input
-							id="trigger-events"
-							value={events}
-							onChange={(event) => setEvents(event.target.value)}
-							maxLength={2000}
-							placeholder="Every event"
-							spellCheck={false}
-							className="font-mono text-xs"
-						/>
-						<p className="text-xs text-muted-foreground">
-							The event types to start a run on, as the sender names them in the event's{" "}
-							<code>type</code>, separated by commas: <code>issue.created</code>. Others are
-							skipped. Leave it empty for every event.
-						</p>
-					</div>
+					{scheduled ? (
+						<div className="space-y-2">
+							<div className="grid grid-cols-[1fr_auto] gap-3">
+								<div className="space-y-2">
+									<Label htmlFor="trigger-cron">Schedule</Label>
+									<Input
+										id="trigger-cron"
+										value={cron}
+										onChange={(event) => setCron(event.target.value)}
+										maxLength={100}
+										placeholder={FIRST_SCHEDULE}
+										spellCheck={false}
+										autoComplete="off"
+										className="font-mono text-xs"
+										required
+									/>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="trigger-time-zone">Time zone</Label>
+									<Input
+										id="trigger-time-zone"
+										list="trigger-time-zones"
+										value={timeZone}
+										onChange={(event) => setTimeZone(event.target.value)}
+										maxLength={64}
+										spellCheck={false}
+										autoComplete="off"
+										className="w-48"
+										required
+									/>
+									<datalist id="trigger-time-zones">
+										{timeZones().map((zone) => (
+											<option key={zone} value={zone} />
+										))}
+									</datalist>
+								</div>
+							</div>
+							<p className="text-xs text-muted-foreground">
+								A cron expression of five fields: minute, hour, day of the month, month and day of
+								the week. <code>{FIRST_SCHEDULE}</code> is 9:00 on weekdays. It runs at most every{" "}
+								{TRIGGER_LIMITS.scheduleMinutes} minutes.
+							</p>
+							{preview &&
+								("problem" in preview ? (
+									<p className="text-xs text-destructive">{preview.problem}</p>
+								) : (
+									<p className="text-xs">
+										Next:{" "}
+										{preview.runs.map((run) => formatInZone(run, schedule.timeZone)).join(" · ")}
+									</p>
+								))}
+						</div>
+					) : (
+						<div className="space-y-2">
+							<Label htmlFor="trigger-events">Events</Label>
+							<Input
+								id="trigger-events"
+								value={events}
+								onChange={(event) => setEvents(event.target.value)}
+								maxLength={2000}
+								placeholder="Every event"
+								spellCheck={false}
+								className="font-mono text-xs"
+							/>
+							<p className="text-xs text-muted-foreground">
+								The event types to start a run on, as the sender names them in the event's{" "}
+								<code>type</code>, separated by commas: <code>issue.created</code>. Others are
+								skipped. Leave it empty for every event.
+							</p>
+						</div>
+					)}
 					<div className="space-y-2">
 						<Label htmlFor="trigger-per-day">Runs a day</Label>
 						<Input
@@ -435,8 +605,9 @@ function TriggerDialog({
 							required
 						/>
 						<p className="text-xs text-muted-foreground">
-							Events past this, or past {TRIGGER_LIMITS.perMinute} a minute, are turned away for the
-							sender to retry later.
+							{scheduled
+								? "Times past this are skipped until the next day."
+								: `Events past this, or past ${TRIGGER_LIMITS.perMinute} a minute, are turned away for the sender to retry later.`}
 						</p>
 					</div>
 					{error && (
@@ -448,7 +619,15 @@ function TriggerDialog({
 						<Button type="button" variant="outline" onClick={onClose} disabled={pending}>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={pending || !name.trim() || !prompt.trim()}>
+						<Button
+							type="submit"
+							disabled={
+								pending ||
+								!name.trim() ||
+								!prompt.trim() ||
+								(scheduled && (preview === null || "problem" in preview))
+							}
+						>
 							{trigger ? "Save" : "Create trigger"}
 						</Button>
 					</DialogFooter>
