@@ -14,6 +14,7 @@ import {
 	type RunUsage,
 	type TeamEdgeKind,
 	type TotaledRun,
+	triggerOf,
 } from "@gateweave/agents-model";
 import {
 	and,
@@ -30,7 +31,7 @@ import {
 	sql,
 	sum,
 } from "drizzle-orm";
-import { agents, runs } from "./db/schema";
+import { agents, runs, triggers } from "./db/schema";
 import type { Db } from "./state";
 
 /** A run still going after this long was cut short and will not report back. */
@@ -74,6 +75,8 @@ export function beginRun(
 			status: "running",
 			startedAt: now,
 			teamPath,
+			// A trigger's runs keep it by id, nested ones too, to show its name.
+			triggerId: triggerOf(startedBy),
 			...parent,
 		})
 		.run();
@@ -136,9 +139,9 @@ export function finishRun(db: Db, id: string, finish: Required<RunFinish>): bool
 }
 
 /**
- * The runs people's messages started, the latest first, a page at a time, each with the total of
- * the runs nested under it: everyone's, or one member's with `startedBy`. `before` is the last run
- * of the page before.
+ * The runs people's messages and triggers started, the latest first, a page at a time, each with
+ * the total of the runs nested under it: everyone's, or one member's with `startedBy`. `before` is
+ * the last run of the page before.
  */
 export function listRuns(
 	db: Db,
@@ -292,12 +295,21 @@ export function expireRuns(db: Db, now: number): void {
 
 function selectRuns(db: Db) {
 	return db
-		.select({ run: runs, agentName: agents.name })
+		.select({ run: runs, agentName: agents.name, triggerName: triggers.name })
 		.from(runs)
 		.innerJoin(agents, eq(agents.id, runs.agentId))
+		.leftJoin(triggers, eq(triggers.id, runs.triggerId))
 		.$dynamic();
 }
 
-function toRun({ run, agentName }: { run: typeof runs.$inferSelect; agentName: string }): Run {
-	return { ...run, agentName };
+function toRun({
+	run,
+	agentName,
+	triggerName,
+}: {
+	run: typeof runs.$inferSelect;
+	agentName: string;
+	triggerName: string | null;
+}): Run {
+	return { ...run, agentName, triggerName };
 }

@@ -486,6 +486,8 @@ export interface Conversation {
 	createdAt: number;
 	/** When the last turn started. */
 	updatedAt: number;
+	/** The trigger that started it, with no person in it; null for a person's conversation. */
+	triggerId: string | null;
 }
 
 /**
@@ -532,6 +534,10 @@ export interface Run {
 	 * in. Null outside a team.
 	 */
 	teamPath: string[] | null;
+	/** The trigger whose delivery started it, for a run no person's message did; else null. */
+	triggerId: string | null;
+	/** That trigger's name; null once it was deleted, and for a run a person started. */
+	triggerName: string | null;
 }
 
 /** What runs used over a period. */

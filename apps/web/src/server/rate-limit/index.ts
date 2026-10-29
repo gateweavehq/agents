@@ -22,7 +22,22 @@ export const EMAILS_PER_RECIPIENT: Rule[] = [
 	{ window: 24 * 60 * 60, max: 10 },
 ];
 
+/**
+ * Deliveries one client may post to triggers in a short while. Each trigger holds its own runs
+ * to its limits once a delivery is signed; this stops a flood of unsigned ones earlier, before
+ * they reach the database or a registry.
+ */
+export const TRIGGER_REQUESTS: Rule[] = [{ window: 10, max: 60 }];
+
 const local = new LocalLimiter();
+
+/**
+ * Counts a client's posts to triggers in this isolate, which costs nothing per request. An
+ * attacker spread over isolates gets further, and is still stopped by the signature.
+ */
+export function limitTriggerRequests(client: string): Decision {
+	return local.consume(`trigger:${client}`, TRIGGER_REQUESTS, Date.now());
+}
 
 /**
  * Better Auth's rate limit storage. Better Auth counts per client address and path. Paths with

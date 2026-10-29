@@ -4,18 +4,30 @@
  * the workspace, since they answer for what it spends; members see the runs they started. A run's
  * trace is timing and usage, never the conversation's words, so whoever sees the run sees its
  * trace, while the conversation lasts.
+ *
+ * A trigger's delivery starts a run that no member did, in a conversation nobody opens in Chat, so
+ * owners and admins read its words on the run instead.
  */
-import { RUNS_PER_PAGE, type RunSpan, runCursor, type TotaledRun } from "@gateweave/agents-model";
+import {
+	RUNS_PER_PAGE,
+	type RunSpan,
+	runCursor,
+	type TotaledRun,
+	triggerOf,
+} from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-/** A run, with its total and the name of the member who started it. */
+/** A run, with its total and the name of the member or the trigger that started it. */
 export interface RunEntry extends TotaledRun {
 	startedByName: string;
 }
 
 /** What a member who left is called on the runs they started. */
 const FORMER_MEMBER = "A former member";
+
+/** What a trigger is called on its runs once it was deleted. */
+const DELETED_TRIGGER = "A deleted trigger";
 
 async function viewerOf(slug: string) {
 	const { currentMember } = await import("#/server/access");
@@ -38,6 +50,10 @@ async function viewerOf(slug: string) {
 }
 
 function named(run: TotaledRun, names: Map<string, string>): RunEntry {
+	if (triggerOf(run.startedBy) !== null) {
+		const name = run.triggerName === null ? DELETED_TRIGGER : `${run.triggerName} (trigger)`;
+		return { ...run, startedByName: name };
+	}
 	return { ...run, startedByName: names.get(run.startedBy) ?? FORMER_MEMBER };
 }
 
@@ -70,7 +86,9 @@ export const getRuns = createServerFn({ method: "GET" })
  * One run with its trace and the runs it called over its team's edges, or null when the caller may
  * not see it. The trace is null once its conversation is deleted. `conversation` is set when the
  * caller can open the conversation, which a nested run has none of: it ran in a conversation of
- * its own, reached only by its caller's.
+ * its own, reached only by its caller's. `transcript` is the conversation of a trigger's run, which
+ * nobody opens in Chat, as the JSON of its messages, since what their tools took and gave back can
+ * be anything; null for any other run, and once the conversation is deleted.
  */
 export const getRun = createServerFn({ method: "GET" })
 	.validator(z.object({ slug: z.string().min(1), runId: z.string().min(1).max(64) }))
@@ -82,17 +100,22 @@ export const getRun = createServerFn({ method: "GET" })
 			trace: RunSpan[] | null;
 			nested: RunEntry[];
 			conversation: string | null;
+			transcript: string | null;
 		} | null> => {
 			const viewer = await viewerOf(data.slug);
 			if (!viewer) return null;
 			const run = await viewer.registry.getRun(data.runId);
 			if (!run || (!viewer.everyone && run.startedBy !== viewer.userId)) return null;
 			const { conversationId } = run;
-			const [names, trace, nested] = await Promise.all([
+			const conversation =
+				conversationId === null ? null : await conversationOf(viewer.workspaceId, conversationId);
+			const triggered = run.triggerId !== null && run.parentRunId === null;
+			const [names, trace, nested, transcript] = await Promise.all([
 				viewer.names(),
-				conversationId === null ? null : traceOf(viewer.workspaceId, conversationId, run.id),
+				conversation?.runTrace(run.id) ?? null,
 				// Only a team's turns call others.
 				run.teamPath === null ? [] : viewer.registry.listNestedRuns(run.id),
+				triggered ? (conversation?.transcript() ?? null) : null,
 			]);
 			return {
 				run: named(run, names),
@@ -100,19 +123,16 @@ export const getRun = createServerFn({ method: "GET" })
 				nested: nested.map((each) => named(each, names)),
 				conversation:
 					run.startedBy === viewer.userId && run.parentRunId === null ? conversationId : null,
+				transcript,
 			};
 		},
 	);
 
-async function traceOf(workspaceId: string, conversationId: string, runId: string) {
+async function conversationOf(workspaceId: string, conversationId: string) {
 	const [{ env }, { getAgentByName }, { conversationName }] = await Promise.all([
 		import("cloudflare:workers"),
 		import("agents"),
 		import("@gateweave/agents-runtime"),
 	]);
-	const conversation = await getAgentByName(
-		env.CONVERSATIONS,
-		conversationName(workspaceId, conversationId),
-	);
-	return conversation.runTrace(runId);
+	return getAgentByName(env.CONVERSATIONS, conversationName(workspaceId, conversationId));
 }

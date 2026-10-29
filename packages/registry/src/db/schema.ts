@@ -18,6 +18,7 @@ import {
 	type ScanProblem,
 	TEAM_EDGE_KINDS,
 	TEAM_MEMBER_KINDS,
+	TRIGGER_DELIVERY_STATUSES,
 } from "@gateweave/agents-model";
 import { sql } from "drizzle-orm";
 import {
@@ -450,6 +451,8 @@ export const conversations = sqliteTable(
 		 * conversation the person started, which it goes with. Such conversations are not listed.
 		 */
 		rootId: text("root_id"),
+		/** The trigger whose delivery started it; `started_by` names the trigger then. */
+		triggerId: text("trigger_id"),
 	},
 	(table) => [
 		index("conversations_started_by_idx").on(table.startedBy, table.updatedAt),
@@ -493,6 +496,8 @@ export const runs = sqliteTable(
 		depth: integer("depth").notNull().default(0),
 		/** The teams from the one the person talks to down to the one the agent acts in. */
 		teamPath: text("team_path", { mode: "json" }).$type<string[]>(),
+		/** The trigger whose delivery started it. No foreign key: runs outlive their trigger. */
+		triggerId: text("trigger_id"),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),
@@ -500,6 +505,59 @@ export const runs = sqliteTable(
 		index("runs_conversation_idx").on(table.conversationId),
 		index("runs_parent_idx").on(table.parentRunId),
 		index("runs_root_idx").on(table.rootRunId),
+	],
+);
+
+/**
+ * Inbound webhooks that start a run of an agent or a team (`../triggers.ts`). The secret is sealed
+ * (see `secrets.ts`) and opened only to check a delivery's signature.
+ */
+export const triggers = sqliteTable(
+	"triggers",
+	{
+		id: text("id").primaryKey(),
+		name: text("name").notNull(),
+		prompt: text("prompt").notNull(),
+		/** The agent it starts, or null when it starts a team. */
+		agentId: text("agent_id").references(() => agents.id),
+		/** The team whose lead it starts; its triggers go when the team is deleted. */
+		teamId: text("team_id"),
+		sealed: text("sealed").notNull(),
+		secretStart: text("secret_start").notNull(),
+		active: integer("active", { mode: "boolean" }).notNull(),
+		perDay: integer("per_day").notNull(),
+		createdBy: text("created_by").notNull(),
+		createdAt: integer("created_at").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(table) => [
+		index("triggers_agent_idx").on(table.agentId),
+		index("triggers_team_idx").on(table.teamId),
+	],
+);
+
+/**
+ * What came to each trigger, by the sender's `webhook-id`: a retry of one event finds its row, and
+ * the runs started in the last minute and day are counted from here.
+ */
+export const triggerDeliveries = sqliteTable(
+	"trigger_deliveries",
+	{
+		triggerId: text("trigger_id")
+			.notNull()
+			.references(() => triggers.id),
+		id: text("id").notNull(),
+		status: text("status", { enum: TRIGGER_DELIVERY_STATUSES }).notNull(),
+		event: text("event"),
+		conversationId: text("conversation_id"),
+		runId: text("run_id"),
+		error: text("error"),
+		receivedAt: integer("received_at").notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.triggerId, table.id] }),
+		index("trigger_deliveries_received_idx").on(table.triggerId, table.receivedAt),
+		index("trigger_deliveries_conversation_idx").on(table.conversationId),
 	],
 );
 
@@ -515,3 +573,5 @@ export type SetupApplicationRow = typeof setupApplications.$inferSelect;
 export type ProviderKeyRow = typeof providerKeys.$inferSelect;
 export type EnvSecretRow = typeof envSecrets.$inferSelect;
 export type TeamRow = typeof teams.$inferSelect;
+export type TriggerRow = typeof triggers.$inferSelect;
+export type TriggerDeliveryRow = typeof triggerDeliveries.$inferSelect;

@@ -12,6 +12,7 @@ import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { AgentDialog } from "#/components/registry/agent-dialogs";
 import { KindLabel, RuntimeBadge } from "#/components/registry/labels";
+import { Triggers } from "#/components/registry/triggers";
 import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
@@ -20,19 +21,25 @@ import { startChat } from "#/lib/chat";
 import { getProviderKeys } from "#/lib/providers";
 import { getAgent, getLibrary, removeAgent, updateAgent } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
+import { getTriggers } from "#/lib/triggers";
 
 export const Route = createFileRoute("/$workspace/agents/$agentId")({
 	loader: async ({ params }) => {
-		const [detail, library, keys] = await Promise.all([
+		const [detail, library, keys, triggers] = await Promise.all([
 			getAgent({ data: { slug: params.workspace, agentId: params.agentId } }),
 			getLibrary({ data: params.workspace }),
 			getProviderKeys({ data: params.workspace }),
+			getTriggers({
+				data: { slug: params.workspace, target: { kind: "agent", agentId: params.agentId } },
+			}),
 		]);
 		return (
 			detail && {
 				...detail,
 				library: library ?? [],
 				keyed: keys?.keys.map((key) => key.provider) ?? [],
+				// Null for members: owners and admins manage triggers.
+				triggers,
 			}
 		);
 	},
@@ -69,6 +76,13 @@ function AgentPage() {
 				)}
 			</header>
 			{definition ? <Definition definition={definition} admin={admin} /> : <Configured />}
+			{definition && data.triggers && (
+				<Triggers
+					target={{ kind: "agent", agentId: agent.id }}
+					targetName={agent.name}
+					triggers={data.triggers}
+				/>
+			)}
 		</div>
 	);
 }

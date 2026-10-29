@@ -11,6 +11,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AddEdgeDialog, AddMemberDialog, TeamDialog } from "#/components/registry/team-dialogs";
 import { EDGE_STYLES, EDGE_VERBS, TeamGraph } from "#/components/registry/team-graph";
+import { Triggers } from "#/components/registry/triggers";
 import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
@@ -18,10 +19,20 @@ import { Notice } from "#/components/workspace/notice";
 import { startTeamChat } from "#/lib/chat";
 import { deleteTeam, getTeam, setTeamGraph, updateTeam } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
+import { getTriggers } from "#/lib/triggers";
 import { cn } from "#/lib/utils";
 
 export const Route = createFileRoute("/$workspace/teams/$teamId")({
-	loader: ({ params }) => getTeam({ data: { slug: params.workspace, teamId: params.teamId } }),
+	loader: async ({ params }) => {
+		const [team, triggers] = await Promise.all([
+			getTeam({ data: { slug: params.workspace, teamId: params.teamId } }),
+			getTriggers({
+				data: { slug: params.workspace, target: { kind: "team", teamId: params.teamId } },
+			}),
+		]);
+		// Triggers are null for members: owners and admins manage them.
+		return team && { ...team, triggers };
+	},
 	component: TeamPage,
 });
 
@@ -138,6 +149,14 @@ function TeamPage() {
 					</ul>
 				)}
 			</section>
+
+			{data.triggers && lead?.kind === "agent" && (
+				<Triggers
+					target={{ kind: "team", teamId: team.id }}
+					targetName={team.name}
+					triggers={data.triggers}
+				/>
+			)}
 		</div>
 	);
 }
