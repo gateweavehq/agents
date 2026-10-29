@@ -10,6 +10,7 @@
  */
 import {
 	eventType,
+	labelSkip,
 	nextScheduledRun,
 	SCHEDULE_EVENT,
 	scheduleEvent,
@@ -158,6 +159,7 @@ export function insertTrigger(
 		target: TriggerTarget;
 		perDay: number;
 		events: string[] | null;
+		label: string | null;
 		schedule: TriggerSchedule | null;
 		sealed: string;
 		secretStart: string;
@@ -176,6 +178,8 @@ export function insertTrigger(
 			agentId: target.kind === "agent" ? target.agentId : null,
 			teamId: target.kind === "team" ? target.teamId : null,
 			active: true,
+			// A scheduled trigger has no label, as it has no event types.
+			label: row.schedule ? null : row.label,
 			nextRunAt: row.schedule && nextScheduledRun(row.schedule, now),
 			createdAt: now,
 			updatedAt: now,
@@ -194,6 +198,7 @@ export function updateTrigger(
 		prompt?: string;
 		perDay?: number;
 		events?: string[] | null;
+		label?: string | null;
 		schedule?: TriggerSchedule | null;
 		active?: boolean;
 	},
@@ -213,10 +218,10 @@ export function updateTrigger(
 		patch.schedule === undefined && patch.active === undefined
 			? {}
 			: { nextRunAt: active && schedule ? nextScheduledRun(schedule, now) : null };
-	// A schedule's runs all start the same way, so it has no event types.
-	const events = schedule ? { events: null } : {};
+	// A schedule's runs all start the same way, so it has no event types and no label.
+	const webhookOnly = schedule ? { events: null, label: null } : {};
 	db.update(triggers)
-		.set({ ...patch, ...timing, ...events, updatedAt: now })
+		.set({ ...patch, ...timing, ...webhookOnly, updatedAt: now })
 		.where(eq(triggers.id, id))
 		.run();
 	return getTrigger(db, id);
@@ -395,6 +400,11 @@ export function admitDelivery(
 				? `It starts runs on ${wanted} only, not ${event}`
 				: `It starts runs on ${wanted} only, and the event has no type`,
 		});
+		return { status: "skipped" };
+	}
+	const unlabeled = trigger.label === null ? null : labelSkip(trigger.label, delivery.body);
+	if (unlabeled) {
+		record("skipped", { error: unlabeled });
 		return { status: "skipped" };
 	}
 	const limited = limitOf(db, trigger, now);

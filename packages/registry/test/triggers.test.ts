@@ -322,6 +322,58 @@ describe("triggers", () => {
 		});
 	});
 
+	it("start only on issues with their label, and skip the rest, saying why", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub);
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger, secret } = await create(stub, {
+			name: "Agent issues",
+			prompt: "Work on {{data.issue.id}}",
+			target: { kind: "agent", agentId },
+			label: "agent",
+		});
+		expect(trigger.label).toBe("agent");
+		const about = (type: string, labels: { id: string; name: string }[], rest = {}) =>
+			JSON.stringify({ type, data: { issue: { id: "TRK-7", labels }, ...rest } });
+
+		const unlabeled = crypto.randomUUID();
+		const plain = about("issue.created", [{ id: "bug", name: "bug" }]);
+		expect(await deliver(stub, trigger.id, secret, { id: unlabeled, body: plain })).toEqual({
+			status: "skipped",
+		});
+		// A retry of a skipped event starts nothing, as it did not.
+		expect(await deliver(stub, trigger.id, secret, { id: unlabeled, body: plain })).toEqual({
+			status: "duplicate",
+			runId: null,
+		});
+		const kept = about("issue.updated", [{ id: "agent-id", name: "agent" }], {
+			updatedFrom: { labelIds: ["agent-id"] },
+		});
+		expect(await deliver(stub, trigger.id, secret, { body: kept })).toEqual({ status: "skipped" });
+		const [entry] = await stub.listTriggers({ kind: "agent", agentId });
+		expect(entry?.deliveries.map(({ error }) => error)).toEqual(
+			expect.arrayContaining([
+				"It starts runs only on issues labeled agent",
+				"The label agent was on the issue already",
+			]),
+		);
+
+		const labelled = about("issue.created", [{ id: "agent-id", name: "Agent" }]);
+		const receipt = await deliver(stub, trigger.id, secret, { body: labelled });
+		if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
+		expect(receipt.text.startsWith("Work on TRK-7\n\n")).toBe(true);
+		const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+		if ("status" in turn) throw new Error(turn.message);
+		expect(await stub.getRun(turn.runId)).toMatchObject({ triggerId: trigger.id });
+
+		// A label given to a trigger that takes a schedule is taken away with it.
+		const WEEKDAYS = { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" };
+		expect(await stub.updateTrigger(trigger.id, { schedule: WEEKDAYS })).toMatchObject({
+			label: null,
+			schedule: WEEKDAYS,
+		});
+	});
+
 	it("refuse event lists that are empty, repeated or not event types", async () => {
 		const stub = registry();
 		const agentId = await withAgent(stub);

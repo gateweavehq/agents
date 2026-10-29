@@ -542,6 +542,8 @@ export const triggers = sqliteTable(
 		perDay: integer("per_day").notNull(),
 		/** The event types it starts runs for; null is every event. */
 		events: text("events", { mode: "json" }).$type<string[]>(),
+		/** The issue label it starts runs for; null is no label filter. */
+		label: text("label"),
 		/** When it starts runs on its own; null for a trigger that starts on webhooks. */
 		schedule: text("schedule", { mode: "json" }).$type<TriggerSchedule>(),
 		/** When its schedule starts the next run, while it is active: the alarm wakes for it. */

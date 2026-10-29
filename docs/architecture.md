@@ -651,6 +651,12 @@ many runs it may start a day.
   none, answers `202`, starts nothing, and shows as skipped with why, so a sender set to send more
   than the job needs costs no runs. Like a paused trigger's, a skipped event stays skipped when
   its sender retries it.
+- **Labels.** A trigger may be limited to issues that carry a label (`triggers.label`), by its name,
+  compared trimmed and ignoring case, so `agent` starts runs for Gateweave Track issues labeled
+  `agent`. On `issue.updated` it starts a run only when the label was just added, which the body's
+  `updatedFrom.labelIds` shows, so an edit of a labeled issue starts nothing. An event about no
+  issue, or about another one, is skipped with why, as an event of another type is. A scheduled
+  trigger takes no label.
 - **Its own conversation.** An admitted delivery opens a conversation for its run alone, started
   by `trigger:<id>` rather than a member (`conversations.trigger_id`), titled after the trigger
   and the event's `type`. The gateway then calls `triggerTurn` on its `ConversationAgent` over

@@ -176,6 +176,13 @@
       "when": 1793291447722,
       "tag": "0024_trigger_schedules",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1793292766368,
+      "tag": "0025_trigger_labels",
+      "breakpoints": true
     }
   ]
 }
