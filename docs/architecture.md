@@ -500,14 +500,19 @@ staging does, production and self-hosted deploys leave them off until their oper
     `claude-code__<tool>`, their results clipped to 4,000 characters. Each model request becomes a
     model span, with its tokens and cost from Anthropic's usage, cached input counted in the input;
     each tool call becomes a tool span under the server name `claude-code`, a subagent's too. A
-    result that is an error fails the turn, in the same words as Gateweave's loop uses.
+    result that is an error fails the turn, in the same words as Gateweave's loop uses. A message
+    the CLI writes itself (its model is `<synthetic>`, as for a refused key) is meant for a terminal:
+    it is neither text in the chat nor a request in the trace, and only a failure the app has no
+    words for quotes it.
   - **The key never enters the sandbox.** The CLI's `ANTHROPIC_API_KEY` is a placeholder. While the
     turn runs, `RunnerSandbox` holds the workspace's key in memory, and `decideOutbound` lets
     `POST /v1/messages` (and `count_tokens`) to `api.anthropic.com` through. `SandboxOutbound`
     puts the key on each such request (`anthropicRequest` in `packages/runtime/src/models.ts`), and
     sends it through AI Gateway when the deployment names one, with the same metadata as
     Gateweave's own requests. Updates, telemetry and error reports are off, and so are background
-    tasks, so a turn ends with its last answer.
+    tasks, so a turn ends with its last answer. The CLI also asks that host for an organization's
+    managed settings and policy limits (`/api/claude_code/settings` and `/policy_limits`). They are
+    refused like anything else there, and it goes on without them, as staging showed.
   - **One session per conversation.** The sandbox keeps the session's id; a later turn resumes it
     while the container has its transcript. A container that stopped starts a new session, which
     reads the conversation so far, the most recent 50,000 characters, before the new message.
