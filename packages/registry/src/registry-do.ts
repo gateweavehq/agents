@@ -80,7 +80,9 @@ import {
 	type TeamGraphInput,
 	type TeamInput,
 	type TotaledRun,
+	TRACK_KEY_VARIABLE,
 	TRIGGER_LIMITS,
+	type TrackTriagePlan,
 	type Trigger,
 	type TriggerEntry,
 	type TriggerHeaders,
@@ -93,6 +95,7 @@ import {
 	type TurnVia,
 	teamGraphInput,
 	teamInput,
+	trackTriagePlan,
 	triggerInput,
 	triggerMessage,
 	triggerPatch,
@@ -207,6 +210,7 @@ import {
 	turnEdges,
 	updateTeam,
 } from "./teams";
+import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
 import {
 	admitDelivery,
 	deleteTeamTriggers,
@@ -886,6 +890,48 @@ export class RegistryDO extends DurableObject {
 	listTriggers(target?: TriggerTarget): TriggerEntry[] {
 		const parsed = target === undefined ? undefined : triggerInput.shape.target.parse(target);
 		return listTriggers(this.#db, parsed);
+	}
+
+	/**
+	 * Sets up Track triage in one write (`./track-triage.ts`): the agent with its instructions,
+	 * an environment set holding the Track agent member's key, sealed, Track's MCP server, and a
+	 * trigger for new issues. The trigger's own secret is not handed back: Track signs with a
+	 * secret it makes, which takes its place with `replaceTriggerSecret`.
+	 */
+	async setUpTrackTriage(
+		input: TrackTriagePlan,
+		createdBy: string,
+		setBy: string,
+	): Promise<TrackTriageMade | TriggerRefusal> {
+		const { agentKey, ...plan } = trackTriagePlan.parse(input);
+		const member = id.parse(createdBy);
+		const by = z.string().trim().min(1).max(200).parse(setBy);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const envSetId = crypto.randomUUID();
+		const triggerId = crypto.randomUUID();
+		const secret = newTriggerSecret();
+		const [sealedKey, sealedSecret] = await Promise.all([
+			sealer.seal(secretPlace(envSetId, TRACK_KEY_VARIABLE), agentKey),
+			sealer.seal(triggerPlace(triggerId), secret),
+		]);
+		const made = this.#write(() =>
+			setUpTrackTriage(
+				this.#db,
+				{
+					...plan,
+					envSetId,
+					sealedKey,
+					triggerId,
+					sealedSecret,
+					secretStart: secretStartOf(secret),
+					createdBy: member,
+					setBy: by,
+				},
+				Date.now(),
+			),
+		);
+		return "refused" in made ? refused(made.refused) : made;
 	}
 
 	/** Adds a trigger, and hands back its secret, which is not shown again. */

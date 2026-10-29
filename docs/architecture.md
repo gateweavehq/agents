@@ -538,6 +538,33 @@ many runs it may start a day.
 - **Deleting a trigger** deletes its deliveries; the conversations and runs it started stay. A
   team's triggers go with the team.
 
+### Track triage
+
+The first agent made for a Gateweave product triages new issues in Gateweave Track, set up by an
+owner or admin in one dialog on the Agents page ([docs/track-triage.md](track-triage.md)). The
+names, the prompt and the tools are in `packages/model/src/track-triage.ts`, the setup in
+`packages/registry/src/track-triage.ts`, and the instructions the agent follows in
+`apps/web/src/server/track-triage.md`.
+
+- **The key is tried first.** The server function (`apps/web/src/lib/track-triage.ts`) checks
+  Track's MCP server with the agent member's key (`gwt_` and 43 characters) and needs the five
+  tools triage uses, before the registry makes anything. The check is kept as the server's last
+  one, so the MCP page lists its tools at once.
+- **One write makes it all:** the instructions, an environment set whose secret
+  `TRACK_AGENT_KEY` holds the key, Track's MCP server with `Authorization: Bearer
+  ${TRACK_AGENT_KEY}`, the agent pinning all three, and a trigger for it, 50 runs a day. The key
+  and the trigger's secret are sealed before the write, the workspace's trigger limit is checked
+  before anything is inserted, and a refusal after that throws, so a failure leaves nothing half
+  made. A name already in the library gets a number (`track 2`).
+- **Track makes the webhook's secret.** The trigger's own is never shown: the dialog's second
+  step gives the URL to add in Track and takes the secret Track shows, as "Use the sender's
+  secret" does. The webhook names the agent member under "For agent", so Track leaves the
+  agent's own changes out and it never triggers itself.
+- **Least privilege.** The agent pins Track's server with a tool allowlist of `get_workspace`,
+  `get_issue`, `search_issues`, `update_issue` and `add_comment`. An issue is text anyone in the
+  Track workspace wrote: the instructions say to read it as data, and the allowlist is what holds
+  if a model is talked into more.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -573,8 +600,9 @@ workspace.
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its
   pinned instructions with their text, its environment set and its MCP servers, with "Only: …"
-  under a server the agent is limited to some tools of. Owners and
-  admins also see its triggers there, as they do on a team's page.
+  under a server the agent is limited to some tools of. Owners and admins also see its triggers
+  there, as they do on a team's page, and set up the ready-made agents below the list, such as
+  [Track triage](#track-triage).
 - **Teams** lists the teams with their leads. A team's page draws its graph top-down from the
   lead (`apps/web/src/lib/team-layout.ts`, inline SVG, no graph library): each member one row
   below the nearest member that reaches it, every kind of edge in its own color and dashes. Below
@@ -638,9 +666,8 @@ provider keys.
 
 - **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
   check`. It is built and tested here, and stays private until then.
-- **Agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8): agents as workspace
-  members acting in Track, starting with issue triage, set up in one click from a trigger, a
-  Track webhook and Track's MCP server (AGT-38).
+- **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
+  [Track triage](#track-triage).
 - **Workers AI** as a model provider (AGT-36), once it is settled who pays for its runs on
   Gateweave Cloud.
 - **Cloud runners** (phase 5, AGT-9): coding agents in Sandboxes, which also run the MCP servers

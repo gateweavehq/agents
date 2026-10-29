@@ -132,6 +132,14 @@ export function targetRefusal(db: Db, target: TriggerTarget): string | null {
 	return runnable(db, target.agentId) ? null : "That agent was removed or is not run by Gateweave";
 }
 
+/** Why the workspace cannot have another trigger, if it has as many as it may. */
+export function triggerCapRefusal(db: Db): string | null {
+	const existing = db.select({ n: count() }).from(triggers).get()?.n ?? 0;
+	return existing >= TRIGGER_LIMITS.perWorkspace
+		? `A workspace can have up to ${TRIGGER_LIMITS.perWorkspace} triggers`
+		: null;
+}
+
 /** Adds a trigger with its secret sealed, unless the workspace has as many as it may. */
 export function insertTrigger(
 	db: Db,
@@ -147,10 +155,8 @@ export function insertTrigger(
 	},
 	now: number,
 ): Trigger | { refused: string } {
-	const existing = db.select({ n: count() }).from(triggers).get()?.n ?? 0;
-	if (existing >= TRIGGER_LIMITS.perWorkspace) {
-		return { refused: `A workspace can have up to ${TRIGGER_LIMITS.perWorkspace} triggers` };
-	}
+	const full = triggerCapRefusal(db);
+	if (full) return { refused: full };
 	const refusal = targetRefusal(db, row.target);
 	if (refusal) return { refused: refusal };
 	const { target, ...rest } = row;
