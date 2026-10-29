@@ -50,6 +50,7 @@ import {
 	languageModel,
 	SettingsError,
 } from "./models";
+import { OpenCodeTurn } from "./opencode";
 import {
 	COMMIT_EMAIL,
 	type CommitAuthor,
@@ -445,6 +446,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 						system: [agent.instructions, note]
 							.filter((part) => typeof part === "string")
 							.join("\n\n"),
+						provider: agent.provider,
 						model: agent.model,
 						cwd: repository ? SANDBOX_REPOSITORY_PATH : SANDBOX_ROOT,
 						access: {
@@ -646,6 +648,8 @@ function engineTurn(
 			return new ClaudeCodeTurn(sink, run, agent);
 		case "codex":
 			return new CodexTurn(sink, run, agent, memory);
+		case "opencode":
+			return new OpenCodeTurn(sink, run, agent);
 	}
 }
 

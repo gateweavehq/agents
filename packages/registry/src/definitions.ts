@@ -13,6 +13,7 @@ import {
 	ENGINE_PROVIDERS,
 	INSTRUCTION_KINDS,
 	MODEL_PROVIDER_NAMES,
+	type ModelProvider,
 	type SandboxRepository,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
@@ -248,11 +249,10 @@ function checkEngine(input: Definition): void {
 	if (!input.sandbox) {
 		throw new AgentError(`${name} runs in the agent's sandbox: turn the sandbox on`);
 	}
-	const provider = ENGINE_PROVIDERS[input.engine];
-	if (input.provider !== provider) {
-		throw new AgentError(
-			`${name} calls ${MODEL_PROVIDER_NAMES[provider]}'s models: choose one of them`,
-		);
+	const providers: readonly ModelProvider[] = ENGINE_PROVIDERS[input.engine];
+	if (!providers.includes(input.provider)) {
+		const names = providers.map((provider) => `${MODEL_PROVIDER_NAMES[provider]}'s`);
+		throw new AgentError(`${name} calls ${names.join(" or ")} models: choose one of them`);
 	}
 }
 

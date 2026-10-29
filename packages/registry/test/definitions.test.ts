@@ -305,6 +305,35 @@ describe("agents' engines", () => {
 		});
 	});
 
+	it("take OpenCode with the sandbox and an Anthropic or OpenAI model, and refuse it otherwise", async () => {
+		const stub = registry();
+		const opencode = (fields: Partial<AgentDefinitionInput> = {}) =>
+			reviewer(null, { engine: "opencode", sandbox: true, ...fields });
+		await inside(stub, (instance) => {
+			expect(() => instance.createAgent(opencode({ sandbox: false }))).toThrow(
+				"OpenCode runs in the agent's sandbox: turn the sandbox on",
+			);
+			expect(() =>
+				instance.createAgent(opencode({ provider: "google", model: "gemini-3-flash" })),
+			).toThrow("OpenCode calls Anthropic's or OpenAI's models: choose one of them");
+		});
+		expect(await stub.listAgents()).toEqual([]);
+
+		const anthropic = await stub.createAgent(opencode());
+		expect(await stub.agentSnapshot(anthropic.id)).toMatchObject({
+			engine: "opencode",
+			provider: "anthropic",
+			sandbox: true,
+		});
+		const openai = await stub.createAgent(
+			opencode({ name: "Second", provider: "openai", model: "gpt-5.5" }),
+		);
+		expect(await stub.agentSnapshot(openai.id)).toMatchObject({
+			engine: "opencode",
+			provider: "openai",
+		});
+	});
+
 	it("let Claude Code use the agent's MCP servers", async () => {
 		const stub = registry();
 		const acme = await stub.createMcpServer({

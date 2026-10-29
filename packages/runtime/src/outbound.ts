@@ -8,8 +8,11 @@
  * host where it finds Gateweave's tools, which only the Worker answers (`./engine-tools.ts`).
  * Nothing else is, so what the sandbox holds cannot be sent anywhere.
  */
-import { PULL_REQUEST_TOOL } from "@gateweave/agents-model";
-import type { SandboxEngine } from "./engines";
+import {
+	MODEL_PROVIDER_NAMES,
+	type ModelProvider,
+	PULL_REQUEST_TOOL,
+} from "@gateweave/agents-model";
 
 /** The hosts a sandbox downloads packages from: npm, PyPI, crates.io and Go's module proxy. */
 export const PACKAGE_REGISTRIES: readonly string[] = [
@@ -26,20 +29,31 @@ export const PACKAGE_REGISTRIES: readonly string[] = [
 
 const GITHUB = "github.com";
 
-/** Where Claude Code sends its requests for the model. */
+/** Where Claude Code, and OpenCode with an Anthropic model, send their requests for the model. */
 export const ANTHROPIC_API = "api.anthropic.com";
 
-/** The paths of Anthropic's API that Claude Code's requests for the model use. */
-const ANTHROPIC_PATHS = new Set(["/v1/messages", "/v1/messages/count_tokens"]);
-
-/** Where Codex sends its requests for the model. */
+/** Where Codex, and OpenCode with an OpenAI model, send their requests for the model. */
 export const OPENAI_API = "api.openai.com";
 
 /**
- * The path of OpenAI's API that Codex's requests for the model use, compactions included: the
- * Responses API, over HTTPS (`./codex.ts` turns its WebSocket off).
+ * The paths of each provider's API that the engines' requests for the model use: Anthropic's
+ * Messages API, and OpenAI's Responses API over HTTPS (`./codex.ts` turns Codex's WebSocket off),
+ * compactions included.
  */
-const OPENAI_PATHS = new Set(["/v1/responses"]);
+const MODEL_APIS: readonly ModelApi[] = [
+	{
+		provider: "anthropic",
+		host: ANTHROPIC_API,
+		paths: new Set(["/v1/messages", "/v1/messages/count_tokens"]),
+	},
+	{ provider: "openai", host: OPENAI_API, paths: new Set(["/v1/responses"]) },
+];
+
+interface ModelApi {
+	provider: "anthropic" | "openai";
+	host: string;
+	paths: ReadonlySet<string>;
+}
 
 /**
  * Where an engine finds Gateweave's tools. No such host exists outside the sandbox: the Worker
@@ -86,16 +100,16 @@ export type OutboundDecision =
 	| { allow: false; reason: string };
 
 /**
- * `engine` is the engine running a turn in the sandbox, if any; a request to its provider that
- * goes out then does so with the workspace's key, which the Worker puts in place of the
- * placeholder. `tools` says whether that turn has Gateweave's tools, which the conversation
- * answers.
+ * `provider` is the provider whose models the engine running a turn in the sandbox calls, if one
+ * runs; a request for the model to that provider's API goes out with the workspace's key, which
+ * the Worker puts in place of the placeholder. `tools` says whether that turn has Gateweave's
+ * tools, which the conversation answers.
  */
 export function decideOutbound(
 	method: string,
 	url: URL,
 	access: GitAccess | null = null,
-	engine: SandboxEngine | null = null,
+	provider: ModelProvider | null = null,
 	tools = false,
 ): OutboundDecision {
 	const host = url.hostname;
@@ -107,21 +121,17 @@ export function decideOutbound(
 	}
 	if (url.protocol !== "https:") return refuse(`${host} is reachable only over HTTPS`);
 	if (host === GITHUB && url.port === "") return decideGitHub(method, url, access);
-	if (host === ANTHROPIC_API && url.port === "") {
-		if (engine !== "claude-code") {
-			return refuse(`${host} is reachable from this sandbox only while Claude Code runs a turn`);
+	const api = MODEL_APIS.find((candidate) => candidate.host === host);
+	if (api && url.port === "") {
+		if (api.provider !== provider) {
+			const name = MODEL_PROVIDER_NAMES[api.provider];
+			return refuse(
+				`${host} is reachable from this sandbox only while a turn calls ${name}'s models`,
+			);
 		}
-		return method === "POST" && ANTHROPIC_PATHS.has(url.pathname)
-			? { allow: true, credentials: "anthropic" }
-			: refuse(`${host} takes only Claude Code's requests for the model from this sandbox`);
-	}
-	if (host === OPENAI_API && url.port === "") {
-		if (engine !== "codex") {
-			return refuse(`${host} is reachable from this sandbox only while Codex runs a turn`);
-		}
-		return method === "POST" && OPENAI_PATHS.has(url.pathname)
-			? { allow: true, credentials: "openai" }
-			: refuse(`${host} takes only Codex's requests for the model from this sandbox`);
+		return method === "POST" && api.paths.has(url.pathname)
+			? { allow: true, credentials: api.provider }
+			: refuse(`${host} takes only the engine's requests for the model from this sandbox`);
 	}
 	if (!PACKAGE_REGISTRIES.includes(host) || url.port !== "") {
 		return refuse(`${host} is not reachable from this sandbox: only package registries are`);

@@ -425,6 +425,7 @@ describe("Codex's command", () => {
 			prompt: "And the folders?",
 			history: "The person: List the files",
 			system: "",
+			provider: "openai" as const,
 			model: "gpt-5.5",
 			cwd: "/workspace",
 			access: {
@@ -445,20 +446,22 @@ describe("Codex's command", () => {
 describe("OpenAI from the sandbox", () => {
 	const responses = new URL("https://api.openai.com/v1/responses");
 
-	it("is reachable only while Codex runs a turn, and only for the model", () => {
+	it("is reachable only while a turn calls OpenAI's models, and only for them", () => {
 		expect(decideOutbound("POST", responses)).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", responses, null, "claude-code")).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", responses, null, "codex")).toEqual({
+		expect(decideOutbound("POST", responses, null, "anthropic")).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", responses, null, "openai")).toEqual({
 			allow: true,
 			credentials: "openai",
 		});
-		expect(decideOutbound("GET", responses, null, "codex")).toMatchObject({ allow: false });
+		expect(decideOutbound("GET", responses, null, "openai")).toMatchObject({ allow: false });
 		for (const other of ["https://api.openai.com/v1/files", "https://api.openai.com/v1/models"]) {
-			expect(decideOutbound("POST", new URL(other), null, "codex")).toMatchObject({ allow: false });
+			expect(decideOutbound("POST", new URL(other), null, "openai")).toMatchObject({
+				allow: false,
+			});
 		}
-		// Nor is Anthropic open to Codex.
+		// Nor is Anthropic open to a turn that calls OpenAI.
 		const messages = new URL("https://api.anthropic.com/v1/messages");
-		expect(decideOutbound("POST", messages, null, "codex")).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", messages, null, "openai")).toMatchObject({ allow: false });
 	});
 
 	it("gets the workspace's key in place of the placeholder", async () => {

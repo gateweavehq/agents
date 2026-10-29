@@ -19,23 +19,28 @@ export const RUNTIME_NAMES: Record<AgentRuntime, string> = {
 
 /**
  * What takes an agent run by Gateweave its turns: Gateweave's own loop with the agent's tools, or
- * a vendor's coding agent run in the agent's sandbox, which reads the repository's own
- * instructions, skills and settings: Anthropic's Claude Code (`CLAUDE.md`) or OpenAI's Codex
- * (`AGENTS.md`).
+ * a coding agent run in the agent's sandbox, which reads the repository's own instructions, skills
+ * and settings: Anthropic's Claude Code (`CLAUDE.md`), OpenAI's Codex (`AGENTS.md`) or the
+ * open-source OpenCode (`AGENTS.md` and `opencode.json`).
  */
-export const AGENT_ENGINES = ["gateweave", "claude-code", "codex"] as const;
+export const AGENT_ENGINES = ["gateweave", "claude-code", "codex", "opencode"] as const;
 export type AgentEngine = (typeof AGENT_ENGINES)[number];
 
 export const ENGINE_NAMES: Record<AgentEngine, string> = {
 	gateweave: "Gateweave",
 	"claude-code": "Claude Code",
 	codex: "Codex",
+	opencode: "OpenCode",
 };
 
-/** The provider whose models each engine run in the sandbox calls, with the workspace's key. */
-export const ENGINE_PROVIDERS: Record<Exclude<AgentEngine, "gateweave">, KeyedProvider> = {
-	"claude-code": "anthropic",
-	codex: "openai",
+/** The providers whose models each engine run in the sandbox can call, with the workspace's key. */
+export const ENGINE_PROVIDERS: Record<
+	Exclude<AgentEngine, "gateweave">,
+	readonly KeyedProvider[]
+> = {
+	"claude-code": ["anthropic"],
+	codex: ["openai"],
+	opencode: ["anthropic", "openai"],
 };
 
 /**
