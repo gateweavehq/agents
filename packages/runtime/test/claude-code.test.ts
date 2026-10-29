@@ -636,10 +636,10 @@ describe("Claude Code's command", () => {
 describe("Gateweave's tools from the sandbox", () => {
 	const tools = new URL(ENGINE_TOOLS_URL);
 
-	it("are reachable only while a turn of Claude Code has them, and only at their address", () => {
+	it("are reachable only while an engine's turn has them, and only at their address", () => {
 		expect(decideOutbound("POST", tools)).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", tools, null, "claude-code")).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", tools, null, "claude-code", true)).toEqual({
+		expect(decideOutbound("POST", tools, null, "anthropic")).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", tools, null, "anthropic", true)).toEqual({
 			allow: true,
 			credentials: "tools",
 		});
@@ -648,7 +648,7 @@ describe("Gateweave's tools from the sandbox", () => {
 			"http://tools.gateweave.internal:8080/mcp",
 			"https://tools.gateweave.internal/mcp",
 		]) {
-			expect(decideOutbound("POST", new URL(elsewhere), null, "claude-code", true)).toMatchObject({
+			expect(decideOutbound("POST", new URL(elsewhere), null, "anthropic", true)).toMatchObject({
 				allow: false,
 			});
 		}
@@ -658,17 +658,17 @@ describe("Gateweave's tools from the sandbox", () => {
 describe("Anthropic from the sandbox", () => {
 	const messages = new URL("https://api.anthropic.com/v1/messages");
 
-	it("is reachable only while Claude Code runs a turn, and only for the model", () => {
+	it("is reachable only while a turn calls Anthropic's models, and only for them", () => {
 		expect(decideOutbound("POST", messages)).toMatchObject({ allow: false });
-		expect(decideOutbound("POST", messages, null, "claude-code")).toEqual({
+		expect(decideOutbound("POST", messages, null, "anthropic")).toEqual({
 			allow: true,
 			credentials: "anthropic",
 		});
 		const tokens = new URL("https://api.anthropic.com/v1/messages/count_tokens");
-		expect(decideOutbound("POST", tokens, null, "claude-code")).toMatchObject({ allow: true });
-		expect(decideOutbound("GET", messages, null, "claude-code")).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", tokens, null, "anthropic")).toMatchObject({ allow: true });
+		expect(decideOutbound("GET", messages, null, "anthropic")).toMatchObject({ allow: false });
 		const files = new URL("https://api.anthropic.com/v1/files");
-		expect(decideOutbound("POST", files, null, "claude-code")).toMatchObject({ allow: false });
+		expect(decideOutbound("POST", files, null, "anthropic")).toMatchObject({ allow: false });
 	});
 
 	it("gets the workspace's key in place of the placeholder", async () => {

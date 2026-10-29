@@ -41,6 +41,7 @@ import {
 	openaiRequest,
 	SettingsError,
 } from "./models";
+import { OPENCODE_DATABASE, OPENCODE_INSTRUCTIONS, openCodeCommand } from "./opencode";
 import {
 	ANTHROPIC_API,
 	checkPush,
@@ -376,7 +377,7 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 		if (this.#engine) throw new Error("An engine is already running a turn in this sandbox");
 		const container = await this.#ready();
 		const command = await this.#commandFor(container, job);
-		this.#running = { engine: job.engine, access: job.access };
+		this.#running = { engine: job.engine, provider: job.provider, access: job.access };
 		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
 		let process: ExecProcess;
 		try {
@@ -462,6 +463,19 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 					30,
 				);
 				return codexCommand(job, found.exitCode === 0 && found.output.trim() !== "");
+			}
+			case "opencode": {
+				if (job.system !== "") {
+					await new Files(container).writeFile(OPENCODE_INSTRUCTIONS, job.system);
+				}
+				// It keeps its sessions in one database, which its first turn in the container makes.
+				const found = await this.#exec(
+					container,
+					["test", "-s", OPENCODE_DATABASE],
+					SANDBOX_ROOT,
+					30,
+				);
+				return openCodeCommand(job, found.exitCode === 0);
 			}
 		}
 	}
@@ -589,7 +603,7 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 			request.method,
 			url,
 			access,
-			running?.engine ?? null,
+			running?.provider ?? null,
 			tools !== null,
 		);
 		if (!decision.allow) return refused(decision.reason, 403);

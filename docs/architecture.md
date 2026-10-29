@@ -410,10 +410,11 @@ staging does, production and self-hosted deploys leave them off until their oper
 - **Engines.** What takes an agent's turns is its engine. `gateweave`, the default, is Gateweave's
   own loop with the agent's tools (`packages/runtime/src/conversation-agent.ts`). `claude-code` runs
   Anthropic's Claude Code CLI in the agent's sandbox, so it reads the repository's own `CLAUDE.md`,
-  skills and settings as it would on a laptop, and `codex` runs OpenAI's Codex CLI there, which
-  reads its `AGENTS.md`. The registry enforces two rules for each: it needs a sandbox, and it calls
-  its own provider's models (`ENGINE_PROVIDERS`): Anthropic's for Claude Code, OpenAI's for Codex.
-  See **Claude Code** and **Codex** below.
+  skills and settings as it would on a laptop, `codex` runs OpenAI's Codex CLI there, which reads
+  its `AGENTS.md`, and `opencode` runs the open-source OpenCode CLI, which reads `AGENTS.md` and
+  `opencode.json`. The registry enforces two rules for each: it needs a sandbox, and it calls models
+  of a provider it runs with (`ENGINE_PROVIDERS`): Anthropic's for Claude Code, OpenAI's for Codex,
+  either for OpenCode. See **Claude Code**, **Codex** and **OpenCode** below.
 - **One container per conversation.** `RunnerSandbox` (`packages/runtime/src/sandbox.ts`) is a
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
@@ -445,7 +446,7 @@ staging does, production and self-hosted deploys leave them off until their oper
   that would make more than three of the workspace's conversations hold one at once
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
-  sandbox, unless the agent's engine is Claude Code or Codex, which run only in one.
+  sandbox, unless the agent's engine runs only in one, as every engine but Gateweave's loop does.
 - **A repository in the sandbox** (AGT-41). An agent with a sandbox can choose a repository the
   workspace's GitHub App reaches (`agent_definitions.repository_id`). On the conversation's first
   tool call, `withCheckout` (`packages/runtime/src/checkout.ts`) asks the sandbox to clone it into
@@ -561,7 +562,7 @@ staging does, production and self-hosted deploys leave them off until their oper
     input in the input already. The span is priced at the standard rates, since no one request's
     size is known (`requestCost`'s `summed`). A turn that fails reports no usage, so its tokens
     count with the next turn that completes. Metering each request where it leaves the sandbox
-    will replace this (AGT-45).
+    will replace this (AGT-49).
   - **Its items are the chat.** An `agent_message` is text; a command (`codex__shell`), a patch
     (`codex__apply_patch`) and another MCP server's call are tool calls with spans under the
     server name `codex`; a call of Gateweave's `gateweave` server shows under its own name and
@@ -575,6 +576,41 @@ staging does, production and self-hosted deploys leave them off until their oper
     tools are the same MCP server, named with `omit_tools_from = ["deferred"]` so the model has
     them in its first request rather than behind Codex's tool search, and `tool_timeout_sec` the
     turn's hour. Codex speaks MCP's stateless 2025-06-18 revision, which the handler answers too.
+- **OpenCode** (AGT-44). The image installs the OpenCode CLI (MIT), pinned (`OPENCODE_VERSION`):
+  its build for the container's machine alone, and the `@opencode-ai/plugin` package it would
+  otherwise fetch from npm into its settings folder on a new container's first turn. A turn of an
+  agent whose engine is `opencode` runs `opencode run --format json --auto` the same way
+  (`packages/runtime/src/opencode.ts`), with the agent's Anthropic or OpenAI model. `--auto`
+  approves what its permissions would ask about, since nobody is there to answer.
+  - **Its settings come last.** OpenCode reads `OPENCODE_CONFIG_CONTENT` after the repository's
+    `opencode.json`, so the turn's settings win where both speak: the agent's model alone (for its
+    small tasks too), at its provider's own address with a placeholder for a key, no update checks,
+    shared sessions, model list or language server downloads, and no snapshots of the work. It
+    takes instructions only from files, so the sandbox writes the agent's instructions and where it
+    runs to `/tmp/gateweave-instructions.md`, which its `instructions` name: they follow the
+    repository's `AGENTS.md` in its system prompt. A new session gets the title `Gateweave`, which
+    spares the request to a small model OpenCode makes for one otherwise.
+  - **One span per request.** Each of its steps is one model request, and the step's finish has
+    that request's usage, so each becomes a model span priced on its own, with no summing. OpenCode
+    counts the cached input and the reasoning apart; the trace counts them in the input and the
+    output. It prints a tool call only once it has its result, so the tool span starts back by how
+    long the call took, and the request's span ends where its first tool began, which keeps the
+    sandbox's clock out of the trace. Its `task` tool is off: a subagent's session prints nothing,
+    so its requests would be missing from the trace. So is `webfetch`, since the sandbox reaches no
+    website.
+  - **The key never enters the sandbox,** as with the others: `decideOutbound` opens the API of the
+    agent's provider to the running turn, `POST /v1/messages` to `api.anthropic.com` or
+    `POST /v1/responses` to `api.openai.com`, and nothing of the other's. A failure comes as an
+    `error` event with the provider's status, said in Gateweave's words, once OpenCode's own five
+    retries of a request that may succeed later have failed too.
+  - **One session per conversation.** A later turn continues the last session (`--continue`) while
+    the container has OpenCode's database; otherwise it starts a new one with the conversation so
+    far. Gateweave's tools are the same MCP server, a `remote` one in its settings without OAuth,
+    whose timeout, the turn's hour, covers each call. OpenCode speaks MCP's 2025-11-25 revision.
+  - **It needs more than the smallest machine.** OpenCode runs on Bun. A local run of the image
+    under `lite`'s limits (256 MiB, 1/16 vCPU) ran out of memory before its first answer; under
+    `basic`'s (1 GiB, 1/4 vCPU) a turn took about half a minute and used 415 MiB at most. The
+    sandbox starts as `standard-1`, so keep it at `basic` or above. Claude Code fits in `lite`.
 
 ## Chat
 

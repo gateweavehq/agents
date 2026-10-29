@@ -51,6 +51,8 @@ const ENGINE_HINTS: Record<AgentEngine, string> = {
 		"Runs Anthropic's Claude Code in the sandbox, with the repository's CLAUDE.md, skills and settings, and the agent's tools. It needs the sandbox and an Anthropic model.",
 	codex:
 		"Runs OpenAI's Codex in the sandbox, with the repository's AGENTS.md and the agent's tools. It needs the sandbox and an OpenAI model.",
+	opencode:
+		"Runs OpenCode in the sandbox, with the repository's AGENTS.md and opencode.json, and the agent's tools. It needs the sandbox and an Anthropic or OpenAI model.",
 };
 
 /**

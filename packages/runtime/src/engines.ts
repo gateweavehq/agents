@@ -1,9 +1,10 @@
 /**
- * Vendor coding agents as an agent's engine (AGT-44). A turn of an agent whose engine is not
- * Gateweave's own loop runs the vendor's CLI in the conversation's sandbox: Claude Code
- * (`./claude-code.ts`) or Codex (`./codex.ts`). The CLI reads the repository's own instructions and settings as it would on
- * a laptop and works with its own tools, and the turn passes on what it does as its events come:
- * its text and tool calls to the chat, and its model requests and tool calls to the run's trace.
+ * Coding agents as an agent's engine (AGT-44). A turn of an agent whose engine is not Gateweave's
+ * own loop runs the coding agent's CLI in the conversation's sandbox: Claude Code
+ * (`./claude-code.ts`), Codex (`./codex.ts`) or OpenCode (`./opencode.ts`). The CLI reads the
+ * repository's own instructions and settings as it would on a laptop and works with its own tools,
+ * and the turn passes on what it does as its events come: its text and tool calls to the chat, and
+ * its model requests and tool calls to the run's trace.
  *
  * The CLI holds no key. It sends a placeholder, and `SandboxOutbound` puts the workspace's key on
  * its requests to the model's provider on the way out, while the turn runs (`./outbound.ts`). The
@@ -13,6 +14,7 @@
  */
 import {
 	type AgentEngine,
+	type ModelProvider,
 	PULL_REQUEST_TOOL,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
@@ -46,6 +48,8 @@ export interface EngineJob {
 	history: string | null;
 	/** What the CLI reads after its own instructions. */
 	system: string;
+	/** The provider of the agent's model, whose API the turn's requests for the model go to. */
+	provider: ModelProvider;
 	model: string;
 	/** Where it works: the repository's checkout, or the sandbox's root. */
 	cwd: string;
@@ -63,6 +67,7 @@ export interface EnginePort {
 /** The engine running a turn in a sandbox, and what its requests out of the sandbox go with. */
 export interface RunningEngine {
 	engine: SandboxEngine;
+	provider: ModelProvider;
 	access: EngineAccess;
 }
 
@@ -229,6 +234,11 @@ export function clip(text: string, limit: number): string {
 export function byteSize(value: unknown): number {
 	return new TextEncoder().encode(typeof value === "string" ? value : (JSON.stringify(value) ?? ""))
 		.length;
+}
+
+/** Text with anything that looks like a key, whole or masked, taken out: providers' errors repeat it. */
+export function withoutKeys(text: string): string {
+	return text.replace(/\bsk-[\w*.-]+/g, "[key]").replace(/\S*\*{3,}\S*/g, "[key]");
 }
 
 export function failed(error: string): EngineOutcome {

@@ -21,5 +21,17 @@ RUN npm install --global \
     "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     "@openai/codex@${CODEX_VERSION}" \
   && npm cache clean --force
+# OpenCode, for agents whose engine it is (packages/runtime/src/opencode.ts). MIT, pinned for the
+# same reason. Its build for this machine alone: `opencode-ai` installs one for every variant of
+# Linux. With the package it installs into its settings folder when it starts, which a new
+# container would otherwise fetch from npm on its first turn.
+ARG OPENCODE_VERSION=1.19.5
+RUN npm install --global "opencode-linux-x64@${OPENCODE_VERSION}" \
+  && ln -s "$(npm root --global)/opencode-linux-x64/bin/opencode" /usr/local/bin/opencode \
+  && mkdir -p /root/.config/opencode \
+  && cd /root/.config/opencode \
+  && npm install --no-fund --no-audit "@opencode-ai/plugin@${OPENCODE_VERSION}" \
+  && npm cache clean --force \
+  && opencode --version
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

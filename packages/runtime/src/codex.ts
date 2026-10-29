@@ -43,6 +43,7 @@ import {
 	failed,
 	MAX_CHAT_OUTPUT,
 	outputOf,
+	withoutKeys,
 } from "./engines";
 import type { RunRecorder } from "./trace";
 
@@ -479,9 +480,4 @@ function describeFailure(
 	}
 	const said = failure === null ? "Codex stopped before it finished" : "Codex could not finish";
 	return `${said}: ${clip(withoutKeys(words), FAILURE_DETAIL_LIMIT)}`;
-}
-
-/** Text with anything that looks like a key, whole or masked, taken out. */
-export function withoutKeys(text: string): string {
-	return text.replace(/\bsk-[\w*.-]+/g, "[key]").replace(/\S*\*{3,}\S*/g, "[key]");
 }
