@@ -92,17 +92,53 @@ export class GitHubApp {
 	}
 
 	async installationToken(installationId: string): Promise<string> {
-		const cached = this.#tokens.get(installationId);
+		return this.#token(installationId, installationId, undefined);
+	}
+
+	/**
+	 * A token of the installation that reaches only one repository, by GitHub's id for it, and
+	 * only with `permissions`: what a sandbox's requests to GitHub go out with.
+	 */
+	async repositoryToken(
+		installationId: string,
+		repositoryId: string,
+		permissions: Partial<Record<RepositoryPermission, "read" | "write">>,
+	): Promise<string> {
+		const granted = Object.entries(permissions).sort(([a], [b]) => a.localeCompare(b));
+		const cacheKey = `${installationId}:${repositoryId}:${JSON.stringify(granted)}`;
+		return this.#token(installationId, cacheKey, {
+			repository_ids: [Number(repositoryId)],
+			permissions: Object.fromEntries(granted),
+		});
+	}
+
+	async #token(installationId: string, cacheKey: string, scope: object | undefined) {
+		const cached = this.#tokens.get(cacheKey);
 		if (cached && cached.expiresAt - TOKEN_MARGIN_MS > Date.now()) return cached.token;
 		const jwt = await appJwt(this.#appId, await this.#key);
 		const { token, expires_at } = tokenSchema.parse(
 			await request(`/app/installations/${encodeURIComponent(installationId)}/access_tokens`, jwt, {
 				method: "POST",
+				...(scope === undefined ? {} : { body: JSON.stringify(scope) }),
 			}),
 		);
-		this.#tokens.set(installationId, { token, expiresAt: Date.parse(expires_at) });
+		this.#tokens.set(cacheKey, { token, expiresAt: Date.parse(expires_at) });
 		return token;
 	}
+}
+
+/** What a repository-scoped token may be granted; the app must hold each permission itself. */
+export type RepositoryPermission = "contents" | "pull_requests";
+
+// One client per isolate and app, so the key is imported once and tokens are reused.
+let shared: { appId: string; privateKey: string; app: GitHubApp } | undefined;
+
+/** The isolate's client for the app, made on first use and again only when the settings change. */
+export function sharedApp(config: GitHubAppConfig): GitHubApp {
+	if (shared?.appId !== config.appId || shared.privateKey !== config.privateKey) {
+		shared = { ...config, app: new GitHubApp(config) };
+	}
+	return shared.app;
 }
 
 /** Every installation the user behind a user access token can reach, by id. */

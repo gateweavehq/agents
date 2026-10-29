@@ -10,10 +10,18 @@ import {
 	type AgentSnapshot,
 	type agentDefinitionInput,
 	INSTRUCTION_KINDS,
+	type SandboxRepository,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
 import type { z } from "zod";
-import { agentAssets, agentDefinitions, agentMcpServers, agents, assets } from "./db/schema";
+import {
+	agentAssets,
+	agentDefinitions,
+	agentMcpServers,
+	agents,
+	assets,
+	repositories,
+} from "./db/schema";
 import { remoteServer } from "./mcp-servers";
 import { getAssetVersion } from "./queries";
 import { type Db, toAgent } from "./state";
@@ -27,6 +35,7 @@ export function createAgent(db: Db, input: Definition, now: number): Agent {
 	checkInstructions(db, input.instructions, null);
 	checkEnvironment(db, input.environment, null);
 	checkMcpServers(db, input.mcpServers, new Set());
+	checkRepository(db, input, null);
 	const id = crypto.randomUUID();
 	const row = {
 		id,
@@ -54,6 +63,7 @@ export function updateAgent(db: Db, id: string, input: Definition, now: number):
 	checkInstructions(db, input.instructions, current.instructionsAssetId);
 	checkEnvironment(db, input.environment, current.envSetAssetId);
 	checkMcpServers(db, input.mcpServers, pinnedServers(db, id));
+	checkRepository(db, input, current.repositoryId);
 	const row = db
 		.update(agents)
 		.set({
@@ -112,6 +122,7 @@ function definitionOf(db: Db, id: string) {
 		.select({
 			instructionsAssetId: agentDefinitions.instructionsAssetId,
 			envSetAssetId: agentDefinitions.envSetAssetId,
+			repositoryId: agentDefinitions.repositoryId,
 		})
 		.from(agentDefinitions)
 		.innerJoin(agents, eq(agents.id, agentDefinitions.agentId))
@@ -129,6 +140,7 @@ function definitionRow(agentId: string, input: Definition) {
 		envSetAssetId: input.environment?.assetId ?? null,
 		envSetVersion: input.environment?.version ?? null,
 		sandbox: input.sandbox,
+		repositoryId: input.repositoryId,
 	};
 }
 
@@ -183,6 +195,68 @@ function checkEnvironment(
 	checkPin(db, pin, pinnedAssetId, (name, kind) =>
 		kind === "env-set" ? null : `${name} is not an environment set`,
 	);
+}
+
+/**
+ * The repository must be one the workspace's GitHub App reaches, and the agent must have a
+ * sandbox to check it out in. Like an asset, a repository the app no longer reaches stays chosen
+ * if it was, and the agent's turns say why they cannot go on, but it cannot be chosen anew.
+ */
+function checkRepository(db: Db, input: Definition, chosenId: string | null): void {
+	if (input.repositoryId === null) return;
+	if (!input.sandbox) {
+		throw new AgentError(
+			"Only an agent with a sandbox can have a repository: it is checked out there",
+		);
+	}
+	const repository = db
+		.select()
+		.from(repositories)
+		.where(eq(repositories.id, input.repositoryId))
+		.get();
+	if (!repository) throw new AgentError("There is no such repository in the workspace");
+	if (repository.id === chosenId) return;
+	const problem = repositoryProblem(repository);
+	if (problem) throw new AgentError(problem);
+}
+
+/** Why the workspace's GitHub App cannot check out a repository for a sandbox; null if it can. */
+function repositoryProblem(repository: typeof repositories.$inferSelect): string | null {
+	const name = `${repository.owner}/${repository.name}`;
+	if (repository.provider !== "github" || repository.installationId === null) {
+		return `${name} is not reached through the workspace's GitHub App`;
+	}
+	if (repository.removedAt !== null) return `The workspace's GitHub App no longer reaches ${name}`;
+	return null;
+}
+
+/**
+ * The repository the agent's sandbox checks out, as a turn hands it to the runtime, or why it
+ * cannot be; null when the agent has none.
+ */
+export function agentRepository(
+	db: Db,
+	agentId: string,
+): SandboxRepository | { problem: string } | null {
+	const found = db
+		.select({ repository: repositories })
+		.from(agentDefinitions)
+		.innerJoin(repositories, eq(repositories.id, agentDefinitions.repositoryId))
+		.where(eq(agentDefinitions.agentId, agentId))
+		.get();
+	if (!found) return null;
+	const { repository } = found;
+	const problem = repositoryProblem(repository);
+	if (problem || repository.installationId === null) {
+		return { problem: problem ?? "The repository cannot be reached" };
+	}
+	return {
+		owner: repository.owner,
+		name: repository.name,
+		externalId: repository.externalId,
+		installationId: repository.installationId,
+		defaultBranch: repository.defaultBranch,
+	};
 }
 
 /** The servers the agent pins now, which may stay pinned after they leave the library. */

@@ -7,6 +7,7 @@ import {
 	MODEL_PROVIDER_NAMES,
 	type PinnedAsset,
 	providerMissing,
+	SANDBOX_REPOSITORY_PATH,
 } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { MessagesSquare, Pencil, Trash2 } from "lucide-react";
@@ -223,6 +224,32 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 							: "The agent has a sandbox, but this server runs none, so it cannot answer. Whoever runs the server can turn sandboxes on."
 						: `No sandbox: the agent cannot run commands.${admin && data.sandboxOffered ? " Give it one with Edit." : ""}`}
 				</p>
+				{definition.sandbox && definition.repository && (
+					<p className="rounded-lg border p-6 text-sm text-muted-foreground">
+						{definition.repository.removed ? (
+							<>
+								The workspace's GitHub App no longer reaches{" "}
+								<span className="font-medium text-foreground">
+									{definition.repository.owner}/{definition.repository.name}
+								</span>
+								, so the agent cannot answer.
+								{admin ? " Choose another repository with Edit." : ""}
+							</>
+						) : (
+							<>
+								Each conversation checks out{" "}
+								<Link
+									to="/$workspace/repositories/$repositoryId"
+									params={{ workspace: slug, repositoryId: definition.repository.id }}
+									className="font-medium text-foreground underline-offset-4 hover:underline"
+								>
+									{definition.repository.owner}/{definition.repository.name}
+								</Link>{" "}
+								at <code>{SANDBOX_REPOSITORY_PATH}</code>, on a branch of its own.
+							</>
+						)}
+					</p>
+				)}
 			</section>
 
 			<section aria-labelledby="mcp-heading" className="space-y-3">
@@ -241,7 +268,9 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 					</ul>
 				) : (
 					<p className="rounded-lg border p-6 text-sm text-muted-foreground">
-						No MCP servers: the agent has no tools.
+						{definition.sandbox
+							? "No MCP servers: the agent has only its sandbox's tools."
+							: "No MCP servers: the agent has no tools."}
 						{admin ? " Choose servers from the library with Edit." : ""}
 					</p>
 				)}
@@ -403,6 +432,7 @@ function inputOf(agent: Agent, definition: AgentDefinition) {
 			tools: server.tools,
 		})),
 		sandbox: definition.sandbox,
+		repositoryId: definition.repository?.id ?? null,
 	};
 }
 

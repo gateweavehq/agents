@@ -20,6 +20,7 @@ import m0018 from "./0018_triggers.sql";
 import m0019 from "./0019_mcp_tool_allowlist.sql";
 import m0020 from "./0020_trigger_events.sql";
 import m0021 from "./0021_sandboxes.sql";
+import m0022 from "./0022_workspace_repository.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -47,5 +48,6 @@ export default {
 		m0019,
 		m0020,
 		m0021,
+		m0022,
 	},
 };

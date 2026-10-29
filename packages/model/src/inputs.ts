@@ -535,6 +535,11 @@ export const agentDefinitionInput = projectInput.extend({
 	 * server that runs no sandboxes keeps the choice and refuses the agent's turns.
 	 */
 	sandbox: z.boolean().default(false),
+	/**
+	 * A repository of the workspace's, linked through its GitHub App, that the sandbox checks out
+	 * for each conversation. Only an agent with a sandbox has one.
+	 */
+	repositoryId: z.string().min(1).max(64).nullable().default(null),
 });
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
 

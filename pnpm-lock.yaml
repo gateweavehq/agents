@@ -534,6 +534,9 @@ importers:
       '@cloudflare/sandbox':
         specifier: 1.0.3
         version: 1.0.3
+      '@gateweave/agents-github':
+        specifier: workspace:*
+        version: link:../github
       '@gateweave/agents-model':
         specifier: workspace:*
         version: link:../model

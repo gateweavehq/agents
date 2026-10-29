@@ -329,6 +329,11 @@ export interface AgentDefinition {
 	mcpServers: AgentMcpServer[];
 	/** Whether its turns have a sandbox: a Linux machine to run commands and edit files in. */
 	sandbox: boolean;
+	/**
+	 * The repository its sandbox checks out, linked through the workspace's GitHub App; null when
+	 * none. `removed` once the app no longer reaches it, and the agent's turns are refused.
+	 */
+	repository: { id: string; owner: string; name: string; removed: boolean } | null;
 }
 
 /** An MCP server an agent run by Gateweave uses. */

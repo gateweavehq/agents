@@ -15,6 +15,8 @@ import {
 	type ProviderModel,
 	providerMissing,
 	providerPickerNote,
+	type Repository,
+	SANDBOX_REPOSITORY_PATH,
 } from "@gateweave/agents-model";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
@@ -32,7 +34,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
-import { getMcpServers, getModels } from "#/lib/registry";
+import { getMcpServers, getModels, getRepositories } from "#/lib/registry";
 
 function message(error: unknown) {
 	return error instanceof Error ? error.message : "Something went wrong";
@@ -85,6 +87,10 @@ export function AgentDialog({
 	// The last check of each library server, which says what tools there are to choose from.
 	const [checks, setChecks] = useState<Map<string, McpCheck | null>>(() => new Map());
 	const [sandbox, setSandbox] = useState(agent?.definition.sandbox ?? false);
+	const chosenRepository = agent?.definition.repository ?? null;
+	const [repositoryId, setRepositoryId] = useState(chosenRepository?.id ?? "");
+	// The repositories the workspace's GitHub App reaches, which a sandbox can check out.
+	const [repositories, setRepositories] = useState<Repository[]>([]);
 	const [models, setModels] = useState<ProviderModel[] | string | null>(null);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -95,6 +101,18 @@ export function AgentDialog({
 		getMcpServers({ data: slug })
 			.then((found) => {
 				if (live) setChecks(new Map((found ?? []).map((entry) => [entry.asset.id, entry.check])));
+			})
+			.catch(() => {});
+		getRepositories({ data: slug })
+			.then((found) => {
+				if (live) {
+					setRepositories(
+						(found ?? []).filter(
+							(repository) =>
+								repository.provider === "github" && repository.installationId !== null,
+						),
+					);
+				}
 			})
 			.catch(() => {});
 		return () => {
@@ -168,6 +186,8 @@ export function AgentDialog({
 						};
 					}),
 				sandbox,
+				// The repository is checked out in the sandbox, so it goes with it.
+				repositoryId: sandbox && repositoryId !== "" ? repositoryId : null,
 			});
 			onClose();
 		} catch (failure) {
@@ -371,6 +391,36 @@ export function AgentDialog({
 							</span>
 						</span>
 					</Label>
+					{sandbox && (
+						<div className="space-y-2">
+							<Label htmlFor="agent-repository">Repository</Label>
+							<select
+								id="agent-repository"
+								className={SELECT}
+								value={repositoryId}
+								onChange={(event) => setRepositoryId(event.target.value)}
+							>
+								<option value="">None</option>
+								{chosenRepository &&
+									!repositories.some((repository) => repository.id === chosenRepository.id) && (
+										<option value={chosenRepository.id}>
+											{chosenRepository.owner}/{chosenRepository.name}
+											{chosenRepository.removed ? " (no longer reached)" : ""}
+										</option>
+									)}
+								{repositories.map((repository) => (
+									<option key={repository.id} value={repository.id}>
+										{repository.owner}/{repository.name}
+									</option>
+								))}
+							</select>
+							<p className="text-xs text-muted-foreground">
+								Each conversation checks it out at <code>{SANDBOX_REPOSITORY_PATH}</code> on a
+								branch of its own, through the workspace's GitHub App. The agent changes the files
+								there, and cannot push them yet.
+							</p>
+						</div>
+					)}
 					{error && (
 						<p role="alert" className="text-sm text-destructive">
 							{error}

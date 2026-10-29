@@ -137,7 +137,13 @@ import {
 	startTeamConversation,
 } from "./conversations";
 import * as schema from "./db/schema";
-import { agentSnapshot, createAgent, removeAgent, updateAgent } from "./definitions";
+import {
+	agentRepository,
+	agentSnapshot,
+	createAgent,
+	removeAgent,
+	updateAgent,
+} from "./definitions";
 import {
 	checkEnvSecretName,
 	createEnvSet,
@@ -207,7 +213,7 @@ import {
 } from "./scans";
 import { type Sealer, type SecretsEnv, sealerFor } from "./secrets";
 import { createSetup, deleteSetup, importSetup, setSetupAssets, updateSetup } from "./setups";
-import { type SourceEnv, sourceFor, writerFor } from "./sources";
+import { GITHUB_NOT_SET_UP, githubSetUp, type SourceEnv, sourceFor, writerFor } from "./sources";
 import { type Db, toApplication } from "./state";
 import { nestedTurnPlan, teamTurnPlan } from "./team-turns";
 import {
@@ -858,6 +864,17 @@ export class RegistryDO extends DurableObject {
 			);
 		}
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
+		const repository = sandbox ? agentRepository(this.#db, agent.agentId) : null;
+		if (repository && "problem" in repository) {
+			return refused(
+				`${repository.problem}, so ${agent.name} cannot answer. An owner or admin can choose another repository on the agent, or reconnect it in Repositories.`,
+			);
+		}
+		if (repository && !githubSetUp(this.env as SourceEnv)) {
+			return refused(
+				`${GITHUB_NOT_SET_UP}, so ${agent.name} cannot check out ${repository.owner}/${repository.name}. Whoever runs this server can set it up; see the README.`,
+			);
+		}
 		const servers = tools ? agentServers(this.#db, agent.agentId) : [];
 		const edges = tools && position ? turnEdges(this.#db, position) : [];
 		const [opened, environment] = await Promise.all([
@@ -868,7 +885,7 @@ export class RegistryDO extends DurableObject {
 		]);
 		if ("status" in opened) return opened;
 		const mcpServers = servers.map((server) => turnServer(server, environment));
-		return { agent, key: opened.key, mcpServers, edges, sandbox };
+		return { agent, key: opened.key, mcpServers, edges, sandbox, repository };
 	}
 
 	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */

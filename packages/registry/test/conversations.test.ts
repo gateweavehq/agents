@@ -108,6 +108,7 @@ describe("conversations", () => {
 			mcpServers: [],
 			edges: [],
 			sandbox: false,
+			repository: null,
 			runId: expect.any(String),
 		});
 
@@ -197,6 +198,30 @@ describe("turns with Workers AI", () => {
 	});
 });
 
+/**
+ * Runs `fn` on a registry whose server binds sandboxes, which the test Worker does not, and
+ * with `github`, is set up as a GitHub App too.
+ */
+async function withSandboxes<T>(
+	stub: ReturnType<typeof registry>,
+	fn: (instance: RegistryDO) => Promise<T>,
+	{ github = false } = {},
+) {
+	return runInDurableObject(stub, async (instance: RegistryDO) => {
+		// `env` is protected, and a test of the server's settings is what needs it.
+		const { env: settings } = instance as unknown as { env: Record<string, unknown> };
+		const added: Record<string, unknown> = { SANDBOX: {} };
+		// Only their presence is read here: no test reaches GitHub.
+		if (github) Object.assign(added, { GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: "unused" });
+		Object.assign(settings, added);
+		try {
+			return await fn(instance);
+		} finally {
+			for (const name of Object.keys(added)) delete settings[name];
+		}
+	});
+}
+
 describe("turns with a sandbox", () => {
 	async function builderConversation(stub: ReturnType<typeof registry>, sandbox: boolean) {
 		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
@@ -209,23 +234,6 @@ describe("turns with a sandbox", () => {
 			sandbox,
 		});
 		return { agent, id: (await stub.startConversation(agent.id, ADA))?.id ?? "" };
-	}
-
-	/** Runs `fn` on a registry whose server binds sandboxes, which the test Worker does not. */
-	async function withSandboxes<T>(
-		stub: ReturnType<typeof registry>,
-		fn: (instance: RegistryDO) => Promise<T>,
-	) {
-		return runInDurableObject(stub, async (instance: RegistryDO) => {
-			// `env` is protected, and a test of the server's settings is what needs it.
-			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
-			settings.SANDBOX = {};
-			try {
-				return await fn(instance);
-			} finally {
-				delete settings.SANDBOX;
-			}
-		});
 	}
 
 	it("are off unless the agent is given one, which its definition keeps", async () => {
@@ -280,6 +288,115 @@ describe("turns with a sandbox", () => {
 		});
 		await withSandboxes(stub, async (instance) => {
 			expect(await instance.beginTurn(last, "Build it")).toMatchObject({ sandbox: true });
+		});
+	});
+});
+
+describe("turns with a repository", () => {
+	const SITE = {
+		provider: "github" as const,
+		externalId: "7",
+		installationId: "99",
+		owner: "acme",
+		name: "site",
+		defaultBranch: "main",
+		private: true,
+	};
+
+	function builder(repositoryId: string | null, sandbox = true) {
+		return {
+			name: "Builder",
+			description: null,
+			provider: "anthropic" as const,
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			sandbox,
+			repositoryId,
+		};
+	}
+
+	/** `withSandboxes` with a GitHub App as well. */
+	function withServer<T>(
+		stub: ReturnType<typeof registry>,
+		fn: (instance: RegistryDO) => Promise<T>,
+	) {
+		return withSandboxes(stub, fn, { github: true });
+	}
+
+	it("are only for agents with a sandbox, and repositories the GitHub App reaches", async () => {
+		const stub = registry();
+		const [site = ""] = await stub.syncRepositories([SITE]);
+		await runInDurableObject(stub, (instance: RegistryDO) => {
+			expect(() => instance.createAgent(builder(site, false))).toThrow(
+				"Only an agent with a sandbox can have a repository: it is checked out there",
+			);
+			expect(() => instance.createAgent(builder("nope"))).toThrow(
+				"There is no such repository in the workspace",
+			);
+		});
+		const agent = await stub.createAgent(builder(site));
+		expect((await stub.getAgent(agent.id))?.definition?.repository).toEqual({
+			id: site,
+			owner: "acme",
+			name: "site",
+			removed: false,
+		});
+	});
+
+	it("hand the runtime the repository to check out, and never a token", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const [site = ""] = await stub.syncRepositories([SITE]);
+		const agent = await stub.createAgent(builder(site));
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+
+		const turn = await withServer(stub, (instance) => instance.beginTurn(id, "Fix the build"));
+		expect(turn).toMatchObject({
+			sandbox: true,
+			repository: {
+				owner: "acme",
+				name: "site",
+				externalId: "7",
+				installationId: "99",
+				defaultBranch: "main",
+			},
+		});
+		expect(JSON.stringify(turn)).not.toMatch(/token|ghs_/i);
+
+		// A server that is not a GitHub App has no way to check it out.
+		await withSandboxes(stub, async (instance) => {
+			expect(await instance.beginTurn(id, "Fix the build")).toEqual({
+				status: "refused",
+				message:
+					"GitHub is not set up on this server, so Builder cannot check out acme/site. Whoever runs this server can set it up; see the README.",
+			});
+		});
+	});
+
+	it("are refused once the GitHub App no longer reaches the repository, which stays chosen", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const [site = ""] = await stub.syncRepositories([SITE]);
+		const agent = await stub.createAgent(builder(site));
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.removeInstallation("99");
+
+		expect((await stub.getAgent(agent.id))?.definition?.repository).toMatchObject({
+			removed: true,
+		});
+		expect(await withServer(stub, (instance) => instance.beginTurn(id, "Fix the build"))).toEqual({
+			status: "refused",
+			message:
+				"The workspace's GitHub App no longer reaches acme/site, so Builder cannot answer. An owner or admin can choose another repository on the agent, or reconnect it in Repositories.",
+		});
+		// The agent keeps it through an edit, but no agent can choose it anew.
+		await expect(
+			stub.updateAgent(agent.id, { ...builder(site), name: "Fixer" }),
+		).resolves.toMatchObject({ name: "Fixer" });
+		await runInDurableObject(stub, (instance: RegistryDO) => {
+			expect(() => instance.createAgent(builder(site))).toThrow(
+				"The workspace's GitHub App no longer reaches acme/site",
+			);
 		});
 	});
 });

@@ -25,3 +25,26 @@ export const SANDBOX_NOT_OFFERED = "This server does not run sandboxes";
 export function sandboxOffered(settings: SandboxSettings): boolean {
 	return settings.SANDBOX !== undefined;
 }
+
+/** Where a sandbox checks out its agent's repository. */
+export const SANDBOX_REPOSITORY_PATH = "/workspace/repo";
+
+/**
+ * The repository a turn's sandbox checks out, as the registry hands it to the runtime. It only
+ * names the repository: the Worker mints a token for each of the sandbox's requests to GitHub, so
+ * none travels with a turn or enters the sandbox.
+ */
+export interface SandboxRepository {
+	owner: string;
+	name: string;
+	/** GitHub's id for the repository, which a token is scoped to. */
+	externalId: string;
+	/** The GitHub App installation that reaches it. */
+	installationId: string;
+	defaultBranch: string;
+}
+
+/** The branch a conversation's sandbox works on, made from the repository's default branch. */
+export function conversationBranch(conversationId: string): string {
+	return `gateweave/${conversationId}`;
+}

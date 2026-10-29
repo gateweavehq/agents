@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { decideOutbound } from "../src/outbound";
+import { repositoryNote, withCheckout } from "../src/checkout";
+import { decideOutbound, withGitHubToken } from "../src/outbound";
 import { clipOutput } from "../src/output";
 import { SANDBOX_LIMITS, sandboxPath, sandboxTools } from "../src/sandbox-tools";
 import type { RunRecorder } from "../src/trace";
@@ -206,5 +207,121 @@ describe("a sandbox's way out", () => {
 		]) {
 			expect(decide("GET", url)).toMatchObject({ allow: false });
 		}
+	});
+
+	describe("to GitHub", () => {
+		const repository = { owner: "acme", name: "Site" };
+		const git = (method: string, url: string) => decideOutbound(method, new URL(url), repository);
+		const only = {
+			allow: false,
+			reason: "github.com is reachable from this sandbox only to fetch acme/Site",
+		};
+
+		it("lets git fetch the agent's repository, with a token the Worker adds", () => {
+			const allowed = { allow: true, credentials: "github" };
+			expect(
+				git("GET", "https://github.com/acme/site.git/info/refs?service=git-upload-pack"),
+			).toEqual(allowed);
+			expect(git("POST", "https://github.com/ACME/Site/git-upload-pack")).toEqual(allowed);
+		});
+
+		it("refuses pushing, other repositories and anything else on github.com", () => {
+			const push = { allow: false, reason: "This sandbox cannot push to github.com" };
+			expect(
+				git("GET", "https://github.com/acme/site.git/info/refs?service=git-receive-pack"),
+			).toEqual(push);
+			expect(git("POST", "https://github.com/acme/site.git/git-receive-pack")).toEqual(push);
+			for (const url of [
+				"https://github.com/acme/site-other.git/info/refs?service=git-upload-pack",
+				"https://github.com/acme/siteother/git-upload-pack",
+				"https://github.com/other/site.git/info/refs?service=git-upload-pack",
+				"https://github.com/acme/site/archive/refs/heads/main.zip",
+				"https://github.com/acme/site/..%2Fother/info/refs?service=git-upload-pack",
+				"https://github.com/acme/site.git/info/refs",
+			]) {
+				expect(git("GET", url)).toEqual(only);
+			}
+			expect(git("GET", "https://github.com/acme/site.git/git-upload-pack")).toEqual(only);
+			expect(git("GET", "https://api.github.com/repos/acme/site")).toMatchObject({
+				allow: false,
+			});
+			expect(git("GET", "https://github.com:8443/acme/site.git/info/refs")).toMatchObject({
+				allow: false,
+			});
+			expect(git("GET", "http://github.com/acme/site.git/info/refs")).toEqual({
+				allow: false,
+				reason: "github.com is reachable only over HTTPS",
+			});
+		});
+
+		it("is closed to a sandbox whose agent has no repository", () => {
+			expect(
+				decide("GET", "https://github.com/acme/site.git/info/refs?service=git-upload-pack"),
+			).toEqual({
+				allow: false,
+				reason: "github.com is not reachable from this sandbox: its agent has no repository",
+			});
+		});
+
+		it("carries the token as GitHub takes it, and the request as git sent it", async () => {
+			const sent = new Request("https://github.com/acme/site.git/git-upload-pack", {
+				method: "POST",
+				headers: { "content-type": "application/x-git-upload-pack-request" },
+				body: "0032want",
+			});
+			const outgoing = withGitHubToken(sent, "ghs_scoped");
+			expect(outgoing.method).toBe("POST");
+			expect(outgoing.url).toBe(sent.url);
+			expect(outgoing.headers.get("content-type")).toBe("application/x-git-upload-pack-request");
+			expect(atob((outgoing.headers.get("authorization") ?? "").replace(/^Basic /, ""))).toBe(
+				"x-access-token:ghs_scoped",
+			);
+			expect(await outgoing.text()).toBe("0032want");
+		});
+	});
+});
+
+describe("a repository in the sandbox", () => {
+	const repository = {
+		owner: "acme",
+		name: "site",
+		externalId: "7",
+		installationId: "99",
+		defaultBranch: "main",
+	};
+	const BRANCH = "gateweave/conversation-1";
+
+	it("is checked out before the first tool runs, and once", async () => {
+		const sandbox = new MemorySandbox();
+		const port = withCheckout(sandbox, repository, BRANCH);
+		await port.writeFile("/workspace/repo/a.txt", "a");
+		await port.run("git status", "/workspace/repo", 120);
+		await port.readFile("/workspace/repo/a.txt");
+		expect(sandbox.checkouts).toEqual([{ repository, branch: BRANCH }]);
+		expect(sandbox.commands).toEqual([
+			{ command: "git status", cwd: "/workspace/repo", timeoutSeconds: 120 },
+		]);
+	});
+
+	it("answers a tool with why the checkout failed, and tries again on the next", async () => {
+		const sandbox = new MemorySandbox();
+		sandbox.checkoutAnswers.push({ error: "acme/site could not be checked out." });
+		const port = withCheckout(sandbox, repository, BRANCH);
+		expect(await port.run("ls", "/workspace", 120)).toEqual({
+			exitCode: 1,
+			output: "acme/site could not be checked out.",
+			timedOut: false,
+		});
+		expect(sandbox.commands).toEqual([]);
+		expect(await port.readFile("/workspace/repo/a.txt")).toEqual({
+			error: "/workspace/repo/a.txt does not exist.",
+		});
+		expect(sandbox.checkouts).toHaveLength(2);
+	});
+
+	it("is described to the model with where it is and the branch it works on", () => {
+		expect(repositoryNote(repository, BRANCH)).toBe(
+			"Your sandbox has the repository acme/site at /workspace/repo, on the branch gateweave/conversation-1, made from main. Read its AGENTS.md or CLAUDE.md, if it has one, before you change it. Its files are checked out when you first use a tool.",
+		);
 	});
 });

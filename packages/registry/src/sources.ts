@@ -3,12 +3,12 @@ import {
 	branchHead,
 	createBranch,
 	createCommit,
-	GitHubApp,
 	moveBranch,
 	openPullRequest,
 	pullRequest,
 	readTexts,
 	readTree,
+	sharedApp,
 	updatePullRequest,
 } from "@gateweave/agents-github";
 import type { RepositoryWriter } from "./apply";
@@ -21,14 +21,11 @@ export interface SourceEnv {
 	GITHUB_APP_PRIVATE_KEY?: string;
 }
 
-// One client per isolate, so installation tokens are reused across scans and workspaces.
-let client: { appId: string; privateKey: string; app: GitHubApp } | undefined;
+export const GITHUB_NOT_SET_UP = "GitHub is not set up on this server";
 
-function githubApp(appId: string, privateKey: string): GitHubApp {
-	if (client?.appId !== appId || client.privateKey !== privateKey) {
-		client = { appId, privateKey, app: new GitHubApp({ appId, privateKey }) };
-	}
-	return client.app;
+/** Whether the server can act as its GitHub App: read, write and mint tokens for sandboxes. */
+export function githubSetUp(env: SourceEnv): boolean {
+	return Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY);
 }
 
 /** Where to read the repository from, or why it cannot be read on this server. */
@@ -52,8 +49,9 @@ export function writerFor(
 	if (repository.provider !== "github" || installationId === null) {
 		return { unavailable: "No GitHub App installation reaches this repository" };
 	}
-	if (!appId || !privateKey) return { unavailable: "GitHub is not set up on this server" };
-	const app = githubApp(appId, privateKey);
+	if (!appId || !privateKey) return { unavailable: GITHUB_NOT_SET_UP };
+	// One client per isolate, so installation tokens are reused across scans and workspaces.
+	const app = sharedApp({ appId, privateKey });
 	const name = { owner: repository.owner, name: repository.name };
 	const token = () => app.installationToken(installationId);
 	return {
