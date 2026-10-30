@@ -29,8 +29,8 @@
 		]
 	},
 	// RunnerSandbox is each conversation's sandbox. It does nothing unless an environment binds it
-	// as SANDBOX with a container, as staging does: a sandbox needs Docker to deploy and is paid by
-	// the account, so production and self-hosted deploys leave it off until their operator opts in.
+	// as SANDBOX with a container, as cloud and staging do: a sandbox needs Docker to deploy and is
+	// paid by the account, so self-hosted deploys leave it off until their operator opts in.
 	"exports": {
 		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
 		"ConversationAgent": { "type": "durable-object", "storage": "sqlite" },
@@ -46,9 +46,45 @@
 	// WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID, and the SANDBOX_*
 	// limits (see apps/web/src/server/env.d.ts).
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
-	// The top level is production. Staging is a separate Worker with its own database and
-	// workspaces; bindings are not inherited, so they are repeated here.
+	// The top level is what self-hosters deploy. Gateweave Cloud deploys the environments below:
+	// `cloud` is https://agents.gateweave.com, the same Worker and database the top level names, and
+	// `staging` a separate Worker with its own. Bindings are not inherited, so each repeats them.
 	"env": {
+		"cloud": {
+			"name": "gateweave-agents",
+			"routes": [{ "pattern": "agents.gateweave.com", "custom_domain": true }],
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "gateweave-agents",
+					"migrations_dir": "apps/web/migrations"
+				}
+			],
+			"durable_objects": {
+				"bindings": [
+					{ "name": "REGISTRY", "class_name": "RegistryDO" },
+					{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
+					{ "name": "RATE_LIMITER", "class_name": "RateLimiter" },
+					{ "name": "SANDBOX", "class_name": "RunnerSandbox" },
+					{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
+				]
+			},
+			// Cloud's sandboxes are for the workspaces it invites (SANDBOX_WORKSPACES), within these
+			// limits. Both secrets are required, so a deploy fails rather than offer sandboxes to every
+			// workspace or spend the budget with nobody told.
+			"vars": { "SANDBOX_DAILY_MINUTES": "120", "SANDBOX_MONTHLY_BUDGET": "100" },
+			"containers": [
+				{
+					"class_name": "RunnerSandbox",
+					"scheduling_policy": "durable_object",
+					"images": { "sandbox": { "dockerfile": "./sandbox/Dockerfile" } }
+				}
+			],
+			"send_email": [{ "name": "EMAIL" }],
+			"secrets": {
+				"required": ["BETTER_AUTH_SECRET", "SANDBOX_WORKSPACES", "SANDBOX_ALERT_EMAIL"]
+			}
+		},
 		"staging": {
 			"name": "gateweave-agents-staging",
 			"d1_databases": [

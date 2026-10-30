@@ -405,7 +405,8 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
 An agent with a sandbox works on a Linux machine of its own in each conversation: it runs
 commands and reads, writes, edits, finds and searches files there. It is the first part of cloud
 runners (phase 5, AGT-9). A deployment offers sandboxes when it binds `SANDBOX` with a container;
-staging does, production and self-hosted deploys leave them off until their operator opts in.
+Gateweave Cloud's `cloud` and `staging` environments do, and self-hosted deploys leave them off
+until their operator opts in. Cloud offers them only to the workspaces it invites.
 
 - **Engines.** What takes an agent's turns is its engine. `gateweave`, the default, is Gateweave's
   own loop with the agent's tools (`packages/runtime/src/conversation-agent.ts`). `claude-code` runs
@@ -987,12 +988,13 @@ provider keys.
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
-- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40), a repository in them (AGT-41) and
-  pull requests from them (AGT-42): runs on a schedule or a label (AGT-43), the vendors' own coding CLIs (AGT-44), and metering each workspace's sandbox
-  time before Cloud's production offers them (AGT-45). Sandboxes will also run the MCP servers
+- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40), a repository in them (AGT-41),
+  pull requests from them (AGT-42), the vendors' own coding CLIs (AGT-44) and limits on sandbox
+  time (AGT-45): runs on a schedule or a label (AGT-43). Sandboxes will also run the MCP servers
   that are local commands.
 
 ## Deploys
 
-`main` deploys to staging after CI passes, and a published GitHub release deploys production
-(`.github/workflows/deploy.yml`). D1 migrations are applied before the new code goes live.
+`main` deploys to staging after CI passes, and a published GitHub release deploys production, the
+`cloud` environment of `wrangler.jsonc` (`.github/workflows/deploy.yml`). D1 migrations are
+applied before the new code goes live.

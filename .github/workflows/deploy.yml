@@ -57,7 +57,10 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Builds, applies D1 migrations, then deploys (apps/web/scripts/deploy.mjs), as self-hosters do.
-      # `run` is needed: `pnpm deploy` is a built-in command.
+      # Builds, applies D1 migrations, then deploys (apps/web/scripts/deploy.mjs), as self-hosters do,
+      # but with the `cloud` environment of wrangler.jsonc, which both the build and Wrangler read
+      # from CLOUDFLARE_ENV. `run` is needed: `pnpm deploy` is a built-in command.
       - name: Deploy
+        env:
+          CLOUDFLARE_ENV: cloud
         run: pnpm --filter @gateweave/agents-web run deploy
