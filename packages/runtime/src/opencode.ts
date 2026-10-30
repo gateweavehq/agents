@@ -1,10 +1,10 @@
 /**
  * OpenCode as an agent's engine (`./engines.ts`): the open-source OpenCode CLI, run in the
  * conversation's sandbox in place of Gateweave's own loop, with the agent's Anthropic, OpenAI or
- * Google model. It reads the repository's AGENTS.md and opencode.json as it would on a laptop. Each of its
- * model requests becomes a model span with the request's own usage, and each of its tool calls a
- * tool span. One conversation is one OpenCode session, which each turn continues while the sandbox
- * has it.
+ * Google model. It reads the repository's AGENTS.md and opencode.json as it would on a laptop. Each
+ * of its model requests becomes a model span with the request's own usage, and each of its tool
+ * calls a tool span. One conversation is one OpenCode session, which each turn continues while the
+ * sandbox has it.
  *
  * Gateweave's tools reach it as the MCP server `gateweave` (`./engine-tools.ts`), whose tools it
  * calls `gateweave_<tool>`. Their calls come to the chat under their own names, and record their
