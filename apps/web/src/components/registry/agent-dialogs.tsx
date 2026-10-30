@@ -20,6 +20,7 @@ import {
 	providerPickerNote,
 	type Repository,
 	SANDBOX_REPOSITORY_PATH,
+	type SandboxOffer,
 } from "@gateweave/agents-model";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
@@ -45,6 +46,13 @@ function message(error: unknown) {
 
 const SELECT = "h-9 w-full rounded-md border bg-transparent px-2 text-sm";
 
+/** What the sandbox's box says when the server runs none for the workspace. */
+const SANDBOX_OFFER_NOTES: Record<SandboxOffer, string> = {
+	offered: "",
+	"by-invitation": " (by invitation on this server)",
+	none: " (not on this server)",
+};
+
 const ENGINE_HINTS: Record<AgentEngine, string> = {
 	gateweave: "Gateweave's own loop, with the agent's tools.",
 	"claude-code":
@@ -65,7 +73,7 @@ export function AgentDialog({
 	agent,
 	library,
 	available,
-	sandboxOffered,
+	sandboxOffer,
 	onSave,
 	onClose,
 }: {
@@ -73,8 +81,8 @@ export function AgentDialog({
 	library: LibraryEntry[];
 	/** The providers an agent can use: the workspace has a key, or the server offers it. */
 	available: ModelProvider[];
-	/** Whether the server runs sandboxes. */
-	sandboxOffered: boolean;
+	/** Whether the server runs sandboxes for the workspace. */
+	sandboxOffer: SandboxOffer;
 	onSave: (input: AgentDefinitionInput) => Promise<void>;
 	onClose: () => void;
 }) {
@@ -414,12 +422,12 @@ export function AgentDialog({
 							className="mt-0.5"
 							checked={sandbox}
 							// An agent keeps a sandbox it has on a server that runs none, until it is unticked.
-							disabled={!sandboxOffered && !sandbox}
+							disabled={sandboxOffer !== "offered" && !sandbox}
 							onCheckedChange={(checked) => setSandbox(checked === true)}
 						/>
 						<span className="space-y-1">
 							<span className="block text-sm font-medium">
-								Sandbox{sandboxOffered ? "" : " (not on this server)"}
+								Sandbox{SANDBOX_OFFER_NOTES[sandboxOffer]}
 							</span>
 							<span className="block text-xs text-muted-foreground">
 								A Linux machine for each conversation, where the agent runs commands and edits

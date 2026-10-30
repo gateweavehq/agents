@@ -4,9 +4,17 @@
  * binding; these are the pure parts the registry, the runtime and the app share.
  */
 
-/** What a deployment has when it offers sandboxes: the binding of their Durable Objects. */
+/**
+ * What a deployment has when it offers sandboxes: the binding of their Durable Objects, and the
+ * workspaces it offers them to.
+ */
 export interface SandboxSettings {
 	SANDBOX?: unknown;
+	/**
+	 * The ids of the workspaces that may use sandboxes, separated by commas or spaces; every
+	 * workspace when unset or empty. Gateweave Cloud offers them by invitation.
+	 */
+	SANDBOX_WORKSPACES?: string;
 }
 
 /** Minutes without a request after which a sandbox stops, and its files go with it. */
@@ -21,9 +29,24 @@ export const MAX_WORKSPACE_SANDBOXES = 3;
 /** Why an agent with a sandbox cannot answer on a server that runs none. */
 export const SANDBOX_NOT_OFFERED = "This server does not run sandboxes";
 
+/** Why an agent with a sandbox cannot answer in a workspace the server has not invited. */
+export const SANDBOX_NOT_INVITED = "This server runs sandboxes only for the workspaces it invites";
+
 /** Whether the deployment offers sandboxes. */
 export function sandboxOffered(settings: SandboxSettings): boolean {
 	return settings.SANDBOX !== undefined;
+}
+
+/**
+ * How the deployment offers sandboxes to a workspace: to it, only to the workspaces it invites
+ * (not this one), or to none.
+ */
+export type SandboxOffer = "offered" | "by-invitation" | "none";
+
+export function sandboxOfferTo(settings: SandboxSettings, workspaceId: string): SandboxOffer {
+	if (!sandboxOffered(settings)) return "none";
+	const invited = (settings.SANDBOX_WORKSPACES ?? "").split(/[\s,]+/).filter(Boolean);
+	return invited.length === 0 || invited.includes(workspaceId) ? "offered" : "by-invitation";
 }
 
 /** Where a sandbox checks out its agent's repository. */

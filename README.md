@@ -68,7 +68,8 @@ files, add the `SANDBOX` binding and the `containers` entry that the `staging` e
 `wrangler.jsonc` has to the environment you deploy. Deploying then needs Docker, which builds
 `sandbox/Dockerfile`, and your Cloudflare account pays for the
 [Containers](https://developers.cloudflare.com/containers/) time; each workspace has at most three
-sandboxes at once, and each stops after 15 minutes without use. An agent's sandbox can check out
+sandboxes at once, and each stops after 15 minutes without use. To offer them only to some
+workspaces, list their ids in `SANDBOX_WORKSPACES`, separated by commas. An agent's sandbox can check out
 one of the workspace's repositories when the server is set up as a GitHub App (see above), and
 propose its work as a pull request. The Worker mints a token for that repository alone and adds it
 as the clone leaves, so the token never enters the sandbox. For the one push a pull request needs,

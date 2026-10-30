@@ -45,5 +45,10 @@ declare namespace Cloudflare {
 		 * The Cloudflare account that pays for Workers AI. Taken from AI_GATEWAY_URL when unset.
 		 */
 		CLOUDFLARE_ACCOUNT_ID?: string;
+		/**
+		 * The ids of the workspaces that may use sandboxes, separated by commas or spaces, when the
+		 * deployment binds SANDBOX. Every workspace may when unset; Gateweave Cloud invites them.
+		 */
+		SANDBOX_WORKSPACES?: string;
 	}
 }

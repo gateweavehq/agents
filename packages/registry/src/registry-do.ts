@@ -69,6 +69,7 @@ import {
 	runFinish,
 	runPullRequest,
 	SANDBOX_IDLE_MINUTES,
+	SANDBOX_NOT_INVITED,
 	SANDBOX_NOT_OFFERED,
 	type SandboxSettings,
 	type ScanResult,
@@ -78,7 +79,7 @@ import {
 	type SetupImportInput,
 	type SetupInput,
 	type SetupPins,
-	sandboxOffered,
+	sandboxOfferTo,
 	scanResult,
 	setupImportInput,
 	setupInput,
@@ -861,9 +862,18 @@ export class RegistryDO extends DurableObject {
 		// An ask has no tools, so it needs no sandbox either, but an engine such as Claude Code runs
 		// only in one.
 		const sandbox = agent.sandbox && (tools || agent.engine !== "gateweave");
-		if (sandbox && !sandboxOffered(this.env as SandboxSettings)) {
+		// Each registry is named for its workspace (`registryFor` in the app).
+		const offer = sandbox
+			? sandboxOfferTo(this.env as SandboxSettings, this.ctx.id.name ?? "")
+			: null;
+		if (offer === "none") {
 			return refused(
 				`${SANDBOX_NOT_OFFERED}, so ${agent.name} cannot answer. Whoever runs this server can turn them on; see the README.`,
+			);
+		}
+		if (offer === "by-invitation") {
+			return refused(
+				`${SANDBOX_NOT_INVITED}, so ${agent.name} cannot answer. Whoever runs this server can invite this workspace.`,
 			);
 		}
 		if (sandbox && sandboxesInUse(this.#db, conversation, Date.now()) >= MAX_WORKSPACE_SANDBOXES) {

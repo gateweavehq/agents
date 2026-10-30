@@ -448,8 +448,10 @@ staging does, production and self-hosted deploys leave them off until their oper
   what a third party said. A turn with a sandbox may take 40 model requests
   (`MAX_SANDBOX_STEPS`) instead of 10, since its work goes in many small steps.
 - **The registry decides.** The agent's `sandbox` setting is in `agent_definitions` and its
-  snapshot. `beginTurn` refuses a turn that needs a sandbox where the server binds none, and one
-  that would make more than three of the workspace's conversations hold one at once
+  snapshot. `beginTurn` refuses a turn that needs a sandbox where the server binds none, in a
+  workspace the server does not invite when it names the ones it does (`SANDBOX_WORKSPACES`, by
+  id, which a registry knows as its Durable Object's name; Gateweave Cloud offers sandboxes by
+  invitation), and one that would make more than three of the workspace's conversations hold one at once
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
   sandbox, unless the agent's engine runs only in one, as every engine but Gateweave's loop does.
