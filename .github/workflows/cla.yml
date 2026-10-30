@@ -22,6 +22,21 @@ jobs:
       github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
     runs-on: ubuntu-latest
     steps:
+      # Gateweave Agents' bots commit what agents write in this organization's workspaces. Their
+      # commits pass only on this repository's own branches: anyone can install the production
+      # app, so on a fork the agent behind them could be anyone's.
+      - id: allowlist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+        run: |
+          list="xgame92,dependabot[bot],renovate[bot]"
+          # A comment on an issue that is not a pull request is treated like a fork's.
+          cross=$(gh pr view "$NUMBER" --repo "$GITHUB_REPOSITORY" --json isCrossRepository --jq .isCrossRepository || echo true)
+          if [ "$cross" = "false" ]; then
+            list="$list,gateweave-agents[bot],gateweave-agents-staging[bot]"
+          fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"
       # Pinned to a commit because this job runs with write permissions. Tag: v2.6.1
       - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
         env:
@@ -31,6 +46,4 @@ jobs:
           path-to-signatures: signatures/cla.json
           # Signatures live on their own branch so main can stay protected.
           branch: cla-signatures
-          # gateweave-agents-staging[bot] commits what agents write on Gateweave Agents' staging, in
-          # workspaces of this organization. Its production app's bot joins it once that app exists.
-          allowlist: xgame92,dependabot[bot],renovate[bot],gateweave-agents-staging[bot]
+          allowlist: ${{ steps.allowlist.outputs.list }}
