@@ -590,13 +590,14 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 	/** The container's OpenCode server, as a turn reaches it. */
 	#openCodeServer(container: Container): OpenCodeServerPort {
 		return {
-			ensure: async (env) => {
+			ensure: async (env, signal) => {
 				const started = await this.#exec(
 					container,
 					["bash", "-c", OPENCODE_SERVER_SCRIPT],
 					SANDBOX_ROOT,
 					OPENCODE_SCRIPT_SECONDS,
 					{ ...env, OPENCODE_SETTINGS: JSON.stringify(env) },
+					signal,
 				);
 				const said = /^(running|started) (\d+)$/m.exec(started.output);
 				if (started.exitCode !== 0 || !said) {
@@ -680,17 +681,24 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 		}
 	}
 
-	/** Runs `argv` under GNU `timeout`, with its output clipped as it streams. */
+	/** Runs `argv` under GNU `timeout`, with its output clipped as it streams, until `signal` gives up. */
 	async #exec(
 		container: Container,
 		argv: string[],
 		cwd: string,
 		timeoutSeconds: number,
 		env: Record<string, string> = {},
+		signal?: AbortSignal,
 	): Promise<CommandResult> {
 		const process = await container.exec(
 			["timeout", "--kill-after=5s", `${timeoutSeconds}s`, ...argv],
-			{ cwd, env: { ...COMMAND_ENV, ...env }, stdout: "pipe", stderr: "combined" },
+			{
+				cwd,
+				env: { ...COMMAND_ENV, ...env },
+				stdout: "pipe",
+				stderr: "combined",
+				...(signal === undefined ? {} : { signal }),
+			},
 		);
 		const [output, exitCode] = await Promise.all([clipOutput(process.stdout), process.exitCode]);
 		return { exitCode, output: output.text, timedOut: TIMED_OUT.has(exitCode) };
