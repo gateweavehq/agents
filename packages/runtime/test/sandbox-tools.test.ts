@@ -210,6 +210,7 @@ describe("a sandbox's way out", () => {
 		for (const url of [
 			"https://example.com/",
 			"https://api.anthropic.com/v1/messages",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent",
 			"https://registry.npmjs.org.evil.dev/zod",
 			"https://registry.npmjs.org:8443/zod",
 			"https://github.com/gateweavehq/agents.git/info/refs",

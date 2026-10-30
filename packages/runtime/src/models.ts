@@ -188,6 +188,36 @@ export function openaiRequest(
 }
 
 /**
+ * A request OpenCode sent to Google from a sandbox (`./opencode.ts`), as `anthropicRequest` does:
+ * the key goes in `x-goog-api-key`, where `@ai-sdk/google` puts it too.
+ */
+export function googleRequest(
+	request: Request,
+	key: string,
+	settings: GatewaySettings,
+	metadata: GatewayMetadata,
+): Request {
+	const url = new URL(request.url);
+	const headers = new Headers(request.headers);
+	headers.delete("authorization");
+	headers.set("x-goog-api-key", key);
+	const parts = gatewayOf(settings);
+	if (parts) {
+		for (const [name, value] of Object.entries(gatewayHeadersOf(settings, metadata))) {
+			headers.set(name, value);
+		}
+	}
+	// The gateway's path for Google ends where the API's own begins, at /v1beta (`GATEWAY_PATHS`).
+	const target = parts ? `${parts.url}/google-ai-studio${url.pathname}${url.search}` : url.href;
+	return new Request(target, {
+		method: request.method,
+		headers,
+		body: request.body,
+		redirect: "manual",
+	});
+}
+
+/**
  * Why a turn failed, in words fit for whoever is chatting. Never the provider's own message: some
  * repeat part of the key.
  */

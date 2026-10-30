@@ -60,7 +60,7 @@ const ENGINE_HINTS: Record<AgentEngine, string> = {
 	codex:
 		"Runs OpenAI's Codex in the sandbox, with the repository's AGENTS.md and the agent's tools. It needs the sandbox and an OpenAI model.",
 	opencode:
-		"Runs OpenCode in the sandbox, with the repository's AGENTS.md and opencode.json, and the agent's tools. It needs the sandbox and an Anthropic or OpenAI model.",
+		"Runs OpenCode in the sandbox, with the repository's AGENTS.md and opencode.json, and the agent's tools. It needs the sandbox and an Anthropic, OpenAI or Google model.",
 };
 
 /**
