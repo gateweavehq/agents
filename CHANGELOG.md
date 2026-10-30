@@ -8,6 +8,27 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.2.0] - 2026-10-30
+
+OpenCode answers much sooner. It runs as a server that each sandbox starts once, instead of a new
+process for every message. It can also call Google's models.
+
+### Added
+
+- OpenCode agents can use Google's Gemini models with the workspace's Google key. (#77)
+- A Deploy to Cloudflare button in the README and the self-hosting guide, with what to fill in on
+  its form. (#79)
+
+### Changed
+
+- An OpenCode turn runs on `opencode serve`, which the conversation's sandbox starts with its
+  first turn and keeps for the next ones. On Gateweave Cloud's machines, a turn on a running
+  server took 2.5 s instead of 25 s, and the first turn in a new sandbox 11 s instead of 46 s. The
+  server starts over when the agent's model, instructions or tools change. (#80)
+- Each step before OpenCode gets the message has a time limit. If the server does not come up,
+  the turn fails and says which step was late, instead of waiting until the turn's one-hour
+  limit. (#81)
+
 ## [0.1.1] - 2026-10-30
 
 Gateweave Cloud offers sandboxes to the workspaces it invites. Self-hosted servers are unchanged.
