@@ -10,6 +10,38 @@ Agents call models with each workspace's own provider keys, so model usage is bi
 workspace's accounts with the providers, not to yours. Only Workers AI (optional) and sandboxes
 (optional, Workers Paid plan) cost your account more than the Worker itself.
 
+There are two ways to deploy: the button, which also sets up deploys on every push, or the
+command line.
+
+## Deploy with the button
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/gateweavehq/agents)
+
+The button copies this repository to your GitHub or GitLab account and connects the copy to
+Workers Builds, so every push to its main branch deploys. On the form:
+
+- **Project name** names the Worker. It answers on `<project name>.<your subdomain>.workers.dev`.
+- **D1 database**: choose **+ Create new** and give it a name. The form picks an existing database
+  when one in your account has the name in `wrangler.jsonc` (`gateweave-agents`), so check it
+  before you deploy.
+- **BETTER_AUTH_SECRET** signs sessions. Use a long random string, for example from
+  `openssl rand -base64 32`, and keep it secret. Changing it later signs everyone out.
+- Leave the build and deploy commands as they are. The deploy command applies the database
+  migrations before the new code goes live.
+
+When the build finishes, add `SECRETS_KEY` under Workers & Pages › your Worker › Settings ›
+Variables and Secrets, as a secret: a long random string, such as another
+`openssl rand -base64 32`. Workspaces encrypt their model keys and secret values with it, so keep
+a copy. Then open the Worker's address, create an account and then a workspace. Anyone who can
+reach the address can sign up and create workspaces of their own; a workspace is only visible to
+its members.
+
+**Preview builds.** The button turns them on: a push to any other branch builds a Preview with its
+own URL. Previews get their own Durable Objects, but they share the D1 database, and so the
+accounts, unless you bind another one in the Worker's
+[Preview settings](https://developers.cloudflare.com/workers/previews/configuration/). Turn them
+off under Settings › Build › Branch control if you don't need them.
+
 ## Deploy from the command line
 
 Requirements: Node.js 24 (22+ works) and pnpm 12.
