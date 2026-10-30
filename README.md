@@ -85,9 +85,12 @@ to their requests on the way out, so the key never enters the sandbox either.
 
 ## Self-hosting
 
-Agents runs on your own Cloudflare account with `pnpm run deploy`. See
-[docs/self-hosting.md](docs/self-hosting.md) for the first deploy, every setting, your own domain,
-email, sandboxes and their limits, and updating.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/gateweavehq/agents)
+
+The button copies Agents to your GitHub or GitLab account, creates the database, and deploys it
+to your Cloudflare account; every push to your copy deploys again. From the command line, use
+`pnpm run deploy`. See [docs/self-hosting.md](docs/self-hosting.md) for the first deploy, every
+setting, your own domain, email, sandboxes and their limits, and updating.
 
 ## Contributing
 
