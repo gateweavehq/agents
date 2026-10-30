@@ -41,6 +41,7 @@ import {
 	historyOf,
 	linesOf,
 	type SandboxEngine,
+	settle,
 } from "./engines";
 import {
 	describeFailure,
@@ -468,14 +469,17 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 					calls.abort();
 					await toolbox.close();
 				}
-				const outcome = turn.end();
+				const ended = turn.end();
 				if (signal?.aborted) {
 					await end("stopped");
-				} else if (outcome.status === "failed") {
-					writer.write({ type: "error", errorText: outcome.error });
-					await end("failed", outcome.error);
 				} else {
-					await end("succeeded");
+					const outcome = await settle(ended, ENGINE_NAMES[engine], sandbox);
+					if (outcome.status === "failed") {
+						writer.write({ type: "error", errorText: outcome.error });
+						await end("failed", outcome.error);
+					} else {
+						await end("succeeded");
+					}
 				}
 				writer.write({ type: "finish" });
 			},

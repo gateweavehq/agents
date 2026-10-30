@@ -49,6 +49,7 @@ import {
 	failed,
 	MAX_CHAT_OUTPUT,
 	outputOf,
+	UNFINISHED,
 	withoutKeys,
 } from "./engines";
 import { ANTHROPIC_API, OPENAI_API } from "./outbound";
@@ -330,8 +331,8 @@ export class OpenCodeTurn implements EngineTurn {
 	end(now = Date.now()): EngineOutcome {
 		const stopped = this.#open;
 		this.#closeStep(now);
-		if (this.#answered && !stopped && this.#failure === null) return { status: "succeeded" };
-		return failed(describeFailure(this.#agent, this.#failure));
+		if (this.#failure !== null) return failed(describeFailure(this.#agent, this.#failure));
+		return this.#answered && !stopped ? { status: "succeeded" } : UNFINISHED;
 	}
 
 	/**

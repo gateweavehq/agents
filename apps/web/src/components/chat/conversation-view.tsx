@@ -111,7 +111,7 @@ export function ConversationView({
 					{error && (
 						<p
 							role="alert"
-							className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+							className="whitespace-pre-wrap break-words rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
 						>
 							{error.message}
 						</p>

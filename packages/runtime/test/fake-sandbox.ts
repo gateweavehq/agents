@@ -7,7 +7,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
-import type { EngineJob, EnginePort } from "../src/engines";
+import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
 import type { CommitAuthor, PushPort, PushResult } from "../src/pull-requests";
 import type { CommandResult, ReadResult, WriteResult } from "../src/sandbox-tools";
 
@@ -67,10 +67,14 @@ export class MemorySandbox implements CheckoutPort, PushPort {
 	}
 }
 
-/** What a turn of an engine writes, and whether it then waits until it is stopped. */
+/**
+ * What a turn of an engine writes, whether it then waits until it is stopped, and how its CLI
+ * ended, as `engineExit` says it.
+ */
 export interface EngineScript {
 	lines: string[];
 	untilStopped?: boolean;
+	exit?: EngineExit;
 }
 
 export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort, EnginePort {
@@ -81,6 +85,7 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 	/** Ends the turn of the engine that waits to be stopped. */
 	#release: (() => void) | null = null;
 	#stops = 0;
+	#exit: EngineExit | null = null;
 
 	run(command: string, cwd: string, timeoutSeconds: number) {
 		return this.#memory.run(command, cwd, timeoutSeconds);
@@ -109,7 +114,8 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 
 	async startEngine(job: EngineJob): Promise<ReadableStream<Uint8Array>> {
 		this.#jobs.push(job);
-		const { lines, untilStopped = false } = this.#scripts.shift() ?? { lines: [] };
+		const { lines, untilStopped = false, exit = null } = this.#scripts.shift() ?? { lines: [] };
+		this.#exit = exit;
 		const { readable, writable } = new IdentityTransformStream();
 		const writer = writable.getWriter();
 		const encoder = new TextEncoder();
@@ -123,6 +129,10 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 			await writer.close();
 		})();
 		return readable;
+	}
+
+	async engineExit(): Promise<EngineExit | null> {
+		return this.#exit;
 	}
 
 	async stopEngine(): Promise<void> {

@@ -362,6 +362,32 @@ describe("an agent whose engine is OpenCode", () => {
 		expect(turn.error).toBe("OpenCode stopped before it finished.");
 		expect((await registry.listRuns())[0]).toMatchObject({ status: "failed" });
 	});
+
+	it("says the sandbox likely ran out of memory when OpenCode is killed before its first event", async () => {
+		const { registry, stub, machine } = await conversation();
+		await machine.scriptEngine({ lines: [], exit: { code: 137, seconds: 90, log: "" } });
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Hello");
+		socket.close();
+
+		const words =
+			"OpenCode was killed before it finished, most likely because the sandbox ran out of memory.";
+		expect(turn.error).toBe(words);
+		expect((await registry.listRuns())[0]).toMatchObject({ status: "failed", error: words });
+	});
+
+	it("quotes the end of OpenCode's log when it exits without saying why", async () => {
+		const { registry, stub, machine } = await conversation();
+		const log = "Error: Unable to connect. Is the computer able to access the url?";
+		await machine.scriptEngine({ lines: [], exit: { code: 1, seconds: 3, log } });
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Hello");
+		socket.close();
+
+		const words = `OpenCode stopped before it finished (exit status 1). The end of its log:\n${log}`;
+		expect(turn.error).toBe(words);
+		expect((await registry.listRuns())[0]).toMatchObject({ status: "failed", error: words });
+	});
 });
 
 describe("OpenCode's command", () => {
