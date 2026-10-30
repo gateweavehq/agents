@@ -83,6 +83,12 @@ turns with Claude Code, Codex or OpenCode, which the image installs, in place of
 loop. They run in its sandbox with the workspace's Anthropic or OpenAI key, which the Worker adds
 to their requests on the way out, so the key never enters the sandbox either.
 
+## Self-hosting
+
+Agents runs on your own Cloudflare account with `pnpm run deploy`. See
+[docs/self-hosting.md](docs/self-hosting.md) for the first deploy, every setting, your own domain,
+email, sandboxes and their limits, and updating.
+
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). Run `pnpm verify` before you

@@ -20,7 +20,18 @@ and credit you in the release notes unless you would rather stay anonymous.
 
 Areas where reports are especially valuable:
 
-- Access to a workspace's data without membership, including through the sync gateway
-  (`/api/sync/*`) or WebSocket handshakes from other origins.
+- Access to a workspace's data without membership: through its pages and server functions, the
+  chat gateway (`/api/chat/*`, including WebSocket handshakes from other origins), or the
+  workspace's and conversations' Durable Objects, which have no public route.
+- Secrets leaving where they belong: model provider keys and environment secrets (encrypted with
+  the server's `SECRETS_KEY`) reaching a page, a log, a run's trace or a sandbox, or a GitHub
+  token reaching a sandbox.
+- Getting out of a sandbox: reaching the internet beyond the package registries it allows,
+  writing to a repository other than its own, or pushing to a branch other than its
+  conversation's.
+- Webhooks accepted without a valid signature, or replayed: the GitHub App's
+  (`/api/github/webhooks`) and triggers' (`/api/triggers/*`).
+- Getting around a server's sandbox limits (invitations, time and budget), which its operator pays
+  for.
 - Authentication and session handling.
 - Anything that lets one workspace member act with another member's identity or role.

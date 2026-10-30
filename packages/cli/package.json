@@ -2,17 +2,22 @@
 	"name": "@gateweave/agents",
 	"version": "0.1.0",
 	"description": "Write a Gateweave Agents setup into a repository, and check in CI that the repository still holds it.",
-	"private": true,
 	"license": "AGPL-3.0-only",
+	"homepage": "https://github.com/gateweavehq/agents/tree/main/packages/cli#readme",
+	"bugs": "https://github.com/gateweavehq/agents/issues",
 	"type": "module",
 	"bin": {
 		"gateweave-agents": "./dist/main.js"
 	},
 	"files": [
-		"dist"
+		"dist",
+		"LICENSE"
 	],
 	"engines": {
 		"node": ">=22"
+	},
+	"publishConfig": {
+		"access": "public"
 	},
 	"repository": {
 		"type": "git",
