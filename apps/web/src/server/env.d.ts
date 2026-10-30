@@ -50,5 +50,17 @@ declare namespace Cloudflare {
 		 * deployment binds SANDBOX. Every workspace may when unset; Gateweave Cloud invites them.
 		 */
 		SANDBOX_WORKSPACES?: string;
+		/** Minutes of sandbox time each workspace may use in a day (UTC). No limit when unset. */
+		SANDBOX_DAILY_MINUTES?: string;
+		/**
+		 * US dollars the deployment may spend on sandboxes in a month (UTC), priced at the most their
+		 * machine costs (SANDBOX_SECOND_PRICE in packages/model). No limit when unset.
+		 */
+		SANDBOX_MONTHLY_BUDGET?: string;
+		/**
+		 * Who hears when sandboxes have spent 80% and then all of the monthly budget. Needs email
+		 * (EMAIL_FROM). Keep it a secret, so the address stays out of the repository.
+		 */
+		SANDBOX_ALERT_EMAIL?: string;
 	}
 }

@@ -68,9 +68,12 @@ import {
 	runCursor,
 	runFinish,
 	runPullRequest,
+	SANDBOX_BUDGET_SPENT,
+	SANDBOX_DAY_USED,
 	SANDBOX_IDLE_MINUTES,
 	SANDBOX_NOT_INVITED,
 	SANDBOX_NOT_OFFERED,
+	type SandboxBudgetPassed,
 	type SandboxSettings,
 	type ScanResult,
 	type Setup,
@@ -79,6 +82,7 @@ import {
 	type SetupImportInput,
 	type SetupInput,
 	type SetupPins,
+	sandboxLimits,
 	sandboxOfferTo,
 	scanResult,
 	setupImportInput,
@@ -204,9 +208,18 @@ import {
 	listNestedRuns,
 	listRuns,
 	recordRunPullRequest,
+	runHadSandbox,
 	runUsage,
 	sandboxesInUse,
+	sandboxSeconds,
 } from "./runs";
+import {
+	METER_NAME,
+	type MeterReading,
+	type SandboxMeterDO,
+	utcDay,
+	utcMonth,
+} from "./sandbox-meter";
 import { scanRepository } from "./scanner";
 import {
 	applyScan,
@@ -881,6 +894,16 @@ export class RegistryDO extends DurableObject {
 				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
 			);
 		}
+		const limits = sandboxLimits(this.env as SandboxSettings);
+		if (
+			sandbox &&
+			limits.dailyMinutes !== null &&
+			this.sandboxSecondsToday() >= limits.dailyMinutes * 60
+		) {
+			return refused(
+				`${SANDBOX_DAY_USED}, ${limits.dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
+			);
+		}
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
 		const repository = sandbox ? agentRepository(this.#db, agent.agentId) : null;
 		if (repository && "problem" in repository) {
@@ -895,6 +918,19 @@ export class RegistryDO extends DurableObject {
 		}
 		const servers = tools ? agentServers(this.#db, agent.agentId) : [];
 		const edges = tools && position ? turnEdges(this.#db, position) : [];
+		if (sandbox && limits.monthlyBudget !== null) {
+			const reading = await this.#meterSandboxes(limits.monthlyBudget);
+			if (reading === null) {
+				return refused(
+					`This server has a sandbox budget but no meter to keep it, so ${agent.name} cannot answer. Whoever runs this server can bind SANDBOX_METER; see the README.`,
+				);
+			}
+			if (reading.spent >= limits.monthlyBudget) {
+				return refused(
+					`${SANDBOX_BUDGET_SPENT}, so ${agent.name} cannot answer until the month ends (UTC). Whoever runs this server can raise it.`,
+				);
+			}
+		}
 		const [opened, environment] = await Promise.all([
 			// Workers AI has no key of the workspace's: the runtime uses the deployment's token, which
 			// never passes through here.
@@ -910,7 +946,24 @@ export class RegistryDO extends DurableObject {
 	finishRun(runId: string, finish: RunFinish): boolean {
 		const run = id.parse(runId);
 		const data = runFinish.parse(finish);
-		return this.#write(() => finishRun(this.#db, run, data));
+		const closed = this.#write(() => finishRun(this.#db, run, data));
+		const { monthlyBudget } = sandboxLimits(this.env as SandboxSettings);
+		if (closed && monthlyBudget !== null && runHadSandbox(this.#db, run)) {
+			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
+			this.ctx.waitUntil(
+				this.#meterSandboxes(monthlyBudget).catch((error: unknown) => {
+					console.error("registry: the sandbox meter did not answer", error);
+				}),
+			);
+		}
+		return closed;
+	}
+
+	/** Seconds of sandbox time the workspace's conversations use today (UTC), for its limit. */
+	sandboxSecondsToday(): number {
+		const now = Date.now();
+		const today = utcDay(now);
+		return sandboxSeconds(this.#db, today.start, today.end, now);
 	}
 
 	/**
@@ -1391,6 +1444,47 @@ export class RegistryDO extends DurableObject {
 		_text: string,
 	): Promise<TriggerTurnOutcome> {
 		return { runId: null, error: "This server does not start scheduled runs" };
+	}
+
+	/**
+	 * Tells whoever runs the server that its sandboxes have spent `share` percent of the month's
+	 * budget: at 100 they stop until the month ends. Each share is told once a month, by the
+	 * registry whose report passed it. This package cannot reach anyone, so here it only logs; the
+	 * app's Worker exports a `RegistryDO` that emails (`apps/web/src/server/registry-do.ts`).
+	 */
+	protected async sandboxBudgetPassed(passed: SandboxBudgetPassed): Promise<void> {
+		console.warn(
+			`registry: sandboxes have spent ${passed.share}% of the budget for ${passed.month}: $${passed.spent.toFixed(2)} of $${passed.budget}`,
+		);
+	}
+
+	/**
+	 * Reports the workspace's sandbox time this month to the deployment's meter, and reads what the
+	 * deployment has spent. Null when there is no meter.
+	 */
+	async #meterSandboxes(budget: number): Promise<MeterReading | null> {
+		const meter = (this.env as SandboxSettings).SANDBOX_METER as
+			| DurableObjectNamespace<SandboxMeterDO>
+			| undefined;
+		if (!meter) return null;
+		const now = Date.now();
+		const month = utcMonth(now);
+		const seconds = sandboxSeconds(this.#db, month.start, month.end, now);
+		// Each registry is named for its workspace (`registryFor` in the app).
+		const workspace = this.ctx.id.name ?? this.ctx.id.toString();
+		const reading = await meter
+			.getByName(METER_NAME)
+			.record(month.name, workspace, seconds, budget);
+		for (const share of reading.passed) {
+			this.ctx.waitUntil(
+				this.sandboxBudgetPassed({ share, spent: reading.spent, budget, month: month.name }).catch(
+					(error: unknown) => {
+						console.error("registry: telling of the sandbox budget failed", error);
+					},
+				),
+			);
+		}
+		return reading;
 	}
 
 	/** The workspace's key for the provider, opened, or why it cannot be. */

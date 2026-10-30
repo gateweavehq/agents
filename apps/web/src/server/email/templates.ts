@@ -59,6 +59,41 @@ export function invitationEmail({
 	});
 }
 
+/** To whoever runs the server, when its sandboxes have spent a share of the month's budget. */
+export function sandboxBudgetEmail({
+	share,
+	spent,
+	budget,
+	month,
+	server,
+}: {
+	share: number;
+	spent: number;
+	budget: number;
+	month: string;
+	server: string;
+}): Message {
+	const used = `$${spent.toFixed(2)} of its $${budget} budget for ${month}`;
+	return compose({
+		subject:
+			share >= 100
+				? `Sandboxes stopped on ${server}: the budget for ${month} is spent`
+				: `Sandboxes on ${server} have used ${share}% of the budget for ${month}`,
+		heading: share >= 100 ? "Sandboxes stopped" : `${share}% of the sandbox budget used`,
+		body: [
+			share >= 100
+				? `Sandboxes on ${server} have spent ${used}, so agents that need one cannot answer until the month ends (UTC).`
+				: `Sandboxes on ${server} have spent ${used}. They stop when all of it is spent, until the month ends (UTC).`,
+			`${PRODUCT} prices sandbox time at the most its machine costs, so Cloudflare's bill is lower. Raise SANDBOX_MONTHLY_BUDGET to give them more.`,
+		],
+		action: {
+			label: "See containers in Cloudflare",
+			url: "https://dash.cloudflare.com/?to=/:account/workers/containers",
+		},
+		footer: "You get this email because this address is the server's SANDBOX_ALERT_EMAIL.",
+	});
+}
+
 function compose({
 	subject,
 	heading,

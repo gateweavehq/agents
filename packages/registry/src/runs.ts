@@ -113,6 +113,63 @@ export function sandboxesInUse(db: Db, conversationId: string, now: number): num
 	return row?.conversations ?? 0;
 }
 
+/**
+ * Seconds of sandbox time the workspace's conversations use between `from` and `to`. A
+ * conversation's sandbox runs from a turn until `SANDBOX_IDLE_MINUTES` after its last, so its runs,
+ * each stretched by that much, are merged before they are added up. The minutes after a turn count
+ * as soon as it ends, since the sandbox runs them anyway; a run still going counts until `now`, or
+ * until `RUN_TIMEOUT` cut it short. The runs of a deleted conversation lost their link to it, so
+ * each counts as a sandbox of its own: more than ran, never less.
+ */
+export function sandboxSeconds(db: Db, from: number, to: number, now: number): number {
+	const idle = SANDBOX_IDLE_MINUTES * 60_000;
+	const rows = db
+		.select({
+			id: runs.id,
+			conversationId: runs.conversationId,
+			startedAt: runs.startedAt,
+			endedAt: runs.endedAt,
+		})
+		.from(runs)
+		.where(
+			and(
+				eq(runs.sandbox, true),
+				lt(runs.startedAt, to),
+				// No turn goes on for longer than `RUN_TIMEOUT`.
+				gte(runs.startedAt, from - idle - RUN_TIMEOUT),
+			),
+		)
+		.orderBy(asc(runs.startedAt))
+		.all();
+	let seconds = 0;
+	const count = (span: { start: number; end: number }) => {
+		seconds += Math.max(0, Math.min(span.end, to) - Math.max(span.start, from)) / 1000;
+	};
+	const sandboxes = new Map<string, { start: number; end: number }>();
+	for (const run of rows) {
+		const ended =
+			run.endedAt ?? Math.min(Math.max(now, run.startedAt), run.startedAt + RUN_TIMEOUT);
+		const span = { start: run.startedAt, end: ended + idle };
+		const sandbox = run.conversationId ?? run.id;
+		const last = sandboxes.get(sandbox);
+		if (last && span.start <= last.end) {
+			last.end = Math.max(last.end, span.end);
+		} else {
+			if (last) count(last);
+			sandboxes.set(sandbox, span);
+		}
+	}
+	for (const span of sandboxes.values()) count(span);
+	return seconds;
+}
+
+/** Whether a run had its conversation's sandbox. */
+export function runHadSandbox(db: Db, id: string): boolean {
+	return (
+		db.select({ sandbox: runs.sandbox }).from(runs).where(eq(runs.id, id)).get()?.sandbox ?? false
+	);
+}
+
 /** A run that may call others over a team's edges, as a nested turn needs it; null if none. */
 export function callingRun(db: Db, id: string) {
 	return (

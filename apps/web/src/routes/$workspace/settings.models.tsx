@@ -1,9 +1,12 @@
 import {
 	KEYED_PROVIDERS,
 	type KeyedProvider,
+	MAX_WORKSPACE_SANDBOXES,
 	MODEL_PROVIDER_NAMES,
 	type ProviderKey,
 	type ProviderModel,
+	SANDBOX_IDLE_MINUTES,
+	type SandboxOffer,
 } from "@gateweave/agents-model";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -28,6 +31,7 @@ import {
 	getProviderKeys,
 	getWorkersAiModels,
 	removeProviderKey,
+	type SandboxTime,
 	saveProviderKey,
 } from "#/lib/providers";
 import { useDocumentTitle } from "#/lib/title";
@@ -75,6 +79,7 @@ function ModelsPage() {
 				</Notice>
 			)}
 			<WorkersAi offered={data.workersAi} models={data.workersAiModels} />
+			<Sandboxes offer={data.sandbox} time={data.sandboxTime} />
 		</div>
 	);
 }
@@ -157,6 +162,38 @@ function WorkersAi({
 			)}
 		</section>
 	);
+}
+
+/** Sandboxes are paid for by whoever runs the server, so the page says what this workspace may use. */
+function Sandboxes({ offer, time }: { offer: SandboxOffer; time: SandboxTime | null }) {
+	const limit = time?.limit ?? null;
+	return (
+		<section aria-labelledby="sandboxes-heading" className="space-y-3">
+			<div className="space-y-1">
+				<h2 id="sandboxes-heading" className="text-base font-semibold">
+					Sandboxes
+				</h2>
+				<p className="text-sm text-muted-foreground">
+					{offer === "offered"
+						? `Agents with a sandbox run commands and edit files on a Linux machine of their own. Whoever runs this server pays for the machines, so the workspace has at most ${MAX_WORKSPACE_SANDBOXES} at once${limit === null ? "" : `, for ${limit} minutes a day`}. A sandbox counts from a turn until ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last.`
+						: offer === "by-invitation"
+							? "This server runs sandboxes only for the workspaces it invites. Whoever runs it can invite this one."
+							: "This server does not run sandboxes. Whoever runs it can turn them on; see the README in the repository."}
+				</p>
+			</div>
+			{time && (
+				<p className="rounded-lg border p-3 text-sm">
+					{limit === null
+						? `${minutes(time.minutes)} of sandbox time today (UTC).`
+						: `${minutes(time.minutes)} of ${limit} used today (UTC).${time.minutes >= limit ? " Agents with a sandbox answer again tomorrow." : ""}`}
+				</p>
+			)}
+		</section>
+	);
+}
+
+function minutes(count: number) {
+	return count === 1 ? "1 minute" : `${count} minutes`;
 }
 
 function ProviderRow({
