@@ -274,9 +274,13 @@ export class ClaudeCodeTurn implements EngineTurn {
 	#detail: string | null = null;
 	/**
 	 * The request each conversation is streaming, by its subagent's tool call ("" for the main
-	 * one), with how long its first token took. A conversation's requests come one at a time.
+	 * one), with how long its first token took and when it was sent. A conversation's requests come
+	 * one at a time.
 	 */
-	readonly #streaming = new Map<string, { id: string; firstTokenMs: number | null }>();
+	readonly #streaming = new Map<
+		string,
+		{ id: string; firstTokenMs: number | null; startedAt: number }
+	>();
 
 	constructor(sink: ChunkSink, run: RunRecorder, agent: AgentSnapshot) {
 		this.#sink = sink;
@@ -296,7 +300,7 @@ export class ClaudeCodeTurn implements EngineTurn {
 		const type = typeof event === "object" && event !== null && "type" in event ? event.type : null;
 		if (type === "stream_event") {
 			const stream = streamEvent.safeParse(event);
-			if (stream.success) this.#stream(stream.data);
+			if (stream.success) this.#stream(stream.data, now);
 			return;
 		}
 		const assistant = assistantEvent.safeParse(event);
@@ -333,21 +337,27 @@ export class ClaudeCodeTurn implements EngineTurn {
 		return { status: "succeeded" };
 	}
 
-	#stream({
-		parent_tool_use_id: parent,
-		ttft_ms: firstToken,
-		event,
-	}: z.infer<typeof streamEvent>): void {
+	#stream(
+		{ parent_tool_use_id: parent, ttft_ms: firstToken, event }: z.infer<typeof streamEvent>,
+		now: number,
+	): void {
 		const conversation = parent ?? "";
 		if (event.type === "message_start" && event.message) {
 			const firstTokenMs = firstToken === undefined ? null : Math.round(firstToken);
-			this.#streaming.set(conversation, { id: event.message.id, firstTokenMs });
+			// The request went out before its first token, by as long as Claude Code says that took.
+			const startedAt = now - (firstTokenMs ?? 0);
+			this.#streaming.set(conversation, { id: event.message.id, firstTokenMs, startedAt });
 			return;
 		}
-		if (event.type !== "message_delta" || !event.usage) return;
 		const id = this.#streaming.get(conversation)?.id;
 		const request = id === undefined ? undefined : this.#requests.get(id);
-		if (request) request.usage = latestUsage(request.usage, event.usage);
+		if (id === undefined || !request) return;
+		if (event.type === "message_delta" && event.usage) {
+			request.usage = latestUsage(request.usage, event.usage);
+		} else if (event.type === "message_stop") {
+			// The answer is whole, before its tools run.
+			this.#endRequest(id, request, now);
+		}
 	}
 
 	#assistant(event: z.infer<typeof assistantEvent>, now: number): void {
@@ -368,17 +378,18 @@ export class ClaudeCodeTurn implements EngineTurn {
 			// A new request means the one before it in the same conversation has answered.
 			this.#endRequests(parent, now);
 			const streaming = this.#streaming.get(parent ?? "");
+			const streamed = streaming?.id === message.id ? streaming : null;
 			request = {
 				step: this.#steps++,
 				parent,
 				model: message.model ?? this.#agent.model,
 				usage: {},
 				toolCalls: false,
-				startedAt: now,
-				firstTokenMs: streaming?.id === message.id ? streaming.firstTokenMs : null,
+				startedAt: streamed?.startedAt ?? now,
+				firstTokenMs: streamed?.firstTokenMs ?? null,
 			};
 			this.#requests.set(message.id, request);
-			this.#run.stepStarted(request.step, now);
+			this.#run.stepStarted(request.step, request.startedAt);
 			if (parent === null) {
 				this.#closeStep();
 				this.#sink.write({ type: "start-step" });
@@ -455,34 +466,38 @@ export class ClaudeCodeTurn implements EngineTurn {
 	}
 
 	/**
-	 * Ends the requests still open: those of the conversation `parent` names (null is the main
-	 * one), or all of them when it is undefined.
+	 * Ends the requests still open, whose stream did not say when they ended: those of the
+	 * conversation `parent` names (null is the main one), or all of them when it is undefined.
 	 */
 	#endRequests(parent: string | null | undefined, now: number): void {
 		for (const [id, request] of this.#requests) {
 			if (parent !== undefined && request.parent !== parent) continue;
-			this.#requests.delete(id);
-			const { usage } = request;
-			const cacheRead = usage.cache_read_input_tokens ?? 0;
-			const cacheWrite = usage.cache_creation_input_tokens ?? 0;
-			this.#run.requestEnded(
-				request.step,
-				{
-					model: request.model,
-					// Anthropic counts cached input apart; the trace counts it in the input too.
-					tokens: {
-						input: (usage.input_tokens ?? 0) + cacheRead + cacheWrite,
-						output: usage.output_tokens ?? 0,
-						cacheRead,
-						cacheWrite,
-					},
-					finishReason: request.toolCalls ? "tool-calls" : "stop",
-					firstTokenMs: request.firstTokenMs,
-					gatewayLogId: null,
-				},
-				now,
-			);
+			this.#endRequest(id, request, now);
 		}
+	}
+
+	#endRequest(id: string, request: Request, now: number): void {
+		this.#requests.delete(id);
+		const { usage } = request;
+		const cacheRead = usage.cache_read_input_tokens ?? 0;
+		const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+		this.#run.requestEnded(
+			request.step,
+			{
+				model: request.model,
+				// Anthropic counts cached input apart; the trace counts it in the input too.
+				tokens: {
+					input: (usage.input_tokens ?? 0) + cacheRead + cacheWrite,
+					output: usage.output_tokens ?? 0,
+					cacheRead,
+					cacheWrite,
+				},
+				finishReason: request.toolCalls ? "tool-calls" : "stop",
+				firstTokenMs: request.firstTokenMs,
+				gatewayLogId: null,
+			},
+			now,
+		);
 	}
 
 	#closeStep(): void {

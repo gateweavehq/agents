@@ -189,7 +189,7 @@ describe("an agent whose engine is OpenCode", () => {
 		// The model had answered once the tool began, which OpenCode says only once it ends.
 	});
 
-	it("ends a request's span when its first tool began, by how long OpenCode says the tool took", async () => {
+	it("ends a request's span when its last tool began, by how long OpenCode says the tools took", async () => {
 		const { registry, stub, agentId } = await conversation();
 		const agent = await registry.agentSnapshot(agentId);
 		if (!agent) throw new Error("The agent is missing");
@@ -199,8 +199,10 @@ describe("an agent whose engine is OpenCode", () => {
 			const run = new RunRecorder(sql, "run-1", agent, 10_000);
 			const turn = new OpenCodeTurn({ write() {} }, run, agent);
 			turn.take(start, 10_000);
-			// The model had answered at 12,000, when the tests began; OpenCode prints them at 15,000.
-			turn.take(tool("toolu_1", "bash", { command: "npm test" }, { output: "ok" }, 3_000), 15_000);
+			// A read began at 11,000, while the answer went on to call the tests, which began at 12,000
+			// when it ended; OpenCode prints each once it is done.
+			turn.take(tool("toolu_1", "read", { filePath: "a.ts" }, { output: "a" }, 500), 11_500);
+			turn.take(tool("toolu_2", "bash", { command: "npm test" }, { output: "ok" }, 3_000), 15_000);
 			turn.take(finish("tool-calls", { input: 10, output: 2 }), 15_100);
 			turn.take(start, 15_200);
 			turn.take(finish("stop", { input: 20, output: 4 }), 16_000);
@@ -208,6 +210,7 @@ describe("an agent whose engine is OpenCode", () => {
 		});
 		expect(spans).toMatchObject([
 			{ kind: "model", step: 0, startedAt: 10_000, endedAt: 12_000 },
+			{ kind: "tool", step: 0, startedAt: 11_000, endedAt: 11_500 },
 			{ kind: "tool", step: 0, startedAt: 12_000, endedAt: 15_000 },
 			{ kind: "model", step: 1, startedAt: 15_200, endedAt: 16_000 },
 		]);
