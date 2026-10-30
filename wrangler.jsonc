@@ -18,12 +18,14 @@
 	],
 	// Each workspace's registry (projects, repositories, the agents and assets found in them) is
 	// one Durable Object, and so is each conversation with an agent. Rate limits on sign-in,
-	// password reset and email are counted in one per client address or recipient.
+	// password reset and email are counted in one per client address or recipient. The sandbox
+	// meter adds up the deployment's sandbox time for a monthly budget (SANDBOX_MONTHLY_BUDGET).
 	"durable_objects": {
 		"bindings": [
 			{ "name": "REGISTRY", "class_name": "RegistryDO" },
 			{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
-			{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+			{ "name": "RATE_LIMITER", "class_name": "RateLimiter" },
+			{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
 		]
 	},
 	// RunnerSandbox is each conversation's sandbox. It does nothing unless an environment binds it
@@ -33,15 +35,16 @@
 		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
 		"ConversationAgent": { "type": "durable-object", "storage": "sqlite" },
 		"RateLimiter": { "type": "durable-object", "storage": "sqlite" },
-		"RunnerSandbox": { "type": "durable-object", "storage": "sqlite" }
+		"RunnerSandbox": { "type": "durable-object", "storage": "sqlite" },
+		"SandboxMeterDO": { "type": "durable-object", "storage": "sqlite" }
 	},
 	// Email through Cloudflare Email Service. Nothing is sent until EMAIL_FROM names a sender on a
 	// domain onboarded to Email Sending; without it, Agents runs with email off.
 	"send_email": [{ "name": "EMAIL" }],
 	// Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, the six
 	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, AI_GATEWAY_URL with AI_GATEWAY_TOKEN,
-	// and WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID (see
-	// apps/web/src/server/env.d.ts).
+	// WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID, and the SANDBOX_*
+	// limits (see apps/web/src/server/env.d.ts).
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
 	// The top level is production. Staging is a separate Worker with its own database and
 	// workspaces; bindings are not inherited, so they are repeated here.
@@ -60,9 +63,13 @@
 					{ "name": "REGISTRY", "class_name": "RegistryDO" },
 					{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
 					{ "name": "RATE_LIMITER", "class_name": "RateLimiter" },
-					{ "name": "SANDBOX", "class_name": "RunnerSandbox" }
+					{ "name": "SANDBOX", "class_name": "RunnerSandbox" },
+					{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
 				]
 			},
+			// Staging's sandboxes are open to every workspace, within these limits. Its operator hears
+			// of the budget at SANDBOX_ALERT_EMAIL, a secret.
+			"vars": { "SANDBOX_DAILY_MINUTES": "60", "SANDBOX_MONTHLY_BUDGET": "20" },
 			// Sandboxes: one container per conversation that uses one, built from sandbox/Dockerfile.
 			// Its size is set where it starts, and each workspace has at most three at once
 			// (MAX_WORKSPACE_SANDBOXES in packages/model).

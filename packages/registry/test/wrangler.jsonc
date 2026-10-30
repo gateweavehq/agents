@@ -13,9 +13,13 @@
 		"CLOUDFLARE_ACCOUNT_ID": "0123456789abcdef0123456789abcdef"
 	},
 	"durable_objects": {
-		"bindings": [{ "name": "REGISTRY", "class_name": "RegistryDO" }]
+		"bindings": [
+			{ "name": "REGISTRY", "class_name": "RegistryDO" },
+			{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
+		]
 	},
 	"exports": {
-		"RegistryDO": { "type": "durable-object", "storage": "sqlite" }
+		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
+		"SandboxMeterDO": { "type": "durable-object", "storage": "sqlite" }
 	}
 }

@@ -1,8 +1,15 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { MAX_WORKSPACE_SANDBOXES, SANDBOX_IDLE_MINUTES } from "@gateweave/agents-model";
-import { describe, expect, it } from "vitest";
+import {
+	MAX_WORKSPACE_SANDBOXES,
+	SANDBOX_BUDGET_SPENT,
+	SANDBOX_DAY_USED,
+	SANDBOX_IDLE_MINUTES,
+	SANDBOX_SECOND_PRICE,
+} from "@gateweave/agents-model";
+import { describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
+import type { RegistryDO as TestRegistry } from "./worker";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -206,12 +213,16 @@ describe("turns with Workers AI", () => {
 async function withSandboxes<T>(
 	stub: ReturnType<typeof registry>,
 	fn: (instance: RegistryDO) => Promise<T>,
-	{ github = false, invited }: { github?: boolean; invited?: string } = {},
+	{
+		github = false,
+		invited,
+		limits = {},
+	}: { github?: boolean; invited?: string; limits?: Record<string, string> } = {},
 ) {
 	return runInDurableObject(stub, async (instance: RegistryDO) => {
 		// `env` is protected, and a test of the server's settings is what needs it.
 		const { env: settings } = instance as unknown as { env: Record<string, unknown> };
-		const added: Record<string, unknown> = { SANDBOX: {} };
+		const added: Record<string, unknown> = { SANDBOX: {}, ...limits };
 		if (invited !== undefined) added.SANDBOX_WORKSPACES = invited;
 		// Only their presence is read here: no test reaches GitHub.
 		if (github) Object.assign(added, { GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: "unused" });
@@ -379,6 +390,153 @@ describe("turns with a sandbox", () => {
 		await withSandboxes(stub, async (instance) => {
 			expect(await instance.beginTurn(last, "Build it")).toMatchObject({ sandbox: true });
 		});
+	});
+});
+
+describe("sandbox time", () => {
+	const MINUTE = 60_000;
+	const IDLE = SANDBOX_IDLE_MINUTES;
+	const done = {
+		status: "succeeded",
+		error: null,
+		steps: 1,
+		inputTokens: 10,
+		outputTokens: 5,
+		cachedInputTokens: 0,
+		cost: 1,
+	} as const;
+
+	async function builderConversations(stub: ReturnType<typeof registry>, count: number) {
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const agent = await stub.createAgent({
+			name: "Builder",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			sandbox: true,
+		});
+		const ids: string[] = [];
+		for (let n = 0; n < count; n++)
+			ids.push((await stub.startConversation(agent.id, ADA))?.id ?? "");
+		return ids;
+	}
+
+	async function turn(instance: RegistryDO, conversation: string) {
+		const begun = await instance.beginTurn(conversation, "Build it");
+		if ("status" in begun) throw new Error(begun.message);
+		return begun.runId;
+	}
+
+	/** Moves a run to when it began, and to when it ended unless it is still going. */
+	function moveRun(instance: RegistryDO, runId: string, startedAt: number, endedAt?: number) {
+		// A test may reach the storage of the Durable Object it runs in, and only that one.
+		const { sql } = (instance as unknown as { ctx: DurableObjectState }).ctx.storage;
+		sql.exec("UPDATE runs SET started_at = ? WHERE id = ?", startedAt, runId);
+		if (endedAt !== undefined) {
+			sql.exec("UPDATE runs SET status = 'succeeded', ended_at = ? WHERE id = ?", endedAt, runId);
+		}
+	}
+
+	function midnight() {
+		const now = new Date();
+		return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+	}
+
+	it("counts each conversation's sandbox from a turn until it sleeps, within the day", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const plain = await withAgent(stub);
+		const chat = (await stub.startConversation(plain.id, ADA))?.id ?? "";
+		const today = midnight();
+		const at = today + 60 * MINUTE;
+		await withSandboxes(stub, async (instance) => {
+			// Two turns of one conversation, close enough to share its sandbox: 10 minutes of turn,
+			// then 10 asleep, then 10 more and the sandbox's idle minutes.
+			moveRun(instance, await turn(instance, first), at, at + 10 * MINUTE);
+			moveRun(instance, await turn(instance, first), at + 20 * MINUTE, at + 30 * MINUTE);
+			// A sandbox that went on past midnight counts from midnight.
+			moveRun(instance, await turn(instance, second), today - 20 * MINUTE, today - 5 * MINUTE);
+			// A turn without a sandbox counts for nothing.
+			moveRun(instance, await turn(instance, chat), at, at + 10 * MINUTE);
+		});
+		const minutes = 30 + IDLE + (IDLE - 5);
+		expect(await stub.sandboxSecondsToday()).toBe(minutes * 60);
+	});
+
+	it("are refused once the workspace has used the day's minutes", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const at = midnight() + 60 * MINUTE;
+		await withSandboxes(stub, async (instance) => {
+			// 10 minutes of turn, and the sandbox's idle minutes after it.
+			moveRun(instance, await turn(instance, first), at, at + 10 * MINUTE);
+		});
+		const used = 10 + IDLE;
+		await withSandboxes(
+			stub,
+			async (instance) => {
+				expect(await instance.beginTurn(second, "Build it")).toEqual({
+					status: "refused",
+					message: `${SANDBOX_DAY_USED}, ${used} minutes, so Builder cannot answer until the day ends (UTC).`,
+				});
+			},
+			{ limits: { SANDBOX_DAILY_MINUTES: String(used) } },
+		);
+		await withSandboxes(
+			stub,
+			async (instance) => {
+				expect(await instance.beginTurn(second, "Build it")).toMatchObject({ sandbox: true });
+			},
+			{ limits: { SANDBOX_DAILY_MINUTES: String(used + 1) } },
+		);
+	});
+
+	it("are refused once the server has spent the month's budget, which its operator hears of", async () => {
+		const stub = registry();
+		const [first = "", second = "", third = ""] = await builderConversations(stub, 3);
+		const now = new Date();
+		const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+		const start = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+		// The first conversation's sandbox runs 6 minutes of turn and its idle minutes, which is 84%
+		// of the budget; the second's 5 minutes more and as many idle ones go past it.
+		const firstMinutes = 6 + IDLE;
+		const budget = ((firstMinutes * 60) / 0.84) * SANDBOX_SECOND_PRICE;
+		const limits = { SANDBOX_MONTHLY_BUDGET: String(budget) };
+		const heard = (instance: RegistryDO) => (instance as unknown as TestRegistry).budgetPassed();
+		await withSandboxes(
+			stub,
+			async (instance) => {
+				moveRun(instance, await turn(instance, first), start + 60 * MINUTE, start + 66 * MINUTE);
+				// The meter hears as the next turn begins.
+				const next = await turn(instance, second);
+				expect(heard(instance)).toEqual([
+					{
+						share: 80,
+						spent: expect.closeTo(firstMinutes * 60 * SANDBOX_SECOND_PRICE, 10),
+						budget,
+						month,
+					},
+				]);
+				// And again as that turn ends.
+				moveRun(instance, next, start + 120 * MINUTE);
+				expect(instance.finishRun(next, { ...done, endedAt: start + 125 * MINUTE })).toBe(true);
+				await vi.waitFor(() => expect(heard(instance)).toHaveLength(2));
+				expect(heard(instance)[1]).toEqual({
+					share: 100,
+					spent: expect.closeTo((firstMinutes + 5 + IDLE) * 60 * SANDBOX_SECOND_PRICE, 10),
+					budget,
+					month,
+				});
+				expect(await instance.beginTurn(third, "Build it")).toEqual({
+					status: "refused",
+					message: `${SANDBOX_BUDGET_SPENT}, so Builder cannot answer until the month ends (UTC). Whoever runs this server can raise it.`,
+				});
+			},
+			{ limits },
+		);
+		// Each share is told once a month.
+		expect(await stub.budgetPassed()).toHaveLength(2);
 	});
 });
 

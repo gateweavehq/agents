@@ -20,6 +20,9 @@ export const OPTIONAL_SECRETS = [
 	"WORKERS_AI_TOKEN",
 	"CLOUDFLARE_ACCOUNT_ID",
 	"SANDBOX_WORKSPACES",
+	"SANDBOX_DAILY_MINUTES",
+	"SANDBOX_MONTHLY_BUDGET",
+	"SANDBOX_ALERT_EMAIL",
 ] as const;
 
 /** What local dev loads from .dev.vars: the required secrets, and the optional ones it sets. */

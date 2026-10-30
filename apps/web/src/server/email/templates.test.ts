@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { invitationEmail, passwordResetEmail, verificationEmail } from "./templates";
+import {
+	invitationEmail,
+	passwordResetEmail,
+	sandboxBudgetEmail,
+	verificationEmail,
+} from "./templates";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -60,5 +65,25 @@ describe("verificationEmail", () => {
 		expect(email.text).toContain(url);
 		expect(email.text).toContain("24 hours");
 		expect(email.html).toContain(`href="${url.replace("&", "&amp;")}"`);
+	});
+});
+
+describe("sandboxBudgetEmail", () => {
+	const passed = { spent: 82.4, budget: 100, month: "2026-10", server: "agents.example.com" };
+
+	it("warns before the budget is spent, and says sandboxes stopped once it is", () => {
+		const warning = sandboxBudgetEmail({ ...passed, share: 80 });
+		expect(warning.subject).toBe(
+			"Sandboxes on agents.example.com have used 80% of the budget for 2026-10",
+		);
+		expect(warning.text).toContain("$82.40 of its $100 budget for 2026-10");
+		expect(warning.text).toContain("They stop when all of it is spent");
+
+		const stopped = sandboxBudgetEmail({ ...passed, share: 100, spent: 100.02 });
+		expect(stopped.subject).toBe(
+			"Sandboxes stopped on agents.example.com: the budget for 2026-10 is spent",
+		);
+		expect(stopped.text).toContain("cannot answer until the month ends (UTC)");
+		expect(stopped.text).toContain("SANDBOX_MONTHLY_BUDGET");
 	});
 });

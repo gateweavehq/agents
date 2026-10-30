@@ -19,6 +19,7 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { sharedApp } from "@gateweave/agents-github";
 import {
+	SANDBOX_INSTANCE,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
@@ -594,7 +595,8 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 		try {
 			container.start({
 				image: container.images.sandbox ?? "",
-				instance: "standard-1",
+				// Budgets price sandbox time by this machine (`SANDBOX_SECOND_PRICE`).
+				instance: SANDBOX_INSTANCE,
 				enableInternet: false,
 			});
 			// The intercepts last as long as this run of the container. The tools' host is named too,

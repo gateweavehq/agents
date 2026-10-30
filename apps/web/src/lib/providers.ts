@@ -9,6 +9,7 @@ import {
 	type ProviderModel,
 	providerKeyInput,
 	type SandboxOffer,
+	sandboxLimits,
 	sandboxOfferTo,
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
@@ -27,10 +28,16 @@ async function memberOf(slug: string, admin: boolean) {
 	return { member, registry: registryFor(member.membership.workspaceId) };
 }
 
+/** The workspace's sandbox time today (UTC), in minutes, and the server's daily limit if any. */
+export interface SandboxTime {
+	minutes: number;
+	limit: number | null;
+}
+
 /**
  * The keys, whether this server can keep keys at all (it needs `SECRETS_KEY`), whether it offers
  * Workers AI, which has no key: the deployment pays for it, and whether it runs sandboxes for the
- * workspace, which the deployment pays for too.
+ * workspace, which the deployment pays for too, with how much of them the workspace used today.
  */
 export const getProviderKeys = createServerFn({ method: "GET" })
 	.validator(z.string().min(1))
@@ -42,16 +49,26 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 			keys: ProviderKey[];
 			workersAi: boolean;
 			sandbox: SandboxOffer;
+			sandboxTime: SandboxTime | null;
 		} | null> => {
 			const found = await memberOf(slug, false);
 			if (!found) return null;
 			const { env } = await import("cloudflare:workers");
 			const { offersWorkersAi } = await import("#/server/workers-ai");
+			const sandbox = sandboxOfferTo(env, found.member.membership.workspaceId);
+			const [keys, seconds] = await Promise.all([
+				found.registry.listProviderKeys(),
+				sandbox === "offered" ? found.registry.sandboxSecondsToday() : null,
+			]);
 			return {
 				configured: Boolean(env.SECRETS_KEY),
-				keys: await found.registry.listProviderKeys(),
+				keys,
 				workersAi: offersWorkersAi(),
-				sandbox: sandboxOfferTo(env, found.member.membership.workspaceId),
+				sandbox,
+				sandboxTime:
+					seconds === null
+						? null
+						: { minutes: Math.ceil(seconds / 60), limit: sandboxLimits(env).dailyMinutes },
 			};
 		},
 	);

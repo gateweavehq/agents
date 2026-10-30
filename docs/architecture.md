@@ -425,8 +425,8 @@ staging does, production and self-hosted deploys leave them off until their oper
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
   with Node.js 24, Python 3, git, ripgrep, curl, jq and the shim `@cloudflare/sandbox` 1.0 talks
-  to), as a `standard-1` instance, and stops after 15 minutes without a call; its disk goes with
-  it. Deleting the conversation stops it at once.
+  to), as a `standard-1` instance (`SANDBOX_INSTANCE`), and stops after 15 minutes without a
+  call; its disk goes with it. Deleting the conversation stops it at once.
 - **No internet, but packages.** The container starts with `enableInternet: false`, and all of its
   HTTP and HTTPS goes to `SandboxOutbound`, a `WorkerEntrypoint` of the app's Worker, through the
   container's own certificate authority. `decideOutbound` (`packages/runtime/src/outbound.ts`)
@@ -455,6 +455,28 @@ staging does, production and self-hosted deploys leave them off until their oper
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
   sandbox, unless the agent's engine runs only in one, as every engine but Gateweave's loop does.
+- **Sandbox time and its limits** (AGT-45). The runs say how much sandbox time a workspace uses
+  (`sandboxSeconds` in `packages/registry/src/runs.ts`):
+  - Each conversation's sandbox counts from a run with it until 15 minutes after the last.
+  - Runs that overlap that way are merged.
+  - The idle minutes count as soon as a run ends, since the sandbox runs them anyway.
+
+  Then two limits apply, both off unless the server sets them:
+  - **Daily.** `SANDBOX_DAILY_MINUTES` refuses a turn that needs a sandbox once the workspace has
+    used that much of the UTC day.
+  - **Monthly.** `SANDBOX_MONTHLY_BUDGET` covers the whole deployment. Before such a turn, and
+    after it ends, the registry reports the workspace's figure for the month to `SandboxMeterDO`
+    (`packages/registry/src/sandbox-meter.ts`). That is one Durable Object per deployment, bound as
+    `SANDBOX_METER`, with no route. It keeps each workspace's latest figure, and prices the total
+    at `SANDBOX_SECOND_PRICE`, the most a second of the machine costs. Turns are refused once that
+    reaches the budget.
+    - The first report to pass 80% or 100% calls `sandboxBudgetPassed` once a month. The app's
+      `RegistryDO` emails `SANDBOX_ALERT_EMAIL` from there.
+    - A setting that is not a number allows nothing, so a typo never lifts a limit.
+    - A budget without the meter refuses too.
+
+  A turn that begins under a limit runs to its end, so a limit can be passed by up to an hour of
+  each sandbox in use.
 - **A repository in the sandbox** (AGT-41). An agent with a sandbox can choose a repository the
   workspace's GitHub App reaches (`agent_definitions.repository_id`). On the conversation's first
   tool call, `withCheckout` (`packages/runtime/src/checkout.ts`) asks the sandbox to clone it into

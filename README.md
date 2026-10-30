@@ -69,7 +69,12 @@ files, add the `SANDBOX` binding and the `containers` entry that the `staging` e
 `sandbox/Dockerfile`, and your Cloudflare account pays for the
 [Containers](https://developers.cloudflare.com/containers/) time; each workspace has at most three
 sandboxes at once, and each stops after 15 minutes without use. To offer them only to some
-workspaces, list their ids in `SANDBOX_WORKSPACES`, separated by commas. An agent's sandbox can check out
+workspaces, list their ids in `SANDBOX_WORKSPACES`, separated by commas. To cap what they cost, set
+`SANDBOX_DAILY_MINUTES` (each workspace's minutes per UTC day) and `SANDBOX_MONTHLY_BUDGET` (US
+dollars per UTC month for the whole server). The budget prices sandbox time at the most Cloudflare
+charges for its machine, about $0.074 an hour, so your bill comes in under it. Set
+`SANDBOX_ALERT_EMAIL` as a secret to get an email at 80% and at 100% of the budget (this needs
+email, above). Turns that would go over a limit are refused with a message that says which one. An agent's sandbox can check out
 one of the workspace's repositories when the server is set up as a GitHub App (see above), and
 propose its work as a pull request. The Worker mints a token for that repository alone and adds it
 as the clone leaves, so the token never enters the sandbox. For the one push a pull request needs,
