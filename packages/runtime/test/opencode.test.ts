@@ -9,9 +9,8 @@ import {
 	OPENCODE_INSTRUCTIONS,
 	OPENCODE_PLACEHOLDER_KEY,
 	OpenCodeTurn,
-	openCodeArguments,
-	openCodeCommand,
 	openCodeConfig,
+	openCodeSettings,
 } from "../src/opencode";
 import { decideOutbound } from "../src/outbound";
 import { createTraceTables, RunRecorder, readTrace, type Sql } from "../src/trace";
@@ -395,7 +394,7 @@ describe("an agent whose engine is OpenCode", () => {
 	});
 });
 
-describe("OpenCode's command", () => {
+describe("OpenCode's settings", () => {
 	const job: EngineJob = {
 		engine: "opencode",
 		prompt: "And the folders?",
@@ -406,36 +405,11 @@ describe("OpenCode's command", () => {
 		cwd: "/workspace",
 		access: { key: KEY, metadata: { workspace: "w", agent: "a", conversation: "c" }, tools: null },
 	};
-	const config = (command: { env: Record<string, string> }) =>
-		JSON.parse(command.env.OPENCODE_CONFIG_CONTENT ?? "{}");
-
-	it("runs it headless and unasked, with the message on its input, and names a new session", () => {
-		const fresh = openCodeArguments({ provider: "openai", model: "gpt-5.5", resume: false });
-		expect(fresh).toEqual([
-			"run",
-			"--format",
-			"json",
-			"--model",
-			"openai/gpt-5.5",
-			"--auto",
-			"--title",
-			"Gateweave",
-		]);
-		const resumed = openCodeArguments({ provider: "openai", model: "gpt-5.5", resume: true });
-		expect(resumed.slice(-1)).toEqual(["--continue"]);
-		expect(resumed).not.toContain("--title");
-	});
-
-	it("is `opencode`, with the message after the conversation so far when it lost the session", () => {
-		const fresh = openCodeCommand(job, false);
-		expect(fresh.argv[0]).toBe("opencode");
-		expect(fresh.input).toContain("The person: List the files");
-		expect(fresh.input.endsWith("And the folders?")).toBe(true);
-		expect(openCodeCommand(job, true).input).toBe("And the folders?");
-	});
+	const config = (settings: Record<string, string>) =>
+		JSON.parse(settings.OPENCODE_CONFIG_CONTENT ?? "{}");
 
 	it("calls the agent's model alone, at its provider's own address, with the placeholder", () => {
-		expect(config(openCodeCommand(job, false))).toMatchObject({
+		expect(config(openCodeSettings(job))).toMatchObject({
 			model: "anthropic/claude-sonnet-5-5",
 			small_model: "anthropic/claude-sonnet-5-5",
 			enabled_providers: ["anthropic"],
@@ -486,50 +460,43 @@ describe("OpenCode's command", () => {
 	});
 
 	it("gives a Google model the placeholder alone, never the workspace's key", () => {
-		const command = openCodeCommand(
-			{
-				...job,
-				provider: "google",
-				model: "gemini-3-flash",
-				access: { ...job.access, key: GOOGLE_KEY },
-			},
-			false,
-		);
-		expect(command.argv).toContain("google/gemini-3-flash");
-		expect(JSON.stringify(command)).toContain(OPENCODE_PLACEHOLDER_KEY);
-		expect(JSON.stringify(command)).not.toContain(GOOGLE_KEY);
+		const settings = openCodeSettings({
+			...job,
+			provider: "google",
+			model: "gemini-3-flash",
+			access: { ...job.access, key: GOOGLE_KEY },
+		});
+		expect(config(settings).model).toBe("google/gemini-3-flash");
+		expect(JSON.stringify(settings)).toContain(OPENCODE_PLACEHOLDER_KEY);
+		expect(JSON.stringify(settings)).not.toContain(GOOGLE_KEY);
 	});
 
 	it("keeps out what would leave the sandbox, and the tools whose requests the trace would miss", () => {
-		const command = openCodeCommand(job, false);
-		expect(config(command)).toMatchObject({
+		const settings = openCodeSettings(job);
+		expect(config(settings)).toMatchObject({
 			autoupdate: false,
 			share: "disabled",
 			snapshot: false,
 			tools: { task: false, webfetch: false },
 		});
-		expect(command.env).toMatchObject({
+		expect(settings).toMatchObject({
 			OPENCODE_DISABLE_AUTOUPDATE: "1",
 			OPENCODE_DISABLE_MODELS_FETCH: "1",
 			OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
 			OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
 		});
-		expect(JSON.stringify(command)).not.toContain(KEY);
+		expect(JSON.stringify(settings)).not.toContain(KEY);
 	});
 
 	it("reads the turn's instructions from the file the sandbox writes, when there are any", () => {
-		expect(config(openCodeCommand(job, false)).instructions).toEqual([OPENCODE_INSTRUCTIONS]);
-		expect(config(openCodeCommand({ ...job, system: "" }, false))).not.toHaveProperty(
-			"instructions",
-		);
+		expect(config(openCodeSettings(job)).instructions).toEqual([OPENCODE_INSTRUCTIONS]);
+		expect(config(openCodeSettings({ ...job, system: "" }))).not.toHaveProperty("instructions");
 	});
 
 	it("names Gateweave's MCP server only when the turn has tools, for as long as the turn may run", () => {
-		expect(config(openCodeCommand(job, false))).not.toHaveProperty("mcp");
+		expect(config(openCodeSettings(job))).not.toHaveProperty("mcp");
 		const tools = { conversation: "c", token: "t" };
-		expect(
-			config(openCodeCommand({ ...job, access: { ...job.access, tools } }, false)),
-		).toMatchObject({
+		expect(config(openCodeSettings({ ...job, access: { ...job.access, tools } }))).toMatchObject({
 			mcp: {
 				gateweave: {
 					type: "remote",
@@ -539,6 +506,19 @@ describe("OpenCode's command", () => {
 				},
 			},
 		});
+	});
+
+	it("are the same for each turn of the same agent, so its server keeps running", () => {
+		const tools = { conversation: "c", token: "another turn's" };
+		const next = { ...job, prompt: "Next", history: null, access: { ...job.access, tools } };
+		const withTools = {
+			...job,
+			access: { ...job.access, tools: { conversation: "c", token: "t" } },
+		};
+		expect(openCodeSettings(next)).toEqual(openCodeSettings(withTools));
+		expect(openCodeSettings({ ...job, model: "claude-opus-5-5" })).not.toEqual(
+			openCodeSettings(job),
+		);
 	});
 });
 

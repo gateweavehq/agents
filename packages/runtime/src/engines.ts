@@ -296,13 +296,19 @@ export function logTail(log: string): string {
 	return tail.length <= LOG_TAIL_LIMIT ? tail : `…${tail.slice(-LOG_TAIL_LIMIT)}`;
 }
 
-/** What `timeout` exits with when it stopped the CLI, and when it, or the kernel, killed it. */
-const TIMED_OUT = 124;
+/**
+ * What `timeout` exits with when it stopped the CLI, and when it, or the kernel, killed it. A turn
+ * of OpenCode's server that the sandbox stopped at its time limit ends with the first too.
+ */
+export const TIMED_OUT_STATUS = 124;
 const KILLED = 137;
 
 /** Why a turn failed whose CLI ended without saying why, from how it ended. */
 export function describeUnfinished(name: string, exit: EngineExit | null): string {
-	if (exit?.code === TIMED_OUT || (exit?.code === KILLED && exit.seconds >= ENGINE_SECONDS)) {
+	if (
+		exit?.code === TIMED_OUT_STATUS ||
+		(exit?.code === KILLED && exit.seconds >= ENGINE_SECONDS)
+	) {
 		return `${name} ran for ${ENGINE_SECONDS / 60} minutes, the most one message may take.`;
 	}
 	// Nothing else in the sandbox kills it: the kernel does when the container runs out of memory.

@@ -1,10 +1,12 @@
 /**
  * OpenCode as an agent's engine (`./engines.ts`): the open-source OpenCode CLI, run in the
  * conversation's sandbox in place of Gateweave's own loop, with the agent's Anthropic, OpenAI or
- * Google model. It reads the repository's AGENTS.md and opencode.json as it would on a laptop. Each
- * of its model requests becomes a model span with the request's own usage, and each of its tool
- * calls a tool span. One conversation is one OpenCode session, which each turn continues while the
- * sandbox has it.
+ * Google model. Its server runs in the sandbox, and each turn is a message to it
+ * (`./opencode-server.ts`), whose events come out as `opencode run --format json` prints them. It
+ * reads the repository's AGENTS.md and opencode.json as it would on a laptop. Each of its model
+ * requests becomes a model span with the request's own usage, and each of its tool calls a tool
+ * span. One conversation is one OpenCode session, which each turn continues while the sandbox has
+ * it.
  *
  * Gateweave's tools reach it as the MCP server `gateweave` (`./engine-tools.ts`), whose tools it
  * calls `gateweave_<tool>`. Their calls come to the chat under their own names, and record their
@@ -22,7 +24,7 @@
  *   so theirs win (`config/config.ts`), and `instructions` takes only files, which follow the
  *   repository's AGENTS.md in the system prompt (`session/instruction.ts`)
  * - a new session without a title asks the provider's small model for one (`ensureTitle` in
- *   `session/prompt.ts`): `--title` names it instead
+ *   `session/prompt.ts`): the sandbox names it instead
  * - what it fetches otherwise, and the variables that stop it: its list of models
  *   (models.opencode.ai), its updates, language servers, and `@opencode-ai/plugin` from npm into
  *   its settings folder, which the image installs instead
@@ -41,11 +43,9 @@ import {
 	type ChunkSink,
 	clip,
 	ENGINE_SECONDS,
-	type EngineCommand,
 	type EngineJob,
 	type EngineOutcome,
 	type EngineTurn,
-	enginePrompt,
 	failed,
 	MAX_CHAT_OUTPUT,
 	outputOf,
@@ -69,15 +69,6 @@ export const OPENCODE_PLACEHOLDER_KEY = "sk-gateweave-sandbox-placeholder";
  * its settings. The sandbox writes them there before each turn.
  */
 export const OPENCODE_INSTRUCTIONS = "/tmp/gateweave-instructions.md";
-
-/** Where OpenCode keeps its sessions, under its home, which it creates. */
-export const OPENCODE_DATABASE = "/root/.local/share/opencode/opencode.db";
-
-/** Where its own messages go in the sandbox, out of the events' way. */
-export const OPENCODE_LOG = "/tmp/opencode.log";
-
-/** The title of the conversation's session, which spares a request to the model for one. */
-const SESSION_TITLE = "Gateweave";
 
 /**
  * The providers' APIs, as OpenCode calls them, for those it runs with here: their own addresses,
@@ -142,7 +133,7 @@ export function openCodeConfig(options: {
 	};
 }
 
-/** What the CLI runs with besides the sandbox's usual environment: its settings, and no fetches. */
+/** What the server runs with besides the sandbox's usual environment: its settings, and no fetches. */
 export function openCodeEnv(config: Record<string, unknown>): Record<string, string> {
 	return {
 		OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
@@ -155,44 +146,21 @@ export function openCodeEnv(config: Record<string, unknown>): Record<string, str
 }
 
 /**
- * The command line after `opencode`, for a session to start or to continue. The sandbox is the
- * turn's sandbox, so it asks nothing: `--auto` approves whatever its permissions would ask about.
- */
-export function openCodeArguments(options: {
-	provider: ModelProvider;
-	model: string;
-	resume: boolean;
-}): string[] {
-	return [
-		"run",
-		"--format",
-		"json",
-		"--model",
-		`${options.provider}/${options.model}`,
-		"--auto",
-		// The container holds this conversation's session alone, so its last is the one.
-		...(options.resume ? ["--continue"] : ["--title", SESSION_TITLE]),
-	];
-}
-
-/**
- * How the sandbox runs a turn of OpenCode, continuing its session when the sandbox still has one,
- * with the message on its input. The sandbox has written the turn's instructions, if any, to
+ * What OpenCode's server runs with for the job's turn, which starts it over when they differ from
+ * the last turn's. The sandbox has written the turn's instructions, if any, to
  * `OPENCODE_INSTRUCTIONS` first.
  */
-export function openCodeCommand(job: EngineJob, resume: boolean): EngineCommand {
-	const config = openCodeConfig({
-		provider: job.provider,
-		model: job.model,
-		instructions: job.system !== "",
-		tools: job.access.tools !== null,
-	});
-	return {
-		argv: ["opencode", ...openCodeArguments({ provider: job.provider, model: job.model, resume })],
-		env: openCodeEnv(config),
-		input: enginePrompt(job, resume),
-		log: OPENCODE_LOG,
-	};
+export function openCodeSettings(
+	job: Pick<EngineJob, "provider" | "model" | "system" | "access">,
+): Record<string, string> {
+	return openCodeEnv(
+		openCodeConfig({
+			provider: job.provider,
+			model: job.model,
+			instructions: job.system !== "",
+			tools: job.access.tools !== null,
+		}),
+	);
 }
 
 /** The longest failure of a tool the trace records. */
