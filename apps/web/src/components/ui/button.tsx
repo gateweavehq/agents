@@ -1,3 +1,5 @@
+// Adapted from shadcn/ui (https://ui.shadcn.com): MIT License, Copyright (c) 2023 shadcn.
+// The license's full text is in THIRD_PARTY_NOTICES.md at the root of this repository.
 import { cva, type VariantProps } from "class-variance-authority";
 import { Slot } from "radix-ui";
 import * as React from "react";

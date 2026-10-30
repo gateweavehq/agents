@@ -1,3 +1,5 @@
+// Adapted from shadcn/ui (https://ui.shadcn.com): MIT License, Copyright (c) 2023 shadcn.
+// The license's full text is in THIRD_PARTY_NOTICES.md at the root of this repository.
 import type * as React from "react";
 
 import { cn } from "#/lib/utils";
