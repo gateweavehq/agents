@@ -25,8 +25,9 @@ jobs:
       github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    # While the repository is private, GitHub's free plan has no environments, so the
-    # credentials are repository secrets. https://agents-staging.gateweave.com
+    environment:
+      name: staging
+      url: https://agents-staging.gateweave.com
     concurrency: deploy-staging
     steps:
       - uses: actions/checkout@v7
@@ -47,7 +48,9 @@ jobs:
   production:
     if: github.repository == 'gateweavehq/agents' && github.event_name == 'release'
     runs-on: ubuntu-latest
-    # https://agents.gateweave.com
+    environment:
+      name: production
+      url: https://agents.gateweave.com
     concurrency: deploy-production
     steps:
       - uses: actions/checkout@v7
