@@ -105,7 +105,7 @@
 			},
 			// Staging's sandboxes are open to every workspace, within these limits. Its operator hears
 			// of the budget at SANDBOX_ALERT_EMAIL, a secret.
-			"vars": { "SANDBOX_DAILY_MINUTES": "60", "SANDBOX_MONTHLY_BUDGET": "20" },
+			"vars": { "SANDBOX_DAILY_MINUTES": "180", "SANDBOX_MONTHLY_BUDGET": "20" },
 			// Sandboxes: one container per conversation that uses one, built from sandbox/Dockerfile.
 			// Its size is set where it starts, and each workspace has at most three at once
 			// (MAX_WORKSPACE_SANDBOXES in packages/model).
