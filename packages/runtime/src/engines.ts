@@ -62,6 +62,21 @@ export interface EnginePort {
 	startEngine(job: EngineJob): Promise<ReadableStream<Uint8Array>>;
 	/** Ends the turn under way: the CLI finishes it as it would on Ctrl+C, or is killed. */
 	stopEngine(): Promise<void>;
+	/**
+	 * How the CLI of the last turn ended, for a turn it ended without saying why; null when the
+	 * container has run no turn since it started.
+	 */
+	engineExit(): Promise<EngineExit | null>;
+}
+
+/** How the CLI of a turn ended. */
+export interface EngineExit {
+	/** Its exit status; null when it had not exited, or the sandbox could not tell. */
+	code: number | null;
+	/** How long it ran. */
+	seconds: number;
+	/** The end of what it wrote to its log in the turn, as `logTail` gives it. */
+	log: string;
 }
 
 /** The engine running a turn in a sandbox, and what its requests out of the sandbox go with. */
@@ -85,8 +100,11 @@ export interface ChunkSink {
 	write(chunk: UIMessageChunk): void;
 }
 
-/** How a turn of an engine went. */
-export type EngineOutcome = { status: "succeeded" } | { status: "failed"; error: string };
+/** How a turn of an engine went: `unfinished` when the CLI ended without saying. */
+export type EngineOutcome =
+	| { status: "succeeded" }
+	| { status: "failed"; error: string }
+	| { status: "unfinished" };
 
 /** What a turn keeps for the conversation's next one: the conversation's own storage. */
 export interface EngineMemory {
@@ -243,4 +261,55 @@ export function withoutKeys(text: string): string {
 
 export function failed(error: string): EngineOutcome {
 	return { status: "failed", error };
+}
+
+export const UNFINISHED: EngineOutcome = { status: "unfinished" };
+
+/** How a turn went, once the conversation knows why a CLI that did not say stopped. */
+export type SettledOutcome = Exclude<EngineOutcome, { status: "unfinished" }>;
+
+/** The turn's outcome, with why its CLI stopped, when it did not say, from how it ended. */
+export async function settle(
+	outcome: EngineOutcome,
+	name: string,
+	sandbox: Pick<EnginePort, "engineExit">,
+): Promise<SettledOutcome> {
+	if (outcome.status !== "unfinished") return outcome;
+	const exit = await sandbox.engineExit().catch(() => null);
+	return { status: "failed", error: describeUnfinished(name, exit) };
+}
+
+/** Most lines, and characters, of the CLI's log that a turn it left unfinished quotes. */
+export const LOG_TAIL_LINES = 10;
+export const LOG_TAIL_LIMIT = 1_000;
+
+/**
+ * The end of a CLI's log, as a turn it left unfinished quotes it: its last lines, with anything
+ * like a key taken out first, so that no cut leaves part of one.
+ */
+export function logTail(log: string): string {
+	const lines = withoutKeys(log)
+		.split("\n")
+		.map((line) => line.trimEnd())
+		.filter((line) => line !== "");
+	const tail = lines.slice(-LOG_TAIL_LINES).join("\n");
+	return tail.length <= LOG_TAIL_LIMIT ? tail : `…${tail.slice(-LOG_TAIL_LIMIT)}`;
+}
+
+/** What `timeout` exits with when it stopped the CLI, and when it, or the kernel, killed it. */
+const TIMED_OUT = 124;
+const KILLED = 137;
+
+/** Why a turn failed whose CLI ended without saying why, from how it ended. */
+export function describeUnfinished(name: string, exit: EngineExit | null): string {
+	if (exit?.code === TIMED_OUT || (exit?.code === KILLED && exit.seconds >= ENGINE_SECONDS)) {
+		return `${name} ran for ${ENGINE_SECONDS / 60} minutes, the most one message may take.`;
+	}
+	// Nothing else in the sandbox kills it: the kernel does when the container runs out of memory.
+	if (exit?.code === KILLED) {
+		return `${name} was killed before it finished, most likely because the sandbox ran out of memory.`;
+	}
+	const status = exit === null || exit.code === null ? "" : ` (exit status ${exit.code})`;
+	const said = exit && exit.log !== "" ? `. The end of its log:\n${exit.log}` : ".";
+	return `${name} stopped before it finished${status}${said}`;
 }

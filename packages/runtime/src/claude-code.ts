@@ -41,6 +41,7 @@ import {
 	failed,
 	MAX_CHAT_OUTPUT,
 	outputOf,
+	UNFINISHED,
 } from "./engines";
 import type { RunRecorder } from "./trace";
 
@@ -320,7 +321,7 @@ export class ClaudeCodeTurn implements EngineTurn {
 		this.#endRequests(undefined, now);
 		this.#closeStep();
 		const result = this.#result;
-		if (!result) return failed("Claude Code stopped before it finished.");
+		if (!result) return UNFINISHED;
 		if (result.subtype === "error_max_turns") {
 			return failed(
 				`Claude Code stopped after ${result.num_turns ?? CLAUDE_CODE_TURNS} turns, the most one message may take.`,

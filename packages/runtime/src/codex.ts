@@ -43,6 +43,7 @@ import {
 	failed,
 	MAX_CHAT_OUTPUT,
 	outputOf,
+	UNFINISHED,
 	withoutKeys,
 } from "./engines";
 import type { RunRecorder } from "./trace";
@@ -280,7 +281,9 @@ export class CodexTurn implements EngineTurn {
 	end(now = Date.now()): EngineOutcome {
 		this.#endModel(null, "error", now);
 		if (this.#completed) return { status: "succeeded" };
-		return failed(describeFailure(this.#agent, this.#failure, this.#detail));
+		const words = this.#failure ?? this.#detail;
+		if (words === null) return UNFINISHED;
+		return failed(describeFailure(this.#agent, words, this.#failure === null));
 	}
 
 	#started(item: { id: string }, now: number): void {
@@ -453,17 +456,12 @@ export class CodexTurn implements EngineTurn {
 const STATUS = /(?:unexpected status|last status:) (\d{3})\b/;
 
 /**
- * Why Codex's turn failed, in the same words as a turn of Gateweave's own loop. What it says
+ * Why Codex's turn failed, in the same words as a turn of Gateweave's own loop; `cutShort` when
+ * the turn did not fail in its words but stopped after an error it reported. What it says
  * otherwise is quoted with anything like a key taken out: OpenAI's errors repeat part of the key.
  */
-function describeFailure(
-	agent: AgentSnapshot,
-	failure: string | null,
-	detail: string | null,
-): string {
+function describeFailure(agent: AgentSnapshot, words: string, cutShort: boolean): string {
 	const name = MODEL_PROVIDER_NAMES[agent.provider];
-	const words = failure ?? detail;
-	if (words === null) return "Codex stopped before it finished.";
 	const status = Number(STATUS.exec(words)?.[1] ?? 0);
 	if (status === 401 || status === 403) {
 		return `${name} refused the workspace's key. An owner or admin can check it in Settings.`;
@@ -478,6 +476,6 @@ function describeFailure(
 	if (status >= 500 || words.startsWith("Selected model is at capacity")) {
 		return `${name} could not answer just now. Try again shortly.`;
 	}
-	const said = failure === null ? "Codex stopped before it finished" : "Codex could not finish";
+	const said = cutShort ? "Codex stopped before it finished" : "Codex could not finish";
 	return `${said}: ${clip(withoutKeys(words), FAILURE_DETAIL_LIMIT)}`;
 }

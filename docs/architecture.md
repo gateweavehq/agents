@@ -415,6 +415,12 @@ staging does, production and self-hosted deploys leave them off until their oper
   `opencode.json`. The registry enforces two rules for each: it needs a sandbox, and it calls models
   of a provider it runs with (`ENGINE_PROVIDERS`): Anthropic's for Claude Code, OpenAI's for Codex,
   either for OpenCode. See **Claude Code**, **Codex** and **OpenCode** below.
+  A CLI writes its own messages to a log in the sandbox, out of its events' way, one turn's at a
+  time. When it ends without saying how its turn went, the conversation asks the sandbox how it
+  ended (`engineExit`): its exit status, how long it ran, and the last ten lines of its log, at
+  most 1,000 characters, with anything like a key taken out before they leave the sandbox. The
+  turn fails with those (AGT-48). A kill before the turn's hour reads as the sandbox running out
+  of memory, since nothing else there kills the CLI.
 - **One container per conversation.** `RunnerSandbox` (`packages/runtime/src/sandbox.ts`) is a
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian

@@ -83,7 +83,7 @@ function RunPage() {
 				)}
 			</header>
 			{run.error && (
-				<p className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+				<p className="whitespace-pre-wrap break-words rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
 					{run.error}
 				</p>
 			)}

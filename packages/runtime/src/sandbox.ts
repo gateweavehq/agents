@@ -30,8 +30,10 @@ import { toolsRequest } from "./engine-tools";
 import {
 	ENGINE_SECONDS,
 	type EngineCommand,
+	type EngineExit,
 	type EngineJob,
 	type EnginePort,
+	logTail,
 	type RunningEngine,
 } from "./engines";
 import {
@@ -117,6 +119,12 @@ const SIGTERM = 15;
 /** `timeout`'s exit codes for a command it stopped, and one it had to kill. */
 const TIMED_OUT = new Set([124, 137]);
 
+/** How long `engineExit` waits for the engine to exit after its events end. */
+const EXIT_WAIT_MS = 5_000;
+
+/** Most bytes of the end of the engine's log that `engineExit` reads. */
+const LOG_TAIL_BYTES = 4_096;
+
 /** The environment a commit is made with: the author, as both its author and its committer. */
 export function commitEnvironment(author: CommitAuthor): Record<string, string> {
 	return {
@@ -157,6 +165,12 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 	 * In memory alone, like `#push`, and only while the turn runs.
 	 */
 	#running: RunningEngine | null = null;
+	/** The last turn's log, when it started, and how it ended, for `engineExit`. */
+	#lastTurn: {
+		log: string;
+		started: number;
+		ended: Promise<{ code: number | null; seconds: number }>;
+	} | null = null;
 
 	constructor(ctx: SandboxState, env: Cloudflare.Env) {
 		super(ctx, env);
@@ -375,6 +389,7 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 	 */
 	async startEngine(job: EngineJob): Promise<ReadableStream<Uint8Array>> {
 		if (this.#engine) throw new Error("An engine is already running a turn in this sandbox");
+		this.#lastTurn = null;
 		const container = await this.#ready();
 		const command = await this.#commandFor(container, job);
 		this.#running = { engine: job.engine, provider: job.provider, access: job.access };
@@ -388,8 +403,8 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 					`${ENGINE_SECONDS}s`,
 					"bash",
 					"-c",
-					// Its own messages go to a file, so its output holds only its events.
-					`exec "$0" "$@" 2>>${command.log}`,
+					// Its own messages go to a file, this turn's alone, so its output holds only its events.
+					`exec "$0" "$@" 2>${command.log}`,
 					...command.argv,
 				],
 				{
@@ -405,6 +420,16 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 			throw error;
 		}
 		this.#engine = process;
+		const started = Date.now();
+		const seconds = () => (Date.now() - started) / 1000;
+		this.#lastTurn = {
+			log: command.log,
+			started,
+			ended: process.exitCode.then(
+				(code) => ({ code, seconds: seconds() }),
+				() => ({ code: null, seconds: seconds() }),
+			),
+		};
 		process.exitCode
 			.catch(() => null)
 			.then(() => this.#engineEnded(container))
@@ -428,6 +453,32 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 		setTimeout(() => {
 			if (this.#engine === process) process.kill(SIGTERM);
 		}, STOP_GRACE_MS);
+	}
+
+	async engineExit(): Promise<EngineExit | null> {
+		const turn = this.#lastTurn;
+		const container = this.#container;
+		if (!turn || !container) return null;
+		// Its events can end a moment before it exits.
+		const ended = await Promise.race([
+			turn.ended,
+			new Promise<null>((resolve) => setTimeout(() => resolve(null), EXIT_WAIT_MS)),
+		]);
+		let log = "";
+		if (container.running) {
+			const read = await this.#exec(
+				container,
+				["tail", "--bytes", String(LOG_TAIL_BYTES), turn.log],
+				SANDBOX_ROOT,
+				10,
+			).catch(() => null);
+			if (read?.exitCode === 0) log = logTail(read.output);
+		}
+		return {
+			code: ended?.code ?? null,
+			seconds: ended?.seconds ?? (Date.now() - turn.started) / 1000,
+			log,
+		};
 	}
 
 	/** The engine whose turn `SandboxOutbound` lets out, and with what; null when none runs. */
