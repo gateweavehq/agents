@@ -903,6 +903,10 @@ file the pull request would.
   differing. Paths it would leave alone are warnings, not failures.
 - **One file, no dependencies.** Vite bundles the CLI, the workspace packages it uses and the
   ready-made setups into `dist/main.js`, so a version always writes the same files.
+- **Published from CI.** Pushing a `cli-v<version>` tag runs `publish-cli.yml`, which publishes
+  that version to npm through trusted publishing, with provenance and no npm token. Only admins
+  can create those tags, and the tag must point at a commit on `main` whose
+  `packages/cli/package.json` has that version. The CLI's version is its own, apart from the app's.
 
 ## Pages
 
@@ -986,17 +990,14 @@ provider keys.
 
 ## What comes next
 
-- **Publishing the CLI** to npm as `@gateweave/agents`, so CI can run `npx @gateweave/agents
-  check`. It is built and tested here, and stays private until then.
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
   [Track triage](#track-triage).
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
-- **Cloud runners** (phase 5, AGT-9), after sandboxes (AGT-40), a repository in them (AGT-41),
-  pull requests from them (AGT-42), the vendors' own coding CLIs (AGT-44) and limits on sandbox
-  time (AGT-45): runs on a schedule or a label (AGT-43). Sandboxes will also run the MCP servers
-  that are local commands.
+- **After cloud runners** (phase 5, AGT-9, done): model requests metered where they leave the
+  sandbox (AGT-49), a long-lived OpenCode server in the sandbox (AGT-50), and container cost on
+  Runs (AGT-53). Sandboxes will also run the MCP servers that are local commands.
 
 ## Deploys
 

@@ -1,0 +1,53 @@
+name: Publish CLI
+
+# Publishes @gateweave/agents to npm when a `cli-v<version>` tag is pushed. npm trusts this
+# workflow's OIDC token (trusted publishing), so no npm token is stored anywhere, and the package
+# gets provenance. Only admins can create those tags (a tag ruleset), and the tag must point at a
+# commit on main whose packages/cli/package.json has that version.
+on:
+  push:
+    tags: ["cli-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: github.repository == 'gateweavehq/agents'
+    runs-on: ubuntu-latest
+    concurrency: publish-cli
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG does not point at a commit on main"
+            exit 1
+          fi
+          version=$(node -p "require('./packages/cli/package.json').version")
+          if [ "$TAG" != "cli-v$version" ]; then
+            echo "::error::$TAG does not match packages/cli/package.json ($version)"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @gateweave/agents build
+      - run: pnpm --filter @gateweave/agents test
+      # pnpm pack turns workspace: and catalog: references into versions. npm publishes, because
+      # trusted publishing needs npm 11.5.1 or later.
+      - name: Publish
+        working-directory: packages/cli
+        run: |
+          npm --version
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          npm publish "$RUNNER_TEMP"/gateweave-agents-*.tgz --access public
