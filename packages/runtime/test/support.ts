@@ -1,7 +1,8 @@
 /** What the runtime's tests share: a chat socket, and a model that answers as a provider does. */
 import { vi } from "vitest";
 
-export const KEY = "sk-ant-api03-secret-abcd";
+// Its tail is not hexadecimal, so tests that look for it in a reply never find it in a random id.
+export const KEY = "sk-ant-api03-secret-wxyz";
 
 export async function connect(stub: {
 	fetch: (input: string, init?: RequestInit) => Promise<Response>;
