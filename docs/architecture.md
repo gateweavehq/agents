@@ -611,18 +611,39 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     turn's hour. Codex speaks MCP's stateless 2025-06-18 revision, which the handler answers too.
 - **OpenCode** (AGT-44). The image installs the OpenCode CLI (MIT), pinned (`OPENCODE_VERSION`):
   its build for the container's machine alone, and the `@opencode-ai/plugin` package it would
-  otherwise fetch from npm into its settings folder on a new container's first turn. A turn of an
-  agent whose engine is `opencode` runs `opencode run --format json --auto` the same way
-  (`packages/runtime/src/opencode.ts`), with the agent's Anthropic, OpenAI or Google model. `--auto`
-  approves what its permissions would ask about, since nobody is there to answer.
+  otherwise fetch from npm into its settings folder on a new container's first turn. An agent
+  whose engine is `opencode` runs with its Anthropic, OpenAI or Google model
+  (`packages/runtime/src/opencode.ts`), and its turns come out as `opencode run --format json
+  --auto` prints them. Permissions are approved as `--auto` approves them, since nobody is there
+  to answer.
+  - **A server per container** (AGT-50, `packages/runtime/src/opencode-server.ts`). Before its
+    first request, `opencode run` starts Bun and loads its settings, plugins, MCP servers and
+    database: about 4 s a turn on one vCPU, and 9 s on `standard-1`. So the container's first
+    OpenCode turn starts `opencode serve` (`OPENCODE_SERVER_SCRIPT`), which outlives the turn.
+    - Each turn drives the server from the sandbox's Durable Object, through the container's port
+      (`getTcpPort`). It opens the project's events, sends the message (`prompt_async`) and prints
+      what `opencode run` would of the events until the session is idle. On a running server, a
+      turn reaches its first request in tens of milliseconds.
+    - `opencode run --attach` would skip the start too, but with `--format json` it prints nothing:
+      it returns without waiting for its events.
+    - The server reads its settings when it starts. It starts over when a turn's differ, which
+      happens when the agent's model changes, or whether it has instructions or Gateweave's tools.
+    - It lists an MCP server's tools only when it connects to it, so each turn with tools
+      reconnects `gateweave` first, and the server lists the turn's own.
+    - Stopping a turn stops the session (`abort`). At the hour's limit, the turn ends as one that
+      `timeout` stopped.
+    - The server keeps its warnings and errors in `/tmp/opencode-server.log`. A turn that ends
+      without saying why quotes the part of that log written since the turn began, with the
+      server's exit status if it exited.
   - **Its settings come last.** OpenCode reads `OPENCODE_CONFIG_CONTENT` after the repository's
     `opencode.json`, so the turn's settings win where both speak: the agent's model alone (for its
     small tasks too), at its provider's own address with a placeholder for a key, no update checks,
     shared sessions, model list or language server downloads, and no snapshots of the work. It
     takes instructions only from files, so the sandbox writes the agent's instructions and where it
     runs to `/tmp/gateweave-instructions.md`, which its `instructions` name: they follow the
-    repository's `AGENTS.md` in its system prompt. A new session gets the title `Gateweave`, which
-    spares the request to a small model OpenCode makes for one otherwise.
+    repository's `AGENTS.md` in its system prompt, and the server reads them at each message. A
+    new session gets the title `Gateweave`, which spares the request to a small model OpenCode makes
+    for one otherwise.
   - **One span per request.** Each of its steps is one model request, and the step's finish has
     that request's usage, so each becomes a model span priced on its own, with no summing. OpenCode
     counts the cached input and the reasoning apart; the trace counts them in the input and the
@@ -642,9 +663,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     `google-ai-studio` path when the deployment names one, as for Gateweave's own calls. A failure comes as an
     `error` event with the provider's status, said in Gateweave's words, once OpenCode's own five
     retries of a request that may succeed later have failed too.
-  - **One session per conversation.** A later turn continues the last session (`--continue`) while
-    the container has OpenCode's database; otherwise it starts a new one with the conversation so
-    far. Gateweave's tools are the same MCP server, a `remote` one in its settings without OAuth,
+  - **One session per conversation.** The conversation keeps its session's id, and a later turn
+    continues that session while the server has it, even after the server starts over; otherwise
+    it starts a new one with the conversation so far. Gateweave's tools are the same MCP server, a `remote` one in its settings without OAuth,
     whose timeout, the turn's hour, covers each call. OpenCode speaks MCP's 2025-11-25 revision.
   - **It needs more than the smallest machine.** OpenCode runs on Bun. A local run of the image
     under `lite`'s limits (256 MiB, 1/16 vCPU) ran out of memory before its first answer; under
@@ -996,8 +1017,8 @@ provider keys.
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
 - **After cloud runners** (phase 5, AGT-9, done): model requests metered where they leave the
-  sandbox (AGT-49), a long-lived OpenCode server in the sandbox (AGT-50), and container cost on
-  Runs (AGT-53). Sandboxes will also run the MCP servers that are local commands.
+  sandbox (AGT-49), and container cost on Runs (AGT-53). Sandboxes will also run the MCP servers
+  that are local commands.
 
 ## Deploys
 

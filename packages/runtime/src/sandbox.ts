@@ -36,6 +36,8 @@ import {
 	type EnginePort,
 	logTail,
 	type RunningEngine,
+	type SandboxEngine,
+	TIMED_OUT_STATUS,
 } from "./engines";
 import {
 	anthropicRequest,
@@ -45,7 +47,16 @@ import {
 	openaiRequest,
 	SettingsError,
 } from "./models";
-import { OPENCODE_DATABASE, OPENCODE_INSTRUCTIONS, openCodeCommand } from "./opencode";
+import { OPENCODE_INSTRUCTIONS } from "./opencode";
+import {
+	OPENCODE_PORT,
+	OPENCODE_SERVER_EXIT,
+	OPENCODE_SERVER_LOG,
+	OPENCODE_SERVER_SCRIPT,
+	type OpenCodeServerPort,
+	type OpenCodeServerTurn,
+	startOpenCodeTurn,
+} from "./opencode-server";
 import {
 	ANTHROPIC_API,
 	checkPush,
@@ -108,6 +119,11 @@ const REPOSITORY_KEY = "repository";
 const PUSHED_KEY = "pushed";
 /** The conversation's Claude Code session, which its turns resume while the container has it. */
 const SESSION_KEY = "claude-code-session";
+/** The conversation's OpenCode session, which its turns continue while the container has it. */
+const OPENCODE_SESSION_KEY = "opencode-session";
+
+/** How long `OPENCODE_SERVER_SCRIPT` may take, which waits up to 10 s for an old server to stop. */
+const OPENCODE_SCRIPT_SECONDS = 60;
 
 /** How a request to each provider's API goes out, with the workspace's key. */
 const MODEL_REQUESTS: ReadonlyMap<string | undefined, typeof anthropicRequest> = new Map([
@@ -169,15 +185,21 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 	#push: PushWindow | null = null;
 	/** The engine's turn under way, if any. */
 	#engine: ExecProcess | null = null;
+	/** The turn of OpenCode's server under way, if any, which runs in place of a process. */
+	#openCode: OpenCodeServerTurn | null = null;
 	/**
 	 * What the turn the engine is running reaches through `SandboxOutbound`: the workspace's key,
 	 * which goes on its requests to the model's provider, and the way to the conversation's tools.
 	 * In memory alone, like `#push`, and only while the turn runs.
 	 */
 	#running: RunningEngine | null = null;
-	/** The last turn's log, when it started, and how it ended, for `engineExit`. */
+	/**
+	 * The last turn's log, where in it the turn began for a log that every turn adds to, when it
+	 * started, and how it ended, for `engineExit`.
+	 */
 	#lastTurn: {
 		log: string;
+		logFrom?: number;
 		started: number;
 		ended: Promise<{ code: number | null; seconds: number }>;
 	} | null = null;
@@ -398,10 +420,13 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 	 * with the turn, which may run for `ENGINE_SECONDS`, and the container stays up meanwhile.
 	 */
 	async startEngine(job: EngineJob): Promise<ReadableStream<Uint8Array>> {
-		if (this.#engine) throw new Error("An engine is already running a turn in this sandbox");
+		if (this.#engine || this.#openCode) {
+			throw new Error("An engine is already running a turn in this sandbox");
+		}
 		this.#lastTurn = null;
 		const container = await this.#ready();
-		const command = await this.#commandFor(container, job);
+		if (job.engine === "opencode") return this.#startOpenCode(container, job);
+		const command = await this.#commandFor(container, job, job.engine);
 		this.#running = { engine: job.engine, provider: job.provider, access: job.access };
 		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
 		let process: ExecProcess;
@@ -457,6 +482,7 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 	}
 
 	async stopEngine(): Promise<void> {
+		if (this.#openCode) return this.#openCode.stop();
 		const process = this.#engine;
 		if (!process) return;
 		process.kill(SIGINT);
@@ -476,12 +502,19 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 		]);
 		let log = "";
 		if (container.running) {
-			const read = await this.#exec(
-				container,
-				["tail", "--bytes", String(LOG_TAIL_BYTES), turn.log],
-				SANDBOX_ROOT,
-				10,
-			).catch(() => null);
+			const tail =
+				turn.logFrom === undefined
+					? ["tail", "--bytes", String(LOG_TAIL_BYTES), turn.log]
+					: [
+							"bash",
+							"-c",
+							'tail --bytes="+$(($1 + 1))" "$2" | tail --bytes "$3"',
+							"tail",
+							String(turn.logFrom),
+							turn.log,
+							String(LOG_TAIL_BYTES),
+						];
+			const read = await this.#exec(container, tail, SANDBOX_ROOT, 10).catch(() => null);
 			if (read?.exitCode === 0) log = logTail(read.output);
 		}
 		return {
@@ -502,9 +535,97 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 		if (container.running) await container.setInactivityTimeout(IDLE_MS);
 	}
 
+	/**
+	 * Starts a turn of OpenCode on its server in the container, which the turn starts, or starts
+	 * over, unless it runs with the turn's settings (`./opencode-server.ts`). The server stays up
+	 * for the next turn. Its events end with the turn, which the sandbox stops at `ENGINE_SECONDS`.
+	 */
+	async #startOpenCode(container: Container, job: EngineJob): Promise<ReadableStream<Uint8Array>> {
+		// Before the server is reached: reconnecting its MCP server goes out as the turn's request.
+		this.#running = { engine: job.engine, provider: job.provider, access: job.access };
+		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
+		let turn: OpenCodeServerTurn;
+		try {
+			if (job.system !== "") {
+				await new Files(container).writeFile(OPENCODE_INSTRUCTIONS, job.system);
+			}
+			turn = await startOpenCodeTurn(
+				this.#openCodeServer(container),
+				job,
+				this.ctx.storage.kv.get<string>(OPENCODE_SESSION_KEY),
+			);
+		} catch (error) {
+			await this.#engineEnded(container);
+			throw error;
+		}
+		if (turn.session !== null) this.ctx.storage.kv.put(OPENCODE_SESSION_KEY, turn.session);
+		this.#openCode = turn;
+		const started = Date.now();
+		let timedOut = false;
+		const limit = setTimeout(() => {
+			timedOut = true;
+			void turn.stop();
+		}, ENGINE_SECONDS * 1000);
+		this.#lastTurn = {
+			log: OPENCODE_SERVER_LOG,
+			logFrom: turn.logFrom,
+			started,
+			ended: turn.ended.then(async () => ({
+				code: timedOut ? TIMED_OUT_STATUS : await this.#openCodeExit(container),
+				seconds: (Date.now() - started) / 1000,
+			})),
+		};
+		turn.ended
+			.then(() => {
+				clearTimeout(limit);
+				if (this.#openCode === turn) this.#openCode = null;
+				return this.#engineEnded(container);
+			})
+			.catch((error: unknown) =>
+				console.error("A sandbox did not settle after OpenCode's turn", failureForLogs(error)),
+			);
+		return turn.events;
+	}
+
+	/** The container's OpenCode server, as a turn reaches it. */
+	#openCodeServer(container: Container): OpenCodeServerPort {
+		return {
+			ensure: async (env) => {
+				const started = await this.#exec(
+					container,
+					["bash", "-c", OPENCODE_SERVER_SCRIPT],
+					SANDBOX_ROOT,
+					OPENCODE_SCRIPT_SECONDS,
+					{ ...env, OPENCODE_SETTINGS: JSON.stringify(env) },
+				);
+				const said = /^(running|started) (\d+)$/m.exec(started.output);
+				if (started.exitCode !== 0 || !said) {
+					throw new Error(`OpenCode's server did not start: ${started.output.slice(-500)}`);
+				}
+				return { logFrom: Number(said[2]) };
+			},
+			fetch: (path, init) =>
+				container.getTcpPort(OPENCODE_PORT).fetch(`http://opencode.internal${path}`, init),
+		};
+	}
+
+	/** The exit status of the container's OpenCode server, if it has exited. */
+	async #openCodeExit(container: Container): Promise<number | null> {
+		if (!container.running) return null;
+		const read = await this.#exec(container, ["cat", OPENCODE_SERVER_EXIT], SANDBOX_ROOT, 10).catch(
+			() => null,
+		);
+		const code = read?.exitCode === 0 ? Number.parseInt(read.output, 10) : Number.NaN;
+		return Number.isNaN(code) ? null : code;
+	}
+
 	/** The command for the job's turn, in the session the container has, or a new one. */
-	async #commandFor(container: Container, job: EngineJob): Promise<EngineCommand> {
-		switch (job.engine) {
+	async #commandFor(
+		container: Container,
+		job: EngineJob,
+		engine: Exclude<SandboxEngine, "opencode">,
+	): Promise<EngineCommand> {
+		switch (engine) {
 			case "claude-code": {
 				let session = this.ctx.storage.kv.get<string>(SESSION_KEY);
 				const resume =
@@ -524,19 +645,6 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 					30,
 				);
 				return codexCommand(job, found.exitCode === 0 && found.output.trim() !== "");
-			}
-			case "opencode": {
-				if (job.system !== "") {
-					await new Files(container).writeFile(OPENCODE_INSTRUCTIONS, job.system);
-				}
-				// It keeps its sessions in one database, which its first turn in the container makes.
-				const found = await this.#exec(
-					container,
-					["test", "-s", OPENCODE_DATABASE],
-					SANDBOX_ROOT,
-					30,
-				);
-				return openCodeCommand(job, found.exitCode === 0);
 			}
 		}
 	}
