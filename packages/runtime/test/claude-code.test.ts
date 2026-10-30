@@ -1,14 +1,20 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createMCPClient } from "@ai-sdk/mcp";
 import type { McpServerInput } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { conversationName } from "../src";
-import { CLAUDE_CODE_PLACEHOLDER_KEY, claudeCodeArguments } from "../src/claude-code";
+import { type ConversationAgent, conversationName } from "../src";
+import {
+	CLAUDE_CODE_PLACEHOLDER_KEY,
+	ClaudeCodeTurn,
+	claudeCodeArguments,
+} from "../src/claude-code";
 import { ENGINE_TOOLS_URL, toolsRequest } from "../src/engine-tools";
 import { linesOf } from "../src/engines";
 import { anthropicRequest } from "../src/models";
 import { decideOutbound } from "../src/outbound";
+import { createTraceTables, RunRecorder, readTrace, type Sql } from "../src/trace";
 import { FakeMcpServer } from "./fake-mcp";
 import type { FakeSandbox } from "./fake-sandbox";
 import { ask, connect, fakeModel, KEY } from "./support";
@@ -150,6 +156,11 @@ function messageDelta(outputTokens: number, extra: { parent_tool_use_id?: string
 		},
 		extra,
 	);
+}
+
+/** The end of a request's stream, after its last block. */
+function messageStop(extra: { parent_tool_use_id?: string } = {}) {
+	return streamEvent({ type: "message_stop" }, extra);
 }
 
 function toolResult(toolUseId: string, content: string, isError = false): string {
@@ -359,6 +370,40 @@ describe("an agent whose engine is Claude Code", () => {
 			{ step: 0, outputTokens: 60, firstTokenMs: 420 },
 			{ step: 1, outputTokens: 40, firstTokenMs: 300 },
 			{ step: 2, outputTokens: 15, firstTokenMs: null },
+		]);
+	});
+
+	it("times each request from its sending to its stream's end, before its tools run", async () => {
+		const { registry, stub, agentId } = await conversation();
+		const agent = await registry.agentSnapshot(agentId);
+		if (!agent) throw new Error("The agent is missing");
+		const usage = { input_tokens: 10, output_tokens: 1 };
+		const spans = await runInDurableObject(stub, (instance: ConversationAgent) => {
+			const sql = instance.sql.bind(instance) as Sql;
+			createTraceTables(sql);
+			const run = new RunRecorder(sql, "run-1", agent, 9_000);
+			const turn = new ClaudeCodeTurn({ write() {} }, run, agent);
+			// Its first token came 400 ms after it was sent; Bash then runs for 2.3 s.
+			turn.take(messageStart("msg_1", { ttft_ms: 400 }), 10_000);
+			turn.take(
+				assistant("msg_1", { type: "tool_use", id: "toolu_1", name: "Bash", input: {} }, usage),
+				10_500,
+			);
+			turn.take(messageDelta(20), 10_600);
+			turn.take(messageStop(), 10_700);
+			turn.take(toolResult("toolu_1", "ok"), 13_000);
+			turn.take(messageStart("msg_2", { ttft_ms: 300 }), 13_500);
+			turn.take(assistant("msg_2", { type: "text", text: "Done." }, usage), 14_000);
+			turn.take(messageDelta(5), 14_050);
+			turn.take(messageStop(), 14_100);
+			turn.take(result(), 14_200);
+			turn.end(14_200);
+			return readTrace(sql, "run-1");
+		});
+		expect(spans).toMatchObject([
+			{ kind: "model", step: 0, startedAt: 9_600, endedAt: 10_700, outputTokens: 20 },
+			{ kind: "tool", step: 0, startedAt: 10_500, endedAt: 13_000 },
+			{ kind: "model", step: 1, startedAt: 13_200, endedAt: 14_100, outputTokens: 5 },
 		]);
 	});
 

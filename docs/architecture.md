@@ -511,7 +511,9 @@ staging does, production and self-hosted deploys leave them off until their oper
     model span, with its tokens and cost from Anthropic's usage, cached input counted in the input.
     An `assistant` event carries only the usage of the request's start, so the CLI also passes on the
     API's streaming events (`--include-partial-messages`), whose `message_delta` has the request's
-    final output tokens, and whose `message_start` says how long the first token took. Each tool call
+    final output tokens, and whose `message_start` says how long the first token took. A request's
+    span runs from when it was sent, that long before its `message_start`, to its `message_stop`,
+    before its tools run. Each tool call
     becomes a tool span under the server name `claude-code`, a subagent's too. A
     result that is an error fails the turn, in the same words as Gateweave's loop uses. A message
     the CLI writes itself (its model is `<synthetic>`, as for a refused key) is meant for a terminal:
@@ -600,8 +602,9 @@ staging does, production and self-hosted deploys leave them off until their oper
     that request's usage, so each becomes a model span priced on its own, with no summing. OpenCode
     counts the cached input and the reasoning apart; the trace counts them in the input and the
     output. It prints a tool call only once it has its result, so the tool span starts back by how
-    long the call took, and the request's span ends where its first tool began, which keeps the
-    sandbox's clock out of the trace. Its `task` tool is off: a subagent's session prints nothing,
+    long the call took, and the request's span ends where its last tool began, which keeps the
+    sandbox's clock out of the trace: each tool starts as soon as its call has come, while the
+    answer goes on, so the last one starts about when the answer ends. Its `task` tool is off: a subagent's session prints nothing,
     so its requests would be missing from the trace. So is `webfetch`, since the sandbox reaches no
     website.
   - **The key never enters the sandbox,** as with the others: `decideOutbound` opens the API of the

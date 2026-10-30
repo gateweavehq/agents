@@ -267,8 +267,9 @@ export class OpenCodeTurn implements EngineTurn {
 	/** Whether the step's model span and the chat's step are open. */
 	#open = false;
 	/**
-	 * When the step's first tool started, which is when the model's answer to the request had come.
-	 * The step itself ends once its tools have.
+	 * When the step's last tool started, which is about when the model's answer to the request
+	 * ended: each tool starts as soon as its call has come, while the answer goes on. The step itself
+	 * ends once its tools have.
 	 */
 	#toolsFrom: number | null = null;
 	#stepFrom = 0;
@@ -343,7 +344,7 @@ export class OpenCodeTurn implements EngineTurn {
 		const { callID: id, tool, state } = part;
 		const took = Math.max(0, state.time.end - state.time.start);
 		const started = Math.max(this.#stepFrom, now - took);
-		if (this.#open && (this.#toolsFrom === null || started < this.#toolsFrom)) {
+		if (this.#open && (this.#toolsFrom === null || started > this.#toolsFrom)) {
 			this.#toolsFrom = started;
 		}
 		const gateweave = tool.startsWith(OPENCODE_TOOL_PREFIX);
