@@ -29,6 +29,11 @@
  *   when it connects to it (`mcp/index.ts`): reconnecting `gateweave` at the start of a turn lists
  *   the turn's own. It reads its settings when it starts, so it starts over when a turn's differ.
  * - a stopped prompt ends with a `session.error` named `MessageAbortedError`, then idle.
+ *
+ * Every step before the message has its own time limit, and so does each request asking whether
+ * the server is up yet: on Cloudflare, a request to a port that nothing listens on yet can wait
+ * without an answer, where Docker refuses it at once. `@cloudflare/containers` gives its own such
+ * requests 5 s for the same reason. Without the limits, a turn waited for good before it began.
  */
 import { z } from "zod";
 import { ENGINE_TOOLS_SERVER } from "./engine-tools";
@@ -84,9 +89,10 @@ echo "started $from"
 export interface OpenCodeServerPort {
 	/**
 	 * Makes sure the server runs with these variables, starting it, or starting it over, if not,
-	 * as `OPENCODE_SERVER_SCRIPT` does. Says how long its log was before the turn.
+	 * as `OPENCODE_SERVER_SCRIPT` does. Says how long its log was before the turn. `signal` gives
+	 * up on it.
 	 */
-	ensure(env: Record<string, string>): Promise<{ logFrom: number }>;
+	ensure(env: Record<string, string>, signal: AbortSignal): Promise<{ logFrom: number }>;
 	/** A request to the server: a path, with its query. */
 	fetch(path: string, init?: RequestInit): Promise<Response>;
 }
@@ -113,6 +119,10 @@ export interface OpenCodeServerOptions {
 	startMs?: number;
 	/** How often it is asked meanwhile. */
 	pollMs?: number;
+	/** How long each of those requests may wait for its answer. */
+	pingMs?: number;
+	/** How long each other step before the message may take, the server's start among them. */
+	stepMs?: number;
 	/** How long a stopped turn has to end before its events end anyway. */
 	graceMs?: number;
 }
@@ -132,6 +142,8 @@ const ABORTED = "MessageAbortedError";
 
 const START_MS = 120_000;
 const POLL_MS = 250;
+const PING_MS = 5_000;
+const STEP_MS = 60_000;
 const GRACE_MS = 10_000;
 
 /**
@@ -148,69 +160,93 @@ export async function startOpenCodeTurn(
 	options: OpenCodeServerOptions = {},
 ): Promise<OpenCodeServerTurn> {
 	const query = `directory=${encodeURIComponent(job.cwd)}`;
-	const call = async (path: string, init?: RequestInit): Promise<Response> => {
+	const stepMs = options.stepMs ?? STEP_MS;
+	/** A step before the message, which fails the turn in the words of `late` after `stepMs`. */
+	const step = <T>(late: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> =>
+		within(stepMs, `its server did not ${late} within ${stepMs / 1000} seconds`, work);
+	const call = async (path: string, init: RequestInit): Promise<Response> => {
 		const response = await server.fetch(`${path}?${query}`, init);
 		if (!response.ok) throw await ServerError.from(response);
 		return response;
 	};
 	let logFrom = 0;
 	let id: string | null = session ?? null;
-	let events: ReadableStreamDefaultReader<string> | null = null;
+	let frames: ServerEvents | null = null;
 	try {
-		({ logFrom } = await server.ensure(openCodeSettings(job)));
-		await waitForServer(server, options.startMs ?? START_MS, options.pollMs ?? POLL_MS);
+		({ logFrom } = await step("start", (signal) => server.ensure(openCodeSettings(job), signal)));
+		await waitForServer(server, {
+			startMs: options.startMs ?? START_MS,
+			pollMs: options.pollMs ?? POLL_MS,
+			pingMs: options.pingMs ?? PING_MS,
+		});
 		if (job.access.tools !== null) {
-			await (await call(`/mcp/${ENGINE_TOOLS_SERVER}/connect`, post())).body?.cancel();
+			await step("connect to Gateweave's tools", async (signal) => {
+				const connected = await call(
+					`/mcp/${ENGINE_TOOLS_SERVER}/connect`,
+					post(undefined, signal),
+				);
+				await connected.body?.cancel();
+			});
 		}
-		let resumed = false;
-		if (session !== undefined) {
-			const kept = await server.fetch(`/session/${session}?${query}`);
-			await kept.body?.cancel();
-			resumed = kept.ok;
-		}
-		let sessionId: string;
-		if (resumed && session !== undefined) {
-			sessionId = session;
-		} else {
-			const created = await call(
-				"/session",
-				post({ title: OPENCODE_SESSION_TITLE, permission: DENIED_PERMISSIONS }),
-			);
-			sessionId = createdSession.parse(await created.json()).id;
-		}
+		const resumed =
+			session !== undefined &&
+			(await step("find the conversation's session", async (signal) => {
+				const kept = await server.fetch(`/session/${session}?${query}`, { signal });
+				await kept.body?.cancel();
+				return kept.ok;
+			}));
+		const sessionId =
+			resumed && session !== undefined
+				? session
+				: await step("start a session", async (signal) => {
+						const created = await call(
+							"/session",
+							post({ title: OPENCODE_SESSION_TITLE, permission: DENIED_PERMISSIONS }, signal),
+						);
+						return createdSession.parse(await created.json()).id;
+					});
 		id = sessionId;
-		const stream = await call("/event");
-		if (!stream.body) throw new ServerError("its events could not be read");
-		events = stream.body.pipeThrough(new TextDecoderStream()).getReader();
-		const frames = new ServerEvents(events);
-		// The events come only from when the stream opened, so the message waits for it.
-		if ((await frames.next()) === null) throw new ServerError("its events ended at once");
-		await (
-			await call(
+		frames = await step("send its events", async (signal) => {
+			// The signal ends the stream too, but `within` gives up on it only when this step is late.
+			const stream = await call("/event", { signal });
+			if (!stream.body) throw new ServerError("its events could not be read");
+			const read = new ServerEvents(stream.body.pipeThrough(new TextDecoderStream()).getReader());
+			// The events come only from when the stream opened, so the message waits for it.
+			if ((await read.next()) === null) throw new ServerError("its events ended at once");
+			return read;
+		});
+		await step("take the message", async (signal) => {
+			const taken = await call(
 				`/session/${sessionId}/prompt_async`,
-				post({
-					model: { providerID: job.provider, modelID: job.model },
-					parts: [{ type: "text", text: enginePrompt(job, resumed) }],
-				}),
-			)
-		).body?.cancel();
+				post(
+					{
+						model: { providerID: job.provider, modelID: job.model },
+						parts: [{ type: "text", text: enginePrompt(job, resumed) }],
+					},
+					signal,
+				),
+			);
+			await taken.body?.cancel();
+		});
 		return follow(server, query, sessionId, logFrom, frames, options.graceMs ?? GRACE_MS);
 	} catch (error) {
-		await events?.cancel().catch(() => {});
+		frames?.cancel();
 		return failedTurn(id, logFrom, error);
 	}
 }
 
-/** Asks the server until it answers, which a server just started takes a few seconds to do. */
+/**
+ * Asks the server until it answers, which a server just started takes a few seconds to do. Each
+ * request gives up after `pingMs`: one to a port that nothing listens on yet may never be answered.
+ */
 async function waitForServer(
 	server: OpenCodeServerPort,
-	startMs: number,
-	pollMs: number,
+	{ startMs, pollMs, pingMs }: { startMs: number; pollMs: number; pingMs: number },
 ): Promise<void> {
 	const deadline = Date.now() + startMs;
 	for (;;) {
 		try {
-			const health = await server.fetch("/global/health");
+			const health = await server.fetch("/global/health", { signal: AbortSignal.timeout(pingMs) });
 			await health.body?.cancel();
 			if (health.ok) return;
 		} catch {
@@ -220,6 +256,30 @@ async function waitForServer(
 			throw new ServerError(`its server did not answer within ${startMs / 1000} seconds`);
 		}
 		await new Promise((resolve) => setTimeout(resolve, pollMs));
+	}
+}
+
+/**
+ * What `work` settles with, or, once `ms` have passed, a failure in the words of `late`, when
+ * the signal it was given gives up on it.
+ */
+async function within<T>(
+	ms: number,
+	late: string,
+	work: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+	const controller = new AbortController();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timedOut = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => {
+			reject(new ServerError(late));
+			controller.abort();
+		}, ms);
+	});
+	try {
+		return await Promise.race([work(controller.signal), timedOut]);
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
@@ -467,10 +527,11 @@ function follow(
 	};
 }
 
-function post(body?: unknown): RequestInit {
+function post(body?: unknown, signal?: AbortSignal): RequestInit {
 	return {
 		method: "POST",
 		headers: { "content-type": "application/json" },
 		...(body === undefined ? {} : { body: JSON.stringify(body) }),
+		...(signal === undefined ? {} : { signal }),
 	};
 }

@@ -28,6 +28,15 @@ class FakeServer implements OpenCodeServerPort {
 	readonly sessions = new Set<string>();
 	/** How many health checks fail before it answers, as a server that is starting. */
 	startingFor = 0;
+	/**
+	 * How many health checks go unanswered before it answers, as Cloudflare leaves a request to a
+	 * port nothing listens on yet: until the request gives up.
+	 */
+	unansweredFor = 0;
+	/** Whether its event streams begin with `server.connected`. */
+	connects = true;
+	/** The signals of the requests it was sent, in their order, which say if each was given up on. */
+	readonly signals: (AbortSignal | undefined)[] = [];
 	/** Answers for some requests in place of the usual ones, by method and path. */
 	readonly refusals = new Map<string, () => Response>();
 	/** The events it sends once a message comes to a session. */
@@ -36,7 +45,7 @@ class FakeServer implements OpenCodeServerPort {
 	onAbort: (session: string) => object[] = (session) => [aborted(session), idle(session)];
 	readonly #streams: ReadableStreamDefaultController<Uint8Array>[] = [];
 
-	async ensure(env: Record<string, string>): Promise<{ logFrom: number }> {
+	async ensure(env: Record<string, string>, _signal?: AbortSignal): Promise<{ logFrom: number }> {
 		this.ensured.push(env);
 		return { logFrom: 42 };
 	}
@@ -51,7 +60,12 @@ class FakeServer implements OpenCodeServerPort {
 			directory: url.searchParams.get("directory"),
 			body,
 		});
+		this.signals.push(init?.signal ?? undefined);
 		if (url.pathname === "/global/health") {
+			if (this.unansweredFor > 0) {
+				this.unansweredFor -= 1;
+				return unanswered(init?.signal);
+			}
 			if (this.startingFor > 0) {
 				this.startingFor -= 1;
 				throw new Error("connection refused");
@@ -64,7 +78,8 @@ class FakeServer implements OpenCodeServerPort {
 			const stream = new ReadableStream<Uint8Array>({
 				start: (controller) => {
 					this.#streams.push(controller);
-					controller.enqueue(frame({ type: "server.connected", properties: {} }));
+					if (this.connects)
+						controller.enqueue(frame({ type: "server.connected", properties: {} }));
 				},
 			});
 			return new Response(stream, { headers: { "content-type": "text/event-stream" } });
@@ -113,6 +128,13 @@ class FakeServer implements OpenCodeServerPort {
 	requested(method: string, path: string): Request[] {
 		return this.requests.filter((request) => request.method === method && request.path === path);
 	}
+}
+
+/** A request that is never answered: it fails only once its signal gives up on it. */
+function unanswered(signal: AbortSignal | null | undefined): Promise<never> {
+	return new Promise((_, reject) => {
+		signal?.addEventListener("abort", () => reject(signal.reason));
+	});
 }
 
 /** An event as the server sends it. */
@@ -308,6 +330,53 @@ describe("a turn on OpenCode's server", () => {
 		await linesOf(turn.events);
 		expect(server.requested("GET", "/global/health")).toHaveLength(4);
 		expect(turn.session).toBe("ses_1");
+	});
+
+	it("keeps asking a server whose port does not answer yet, giving up on each request", async () => {
+		const server = new FakeServer();
+		server.unansweredFor = 2;
+		server.onPrompt = (session) => [idle(session)];
+		const turn = await startOpenCodeTurn(server, JOB, undefined, { pollMs: 1, pingMs: 5 });
+		await linesOf(turn.events);
+		const health = server.requests.flatMap((request, index) =>
+			request.path === "/global/health" ? [server.signals[index]] : [],
+		);
+		expect(health.map((signal) => signal?.aborted)).toEqual([true, true, false]);
+		expect(turn.session).toBe("ses_1");
+	});
+
+	it("fails the turn, saying which step, when the server never sends its events", async () => {
+		const server = new FakeServer();
+		server.connects = false;
+		const turn = await startOpenCodeTurn(server, JOB, undefined, { stepMs: 20 });
+		expect(await linesOf(turn.events)).toMatchObject([
+			{
+				type: "error",
+				error: { data: { message: "its server did not send its events within 0.02 seconds" } },
+			},
+		]);
+		const events = server.requests.findIndex((request) => request.path === "/event");
+		expect(server.signals[events]?.aborted).toBe(true);
+		expect(server.requested("POST", "/session/ses_1/prompt_async")).toEqual([]);
+		expect(turn.session).toBe("ses_1");
+	});
+
+	it("fails the turn when the server does not start in time, and gives up on starting it", async () => {
+		const server = new FakeServer();
+		let given: AbortSignal | undefined;
+		vi.spyOn(server, "ensure").mockImplementation((_, signal) => {
+			given = signal;
+			return unanswered(signal);
+		});
+		const turn = await startOpenCodeTurn(server, JOB, undefined, { stepMs: 20 });
+		expect(await linesOf(turn.events)).toMatchObject([
+			{
+				type: "error",
+				error: { data: { message: "its server did not start within 0.02 seconds" } },
+			},
+		]);
+		expect(given?.aborted).toBe(true);
+		expect(server.requests).toEqual([]);
 	});
 
 	it("answers OpenCode's permission requests once, as `--auto` does, for its own sessions alone", async () => {

@@ -626,6 +626,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
       turn reaches its first request in tens of milliseconds.
     - `opencode run --attach` would skip the start too, but with `--format json` it prints nothing:
       it returns without waiting for its events.
+    - Each step before the message has a time limit, and so does each request asking whether a
+      new server is up. On Cloudflare, a request to a port that nothing listens on yet can go
+      unanswered, where Docker refuses it at once, so the first turn on staging waited for good.
     - The server reads its settings when it starts. It starts over when a turn's differ, which
       happens when the agent's model changes, or whether it has instructions or Gateweave's tools.
     - It lists an MCP server's tools only when it connects to it, so each turn with tools
