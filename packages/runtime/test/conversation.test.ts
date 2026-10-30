@@ -94,7 +94,7 @@ describe("a conversation", () => {
 		expect(turn.error).toBe(
 			"Anthropic refused the workspace's key. An owner or admin can check it in Settings.",
 		);
-		expect(turn.raw.join("")).not.toContain("abcd");
+		expect(turn.raw.join("")).not.toContain("wxyz");
 		socket.close();
 	});
 
@@ -171,7 +171,7 @@ describe("runs", () => {
 		});
 		const trace = await stub.runTrace(run?.id ?? "");
 		expect(trace).toMatchObject([{ status: "error" }]);
-		expect(JSON.stringify(trace)).not.toContain("abcd");
+		expect(JSON.stringify(trace)).not.toContain("wxyz");
 	});
 
 	it("record a stopped turn as stopped", async () => {
