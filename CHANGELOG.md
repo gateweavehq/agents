@@ -8,6 +8,16 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.1.1] - 2026-10-30
+
+Gateweave Cloud offers sandboxes to the workspaces it invites. Self-hosted servers are unchanged.
+
+### Changed
+
+- Gateweave Cloud's production deploys the new `cloud` environment of `wrangler.jsonc`. It adds
+  sandboxes for invited workspaces, with at most 120 minutes a day for each workspace and $100 a
+  month for the server. The top level, which self-hosters deploy, still runs no sandboxes. (#74)
+
 ## [0.1.0] - 2026-10-30
 
 The first release of Gateweave Agents. It shows which coding agents work in which repositories and
