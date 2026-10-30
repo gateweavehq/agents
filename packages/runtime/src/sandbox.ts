@@ -41,6 +41,7 @@ import {
 	anthropicRequest,
 	failureForLogs,
 	type GatewaySettings,
+	googleRequest,
 	openaiRequest,
 	SettingsError,
 } from "./models";
@@ -51,6 +52,7 @@ import {
 	decideOutbound,
 	ENGINE_TOOLS_HOST,
 	type GitAccess,
+	GOOGLE_API,
 	OPENAI_API,
 	type PushWindow,
 	pushedRefs,
@@ -107,8 +109,15 @@ const PUSHED_KEY = "pushed";
 /** The conversation's Claude Code session, which its turns resume while the container has it. */
 const SESSION_KEY = "claude-code-session";
 
+/** How a request to each provider's API goes out, with the workspace's key. */
+const MODEL_REQUESTS: ReadonlyMap<string | undefined, typeof anthropicRequest> = new Map([
+	["anthropic", anthropicRequest],
+	["openai", openaiRequest],
+	["google", googleRequest],
+]);
+
 /** The hosts whose requests depend on the engine running a turn, if any. */
-const ENGINE_HOSTS = new Set([ANTHROPIC_API, OPENAI_API, ENGINE_TOOLS_HOST]);
+const ENGINE_HOSTS = new Set([ANTHROPIC_API, OPENAI_API, GOOGLE_API, ENGINE_TOOLS_HOST]);
 
 /** How long an engine has to finish its turn when it is stopped, before it is killed. */
 const STOP_GRACE_MS = 10_000;
@@ -661,9 +670,9 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		);
 		if (!decision.allow) return refused(decision.reason, 403);
 		const env = this.env as unknown as OutboundEnv;
-		if ((decision.credentials === "anthropic" || decision.credentials === "openai") && running) {
+		const toModel = MODEL_REQUESTS.get(decision.credentials);
+		if (toModel && running) {
 			const { key, metadata } = running.access;
-			const toModel = decision.credentials === "anthropic" ? anthropicRequest : openaiRequest;
 			try {
 				return await fetch(toModel(request, key, env, metadata));
 			} catch (error) {

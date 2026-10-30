@@ -415,7 +415,7 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   its `AGENTS.md`, and `opencode` runs the open-source OpenCode CLI, which reads `AGENTS.md` and
   `opencode.json`. The registry enforces two rules for each: it needs a sandbox, and it calls models
   of a provider it runs with (`ENGINE_PROVIDERS`): Anthropic's for Claude Code, OpenAI's for Codex,
-  either for OpenCode. See **Claude Code**, **Codex** and **OpenCode** below.
+  any of Anthropic's, OpenAI's or Google's for OpenCode. See **Claude Code**, **Codex** and **OpenCode** below.
   A CLI writes its own messages to a log in the sandbox, out of its events' way, one turn's at a
   time. When it ends without saying how its turn went, the conversation asks the sandbox how it
   ended (`engineExit`): its exit status, how long it ran, and the last ten lines of its log, at
@@ -613,7 +613,7 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   its build for the container's machine alone, and the `@opencode-ai/plugin` package it would
   otherwise fetch from npm into its settings folder on a new container's first turn. A turn of an
   agent whose engine is `opencode` runs `opencode run --format json --auto` the same way
-  (`packages/runtime/src/opencode.ts`), with the agent's Anthropic or OpenAI model. `--auto`
+  (`packages/runtime/src/opencode.ts`), with the agent's Anthropic, OpenAI or Google model. `--auto`
   approves what its permissions would ask about, since nobody is there to answer.
   - **Its settings come last.** OpenCode reads `OPENCODE_CONFIG_CONTENT` after the repository's
     `opencode.json`, so the turn's settings win where both speak: the agent's model alone (for its
@@ -633,8 +633,13 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     so its requests would be missing from the trace. So is `webfetch`, since the sandbox reaches no
     website.
   - **The key never enters the sandbox,** as with the others: `decideOutbound` opens the API of the
-    agent's provider to the running turn, `POST /v1/messages` to `api.anthropic.com` or
-    `POST /v1/responses` to `api.openai.com`, and nothing of the other's. A failure comes as an
+    agent's provider to the running turn, `POST /v1/messages` to `api.anthropic.com`,
+    `POST /v1/responses` to `api.openai.com`, or, for Google, `POST
+    /v1beta/models/<model>:generateContent` and `:streamGenerateContent?alt=sse` to
+    `generativelanguage.googleapis.com` (the requests `@ai-sdk/google` makes, with no other query,
+    so a request cannot bring a key of its own), and nothing of the others'. The key goes where
+    the provider takes it: `x-goog-api-key` for Google (`googleRequest`), through AI Gateway's
+    `google-ai-studio` path when the deployment names one, as for Gateweave's own calls. A failure comes as an
     `error` event with the provider's status, said in Gateweave's words, once OpenCode's own five
     retries of a request that may succeed later have failed too.
   - **One session per conversation.** A later turn continues the last session (`--continue`) while

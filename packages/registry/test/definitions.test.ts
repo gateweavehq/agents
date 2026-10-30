@@ -305,7 +305,7 @@ describe("agents' engines", () => {
 		});
 	});
 
-	it("take OpenCode with the sandbox and an Anthropic or OpenAI model, and refuse it otherwise", async () => {
+	it("take OpenCode with the sandbox and an Anthropic, OpenAI or Google model, and refuse it otherwise", async () => {
 		const stub = registry();
 		const opencode = (fields: Partial<AgentDefinitionInput> = {}) =>
 			reviewer(null, { engine: "opencode", sandbox: true, ...fields });
@@ -314,8 +314,8 @@ describe("agents' engines", () => {
 				"OpenCode runs in the agent's sandbox: turn the sandbox on",
 			);
 			expect(() =>
-				instance.createAgent(opencode({ provider: "google", model: "gemini-3-flash" })),
-			).toThrow("OpenCode calls Anthropic's or OpenAI's models: choose one of them");
+				instance.createAgent(opencode({ provider: "workers-ai", model: "@cf/meta/llama" })),
+			).toThrow("OpenCode calls Anthropic's, OpenAI's or Google's models: choose one of them");
 		});
 		expect(await stub.listAgents()).toEqual([]);
 
@@ -331,6 +331,14 @@ describe("agents' engines", () => {
 		expect(await stub.agentSnapshot(openai.id)).toMatchObject({
 			engine: "opencode",
 			provider: "openai",
+		});
+		const google = await stub.createAgent(
+			opencode({ name: "Third", provider: "google", model: "gemini-3-flash" }),
+		);
+		expect(await stub.agentSnapshot(google.id)).toMatchObject({
+			engine: "opencode",
+			provider: "google",
+			sandbox: true,
 		});
 	});
 

@@ -40,7 +40,7 @@ export const ENGINE_PROVIDERS: Record<
 > = {
 	"claude-code": ["anthropic"],
 	codex: ["openai"],
-	opencode: ["anthropic", "openai"],
+	opencode: ["anthropic", "openai", "google"],
 };
 
 /**

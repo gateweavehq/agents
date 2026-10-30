@@ -1,7 +1,7 @@
 /**
  * OpenCode as an agent's engine (`./engines.ts`): the open-source OpenCode CLI, run in the
- * conversation's sandbox in place of Gateweave's own loop, with the agent's Anthropic or OpenAI
- * model. It reads the repository's AGENTS.md and opencode.json as it would on a laptop. Each of its
+ * conversation's sandbox in place of Gateweave's own loop, with the agent's Anthropic, OpenAI or
+ * Google model. It reads the repository's AGENTS.md and opencode.json as it would on a laptop. Each of its
  * model requests becomes a model span with the request's own usage, and each of its tool calls a
  * tool span. One conversation is one OpenCode session, which each turn continues while the sandbox
  * has it.
@@ -52,7 +52,7 @@ import {
 	UNFINISHED,
 	withoutKeys,
 } from "./engines";
-import { ANTHROPIC_API, OPENAI_API } from "./outbound";
+import { ANTHROPIC_API, GOOGLE_API, OPENAI_API } from "./outbound";
 import type { RunRecorder } from "./trace";
 
 /** The server the trace and the chat name for OpenCode's own tools. */
@@ -86,6 +86,7 @@ const SESSION_TITLE = "Gateweave";
 const PROVIDER_URLS: Partial<Record<ModelProvider, string>> = {
 	anthropic: `https://${ANTHROPIC_API}/v1`,
 	openai: `https://${OPENAI_API}/v1`,
+	google: `https://${GOOGLE_API}/v1beta`,
 };
 
 /**

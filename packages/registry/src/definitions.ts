@@ -252,7 +252,9 @@ function checkEngine(input: Definition): void {
 	const providers: readonly ModelProvider[] = ENGINE_PROVIDERS[input.engine];
 	if (!providers.includes(input.provider)) {
 		const names = providers.map((provider) => `${MODEL_PROVIDER_NAMES[provider]}'s`);
-		throw new AgentError(`${name} calls ${names.join(" or ")} models: choose one of them`);
+		const last = names.pop();
+		const list = names.length > 0 ? `${names.join(", ")} or ${last}` : last;
+		throw new AgentError(`${name} calls ${list} models: choose one of them`);
 	}
 }
 

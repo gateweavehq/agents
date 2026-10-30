@@ -35,10 +35,23 @@ export const ANTHROPIC_API = "api.anthropic.com";
 /** Where Codex, and OpenCode with an OpenAI model, send their requests for the model. */
 export const OPENAI_API = "api.openai.com";
 
+/** Where OpenCode with a Google model sends its requests for the model. */
+export const GOOGLE_API = "generativelanguage.googleapis.com";
+
+/**
+ * `@ai-sdk/google` posts to `/v1beta/models/<model>:generateContent`, and to
+ * `/v1beta/models/<model>:streamGenerateContent?alt=sse` to stream (`doGenerate` and `doStream` in
+ * its `dist/index.js`). A model's name holds neither a slash nor a colon.
+ */
+const GOOGLE_MODEL_PATH = /^\/v1beta\/models\/[^/:]+:(generateContent|streamGenerateContent)$/;
+
+const GOOGLE_STREAM_QUERY = "?alt=sse";
+
 /**
  * The paths of each provider's API that the engines' requests for the model use: Anthropic's
- * Messages API, and OpenAI's Responses API over HTTPS (`./codex.ts` turns Codex's WebSocket off),
- * compactions included.
+ * Messages API, OpenAI's Responses API over HTTPS (`./codex.ts` turns Codex's WebSocket off),
+ * compactions included, and Google's `generateContent` and `streamGenerateContent` for a model,
+ * which `@ai-sdk/google` posts to (`GOOGLE_STREAM_QUERY` below is the query of the latter).
  */
 const MODEL_APIS: readonly ModelApi[] = [
 	{
@@ -47,12 +60,27 @@ const MODEL_APIS: readonly ModelApi[] = [
 		paths: new Set(["/v1/messages", "/v1/messages/count_tokens"]),
 	},
 	{ provider: "openai", host: OPENAI_API, paths: new Set(["/v1/responses"]) },
+	{ provider: "google", host: GOOGLE_API, paths: GOOGLE_MODEL_PATH },
 ];
 
 interface ModelApi {
-	provider: "anthropic" | "openai";
+	provider: "anthropic" | "openai" | "google";
 	host: string;
-	paths: ReadonlySet<string>;
+	/** The paths the engine's requests use: exact ones, or a pattern. */
+	paths: ReadonlySet<string> | RegExp;
+}
+
+/** Whether a request to a provider's API is one of the engine's requests for the model. */
+function isModelRequest(api: ModelApi, method: string, url: URL): boolean {
+	if (method !== "POST") return false;
+	if (api.paths instanceof RegExp) {
+		if (!api.paths.test(url.pathname)) return false;
+		// Streaming asks for server-sent events; the other takes no query. A `key` parameter, which
+		// Google also takes, would let a request carry a key of its own.
+		const streams = url.pathname.endsWith(":streamGenerateContent");
+		return url.search === (streams ? GOOGLE_STREAM_QUERY : "");
+	}
+	return api.paths.has(url.pathname);
 }
 
 /**
@@ -94,7 +122,7 @@ export interface GitAccess {
 export type OutboundDecision =
 	| {
 			allow: true;
-			credentials?: "read" | "write" | "anthropic" | "openai" | "tools";
+			credentials?: "read" | "write" | "anthropic" | "openai" | "google" | "tools";
 			push?: PushWindow;
 	  }
 	| { allow: false; reason: string };
@@ -129,7 +157,7 @@ export function decideOutbound(
 				`${host} is reachable from this sandbox only while a turn calls ${name}'s models`,
 			);
 		}
-		return method === "POST" && api.paths.has(url.pathname)
+		return isModelRequest(api, method, url)
 			? { allow: true, credentials: api.provider }
 			: refuse(`${host} takes only the engine's requests for the model from this sandbox`);
 	}

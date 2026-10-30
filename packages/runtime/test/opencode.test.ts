@@ -4,6 +4,7 @@ import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ConversationAgent, conversationName } from "../src";
 import type { EngineJob } from "../src/engines";
+import { googleRequest } from "../src/models";
 import {
 	OPENCODE_INSTRUCTIONS,
 	OPENCODE_PLACEHOLDER_KEY,
@@ -22,6 +23,7 @@ afterEach(() => {
 });
 
 const KEY = "sk-ant-secret-abcdefgh";
+const GOOGLE_KEY = "AIza-test-placeholder";
 
 const SITE = {
 	provider: "github" as const,
@@ -453,9 +455,49 @@ describe("OpenCode's command", () => {
 		expect(openai).toMatchObject({
 			provider: { openai: { options: { baseURL: "https://api.openai.com/v1" } } },
 		});
+		const google = openCodeConfig({
+			provider: "google",
+			model: "gemini-3-flash",
+			instructions: false,
+			tools: false,
+		});
+		expect(google).toMatchObject({
+			model: "google/gemini-3-flash",
+			small_model: "google/gemini-3-flash",
+			enabled_providers: ["google"],
+			provider: {
+				google: {
+					options: {
+						baseURL: "https://generativelanguage.googleapis.com/v1beta",
+						apiKey: OPENCODE_PLACEHOLDER_KEY,
+					},
+					models: { "gemini-3-flash": {} },
+				},
+			},
+		});
 		expect(() =>
-			openCodeConfig({ provider: "google", model: "gemini-3", instructions: false, tools: false }),
-		).toThrow("OpenCode does not call Google's models here");
+			openCodeConfig({
+				provider: "workers-ai",
+				model: "@cf/meta/llama",
+				instructions: false,
+				tools: false,
+			}),
+		).toThrow("OpenCode does not call Workers AI's models here");
+	});
+
+	it("gives a Google model the placeholder alone, never the workspace's key", () => {
+		const command = openCodeCommand(
+			{
+				...job,
+				provider: "google",
+				model: "gemini-3-flash",
+				access: { ...job.access, key: GOOGLE_KEY },
+			},
+			false,
+		);
+		expect(command.argv).toContain("google/gemini-3-flash");
+		expect(JSON.stringify(command)).toContain(OPENCODE_PLACEHOLDER_KEY);
+		expect(JSON.stringify(command)).not.toContain(GOOGLE_KEY);
 	});
 
 	it("keeps out what would leave the sandbox, and the tools whose requests the trace would miss", () => {
@@ -518,5 +560,103 @@ describe("the providers' APIs from the sandbox", () => {
 			credentials: "openai",
 		});
 		expect(decideOutbound("POST", messages, null, "google")).toMatchObject({ allow: false });
+	});
+});
+
+describe("Google's API from the sandbox", () => {
+	const generate = new URL(
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent",
+	);
+	const stream = new URL(
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:streamGenerateContent?alt=sse",
+	);
+	const metadata = { workspace: "w", agent: "a", conversation: "c" };
+
+	it("is open to the requests for the model of a Google turn, and to nothing else", () => {
+		for (const url of [generate, stream]) {
+			expect(decideOutbound("POST", url, null, "google")).toEqual({
+				allow: true,
+				credentials: "google",
+			});
+			expect(decideOutbound("GET", url, null, "google")).toMatchObject({ allow: false });
+			expect(decideOutbound("POST", url)).toMatchObject({ allow: false });
+		}
+		const refused = [
+			"https://generativelanguage.googleapis.com/v1beta/models",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:embedContent",
+			"https://generativelanguage.googleapis.com/v1beta/models/a/b:generateContent",
+			"https://generativelanguage.googleapis.com/v1beta/files",
+			"https://generativelanguage.googleapis.com/upload/v1beta/files",
+			"https://generativelanguage.googleapis.com/v1/models/gemini-3-flash:generateContent",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=AIza-other",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:streamGenerateContent",
+			"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:streamGenerateContent?alt=sse&key=AIza-other",
+			"https://generativelanguage.googleapis.com:8443/v1beta/models/gemini-3-flash:generateContent",
+			"http://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent",
+			"https://generativelanguage.googleapis.com.evil.dev/v1beta/models/gemini-3-flash:generateContent",
+			"https://ai.google.dev/v1beta/models/gemini-3-flash:generateContent",
+		];
+		for (const url of refused) {
+			expect(decideOutbound("POST", new URL(url), null, "google")).toMatchObject({
+				allow: false,
+			});
+		}
+	});
+
+	it("is shut during a turn of another provider, and theirs during this one", () => {
+		const message = {
+			allow: false,
+			reason:
+				"generativelanguage.googleapis.com is reachable from this sandbox only while a turn calls Google's models",
+		};
+		expect(decideOutbound("POST", generate, null, "anthropic")).toEqual(message);
+		expect(decideOutbound("POST", stream, null, "openai")).toEqual(message);
+		for (const url of [
+			"https://api.anthropic.com/v1/messages",
+			"https://api.openai.com/v1/responses",
+		]) {
+			expect(decideOutbound("POST", new URL(url), null, "google")).toMatchObject({ allow: false });
+		}
+	});
+
+	it("gets the workspace's key in x-goog-api-key, in place of the placeholder", async () => {
+		const request = new Request(stream, {
+			method: "POST",
+			headers: {
+				"x-goog-api-key": OPENCODE_PLACEHOLDER_KEY,
+				authorization: "Bearer stray",
+				"content-type": "application/json",
+			},
+			body: '{"contents":[]}',
+		});
+		const out = googleRequest(request, GOOGLE_KEY, {}, metadata);
+		expect(out.url).toBe(stream.href);
+		expect(out.headers.get("x-goog-api-key")).toBe(GOOGLE_KEY);
+		expect(out.headers.has("authorization")).toBe(false);
+		expect(await out.text()).toBe('{"contents":[]}');
+		// The request in the sandbox is not changed: it never sees the key.
+		expect(request.headers.get("x-goog-api-key")).toBe(OPENCODE_PLACEHOLDER_KEY);
+	});
+
+	it("goes through AI Gateway's google-ai-studio path when the deployment names one", () => {
+		const gateway = "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/track";
+		const request = new Request(stream, {
+			method: "POST",
+			headers: { "x-goog-api-key": OPENCODE_PLACEHOLDER_KEY },
+			body: "{}",
+		});
+		const out = googleRequest(
+			request,
+			GOOGLE_KEY,
+			{ AI_GATEWAY_URL: gateway, AI_GATEWAY_TOKEN: "gateway-token" },
+			metadata,
+		);
+		expect(out.url).toBe(
+			`${gateway}/google-ai-studio/v1beta/models/gemini-3-flash:streamGenerateContent?alt=sse`,
+		);
+		expect(out.headers.get("x-goog-api-key")).toBe(GOOGLE_KEY);
+		expect(out.headers.get("cf-aig-metadata")).toBe(JSON.stringify(metadata));
+		expect(out.headers.get("cf-aig-authorization")).toBe("Bearer gateway-token");
 	});
 });
