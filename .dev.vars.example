@@ -42,3 +42,11 @@ BETTER_AUTH_SECRET=
 # Optional: turns on email (invitations, password reset), such as "Gateweave Agents <agents@example.com>".
 # In local dev nothing is sent: each email is printed in the terminal and saved to a file.
 # EMAIL_FROM=
+
+# Optional, for sandboxes (the SANDBOX binding; see the README): the ids of the workspaces that
+# may use them, separated by commas (every workspace when unset); each workspace's minutes per UTC
+# day; the server's US dollars per UTC month; and who hears at 80% and 100% of that budget.
+# SANDBOX_WORKSPACES=
+# SANDBOX_DAILY_MINUTES=
+# SANDBOX_MONTHLY_BUDGET=
+# SANDBOX_ALERT_EMAIL=
