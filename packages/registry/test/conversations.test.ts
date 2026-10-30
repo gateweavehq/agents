@@ -206,12 +206,13 @@ describe("turns with Workers AI", () => {
 async function withSandboxes<T>(
 	stub: ReturnType<typeof registry>,
 	fn: (instance: RegistryDO) => Promise<T>,
-	{ github = false } = {},
+	{ github = false, invited }: { github?: boolean; invited?: string } = {},
 ) {
 	return runInDurableObject(stub, async (instance: RegistryDO) => {
 		// `env` is protected, and a test of the server's settings is what needs it.
 		const { env: settings } = instance as unknown as { env: Record<string, unknown> };
 		const added: Record<string, unknown> = { SANDBOX: {} };
+		if (invited !== undefined) added.SANDBOX_WORKSPACES = invited;
 		// Only their presence is read here: no test reaches GitHub.
 		if (github) Object.assign(added, { GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: "unused" });
 		Object.assign(settings, added);
@@ -324,6 +325,31 @@ describe("turns with a sandbox", () => {
 				"This server does not run sandboxes, so Builder cannot answer. Whoever runs this server can turn them on; see the README.",
 		});
 		expect(await stub.listRuns()).toEqual([]);
+	});
+
+	it("are refused in a workspace the server has not invited, and go on in one it has", async () => {
+		const workspace = crypto.randomUUID();
+		const stub = env.REGISTRY.getByName(workspace);
+		const { id } = await builderConversation(stub, true);
+		await withSandboxes(
+			stub,
+			async (instance) => {
+				expect(await instance.beginTurn(id, "Build it")).toEqual({
+					status: "refused",
+					message:
+						"This server runs sandboxes only for the workspaces it invites, so Builder cannot answer. Whoever runs this server can invite this workspace.",
+				});
+			},
+			{ invited: "another-workspace" },
+		);
+		expect(await stub.listRuns()).toEqual([]);
+		await withSandboxes(
+			stub,
+			async (instance) => {
+				expect(await instance.beginTurn(id, "Build it")).toMatchObject({ sandbox: true });
+			},
+			{ invited: `another-workspace, ${workspace}` },
+		);
 	});
 
 	it("are refused once the workspace's sandboxes are all in use, until one is idle", async () => {

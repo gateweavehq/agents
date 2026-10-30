@@ -43,7 +43,7 @@ export const Route = createFileRoute("/$workspace/agents/$agentId")({
 				...detail,
 				library: library ?? [],
 				available: availableProviders(keys),
-				sandboxOffered: keys?.sandbox ?? false,
+				sandboxOffer: keys?.sandbox ?? "none",
 				// Null for members: owners and admins manage triggers.
 				triggers,
 			}
@@ -222,10 +222,14 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 				</h2>
 				<p className="rounded-lg border p-6 text-sm text-muted-foreground">
 					{definition.sandbox
-						? data.sandboxOffered
-							? "Each conversation has a Linux machine of its own, where the agent runs commands and edits files. It can download packages, and reach nothing else. It stops after 15 minutes without use, and its files go with it."
-							: "The agent has a sandbox, but this server runs none, so it cannot answer. Whoever runs the server can turn sandboxes on."
-						: `No sandbox: the agent cannot run commands.${admin && data.sandboxOffered ? " Give it one with Edit." : ""}`}
+						? {
+								offered:
+									"Each conversation has a Linux machine of its own, where the agent runs commands and edits files. It can download packages, and reach nothing else. It stops after 15 minutes without use, and its files go with it.",
+								"by-invitation":
+									"The agent has a sandbox, but this server runs them only for the workspaces it invites, so it cannot answer. Whoever runs the server can invite this workspace.",
+								none: "The agent has a sandbox, but this server runs none, so it cannot answer. Whoever runs the server can turn sandboxes on.",
+							}[data.sandboxOffer]
+						: `No sandbox: the agent cannot run commands.${admin && data.sandboxOffer === "offered" ? " Give it one with Edit." : ""}`}
 				</p>
 				{definition.sandbox && definition.repository && (
 					<p className="rounded-lg border p-6 text-sm text-muted-foreground">
@@ -557,7 +561,7 @@ function AgentActions({ definition }: { definition: AgentDefinition }) {
 					agent={{ agent, definition }}
 					library={data.library}
 					available={data.available}
-					sandboxOffered={data.sandboxOffered}
+					sandboxOffer={data.sandboxOffer}
 					onSave={async (input) => {
 						await updateAgent({ data: { slug, agentId: agent.id, agent: input } });
 						await router.invalidate();

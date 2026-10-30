@@ -8,7 +8,8 @@ import {
 	type ProviderKey,
 	type ProviderModel,
 	providerKeyInput,
-	sandboxOffered,
+	type SandboxOffer,
+	sandboxOfferTo,
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -28,8 +29,8 @@ async function memberOf(slug: string, admin: boolean) {
 
 /**
  * The keys, whether this server can keep keys at all (it needs `SECRETS_KEY`), whether it offers
- * Workers AI, which has no key: the deployment pays for it, and whether it runs sandboxes, which
- * the deployment pays for too.
+ * Workers AI, which has no key: the deployment pays for it, and whether it runs sandboxes for the
+ * workspace, which the deployment pays for too.
  */
 export const getProviderKeys = createServerFn({ method: "GET" })
 	.validator(z.string().min(1))
@@ -40,7 +41,7 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 			configured: boolean;
 			keys: ProviderKey[];
 			workersAi: boolean;
-			sandbox: boolean;
+			sandbox: SandboxOffer;
 		} | null> => {
 			const found = await memberOf(slug, false);
 			if (!found) return null;
@@ -50,7 +51,7 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 				configured: Boolean(env.SECRETS_KEY),
 				keys: await found.registry.listProviderKeys(),
 				workersAi: offersWorkersAi(),
-				sandbox: sandboxOffered(env),
+				sandbox: sandboxOfferTo(env, found.member.membership.workspaceId),
 			};
 		},
 	);

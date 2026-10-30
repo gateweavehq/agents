@@ -124,7 +124,7 @@ function NewAgentButton() {
 				<AgentDialog
 					library={choices.library ?? []}
 					available={availableProviders(choices.keys)}
-					sandboxOffered={choices.keys?.sandbox ?? false}
+					sandboxOffer={choices.keys?.sandbox ?? "none"}
 					onSave={async (agent) => {
 						const created = await createAgent({ data: { slug, agent } });
 						toast.success(`${created.name} was created`);
