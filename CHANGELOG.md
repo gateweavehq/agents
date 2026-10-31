@@ -8,6 +8,37 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.4.0] - 2026-10-31
+
+An agent working on an assigned Track issue now goes on when a person comments on it: it answers
+the question, makes the change asked for and pushes it to the same pull request. Updating a
+self-hosted copy applies a migration in each workspace's database, which runs on its own; there
+is no D1 migration and no new setting. A "Work on Track issues" set up before this version keeps
+starting each assignment anew until you change its trigger, as `docs/track-work.md` says under
+"Set up before comments continued the work".
+
+### Added
+
+- A trigger can keep one conversation per issue. Its deliveries about an issue it has seen go on
+  in that issue's conversation, with its history, its sandbox branch and its pull request. While
+  the agent is still on a turn about the issue, Agents asks the sender to try again later. (#90)
+- The ready-made "Work on Track issues" listens to comments too, with one conversation per issue.
+  A person's comment on an issue assigned to the agent continues its work, and its instructions
+  say how to answer one. Comments by agents and by Track itself start no run. (#90)
+
+### Changed
+
+- The sandbox has pnpm and Yarn through Corepack, so an agent can run a repository's own checks,
+  such as `pnpm verify`. (#88)
+
+### Fixed
+
+- Claude Code in a sandbox no longer adds "Generated with Claude Code" to an agent's pull
+  requests or a co-author to its commits, whatever the repository's settings say. Codex and
+  OpenCode add neither. (#89)
+- A dialog taller than the window, such as a trigger's, scrolls inside itself, so its title and
+  its buttons stay in reach. (#92)
+
 ## [0.3.0] - 2026-10-31
 
 Assign a Gateweave Track issue to an agent, and it works on it in a sandbox, opens a pull request
