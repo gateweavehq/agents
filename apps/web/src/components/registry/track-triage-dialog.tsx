@@ -6,10 +6,8 @@ import {
 	providerMissing,
 	providerPickerNote,
 } from "@gateweave/agents-model";
-import { useNavigate } from "@tanstack/react-router";
-import { Copy } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { toast } from "sonner";
+import { TrackWebhookStep } from "#/components/registry/track-webhook-step";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -23,7 +21,6 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { useWorkspace } from "#/components/workspace/context";
 import { setUpTrackTriage, type TrackTriageSetUp } from "#/lib/track-triage";
-import { replaceTriggerSecret } from "#/lib/triggers";
 
 /** Where Gateweave Cloud's Track is, which most people triage. */
 const GATEWEAVE_TRACK = "https://track.gateweave.com";
@@ -56,7 +53,15 @@ export function TrackTriageDialog({
 		<Dialog open onOpenChange={(open) => !open && onClose()}>
 			<DialogContent className="max-w-lg">
 				{made ? (
-					<WebhookStep made={made} onClose={onClose} />
+					<TrackWebhookStep
+						made={made}
+						done={`${made.agentName} will triage each new issue`}
+						onClose={onClose}
+					>
+						{made.agentName} is ready. In Track, open Settings → Webhooks and add a webhook with
+						this URL. Under Events, Issue created is all triage needs; the trigger skips the others.
+						Under For agent, choose your agent, so that its own changes do not come back to it.
+					</TrackWebhookStep>
 				) : (
 					<SetUpStep available={available} onMade={setMade} onClose={onClose} />
 				)}
@@ -194,113 +199,6 @@ function SetUpStep({
 				</Button>
 				<Button type="submit" disabled={pending || !agentKey.trim() || !model.trim()}>
 					{pending ? "Checking with Track…" : "Set up"}
-				</Button>
-			</DialogFooter>
-		</form>
-	);
-}
-
-/** The webhook to add in Track, and the secret Track shows for it, which the trigger then checks. */
-function WebhookStep({ made, onClose }: { made: TrackTriageSetUp; onClose: () => void }) {
-	const { slug } = useWorkspace();
-	const navigate = useNavigate();
-	const [secret, setSecret] = useState("");
-	const [pending, setPending] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-
-	async function openAgent() {
-		onClose();
-		await navigate({
-			to: "/$workspace/agents/$agentId",
-			params: { workspace: slug, agentId: made.agentId },
-		});
-	}
-
-	async function onSubmit(event: FormEvent) {
-		event.preventDefault();
-		setPending(true);
-		setError(null);
-		try {
-			await replaceTriggerSecret({
-				data: { slug, triggerId: made.triggerId, secret: secret.trim() },
-			});
-			toast.success(`${made.agentName} will triage each new issue`);
-			await openAgent();
-		} catch (failure) {
-			setError(message(failure));
-			setPending(false);
-		}
-	}
-
-	async function copy() {
-		try {
-			await navigator.clipboard.writeText(made.url);
-			toast.success("URL copied");
-		} catch {
-			toast.error("Could not copy; select it and copy it yourself");
-		}
-	}
-
-	return (
-		<form onSubmit={onSubmit} className="space-y-4">
-			<DialogHeader>
-				<DialogTitle>Now tell Track</DialogTitle>
-				<DialogDescription>
-					{made.agentName} is ready. In Track, open Settings → Webhooks and add a webhook with this
-					URL. Under Events, Issue created is all triage needs; the trigger skips the others. Under
-					For agent, choose your agent, so that its own changes do not come back to it.
-				</DialogDescription>
-			</DialogHeader>
-			<div className="space-y-2">
-				<Label htmlFor="triage-webhook-url">URL</Label>
-				<div className="flex gap-2">
-					<Input
-						id="triage-webhook-url"
-						value={made.url}
-						readOnly
-						onFocus={(event) => event.target.select()}
-						className="font-mono text-xs"
-					/>
-					<Button
-						type="button"
-						variant="outline"
-						size="icon"
-						aria-label="Copy the URL"
-						onClick={copy}
-					>
-						<Copy />
-					</Button>
-				</div>
-			</div>
-			<div className="space-y-2">
-				<Label htmlFor="triage-webhook-secret">The webhook's secret</Label>
-				<Input
-					id="triage-webhook-secret"
-					type="password"
-					autoComplete="off"
-					spellCheck={false}
-					value={secret}
-					onChange={(event) => setSecret(event.target.value)}
-					placeholder="whsec_…"
-					maxLength={200}
-					required
-				/>
-				<p className="text-xs text-muted-foreground">
-					Track shows it once, when the webhook is added. Until it is here, deliveries are refused.
-					You can also paste it later on the agent's page, under Triggers.
-				</p>
-			</div>
-			{error && (
-				<p role="alert" className="text-sm text-destructive">
-					{error}
-				</p>
-			)}
-			<DialogFooter className="gap-2">
-				<Button type="button" variant="outline" onClick={openAgent} disabled={pending}>
-					Later
-				</Button>
-				<Button type="submit" disabled={pending || !secret.trim()}>
-					{pending ? "Saving…" : "Save and finish"}
 				</Button>
 			</DialogFooter>
 		</form>

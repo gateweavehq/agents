@@ -374,6 +374,56 @@ describe("triggers", () => {
 		});
 	});
 
+	it("start only on issues just assigned to their member, and skip the rest, saying why", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub, "Coder");
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger, secret } = await create(stub, {
+			name: "Assigned issues",
+			prompt: "Work on {{data.issue.key}}",
+			target: { kind: "agent", agentId },
+			events: ["issue.created", "issue.updated"],
+			assignee: "member-coder",
+		});
+		expect(trigger.assignee).toBe("member-coder");
+		const about = (type: string, assigneeId: string | null, rest = {}) =>
+			JSON.stringify({ type, data: { issue: { id: "i-7", key: "ENG-7", assigneeId }, ...rest } });
+
+		const someoneElse = about("issue.created", "member-maya");
+		expect(await deliver(stub, trigger.id, secret, { body: someoneElse })).toEqual({
+			status: "skipped",
+		});
+		const edited = about("issue.updated", "member-coder", { updatedFrom: { title: "Old" } });
+		expect(await deliver(stub, trigger.id, secret, { body: edited })).toEqual({
+			status: "skipped",
+		});
+		const [entry] = await stub.listTriggers({ kind: "agent", agentId });
+		expect(entry?.deliveries.map(({ error }) => error)).toEqual(
+			expect.arrayContaining([
+				"The issue is not assigned to its member",
+				"The issue was assigned to its member already",
+			]),
+		);
+
+		const assigned = about("issue.updated", "member-coder", {
+			updatedFrom: { assigneeId: "member-maya" },
+		});
+		const receipt = await deliver(stub, trigger.id, secret, { body: assigned });
+		if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
+		expect(receipt.text.startsWith("Work on ENG-7\n\n")).toBe(true);
+
+		// The assignee goes with a schedule, as event types and labels do, and can be taken away.
+		expect(await stub.updateTrigger(trigger.id, { assignee: null })).toMatchObject({
+			assignee: null,
+		});
+		await stub.updateTrigger(trigger.id, { assignee: "member-coder" });
+		const WEEKDAYS = { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" };
+		expect(await stub.updateTrigger(trigger.id, { schedule: WEEKDAYS })).toMatchObject({
+			assignee: null,
+			schedule: WEEKDAYS,
+		});
+	});
+
 	it("refuse event lists that are empty, repeated or not event types", async () => {
 		const stub = registry();
 		const agentId = await withAgent(stub);

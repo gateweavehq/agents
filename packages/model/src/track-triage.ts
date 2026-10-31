@@ -40,17 +40,25 @@ export const TRACK_TRIAGE_PROMPT =
 export const TRACK_TRIAGE_EVENT = "issue.created";
 
 /** A Track agent member's key, as Track shows it when it is made. */
-const trackAgentKey = z
+export const trackAgentKey = z
 	.string()
 	.trim()
 	.regex(/^gwt_[A-Za-z0-9_-]{43}$/, "Paste the whole key, starting with gwt_, as Track shows it");
 
+/**
+ * Where people open Track, such as https://track.gateweave.com; its MCP server is at `/mcp`. Any
+ * page of Track will do, so the address bar can be pasted as it is.
+ */
+export const trackUrlInput = z
+	.string()
+	.trim()
+	.max(2000)
+	.transform(originOf)
+	.pipe(mcpServerUrl)
+	.transform(originOf);
+
 export const trackTriageInput = z.object({
-	/**
-	 * Where people open Track, such as https://track.gateweave.com; its MCP server is at `/mcp`.
-	 * Any page of Track will do, so the address bar can be pasted as it is.
-	 */
-	trackUrl: z.string().trim().max(2000).transform(originOf).pipe(mcpServerUrl).transform(originOf),
+	trackUrl: trackUrlInput,
 	agentKey: trackAgentKey,
 	name: z.string().trim().min(1).max(200).default(TRACK_TRIAGE_NAMES.agent),
 	provider: z.enum(MODEL_PROVIDERS),

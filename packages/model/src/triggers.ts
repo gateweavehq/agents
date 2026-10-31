@@ -91,6 +91,11 @@ export interface Trigger {
 	 * only when it was just added (`labelSkip`). Null is no label filter.
 	 */
 	label: string | null;
+	/**
+	 * The Gateweave Track member it starts runs for, by id: only issues assigned to them, and on
+	 * `issue.updated` only when they were just assigned (`assigneeSkip`). Null is no assignee filter.
+	 */
+	assignee: string | null;
 	/** When it starts runs on its own; null for a trigger that starts on webhooks. */
 	schedule: TriggerSchedule | null;
 	/** When its schedule starts the next run, while it is active; null otherwise. */
@@ -228,6 +233,24 @@ const NO_LABEL = {
 	path: ["label"],
 };
 
+/**
+ * The Gateweave Track member a trigger starts runs for, by the id Track gives them: what MCP's
+ * `get_workspace` returns as `you` for an agent's key.
+ */
+export const triggerAssignee = z
+	.string()
+	.trim()
+	.min(1, "Give the member's id")
+	.max(64, "A member's id is at most 64 characters")
+	.regex(/^[A-Za-z0-9_-]+$/, "Give the member's id as Track gives it: letters, digits, - and _")
+	.nullable();
+
+/** Only webhooks name an assignee: a schedule's runs are about no issue. */
+const NO_ASSIGNEE = {
+	message: "A scheduled trigger starts on its schedule, not on assignees",
+	path: ["assignee"],
+};
+
 export const triggerInput = z
 	.object({
 		name,
@@ -239,10 +262,12 @@ export const triggerInput = z
 		perDay: perDay.default(TRIGGER_LIMITS.defaultPerDay),
 		events: triggerEvents.default(null),
 		label: triggerLabel.default(null),
+		assignee: triggerAssignee.default(null),
 		schedule: triggerSchedule.nullable().default(null),
 	})
 	.refine((input) => input.schedule === null || input.events === null, ONE_KIND)
-	.refine((input) => input.schedule === null || input.label === null, NO_LABEL);
+	.refine((input) => input.schedule === null || input.label === null, NO_LABEL)
+	.refine((input) => input.schedule === null || input.assignee === null, NO_ASSIGNEE);
 export type TriggerInput = z.input<typeof triggerInput>;
 
 /**
@@ -256,11 +281,13 @@ export const triggerPatch = z
 		perDay: perDay.optional(),
 		events: triggerEvents.optional(),
 		label: triggerLabel.optional(),
+		assignee: triggerAssignee.optional(),
 		schedule: triggerSchedule.nullable().optional(),
 		active: z.boolean().optional(),
 	})
 	.refine((patch) => !patch.schedule || !patch.events, ONE_KIND)
-	.refine((patch) => !patch.schedule || !patch.label, NO_LABEL);
+	.refine((patch) => !patch.schedule || !patch.label, NO_LABEL)
+	.refine((patch) => !patch.schedule || !patch.assignee, NO_ASSIGNEE);
 export type TriggerPatch = z.input<typeof triggerPatch>;
 
 /**
@@ -351,6 +378,31 @@ export function labelSkip(label: string, body: string): string | null {
 		// Added when some label of that name was not on the issue before the change.
 		const added = Array.isArray(before) && matching.some((id) => !before.includes(id));
 		if (!added) return `The label ${label} was on the issue already`;
+	}
+	return null;
+}
+
+/**
+ * Why an event does not start a run of a trigger that takes only issues assigned to `assignee`, in
+ * words a person reads; null when it does. The issue must be assigned to them, and on
+ * `issue.updated` they must have just been assigned: `updatedFrom` holds the fields the change
+ * touched, so an edit of an issue that stayed theirs starts nothing. Other events, such as a new
+ * comment, start a run while the issue is theirs. The body is whatever the sender sent, so every
+ * field is checked before it is used.
+ */
+export function assigneeSkip(assignee: string, body: string): string | null {
+	const event = recordOf(parseJson(body));
+	const data = recordOf(event?.data);
+	const issue = recordOf(data?.issue);
+	if (!issue) {
+		return "It starts runs only on issues assigned to its member, and the event is not about an issue";
+	}
+	if (issue.assigneeId !== assignee) return "The issue is not assigned to its member";
+	if (event?.type === "issue.updated") {
+		const before = recordOf(data?.updatedFrom);
+		if (!before || !Object.hasOwn(before, "assigneeId")) {
+			return "The issue was assigned to its member already";
+		}
 	}
 	return null;
 }

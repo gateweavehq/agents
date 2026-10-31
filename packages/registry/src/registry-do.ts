@@ -97,6 +97,7 @@ import {
 	TRACK_KEY_VARIABLE,
 	TRIGGER_LIMITS,
 	type TrackTriagePlan,
+	type TrackWorkPlan,
 	type Trigger,
 	type TriggerEntry,
 	type TriggerHeaders,
@@ -111,6 +112,7 @@ import {
 	teamGraphInput,
 	teamInput,
 	trackTriagePlan,
+	trackWorkPlan,
 	triggerInput,
 	triggerMessage,
 	triggerPatch,
@@ -245,6 +247,7 @@ import {
 	updateTeam,
 } from "./teams";
 import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
+import { setUpTrackWork, type TrackWorkMade } from "./track-work";
 import {
 	admitDelivery,
 	admitScheduledRun,
@@ -1056,6 +1059,46 @@ export class RegistryDO extends DurableObject {
 		]);
 		const made = this.#write(() =>
 			setUpTrackTriage(
+				this.#db,
+				{
+					...plan,
+					envSetId,
+					sealedKey,
+					triggerId,
+					sealedSecret,
+					secretStart: secretStartOf(secret),
+					createdBy: member,
+					setBy: by,
+				},
+				Date.now(),
+			),
+		);
+		return "refused" in made ? refused(made.refused) : made;
+	}
+
+	/**
+	 * Sets up an agent that works on the Track issues assigned to its agent member (see
+	 * `./track-work.ts`), sealing the member's key and the trigger's secret first, as triage does.
+	 */
+	async setUpTrackWork(
+		input: TrackWorkPlan,
+		createdBy: string,
+		setBy: string,
+	): Promise<TrackWorkMade | TriggerRefusal> {
+		const { agentKey, ...plan } = trackWorkPlan.parse(input);
+		const member = id.parse(createdBy);
+		const by = z.string().trim().min(1).max(200).parse(setBy);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const envSetId = crypto.randomUUID();
+		const triggerId = crypto.randomUUID();
+		const secret = newTriggerSecret();
+		const [sealedKey, sealedSecret] = await Promise.all([
+			sealer.seal(secretPlace(envSetId, TRACK_KEY_VARIABLE), agentKey),
+			sealer.seal(triggerPlace(triggerId), secret),
+		]);
+		const made = this.#write(() =>
+			setUpTrackWork(
 				this.#db,
 				{
 					...plan,

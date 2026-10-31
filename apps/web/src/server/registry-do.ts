@@ -2,8 +2,12 @@ import type { SandboxBudgetPassed, TriggerTurnOutcome } from "@gateweave/agents-
 import { RegistryDO as Registry } from "@gateweave/agents-registry";
 import { conversationName } from "@gateweave/agents-runtime";
 import { getAgentByName } from "agents";
+import { eq } from "drizzle-orm";
+import { db } from "./auth";
+import { schema } from "./db";
 import { mailer } from "./email";
 import { sandboxBudgetEmail } from "./email/templates";
+import { runsPage } from "./runs-page";
 
 /**
  * The workspace's registry as this Worker runs it: the registry package's, which begins a
@@ -33,7 +37,12 @@ export class RegistryDO extends Registry {
 			this.env.CONVERSATIONS,
 			conversationName(workspaceId, conversationId),
 		);
-		return conversation.triggerTurn(text);
+		const workspace = await db
+			.select({ slug: schema.organization.slug })
+			.from(schema.organization)
+			.where(eq(schema.organization.id, workspaceId))
+			.get();
+		return conversation.triggerTurn(text, workspace ? runsPage(workspace.slug) : null);
 	}
 }
 

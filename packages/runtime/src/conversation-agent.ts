@@ -224,16 +224,26 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 * Takes the one turn a trigger's delivery opened this conversation for, with the trigger's
 	 * message. The registry checks the conversation and begins the run. Nobody waits for the
 	 * answer, so the conversation stays awake until the turn ends.
+	 *
+	 * `runs` is where the app shows the workspace's runs, such as `https://…/acme/runs/`. The run
+	 * has a page only once it began, so the agent is told it after the trigger's message, to link
+	 * where it reports, such as an issue it comments on.
 	 */
-	async triggerTurn(text: string): Promise<TriggerTurnOutcome> {
+	async triggerTurn(text: string, runs: string | null = null): Promise<TriggerTurnOutcome> {
 		const { conversationId, registry } = this.#parties();
 		const turn = await registry.beginTriggerTurn(conversationId, text);
 		if ("status" in turn) return { runId: null, error: turn.message };
 		this.#begun = turn;
+		const told =
+			typeof runs === "string"
+				? `${text}
+
+${runPageNote(runs, turn.runId)}`
+				: text;
 		const message: UIMessage = {
 			id: crypto.randomUUID(),
 			role: "user",
-			parts: [{ type: "text", text }],
+			parts: [{ type: "text", text: told }],
 		};
 		const done = this.saveMessages((messages) => [...messages, message]);
 		this.keepAliveWhile(() => done).catch((error: unknown) =>
@@ -685,6 +695,18 @@ function lastUserText(messages: UIMessage[]): string {
 	return (message?.parts ?? [])
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join("\n");
+}
+
+/**
+ * Where a trigger's run can be followed, said to the agent after the trigger's message. The app
+ * passes `runs`; anything that is not an http(s) address of a sensible length is left out, so the
+ * message never carries what it should not.
+ */
+function runPageNote(runs: string, runId: string): string {
+	const page = runs.length <= 2000 && /^https?:\/\/[^\s]+\/$/.test(runs) ? `${runs}${runId}` : null;
+	return page === null
+		? `This run is ${runId} in Gateweave Agents.`
+		: `This run's page, where people can follow your work in Gateweave Agents: ${page}`;
 }
 
 /** The text of the conversation's last answer, cut to what a caller's model reads. */

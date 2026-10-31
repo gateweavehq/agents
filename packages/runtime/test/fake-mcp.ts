@@ -8,7 +8,11 @@ export interface FakeTool {
 	inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
 }
 
-type CallResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+type CallResult = {
+	content: { type: "text"; text: string }[];
+	structuredContent?: Record<string, unknown>;
+	isError?: boolean;
+};
 
 export class FakeMcpServer {
 	/** Every JSON-RPC method asked for, with the request's headers. */

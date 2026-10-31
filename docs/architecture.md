@@ -853,6 +853,13 @@ many runs it may start a day.
   `updatedFrom.labelIds` shows, so an edit of a labeled issue starts nothing. An event about no
   issue, or about another one, is skipped with why, as an event of another type is. A scheduled
   trigger takes no label.
+- **Assignees.** A trigger may be limited to the issues assigned to one Gateweave Track member
+  (`triggers.assignee`), by the id Track gives them, which MCP's `get_workspace` returns as `you`
+  for an agent member's key (`assigneeSkip` in `packages/model/src/triggers.ts`). The issue's
+  `assigneeId` must be that id, and on `issue.updated` the change must have just made it so:
+  `updatedFrom` lists the fields a change touched, so an edit of an issue that stayed theirs
+  starts nothing. Other events about an issue, such as a comment, start a run while the issue is
+  theirs. A scheduled trigger takes no assignee.
 - **Its own conversation.** An admitted delivery opens a conversation for its run alone, started
   by `trigger:<id>` rather than a member (`conversations.trigger_id`), titled after the trigger
   and the event's `type`. The gateway then calls `triggerTurn` on its `ConversationAgent` over
@@ -911,6 +918,41 @@ names, the prompt and the tools are in `packages/model/src/track-triage.ts`, the
   Track workspace wrote: the instructions say to read it as data, and the allowlist is what holds
   if a model is talked into more.
 
+### Track issue work
+
+The second agent made for Track works on the issues assigned to it (AGT-54): it is an agent member
+of a Track workspace that people assign issues to, and each one becomes a run in a sandbox on one
+of the workspace's repositories, ending in a pull request
+([docs/track-work.md](track-work.md)). The names, the prompt and the tools are in
+`packages/model/src/track-work.ts`, the setup in `packages/registry/src/track-work.ts`, and the
+instructions in `apps/web/src/server/track-work.md`. It reuses triage's parts where they are the
+same (`makeTrackAccess`: the instructions, the environment set with the key, and Track's MCP
+server).
+
+- **The key says who the agent is.** The server function (`apps/web/src/lib/track-work.ts`) checks
+  Track's MCP server with the key as triage does, then asks it which member the key is
+  (`checkTrackAgent` in `packages/runtime/src/tools.ts`): the one workspace `list_workspaces`
+  lists, which must have the key as an `agent`, and the member `get_workspace` returns as `you`.
+  A Track too old to say is refused with that reason, before anything is made.
+- **One write makes it all**, as for triage, plus what the work needs: the agent has a sandbox, the
+  chosen repository and engine, and the registry holds them to the usual rules (an engine calls
+  only its providers' models, and the repository must be one the GitHub App reaches), so a
+  refusal throws and undoes the write. The trigger takes `issue.created` and `issue.updated`,
+  with the member's id as its assignee, at most 20 runs a day, since each can hold a sandbox for an
+  hour.
+- **It reports on the issue.** A trigger's run is told its page in the app, after the trigger's
+  message (`triggerTurn`'s `runs`, from `apps/web/src/server/runs-page.ts`: `BETTER_AUTH_URL`'s
+  origin, or the delivery's), so the agent links it when it comments that it started. It then moves
+  the issue to In Progress, works in the repository, opens a pull request with
+  `open_pull_request` (titled with the issue's key, and ending `Fixes <key>`, so Track's GitHub
+  connection links it), comments with its link and moves the issue to In Review. When the issue
+  is unclear it asks in a comment, mentioning who assigned it, and stops; assigning it again starts
+  a new run.
+- **The same limits.** Track's tools are the same five as triage's. In the sandbox, the agent's
+  pushes reach only its conversation's branch, through `open_pull_request`, as for any agent; the
+  pull request is where a person reviews what an issue talked it into. Agents' proposal settings
+  in Track still apply to the agent member.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -951,8 +993,8 @@ workspace.
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its
   pinned instructions with their text, its environment set and its MCP servers, with "Only: …"
   under a server the agent is limited to some tools of. Owners and admins also see its triggers
-  there, as they do on a team's page, and set up the ready-made agents below the list, such as
-  [Track triage](#track-triage).
+  there, as they do on a team's page, and set up the ready-made agents below the list:
+  [Track triage](#track-triage) and [Track issue work](#track-issue-work).
 - **Teams** lists the teams with their leads. A team's page draws its graph top-down from the
   lead (`apps/web/src/lib/team-layout.ts`, inline SVG, no graph library): each member one row
   below the nearest member that reaches it, every kind of edge in its own color and dashes. Below
@@ -1015,7 +1057,9 @@ provider keys.
 ## What comes next
 
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
-  [Track triage](#track-triage).
+  [Track triage](#track-triage) and [Track issue work](#track-issue-work). Next for the latter: a
+  person's comment on the issue continuing the same conversation, branch and pull request,
+  rather than a new run.
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
