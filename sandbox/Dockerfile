@@ -33,5 +33,13 @@ RUN npm install --global "opencode-linux-x64@${OPENCODE_VERSION}" \
   && npm install --no-fund --no-audit "@opencode-ai/plugin@${OPENCODE_VERSION}" \
   && npm cache clean --force \
   && opencode --version
+# pnpm and Yarn, through Corepack: a repository gets the version its `packageManager` names,
+# downloaded from npm when first used (packages/runtime/src/sandbox.ts tells Corepack to, without
+# asking). pnpm's current version comes with the image, with the native binary it fetches on its
+# first run, so a repository on it, or naming none, needs no download.
+ARG PNPM_VERSION=12.4.2
+RUN corepack enable \
+  && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack install --global "pnpm@${PNPM_VERSION}" \
+  && pnpm --version
 WORKDIR /workspace
 CMD ["sleep", "infinity"]
