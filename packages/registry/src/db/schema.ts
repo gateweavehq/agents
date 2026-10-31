@@ -466,11 +466,17 @@ export const conversations = sqliteTable(
 		rootId: text("root_id"),
 		/** The trigger whose delivery started it; `started_by` names the trigger then. */
 		triggerId: text("trigger_id"),
+		/**
+		 * For a per-issue trigger's conversation, the Gateweave Track issue it is about, as
+		 * `<workspace id>:<issue id>` (`issueOfEvent`): later events about it continue it.
+		 */
+		issue: text("issue"),
 	},
 	(table) => [
 		index("conversations_started_by_idx").on(table.startedBy, table.updatedAt),
 		index("conversations_agent_idx").on(table.agentId),
 		index("conversations_root_idx").on(table.rootId),
+		index("conversations_trigger_issue_idx").on(table.triggerId, table.issue),
 	],
 );
 
@@ -549,6 +555,8 @@ export const triggers = sqliteTable(
 		label: text("label"),
 		/** The Gateweave Track member whose issues it starts runs for; null is no assignee filter. */
 		assignee: text("assignee"),
+		/** Whether an event about an issue continues the conversation it keeps for that issue. */
+		perIssue: integer("per_issue", { mode: "boolean" }).notNull().default(false),
 		/** When it starts runs on its own; null for a trigger that starts on webhooks. */
 		schedule: text("schedule", { mode: "json" }).$type<TriggerSchedule>(),
 		/** When its schedule starts the next run, while it is active: the alarm wakes for it. */

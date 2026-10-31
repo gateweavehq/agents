@@ -1,9 +1,11 @@
 /**
  * Triggers: inbound webhooks that start a run of an agent run by Gateweave, or of a team's lead,
- * in a conversation of the delivery's own, with no person in it. The app's gateway hands each
- * delivery to the registry, which checks its Standard Webhooks signature with the trigger's secret,
- * keeps one row per `webhook-id` so a retry starts nothing twice, and holds each trigger to its
- * runs per minute and per day. The runtime then begins the run (`beginTriggerTurn`).
+ * in a conversation of the delivery's own, with no person in it, or, for a per-issue trigger, in
+ * the conversation it keeps for the Gateweave Track issue the event is about. The app's gateway
+ * hands each delivery to the registry, which checks its Standard Webhooks signature with the
+ * trigger's secret, keeps one row per `webhook-id` so a retry starts nothing twice, and holds each
+ * trigger to its runs per minute and per day. The runtime then begins the run
+ * (`beginTriggerTurn`).
  *
  * A scheduled trigger takes no webhooks: the registry's alarm wakes when its next run is due
  * (`dueSchedules`), and the run is admitted the same way, under the same limits.
@@ -11,6 +13,7 @@
 import {
 	assigneeSkip,
 	eventType,
+	issueOfEvent,
 	labelSkip,
 	nextScheduledRun,
 	SCHEDULE_EVENT,
@@ -31,10 +34,12 @@ import {
 	agentDefinitions,
 	agents,
 	conversations,
+	runs,
 	teams,
 	triggerDeliveries,
 	triggers,
 } from "./db/schema";
+import { RUN_TIMEOUT } from "./runs";
 import type { Db } from "./state";
 import { teamLead } from "./teams";
 
@@ -52,6 +57,12 @@ export const ACCEPT_TIMEOUT = MINUTE;
 
 /** Signatures of one delivery looked at, at most: senders rotating secrets send two. */
 const MAX_SIGNATURES = 5;
+
+/**
+ * When a per-issue trigger's conversation is still on a turn, how long its sender is asked to wait
+ * before trying a delivery about that issue again.
+ */
+export const BUSY_RETRY_SECONDS = 60;
 
 /** Where a trigger's secret is sealed. */
 export function triggerPlace(triggerId: string): string {
@@ -162,6 +173,7 @@ export function insertTrigger(
 		events: string[] | null;
 		label: string | null;
 		assignee: string | null;
+		perIssue: boolean;
 		schedule: TriggerSchedule | null;
 		sealed: string;
 		secretStart: string;
@@ -180,9 +192,11 @@ export function insertTrigger(
 			agentId: target.kind === "agent" ? target.agentId : null,
 			teamId: target.kind === "team" ? target.teamId : null,
 			active: true,
-			// A scheduled trigger has no label or assignee, as it has no event types.
+			// A scheduled trigger has no label or assignee, as it has no event types, and its runs are
+			// about no issue.
 			label: row.schedule ? null : row.label,
 			assignee: row.schedule ? null : row.assignee,
+			perIssue: row.schedule ? false : row.perIssue,
 			nextRunAt: row.schedule && nextScheduledRun(row.schedule, now),
 			createdAt: now,
 			updatedAt: now,
@@ -203,6 +217,7 @@ export function updateTrigger(
 		events?: string[] | null;
 		label?: string | null;
 		assignee?: string | null;
+		perIssue?: boolean;
 		schedule?: TriggerSchedule | null;
 		active?: boolean;
 	},
@@ -222,8 +237,11 @@ export function updateTrigger(
 		patch.schedule === undefined && patch.active === undefined
 			? {}
 			: { nextRunAt: active && schedule ? nextScheduledRun(schedule, now) : null };
-	// A schedule's runs all start the same way, so it has no event types, label or assignee.
-	const webhookOnly = schedule ? { events: null, label: null, assignee: null } : {};
+	// A schedule's runs all start the same way, so it has no event types, label or assignee, and
+	// they are about no issue.
+	const webhookOnly = schedule
+		? { events: null, label: null, assignee: null, perIssue: false }
+		: {};
 	db.update(triggers)
 		.set({ ...patch, ...timing, ...webhookOnly, updatedAt: now })
 		.where(eq(triggers.id, id))
@@ -335,7 +353,9 @@ export type Admission =
  * started a run, or was skipped, starts nothing; one whose run is starting is asked to come back,
  * since that run may still fail to begin; one that was over a limit or could not begin is tried
  * again. Within the limits, it opens the delivery's conversation, whose run the runtime begins
- * next.
+ * next. A per-issue trigger takes the conversation it keeps for the event's issue instead, when
+ * it has one, and asks the sender to come back while that conversation is on a turn: one
+ * conversation takes one turn at a time.
  */
 export function admitDelivery(
 	db: Db,
@@ -366,8 +386,13 @@ export function admitDelivery(
 				retryAfter: secondsUntil(earlier.receivedAt + ACCEPT_TIMEOUT, now),
 			};
 		}
-		// The conversation opened for it had no run, so the retry opens another in its place.
-		if (earlier.conversationId !== null && earlier.runId === null) {
+		// The conversation opened for it had no run, so the retry opens another in its place. One a
+		// per-issue trigger kept, with runs of earlier deliveries, stays.
+		if (
+			earlier.conversationId !== null &&
+			earlier.runId === null &&
+			!hasRuns(db, earlier.conversationId)
+		) {
 			db.delete(conversations).where(eq(conversations.id, earlier.conversationId)).run();
 		}
 	}
@@ -433,6 +458,18 @@ export function admitDelivery(
 		record("failed", { error: message });
 		return { status: "refused", message };
 	}
+	const issue = trigger.perIssue ? issueOfEvent(delivery.body) : null;
+	const kept = issue && keptConversation(db, trigger.id, issue.subject);
+	if (kept) {
+		if (onTurn(db, kept, now)) {
+			const message = "The agent is still on its last turn about this issue";
+			record("limited", { error: message });
+			return { status: "limited", retryAfter: BUSY_RETRY_SECONDS, message };
+		}
+		db.update(conversations).set({ updatedAt: now }).where(eq(conversations.id, kept)).run();
+		record("accepted", { conversationId: kept });
+		return { status: "start", conversationId: kept };
+	}
 	const conversationId = crypto.randomUUID();
 	db.insert(conversations)
 		.values({
@@ -442,7 +479,13 @@ export function admitDelivery(
 			teamId: target.kind === "team" ? target.teamId : null,
 			rootId: null,
 			triggerId: trigger.id,
-			title: event && event !== SCHEDULE_EVENT ? `${trigger.name}: ${event}` : trigger.name,
+			issue: issue?.subject ?? null,
+			// A per-issue conversation goes on past this event, so it is named for the issue.
+			title: issue?.key
+				? `${trigger.name}: ${issue.key}`
+				: event && event !== SCHEDULE_EVENT
+					? `${trigger.name}: ${event}`
+					: trigger.name,
 			createdAt: now,
 			updatedAt: now,
 		})
@@ -451,15 +494,76 @@ export function admitDelivery(
 	return { status: "start", conversationId };
 }
 
-/** The delivery a trigger's conversation was opened for. */
+/**
+ * The delivery whose run is about to begin in a trigger's conversation: the one it was opened
+ * for, or a later one about the same issue. Null once that run began or could not.
+ */
 export function deliveryOf(db: Db, conversationId: string) {
 	return (
 		db
 			.select()
 			.from(triggerDeliveries)
-			.where(eq(triggerDeliveries.conversationId, conversationId))
+			.where(
+				and(
+					eq(triggerDeliveries.conversationId, conversationId),
+					eq(triggerDeliveries.status, "accepted"),
+				),
+			)
 			.get() ?? null
 	);
+}
+
+/** The conversation a per-issue trigger keeps for an issue, if it has one that was not deleted. */
+function keptConversation(db: Db, triggerId: string, issue: string): string | null {
+	return (
+		db
+			.select({ id: conversations.id })
+			.from(conversations)
+			.where(and(eq(conversations.triggerId, triggerId), eq(conversations.issue, issue)))
+			.orderBy(desc(conversations.createdAt))
+			.get()?.id ?? null
+	);
+}
+
+/**
+ * Whether a conversation is on a turn: a run of it is going, or a delivery's run is about to
+ * begin in it. A run older than any turn was cut short and does not count, nor does a delivery
+ * that was taken but never began, as when the Worker stopped in between.
+ */
+function onTurn(db: Db, conversationId: string, now: number): boolean {
+	const running = db
+		.select({ id: runs.id })
+		.from(runs)
+		.where(
+			and(
+				eq(runs.conversationId, conversationId),
+				eq(runs.status, "running"),
+				gte(runs.startedAt, now - RUN_TIMEOUT),
+			),
+		)
+		.get();
+	if (running) return true;
+	const starting = db
+		.select({ id: triggerDeliveries.id })
+		.from(triggerDeliveries)
+		.where(
+			and(
+				eq(triggerDeliveries.conversationId, conversationId),
+				eq(triggerDeliveries.status, "accepted"),
+				gte(triggerDeliveries.receivedAt, now - ACCEPT_TIMEOUT),
+			),
+		)
+		.get();
+	return starting !== undefined;
+}
+
+function hasRuns(db: Db, conversationId: string): boolean {
+	const run = db
+		.select({ id: runs.id })
+		.from(runs)
+		.where(eq(runs.conversationId, conversationId))
+		.get();
+	return run !== undefined;
 }
 
 /** Notes that a delivery's run began, or why it could not. */

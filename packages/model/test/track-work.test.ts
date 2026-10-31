@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { trackWorkInput, trackWorkPlan } from "../src";
+import {
+	assigneeSkip,
+	TRACK_WORK_EVENTS,
+	TRACK_WORK_PROMPT,
+	trackWorkInput,
+	trackWorkPlan,
+	triggerMessage,
+} from "../src";
 
 const KEY = `gwt_${"a".repeat(43)}`;
 const INPUT = {
@@ -33,5 +40,32 @@ describe("Track work input", () => {
 		expect(trackWorkPlan.parse(plan).memberId).toBe("Ab3_x-9");
 		expect(trackWorkPlan.safeParse({ ...plan, memberId: "" }).success).toBe(false);
 		expect(trackWorkPlan.safeParse({ ...plan, memberId: null }).success).toBe(false);
+	});
+});
+
+describe("Track work trigger", () => {
+	const event = (type: string) =>
+		JSON.stringify({
+			type,
+			data: {
+				workspace: { id: "w-1", slug: "acme" },
+				issue: { id: "issue-7", key: "ENG-7", title: "Login fails", assigneeId: "coder" },
+				actor: { id: "maya", name: "Maya", type: "person" },
+			},
+		});
+
+	it("tells the agent what happened to its issue, whichever event it was", () => {
+		for (const type of TRACK_WORK_EVENTS) {
+			expect(triggerMessage(TRACK_WORK_PROMPT, event(type))).toMatch(
+				new RegExp(
+					`^Track sent ${type} for the issue ENG-7, "Login fails", in the workspace "acme"\\. It is assigned to you`,
+				),
+			);
+		}
+	});
+
+	it("takes a person's comment on an issue assigned to the agent", () => {
+		expect(TRACK_WORK_EVENTS).toContain("comment.created");
+		expect(assigneeSkip("coder", event("comment.created"))).toBeNull();
 	});
 });

@@ -227,6 +227,7 @@ function newRow(
 		teamId: null,
 		rootId: null,
 		triggerId: null,
+		issue: null,
 		...parties,
 		createdAt: now,
 		updatedAt: now,

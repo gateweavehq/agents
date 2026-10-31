@@ -34,15 +34,19 @@ export const TRACK_WORK_NAMES = {
 	trigger: "Assigned issues",
 } as const;
 
-/** The trigger's prompt. The event follows it, with the issue's description and who assigned it. */
+/**
+ * The trigger's prompt. The event follows it: the issue's description and who assigned it, or the
+ * comment and who wrote it.
+ */
 export const TRACK_WORK_PROMPT =
-	'The issue {{data.issue.key}}, "{{data.issue.title}}", in the Track workspace "{{data.workspace.slug}}" is assigned to you. Work on it.';
+	'Track sent {{type}} for the issue {{data.issue.key}}, "{{data.issue.title}}", in the workspace "{{data.workspace.slug}}". It is assigned to you: work on it as your instructions say.';
 
 /**
- * The webhook events the trigger is for: an issue made with the agent as its assignee, or one
- * assigned to it later. The trigger's assignee filter skips the rest.
+ * The webhook events the trigger is for: an issue made with the agent as its assignee, one
+ * assigned to it later, and a person's comment on one of its issues. The trigger's assignee filter
+ * skips the rest, and keeps one conversation per issue, so a comment continues the work.
  */
-export const TRACK_WORK_EVENTS = ["issue.created", "issue.updated"] as const;
+export const TRACK_WORK_EVENTS = ["issue.created", "issue.updated", "comment.created"] as const;
 
 /** Runs the trigger may start in a day: each can hold a sandbox for up to an hour. */
 export const TRACK_WORK_RUNS_PER_DAY = 20;

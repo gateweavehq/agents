@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
 	assigneeSkip,
 	eventType,
+	issueOfEvent,
 	labelSkip,
 	nextScheduledRun,
 	scheduleEvent,
@@ -243,8 +244,19 @@ it("starts runs on issues assigned to the member, and on issue.updated only when
 	expect(assigneeSkip("coder", taken)).toBe("The issue is not assigned to its member");
 });
 
-it("starts on a comment on the member's issue, and skips what is not about an issue", () => {
-	expect(assigneeSkip("coder", assigned("comment.created", "coder"))).toBeNull();
+it("starts on a person's comment on the member's issue, and skips what is not about an issue", () => {
+	const by = (type: unknown) => ({ actor: { id: "a", name: "A", type }, comment: { body: "Hi" } });
+	expect(assigneeSkip("coder", assigned("comment.created", "coder", by("person")))).toBeNull();
+	// Another agent's comment, Track's own, or one that does not say who wrote it starts nothing,
+	// so two agents cannot keep each other going.
+	for (const rest of [by("agent"), by("system"), by(["person"]), {}]) {
+		expect(assigneeSkip("coder", assigned("comment.created", "coder", rest))).toBe(
+			"Only a person's comment starts a run, not an agent's or Track's",
+		);
+	}
+	expect(assigneeSkip("coder", assigned("comment.created", "maya", by("person")))).toBe(
+		"The issue is not assigned to its member",
+	);
 	const notAboutAnIssue =
 		"It starts runs only on issues assigned to its member, and the event is not about an issue";
 	expect(assigneeSkip("coder", JSON.stringify({ type: "schedule", data: {} }))).toBe(
@@ -278,4 +290,47 @@ it("trims a trigger's assignee, refuses what is not an id, and refuses one on a 
 	expect(triggerPatch.parse({ assignee: null }).assignee).toBeNull();
 	expect(triggerPatch.safeParse({ schedule, assignee: "coder" }).success).toBe(false);
 	expect(triggerPatch.safeParse({ schedule, assignee: null }).success).toBe(true);
+});
+
+it("names the issue an event is about across workspaces, and nothing for other events", () => {
+	const about = (data: unknown) => JSON.stringify({ type: "comment.created", data });
+	expect(
+		issueOfEvent(about({ workspace: { id: "w-1" }, issue: { id: "issue-1", key: " ENG-1 " } })),
+	).toEqual({ subject: "w-1:issue-1", key: "ENG-1" });
+	expect(issueOfEvent(about({ workspace: { id: "w-1" }, issue: { id: "issue-1" } }))).toEqual({
+		subject: "w-1:issue-1",
+		key: null,
+	});
+	// The same issue id in another workspace is another issue.
+	expect(issueOfEvent(about({ workspace: { id: "w-2" }, issue: { id: "issue-1" } }))?.subject).toBe(
+		"w-2:issue-1",
+	);
+	// Whatever the sender sent is checked before it is used.
+	for (const data of [
+		{ issue: { id: "issue-1" } },
+		{ workspace: { id: "w-1" } },
+		{ workspace: { id: "w-1" }, issue: { id: 7 } },
+		{ workspace: { id: "w-1" }, issue: { id: "" } },
+		{ workspace: { id: "w-1" }, issue: { id: "x".repeat(65) } },
+		{ workspace: "w-1", issue: { id: "issue-1" } },
+	]) {
+		expect(issueOfEvent(about(data))).toBeNull();
+	}
+	expect(issueOfEvent(scheduleEvent({ cron: "0 9 * * *", timeZone: "UTC" }, 0))).toBeNull();
+	expect(issueOfEvent("not json")).toBeNull();
+});
+
+it("keeps a conversation per issue only when asked, and never on a schedule", () => {
+	const schedule = { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" };
+	const base = { name: "Assigned issues", prompt: "Work on it", target };
+	expect(triggerInput.parse(base).perIssue).toBe(false);
+	expect(triggerInput.parse({ ...base, perIssue: true }).perIssue).toBe(true);
+	expect(
+		triggerInput.safeParse({ ...base, schedule, perIssue: true }).error?.issues[0],
+	).toMatchObject({
+		path: ["perIssue"],
+		message: "A scheduled trigger's runs are about no issue, so each has its own conversation",
+	});
+	expect(triggerPatch.safeParse({ schedule, perIssue: true }).success).toBe(false);
+	expect(triggerPatch.safeParse({ schedule, perIssue: false }).success).toBe(true);
 });

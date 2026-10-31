@@ -865,11 +865,25 @@ many runs it may start a day.
   for an agent member's key (`assigneeSkip` in `packages/model/src/triggers.ts`). The issue's
   `assigneeId` must be that id, and on `issue.updated` the change must have just made it so:
   `updatedFrom` lists the fields a change touched, so an edit of an issue that stayed theirs
-  starts nothing. Other events about an issue, such as a comment, start a run while the issue is
-  theirs. A scheduled trigger takes no assignee.
+  starts nothing. A comment starts a run while the issue is theirs, but only a person's
+  (`data.actor.type`): Track sends no change of the agent member a webhook is for, and one by
+  another agent or by Track itself is skipped, so two agents cannot keep each other going. Other
+  events about an issue start a run while it is theirs. A scheduled trigger takes no assignee.
 - **Its own conversation.** An admitted delivery opens a conversation for its run alone, started
   by `trigger:<id>` rather than a member (`conversations.trigger_id`), titled after the trigger
-  and the event's `type`. The gateway then calls `triggerTurn` on its `ConversationAgent` over
+  and the event's `type`, unless its trigger keeps one per issue.
+- **One conversation per issue.** A trigger may keep one conversation for each Gateweave Track
+  issue (`triggers.per_issue`, AGT-58). The first event about an issue opens it, titled after the
+  trigger and the issue's key, and notes the issue as `<workspace id>:<issue id>`
+  (`conversations.issue`, from `issueOfEvent`), which stays the same when the issue is renamed or
+  changes team. A later event about it takes its next turn there, with what was said and done
+  before: a sandbox agent works on the conversation's branch again, which a new container fetches
+  from GitHub, and `open_pull_request` updates the same pull request. A conversation takes one
+  turn at a time, so while it is on one (a run of it going, younger than a run's hour, or a
+  delivery's run starting), an event about the issue gets `429` and shows as over the limit, for
+  the sender to retry. One that was deleted is replaced by a new one, and an event about no issue
+  opens its own, as without the setting. A retry of a delivery whose run could not begin removes
+  the conversation opened for it only when no run took place there. The gateway then calls `triggerTurn` on its `ConversationAgent` over
   RPC, which asks the registry to begin the run (`beginTriggerTurn`) and stays awake until the
   turn ends, as a report's does. The message is the prompt, with each `{{path}}` filled in from
   the event's JSON, and the event after it. A team's trigger starts the lead with the team's
@@ -944,17 +958,20 @@ server).
 - **One write makes it all**, as for triage, plus what the work needs: the agent has a sandbox, the
   chosen repository and engine, and the registry holds them to the usual rules (an engine calls
   only its providers' models, and the repository must be one the GitHub App reaches), so a
-  refusal throws and undoes the write. The trigger takes `issue.created` and `issue.updated`,
-  with the member's id as its assignee, at most 20 runs a day, since each can hold a sandbox for an
-  hour.
+  refusal throws and undoes the write. The trigger takes `issue.created`, `issue.updated` and
+  `comment.created`, with the member's id as its assignee and one conversation per issue, at most
+  20 runs a day, since each can hold a sandbox for an hour.
 - **It reports on the issue.** A trigger's run is told its page in the app, after the trigger's
   message (`triggerTurn`'s `runs`, from `apps/web/src/server/runs-page.ts`: `BETTER_AUTH_URL`'s
   origin, or the delivery's), so the agent links it when it comments that it started. It then moves
   the issue to In Progress, works in the repository, opens a pull request with
   `open_pull_request` (titled with the issue's key, and ending `Fixes <key>`, so Track's GitHub
   connection links it), comments with its link and moves the issue to In Review. When the issue
-  is unclear it asks in a comment, mentioning who assigned it, and stops; assigning it again starts
-  a new run.
+  is unclear it asks in a comment, mentioning who assigned it, and stops.
+- **A comment continues the work** (AGT-58). A person's comment on the issue takes the next turn
+  of the issue's conversation: the agent answers a question, goes on once its own is answered, or
+  makes the change asked for and pushes it to the same pull request, then comments once. Being
+  assigned the issue again also continues the conversation, rather than starting over.
 - **The same limits.** Track's tools are the same five as triage's. In the sandbox, the agent's
   pushes reach only its conversation's branch, through `open_pull_request`, as for any agent; the
   pull request is where a person reviews what an issue talked it into. Agents' proposal settings
@@ -1064,9 +1081,7 @@ provider keys.
 ## What comes next
 
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
-  [Track triage](#track-triage) and [Track issue work](#track-issue-work). Next for the latter: a
-  person's comment on the issue continuing the same conversation, branch and pull request,
-  rather than a new run.
+  [Track triage](#track-triage) and [Track issue work](#track-issue-work).
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.

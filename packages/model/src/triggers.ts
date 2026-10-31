@@ -96,6 +96,13 @@ export interface Trigger {
 	 * `issue.updated` only when they were just assigned (`assigneeSkip`). Null is no assignee filter.
 	 */
 	assignee: string | null;
+	/**
+	 * Whether it keeps one conversation per Gateweave Track issue (`issueOfEvent`): an event about an
+	 * issue it already has a conversation for continues that one, with what was said and worked on
+	 * there, its sandbox's branch and pull request included. An event about no issue starts a
+	 * conversation of its own, as every event does when this is off.
+	 */
+	perIssue: boolean;
 	/** When it starts runs on its own; null for a trigger that starts on webhooks. */
 	schedule: TriggerSchedule | null;
 	/** When its schedule starts the next run, while it is active; null otherwise. */
@@ -144,7 +151,10 @@ export interface TriggerHeaders {
 
 /** What the registry made of a delivery, which the gateway answers the sender by. */
 export type TriggerReceipt =
-	/** Signed and within the limits: the run starts in this new conversation, with this message. */
+	/**
+	 * Signed and within the limits: the run starts in this conversation, with this message. The
+	 * conversation is new, or the one a per-issue trigger keeps for the event's issue.
+	 */
 	| { status: "start"; conversationId: string; text: string }
 	/** A retry of a delivery that started a run, or was skipped. */
 	| { status: "duplicate"; runId: string | null }
@@ -251,6 +261,12 @@ const NO_ASSIGNEE = {
 	path: ["assignee"],
 };
 
+/** A schedule's runs are about no issue either, so each has a conversation of its own. */
+const NOT_PER_ISSUE = {
+	message: "A scheduled trigger's runs are about no issue, so each has its own conversation",
+	path: ["perIssue"],
+};
+
 export const triggerInput = z
 	.object({
 		name,
@@ -263,11 +279,13 @@ export const triggerInput = z
 		events: triggerEvents.default(null),
 		label: triggerLabel.default(null),
 		assignee: triggerAssignee.default(null),
+		perIssue: z.boolean().default(false),
 		schedule: triggerSchedule.nullable().default(null),
 	})
 	.refine((input) => input.schedule === null || input.events === null, ONE_KIND)
 	.refine((input) => input.schedule === null || input.label === null, NO_LABEL)
-	.refine((input) => input.schedule === null || input.assignee === null, NO_ASSIGNEE);
+	.refine((input) => input.schedule === null || input.assignee === null, NO_ASSIGNEE)
+	.refine((input) => input.schedule === null || !input.perIssue, NOT_PER_ISSUE);
 export type TriggerInput = z.input<typeof triggerInput>;
 
 /**
@@ -282,12 +300,14 @@ export const triggerPatch = z
 		events: triggerEvents.optional(),
 		label: triggerLabel.optional(),
 		assignee: triggerAssignee.optional(),
+		perIssue: z.boolean().optional(),
 		schedule: triggerSchedule.nullable().optional(),
 		active: z.boolean().optional(),
 	})
 	.refine((patch) => !patch.schedule || !patch.events, ONE_KIND)
 	.refine((patch) => !patch.schedule || !patch.label, NO_LABEL)
-	.refine((patch) => !patch.schedule || !patch.assignee, NO_ASSIGNEE);
+	.refine((patch) => !patch.schedule || !patch.assignee, NO_ASSIGNEE)
+	.refine((patch) => !patch.schedule || !patch.perIssue, NOT_PER_ISSUE);
 export type TriggerPatch = z.input<typeof triggerPatch>;
 
 /**
@@ -386,9 +406,11 @@ export function labelSkip(label: string, body: string): string | null {
  * Why an event does not start a run of a trigger that takes only issues assigned to `assignee`, in
  * words a person reads; null when it does. The issue must be assigned to them, and on
  * `issue.updated` they must have just been assigned: `updatedFrom` holds the fields the change
- * touched, so an edit of an issue that stayed theirs starts nothing. Other events, such as a new
- * comment, start a run while the issue is theirs. The body is whatever the sender sent, so every
- * field is checked before it is used.
+ * touched, so an edit of an issue that stayed theirs starts nothing. A comment starts a run while
+ * the issue is theirs, but only a person's: Track does not send the member's own, and one by
+ * another agent or by Track itself starts nothing, so two agents cannot keep each other going.
+ * Other events start a run while the issue is theirs. The body is whatever the sender sent, so
+ * every field is checked before it is used.
  */
 export function assigneeSkip(assignee: string, body: string): string | null {
 	const event = recordOf(parseJson(body));
@@ -404,7 +426,34 @@ export function assigneeSkip(assignee: string, body: string): string | null {
 			return "The issue was assigned to its member already";
 		}
 	}
+	if (typeof event?.type === "string" && event.type.startsWith("comment.")) {
+		if (recordOf(data?.actor)?.type !== "person") {
+			return "Only a person's comment starts a run, not an agent's or Track's";
+		}
+	}
 	return null;
+}
+
+/** The longest workspace or issue id `issueOfEvent` takes; Track's are far shorter. */
+const MAX_ISSUE_ID = 64;
+
+/**
+ * The Gateweave Track issue an event is about, for a per-issue trigger: `subject` names it across
+ * workspaces as `<workspace id>:<issue id>`, which stay the same when the issue is renamed or
+ * moved to another team, and `key` is what people call it, such as `ENG-42`, when the event says.
+ * Null when the event is about no issue. The body is whatever the sender sent, so every field is
+ * checked before it is used.
+ */
+export function issueOfEvent(body: string): { subject: string; key: string | null } | null {
+	const data = recordOf(recordOf(parseJson(body))?.data);
+	const issue = recordOf(data?.issue);
+	const workspace = recordOf(data?.workspace)?.id;
+	const id = issue?.id;
+	const fits = (value: unknown): value is string =>
+		typeof value === "string" && value.length > 0 && value.length <= MAX_ISSUE_ID;
+	if (!fits(id) || !fits(workspace)) return null;
+	const key = typeof issue?.key === "string" ? issue.key.trim().slice(0, 40) : "";
+	return { subject: `${workspace}:${id}`, key: key === "" ? null : key };
 }
 
 /**

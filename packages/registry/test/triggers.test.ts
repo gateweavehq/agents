@@ -14,6 +14,17 @@ const ADA = "user-ada";
 const KEY = "sk-ant-api03-abcdefgh";
 const EVENT = JSON.stringify({ type: "issue.created", data: { title: "Login fails" } });
 
+/** How a run ended, for a test that ends one, as the runtime reports it. */
+const FINISHED = {
+	status: "succeeded",
+	error: null,
+	steps: 1,
+	inputTokens: 100,
+	outputTokens: 20,
+	cachedInputTokens: 0,
+	cost: null,
+} as const;
+
 async function withAgent(stub: Stub, name = "Triager") {
 	return (
 		await stub.createAgent({
@@ -422,6 +433,127 @@ describe("triggers", () => {
 			assignee: null,
 			schedule: WEEKDAYS,
 		});
+	});
+
+	it("keep one conversation per issue, which later events about it continue a turn at a time", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub, "Coder");
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger, secret } = await create(stub, {
+			name: "Assigned issues",
+			prompt: "{{type}} on {{data.issue.key}}",
+			target: { kind: "agent", agentId },
+			events: ["issue.created", "comment.created"],
+			assignee: "member-coder",
+			perIssue: true,
+		});
+		expect(trigger.perIssue).toBe(true);
+		const starter = `trigger:${trigger.id}`;
+		const about = (type: string, issue: string, by: "person" | "agent" = "person") =>
+			JSON.stringify({
+				type,
+				data: {
+					workspace: { id: "workspace-1", slug: "acme" },
+					actor: { id: "member-maya", name: "Maya", type: by },
+					issue: { id: `id-${issue}`, key: issue, assigneeId: "member-coder" },
+					...(type === "comment.created" ? { comment: { body: "Use the blue button" } } : {}),
+				},
+			});
+		const started = async (body: string, id = crypto.randomUUID()) => {
+			const receipt = await deliver(stub, trigger.id, secret, { id, body });
+			if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
+			return receipt;
+		};
+		const begin = async (receipt: { conversationId: string; text: string }) => {
+			const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+			if ("status" in turn) throw new Error(turn.message);
+			return turn.runId;
+		};
+		const end = (runId: string) => stub.finishRun(runId, { ...FINISHED, endedAt: Date.now() });
+
+		// The first event about an issue opens its conversation, named for the issue.
+		const assigned = await started(about("issue.created", "ENG-7"));
+		const firstRun = await begin(assigned);
+		expect(await stub.getConversation(assigned.conversationId, starter)).toMatchObject({
+			title: "Assigned issues: ENG-7",
+		});
+
+		// While that turn goes on, a comment about the issue is sent back, for its sender to retry.
+		const commentId = crypto.randomUUID();
+		const comment = about("comment.created", "ENG-7");
+		expect(await deliver(stub, trigger.id, secret, { id: commentId, body: comment })).toEqual({
+			status: "limited",
+			retryAfter: 60,
+			message: "The agent is still on its last turn about this issue",
+		});
+
+		// Once it ends, the retry takes the next turn of the same conversation.
+		await end(firstRun);
+		const answered = await started(comment, commentId);
+		expect(answered.conversationId).toBe(assigned.conversationId);
+		expect(answered.text.startsWith("comment.created on ENG-7\n\n")).toBe(true);
+		const secondRun = await begin(answered);
+		expect(await stub.getRun(secondRun)).toMatchObject({
+			conversationId: assigned.conversationId,
+			triggerId: trigger.id,
+		});
+		await end(secondRun);
+
+		// Another issue has a conversation of its own, and an agent's comment starts nothing.
+		const other = await started(about("issue.created", "ENG-8"));
+		expect(other.conversationId).not.toBe(assigned.conversationId);
+		await end(await begin(other));
+		expect(
+			await deliver(stub, trigger.id, secret, { body: about("comment.created", "ENG-7", "agent") }),
+		).toEqual({ status: "skipped" });
+
+		// A turn that could not begin leaves the conversation as it was, for the retry to continue.
+		await stub.removeProviderKey("anthropic");
+		const retried = crypto.randomUUID();
+		const noKey = await started(about("comment.created", "ENG-7"), retried);
+		expect(await stub.beginTriggerTurn(noKey.conversationId, noKey.text)).toMatchObject({
+			status: "refused",
+		});
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const again = await started(about("comment.created", "ENG-7"), retried);
+		expect(again.conversationId).toBe(assigned.conversationId);
+		await end(await begin(again));
+
+		// Once the conversation is deleted, the next event about the issue opens a new one.
+		await stub.removeConversation(assigned.conversationId, starter);
+		const fresh = await started(about("comment.created", "ENG-7"));
+		expect(fresh.conversationId).not.toBe(assigned.conversationId);
+
+		// A schedule's runs are about no issue, so the setting goes with one.
+		const WEEKDAYS = { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" };
+		expect(await stub.updateTrigger(trigger.id, { schedule: WEEKDAYS })).toMatchObject({
+			perIssue: false,
+		});
+	});
+
+	it("open a conversation for each event unless they keep one per issue", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub, "Coder");
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger, secret } = await create(stub, {
+			name: "Issues",
+			prompt: "Look at {{data.issue.key}}",
+			target: { kind: "agent", agentId },
+		});
+		expect(trigger.perIssue).toBe(false);
+		const body = JSON.stringify({
+			type: "issue.updated",
+			data: { workspace: { id: "workspace-1" }, issue: { id: "id-ENG-7", key: "ENG-7" } },
+		});
+		const first = await deliver(stub, trigger.id, secret, { body });
+		const second = await deliver(stub, trigger.id, secret, { body });
+		if (first.status !== "start" || second.status !== "start") {
+			throw new Error(`The deliveries were ${first.status} and ${second.status}`);
+		}
+		expect(second.conversationId).not.toBe(first.conversationId);
+		expect(await stub.getConversation(first.conversationId, `trigger:${trigger.id}`)).toMatchObject(
+			{ title: "Issues: issue.updated" },
+		);
 	});
 
 	it("refuse event lists that are empty, repeated or not event types", async () => {
