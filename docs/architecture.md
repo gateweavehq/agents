@@ -427,7 +427,10 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
   with Node.js 24, Python 3, git, ripgrep, curl, jq and the shim `@cloudflare/sandbox` 1.0 talks
   to), as a `standard-1` instance (`SANDBOX_INSTANCE`), and stops after 15 minutes without a
-  call; its disk goes with it. Deleting the conversation stops it at once.
+  call; its disk goes with it. Deleting the conversation stops it at once. pnpm and Yarn come
+  through Corepack, in the version a repository's `packageManager` names, downloaded from npm on
+  first use, Yarn 2 and later included; the image carries pnpm's current version
+  (`PNPM_VERSION`). Corepack never asks, and never writes `packageManager` into the repository.
 - **No internet, but packages.** The container starts with `enableInternet: false`, and all of its
   HTTP and HTTPS goes to `SandboxOutbound`, a `WorkerEntrypoint` of the app's Worker, through the
   container's own certificate authority. `decideOutbound` (`packages/runtime/src/outbound.ts`)

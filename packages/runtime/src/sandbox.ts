@@ -105,6 +105,13 @@ const COMMAND_ENV = {
 	// Git asks for nothing: a refused fetch fails at once instead of waiting for a password.
 	GIT_TERMINAL_PROMPT: "0",
 	NPM_CONFIG_UPDATE_NOTIFIER: "false",
+	// pnpm and Yarn come through Corepack (sandbox/Dockerfile). It downloads the version a
+	// repository names without asking, from npm, which the sandbox reaches (Yarn 2 and later
+	// would otherwise come from repo.yarnpkg.com, which it does not), and never writes
+	// `packageManager` into the repository, where it would end up in a pull request.
+	COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
+	COREPACK_NPM_REGISTRY: "https://registry.npmjs.org",
+	COREPACK_ENABLE_AUTO_PIN: "0",
 };
 
 /** How long a clone may take before the checkout gives up, and a push. */
