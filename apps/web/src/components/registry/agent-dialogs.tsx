@@ -222,7 +222,7 @@ export function AgentDialog({
 
 	return (
 		<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-			<DialogContent className="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto">
+			<DialogContent className="max-w-md">
 				<form onSubmit={onSubmit} className="space-y-4">
 					<DialogHeader>
 						<DialogTitle>{agent ? "Edit agent" : "New agent"}</DialogTitle>
