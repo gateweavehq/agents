@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { MCP_CHECK_LIMITS, type McpServerInput, mcpCheckResult } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkMcpServer, conversationName } from "../src";
+import { checkMcpServer, checkTrackAgent, conversationName } from "../src";
 import { FakeMcpServer } from "./fake-mcp";
 import { anthropicStream, anthropicToolCall, ask, connect, fakeModel, KEY } from "./support";
 
@@ -339,5 +339,91 @@ describe("checkMcpServer", () => {
 				problem: "DOCS_TOKEN has no value in the agent's environment set",
 			}),
 		).toEqual({ ok: false, error: "DOCS_TOKEN has no value in the agent's environment set" });
+	});
+});
+
+describe("checkTrackAgent", () => {
+	const KEY_HEADER = `Bearer gwt_${"k".repeat(43)}`;
+	const track = {
+		name: "track",
+		transport: "http" as const,
+		url: "https://track.acme.dev/mcp",
+		headers: { Authorization: KEY_HEADER },
+		tools: null,
+	};
+	const tool = (name: string) => ({ ...SEARCH, name, description: name });
+
+	/** A Track that answers `list_workspaces` and `get_workspace` with these. */
+	function trackAnswering(workspaces: unknown, directory: unknown) {
+		const calls: { name: string; input: unknown }[] = [];
+		const server = new FakeMcpServer(
+			[tool("list_workspaces"), tool("get_workspace")],
+			(name, input) => {
+				calls.push({ name, input });
+				const structuredContent = (name === "list_workspaces" ? workspaces : directory) as Record<
+					string,
+					unknown
+				>;
+				return {
+					content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+					structuredContent,
+				};
+			},
+		);
+		fakeModel(() => anthropicStream("unused"), { "track.acme.dev": server.handle });
+		return { server, calls };
+	}
+
+	it("says which member the key is, in its one workspace, with the check's tools", async () => {
+		const { server, calls } = trackAnswering(
+			{ workspaces: [{ slug: "acme", name: "Acme", role: "agent" }] },
+			{ teams: [], members: [], you: { id: "member-coder", name: "Coder", role: "agent" } },
+		);
+
+		const { check, identity } = await checkTrackAgent(track);
+
+		expect(identity).toEqual({ workspace: "acme", memberId: "member-coder", name: "Coder" });
+		expect(check).toEqual({
+			ok: true,
+			tools: [
+				{ name: "list_workspaces", description: "list_workspaces" },
+				{ name: "get_workspace", description: "get_workspace" },
+			],
+		});
+		expect(calls).toEqual([
+			{ name: "list_workspaces", input: {} },
+			{ name: "get_workspace", input: { workspace: "acme" } },
+		]);
+		for (const request of server.requests) {
+			expect(request.headers.get("authorization")).toBe(KEY_HEADER);
+		}
+	});
+
+	it("says so when the key is not an agent member's, or Track does not say who it is", async () => {
+		trackAnswering({ workspaces: [{ slug: "acme", name: "Acme", role: "owner" }] }, {});
+		expect((await checkTrackAgent(track)).identity).toEqual({
+			problem: "This key is not an agent member's key",
+		});
+
+		trackAnswering(
+			{ workspaces: [{ slug: "acme", name: "Acme", role: "agent" }] },
+			{ teams: [], members: [] },
+		);
+		const older = await checkTrackAgent(track);
+		expect(older.check.ok).toBe(true);
+		expect(older.identity).toEqual({
+			problem: "This Track does not say which member a key belongs to; it needs an update first",
+		});
+	});
+
+	it("says in its own words why Track could not be reached", async () => {
+		fakeModel(() => anthropicStream("unused"), {
+			"track.acme.dev": async () => new Response("No such key", { status: 401 }),
+		});
+		const { check, identity } = await checkTrackAgent(track);
+		expect(check.ok).toBe(false);
+		expect(identity).toEqual({
+			problem: expect.stringContaining("refused the agent's credentials"),
+		});
 	});
 });

@@ -9,6 +9,7 @@
  * (`dueSchedules`), and the run is admitted the same way, under the same limits.
  */
 import {
+	assigneeSkip,
 	eventType,
 	labelSkip,
 	nextScheduledRun,
@@ -160,6 +161,7 @@ export function insertTrigger(
 		perDay: number;
 		events: string[] | null;
 		label: string | null;
+		assignee: string | null;
 		schedule: TriggerSchedule | null;
 		sealed: string;
 		secretStart: string;
@@ -178,8 +180,9 @@ export function insertTrigger(
 			agentId: target.kind === "agent" ? target.agentId : null,
 			teamId: target.kind === "team" ? target.teamId : null,
 			active: true,
-			// A scheduled trigger has no label, as it has no event types.
+			// A scheduled trigger has no label or assignee, as it has no event types.
 			label: row.schedule ? null : row.label,
+			assignee: row.schedule ? null : row.assignee,
 			nextRunAt: row.schedule && nextScheduledRun(row.schedule, now),
 			createdAt: now,
 			updatedAt: now,
@@ -199,6 +202,7 @@ export function updateTrigger(
 		perDay?: number;
 		events?: string[] | null;
 		label?: string | null;
+		assignee?: string | null;
 		schedule?: TriggerSchedule | null;
 		active?: boolean;
 	},
@@ -218,8 +222,8 @@ export function updateTrigger(
 		patch.schedule === undefined && patch.active === undefined
 			? {}
 			: { nextRunAt: active && schedule ? nextScheduledRun(schedule, now) : null };
-	// A schedule's runs all start the same way, so it has no event types and no label.
-	const webhookOnly = schedule ? { events: null, label: null } : {};
+	// A schedule's runs all start the same way, so it has no event types, label or assignee.
+	const webhookOnly = schedule ? { events: null, label: null, assignee: null } : {};
 	db.update(triggers)
 		.set({ ...patch, ...timing, ...webhookOnly, updatedAt: now })
 		.where(eq(triggers.id, id))
@@ -405,6 +409,12 @@ export function admitDelivery(
 	const unlabeled = trigger.label === null ? null : labelSkip(trigger.label, delivery.body);
 	if (unlabeled) {
 		record("skipped", { error: unlabeled });
+		return { status: "skipped" };
+	}
+	const unassigned =
+		trigger.assignee === null ? null : assigneeSkip(trigger.assignee, delivery.body);
+	if (unassigned) {
+		record("skipped", { error: unassigned });
 		return { status: "skipped" };
 	}
 	const limited = limitOf(db, trigger, now);

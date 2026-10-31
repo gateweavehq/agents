@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+	assigneeSkip,
 	eventType,
 	labelSkip,
 	nextScheduledRun,
@@ -209,4 +210,72 @@ it("trims a trigger's label, refuses an empty one, and refuses one on a schedule
 	expect(triggerPatch.parse({ label: null }).label).toBeNull();
 	expect(triggerPatch.safeParse({ schedule, label: "agent" }).success).toBe(false);
 	expect(triggerPatch.safeParse({ schedule, label: null }).success).toBe(true);
+});
+
+/** A Gateweave Track webhook body about an issue, with its assignee as of the event. */
+function assigned(type: string, assigneeId: unknown, rest: Record<string, unknown> = {}): string {
+	return JSON.stringify({
+		type,
+		timestamp: "2026-10-31T12:00:00.000Z",
+		data: { issue: { id: "issue-1", key: "ENG-1", assigneeId }, ...rest },
+	});
+}
+
+it("starts runs on issues assigned to the member, and on issue.updated only when just assigned", () => {
+	expect(assigneeSkip("coder", assigned("issue.created", "coder"))).toBeNull();
+	expect(assigneeSkip("coder", assigned("issue.created", "maya"))).toBe(
+		"The issue is not assigned to its member",
+	);
+	expect(assigneeSkip("coder", assigned("issue.created", null))).toBe(
+		"The issue is not assigned to its member",
+	);
+
+	// Assigned now, from nobody or from someone else.
+	for (const before of [null, "maya"]) {
+		const update = assigned("issue.updated", "coder", { updatedFrom: { assigneeId: before } });
+		expect(assigneeSkip("coder", update)).toBeNull();
+	}
+	// It was the member's already, and only the title changed.
+	const edited = assigned("issue.updated", "coder", { updatedFrom: { title: "Login" } });
+	expect(assigneeSkip("coder", edited)).toBe("The issue was assigned to its member already");
+	// Taken away from the member.
+	const taken = assigned("issue.updated", "maya", { updatedFrom: { assigneeId: "coder" } });
+	expect(assigneeSkip("coder", taken)).toBe("The issue is not assigned to its member");
+});
+
+it("starts on a comment on the member's issue, and skips what is not about an issue", () => {
+	expect(assigneeSkip("coder", assigned("comment.created", "coder"))).toBeNull();
+	const notAboutAnIssue =
+		"It starts runs only on issues assigned to its member, and the event is not about an issue";
+	expect(assigneeSkip("coder", JSON.stringify({ type: "schedule", data: {} }))).toBe(
+		notAboutAnIssue,
+	);
+	expect(assigneeSkip("coder", "not json")).toBe(notAboutAnIssue);
+	// Whatever the sender sent is checked before it is used.
+	expect(assigneeSkip("coder", assigned("issue.created", ["coder"]))).toBe(
+		"The issue is not assigned to its member",
+	);
+	const odd = assigned("issue.updated", "coder", { updatedFrom: ["assigneeId"] });
+	expect(assigneeSkip("coder", odd)).toBe("The issue was assigned to its member already");
+});
+
+it("trims a trigger's assignee, refuses what is not an id, and refuses one on a schedule", () => {
+	const schedule = { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" };
+	const base = { name: "Assigned issues", prompt: "Work on it", target };
+	expect(triggerInput.parse({ ...base, assignee: " Ab3_x-9 " })).toMatchObject({
+		assignee: "Ab3_x-9",
+	});
+	expect(triggerInput.parse(base).assignee).toBeNull();
+	for (const assignee of ["   ", "has space", "x".repeat(65), "maya@example.com"]) {
+		expect(triggerInput.safeParse({ ...base, assignee }).success).toBe(false);
+	}
+	expect(
+		triggerInput.safeParse({ ...base, schedule, assignee: "coder" }).error?.issues[0],
+	).toMatchObject({
+		path: ["assignee"],
+		message: "A scheduled trigger starts on its schedule, not on assignees",
+	});
+	expect(triggerPatch.parse({ assignee: null }).assignee).toBeNull();
+	expect(triggerPatch.safeParse({ schedule, assignee: "coder" }).success).toBe(false);
+	expect(triggerPatch.safeParse({ schedule, assignee: null }).success).toBe(true);
 });

@@ -7,6 +7,7 @@ import { db } from "./auth";
 import { schema } from "./db";
 import { limitTriggerRequests } from "./rate-limit";
 import { registryFor } from "./registry";
+import { runsPage } from "./runs-page";
 
 const ID = /^[\w-]{1,64}$/;
 
@@ -42,7 +43,7 @@ export async function receiveTrigger(
 	if (!id || !timestamp || !signature) return reply(401, "The delivery is not signed");
 
 	const workspace = await db
-		.select({ id: schema.organization.id })
+		.select({ id: schema.organization.id, slug: schema.organization.slug })
 		.from(schema.organization)
 		.where(eq(schema.organization.id, workspaceId))
 		.get();
@@ -52,13 +53,18 @@ export async function receiveTrigger(
 		{ id, timestamp, signature },
 		body,
 	);
-	return answer(workspaceId, receipt);
+	const runs = runsPage(workspace.slug, new URL(request.url).origin);
+	return answer(workspaceId, runs, receipt);
 }
 
-async function answer(workspaceId: string, receipt: TriggerReceipt): Promise<Response> {
+async function answer(
+	workspaceId: string,
+	runs: string | null,
+	receipt: TriggerReceipt,
+): Promise<Response> {
 	switch (receipt.status) {
 		case "start":
-			return start(workspaceId, receipt.conversationId, receipt.text);
+			return start(workspaceId, receipt.conversationId, receipt.text, runs);
 		case "duplicate":
 			return Response.json({ runId: receipt.runId, duplicate: true }, { status: 202 });
 		case "starting":
@@ -79,14 +85,19 @@ async function answer(workspaceId: string, receipt: TriggerReceipt): Promise<Res
 }
 
 /** Begins the run in the conversation the registry opened for the delivery. */
-async function start(workspaceId: string, conversationId: string, text: string) {
+async function start(
+	workspaceId: string,
+	conversationId: string,
+	text: string,
+	runs: string | null,
+) {
 	let outcome: TriggerTurnOutcome;
 	try {
 		const conversation = await getAgentByName(
 			env.CONVERSATIONS,
 			conversationName(workspaceId, conversationId),
 		);
-		outcome = await conversation.triggerTurn(text);
+		outcome = await conversation.triggerTurn(text, runs);
 	} catch (error) {
 		// The delivery stays taken for a minute, then a retry starts it again.
 		console.error("triggers: a run could not be started", error);

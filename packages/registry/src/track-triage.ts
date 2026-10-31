@@ -49,39 +49,9 @@ export function setUpTrackTriage(
 	// Refused before anything is made: a write that returns commits what it made so far.
 	const full = triggerCapRefusal(db);
 	if (full) return { refused: full };
-	const instructions = createLibraryAsset(
+	const { instructions, environment, mcpServer } = makeTrackAccess(
 		db,
-		{
-			kind: "instructions",
-			name: freeName(db, "instructions", TRACK_TRIAGE_NAMES.instructions),
-			text: plan.instructions,
-		},
-		now,
-	);
-	const environment = createEnvSet(
-		db,
-		{
-			name: freeName(db, "env-set", TRACK_TRIAGE_NAMES.environment),
-			variables: {},
-			secrets: [TRACK_KEY_VARIABLE],
-		},
-		now,
-		plan.envSetId,
-	);
-	storeEnvSecret(
-		db,
-		{ assetId: environment, name: TRACK_KEY_VARIABLE, sealed: plan.sealedKey, setBy: plan.setBy },
-		now,
-	);
-	const mcpServer = createMcpServer(
-		db,
-		{
-			name: freeName(db, "mcp-server", TRACK_TRIAGE_NAMES.mcpServer),
-			transport: "http",
-			url: trackMcpUrl(plan.trackUrl),
-			// The header names the variable, not the key: the runtime fills it in from the env set.
-			headers: [{ name: "Authorization", value: `Bearer \${${TRACK_KEY_VARIABLE}}` }],
-		},
+		{ ...plan, names: TRACK_TRIAGE_NAMES },
 		now,
 	);
 	const agent = createAgent(
@@ -109,6 +79,7 @@ export function setUpTrackTriage(
 			// Track sends what its webhook was set to send; only a new issue is triage's.
 			events: [TRACK_TRIAGE_EVENT],
 			label: null,
+			assignee: null,
 			schedule: null,
 			sealed: plan.sealedSecret,
 			secretStart: plan.secretStart,
@@ -119,6 +90,61 @@ export function setUpTrackTriage(
 	// Its agent was made just now, and the workspace had room: throwing undoes the whole write.
 	if ("refused" in trigger) throw new Error(trigger.refused);
 	return { agent, trigger, mcpServerId: mcpServer };
+}
+
+/**
+ * What an agent needs to work in Track as an agent member: its instructions, an environment set
+ * whose secret holds the member's key, sealed by the caller, and Track's MCP server with that key
+ * in its header. Each takes a name the library does not have yet.
+ */
+export function makeTrackAccess(
+	db: Db,
+	plan: {
+		names: { instructions: string; environment: string; mcpServer: string };
+		instructions: string;
+		trackUrl: string;
+		envSetId: string;
+		sealedKey: string;
+		setBy: string;
+	},
+	now: number,
+): { instructions: string; environment: string; mcpServer: string } {
+	const instructions = createLibraryAsset(
+		db,
+		{
+			kind: "instructions",
+			name: freeName(db, "instructions", plan.names.instructions),
+			text: plan.instructions,
+		},
+		now,
+	);
+	const environment = createEnvSet(
+		db,
+		{
+			name: freeName(db, "env-set", plan.names.environment),
+			variables: {},
+			secrets: [TRACK_KEY_VARIABLE],
+		},
+		now,
+		plan.envSetId,
+	);
+	storeEnvSecret(
+		db,
+		{ assetId: environment, name: TRACK_KEY_VARIABLE, sealed: plan.sealedKey, setBy: plan.setBy },
+		now,
+	);
+	const mcpServer = createMcpServer(
+		db,
+		{
+			name: freeName(db, "mcp-server", plan.names.mcpServer),
+			transport: "http",
+			url: trackMcpUrl(plan.trackUrl),
+			// The header names the variable, not the key: the runtime fills it in from the env set.
+			headers: [{ name: "Authorization", value: `Bearer \${${TRACK_KEY_VARIABLE}}` }],
+		},
+		now,
+	);
+	return { instructions, environment, mcpServer };
 }
 
 /** `base`, or `base 2`, `base 3` and on, whichever the library has no asset of `kind` named. */

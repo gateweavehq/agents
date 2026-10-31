@@ -90,6 +90,35 @@ describe("a trigger's turn", () => {
 		});
 	});
 
+	it("tells the agent its run's page after the trigger's message", async () => {
+		const { registry, stub, receipt } = await delivered();
+		const requests = fakeModel(() => anthropicStream("On it."));
+
+		const outcome = await stub.triggerTurn(receipt.text, "https://agents.example.com/acme/runs/");
+		if (outcome.runId === null) throw new Error(outcome.error);
+		await vi.waitFor(async () =>
+			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
+		);
+		const sent = JSON.stringify(requests[0]?.body.messages);
+		expect(sent).toContain(
+			`This run's page, where people can follow your work in Gateweave Agents: https://agents.example.com/acme/runs/${outcome.runId}`,
+		);
+	});
+
+	it("leaves out a runs page that is not a web address", async () => {
+		const { registry, stub, receipt } = await delivered();
+		const requests = fakeModel(() => anthropicStream("On it."));
+
+		const outcome = await stub.triggerTurn(receipt.text, "javascript:alert(1)//");
+		if (outcome.runId === null) throw new Error(outcome.error);
+		await vi.waitFor(async () =>
+			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
+		);
+		const sent = JSON.stringify(requests[0]?.body.messages);
+		expect(sent).toContain(`This run is ${outcome.runId} in Gateweave Agents.`);
+		expect(sent).not.toContain("javascript:");
+	});
+
 	it("says why its run could not begin, and the delivery shows it", async () => {
 		const { registry, stub, receipt, trigger } = await delivered({ key: false });
 		const requests = fakeModel(() => anthropicStream("Never sent"));

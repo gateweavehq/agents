@@ -188,6 +188,12 @@ function TriggerRow({
 										{" "}
 										· on issues labeled <code>{trigger.label}</code>
 									</>
+								)}
+								{trigger.assignee && (
+									<>
+										{" "}
+										· on issues assigned to <code>{trigger.assignee}</code>
+									</>
 								)}{" "}
 								· signed with <code>{trigger.secretStart}…</code>
 							</>
@@ -364,13 +370,14 @@ function Deliveries({ deliveries }: { deliveries: TriggerDelivery[] }) {
 	);
 }
 
-/** What the trigger dialog saves: a webhook's events and label, or a schedule. */
+/** What the trigger dialog saves: a webhook's events, label and assignee, or a schedule. */
 interface TriggerFields {
 	name: string;
 	prompt: string;
 	perDay: number;
 	events: string[] | null;
 	label: string | null;
+	assignee: string | null;
 	schedule: TriggerSchedule | null;
 }
 
@@ -420,6 +427,7 @@ function TriggerDialog({
 	const [perDay, setPerDay] = useState(String(trigger?.perDay ?? TRIGGER_LIMITS.defaultPerDay));
 	const [events, setEvents] = useState(trigger?.events?.join(", ") ?? "");
 	const [label, setLabel] = useState(trigger?.label ?? "");
+	const [assignee, setAssignee] = useState(trigger?.assignee ?? "");
 	const [cron, setCron] = useState(trigger?.schedule?.cron ?? FIRST_SCHEDULE);
 	const [timeZone, setTimeZone] = useState(
 		() => trigger?.schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -443,6 +451,7 @@ function TriggerDialog({
 				perDay: Number(perDay),
 				events: !scheduled && types.length > 0 ? types : null,
 				label: !scheduled && label.trim() ? label.trim() : null,
+				assignee: !scheduled && assignee.trim() ? assignee.trim() : null,
 				schedule: scheduled ? schedule : null,
 			});
 			onClose();
@@ -616,6 +625,25 @@ function TriggerDialog({
 								Start a run only for issues with this label, such as <code>agent</code>. On{" "}
 								<code>issue.updated</code> only when the label was just added. Leave it empty for no
 								label filter.
+							</p>
+						</div>
+					)}
+					{!scheduled && (
+						<div className="space-y-2">
+							<Label htmlFor="trigger-assignee">Assignee</Label>
+							<Input
+								id="trigger-assignee"
+								value={assignee}
+								onChange={(event) => setAssignee(event.target.value)}
+								maxLength={64}
+								placeholder="Anyone"
+								spellCheck={false}
+								className="font-mono text-xs"
+							/>
+							<p className="text-xs text-muted-foreground">
+								Start a run only for issues assigned to this Gateweave Track member, by the id Track
+								gives them. On <code>issue.updated</code> only when they were just assigned. Leave
+								it empty for no assignee filter.
 							</p>
 						</div>
 					)}

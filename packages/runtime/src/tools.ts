@@ -7,6 +7,7 @@
 import { createMCPClient, type MCPClient, MCPClientError } from "@ai-sdk/mcp";
 import { MCP_CHECK_LIMITS, type McpCheckResult, type TurnMcpServer } from "@gateweave/agents-model";
 import type { ToolSet } from "ai";
+import { z } from "zod";
 import { failureForLogs } from "./models";
 import type { RunRecorder } from "./trace";
 
@@ -107,6 +108,82 @@ export async function checkMcpServer(server: TurnMcpServer): Promise<McpCheckRes
 	} catch (error) {
 		console.error("An MCP server check failed", { server: server.name, ...failureForLogs(error) });
 		return { ok: false, error: describeServerFailure(error, deadline) };
+	} finally {
+		await opened?.client.close().catch(() => {});
+	}
+}
+
+/** Who a Gateweave Track agent member's key is in Track. */
+export interface TrackAgentIdentity {
+	/** The slug of the one workspace the key reaches. */
+	workspace: string;
+	/** The member's id, which Track's issues name as their assignee. */
+	memberId: string;
+	name: string;
+}
+
+const trackWorkspaces = z.object({
+	workspaces: z.array(z.object({ slug: z.string().min(1), role: z.string() })),
+});
+const trackYou = z.object({
+	you: z.object({ id: z.string().min(1).max(64), name: z.string(), role: z.string() }),
+});
+
+/**
+ * Checks a Gateweave Track MCP server as `checkMcpServer` does, then asks which member the key
+ * belongs to: the one workspace `list_workspaces` lists, and the member `get_workspace` names as
+ * `you`. An `identity` that is a problem says why in the app's words, such as a Track too old to
+ * say, or a key that is not an agent member's. The key stays in this call's memory.
+ */
+export async function checkTrackAgent(
+	server: TurnMcpServer,
+): Promise<{ check: McpCheckResult; identity: TrackAgentIdentity | { problem: string } }> {
+	if ("problem" in server) {
+		return { check: { ok: false, error: server.problem }, identity: { problem: server.problem } };
+	}
+	const { deadline, options } = timeLimit();
+	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
+	try {
+		opened = await openClient(server, options);
+		const check: McpCheckResult = {
+			ok: true,
+			tools: opened.definitions.tools.slice(0, MCP_CHECK_LIMITS.tools).map((tool) => ({
+				name: shorten(tool.name, MCP_CHECK_LIMITS.name),
+				description: shorten(tool.description ?? "", MCP_CHECK_LIMITS.description),
+			})),
+		};
+		const listed = trackWorkspaces.safeParse(
+			(await opened.client.callTool({ name: "list_workspaces", arguments: {}, options }))
+				.structuredContent,
+		);
+		const [only, ...others] = listed.success ? listed.data.workspaces : [];
+		if (!only || others.length > 0 || only.role !== "agent") {
+			return { check, identity: { problem: "This key is not an agent member's key" } };
+		}
+		const found = trackYou.safeParse(
+			(
+				await opened.client.callTool({
+					name: "get_workspace",
+					arguments: { workspace: only.slug },
+					options,
+				})
+			).structuredContent,
+		);
+		if (!found.success) {
+			return {
+				check,
+				identity: {
+					problem:
+						"This Track does not say which member a key belongs to; it needs an update first",
+				},
+			};
+		}
+		const { id, name } = found.data.you;
+		return { check, identity: { workspace: only.slug, memberId: id, name } };
+	} catch (error) {
+		console.error("A Track check failed", { server: server.name, ...failureForLogs(error) });
+		const problem = describeServerFailure(error, deadline);
+		return { check: { ok: false, error: problem }, identity: { problem } };
 	} finally {
 		await opened?.client.close().catch(() => {});
 	}

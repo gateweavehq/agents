@@ -547,6 +547,8 @@ export const triggers = sqliteTable(
 		events: text("events", { mode: "json" }).$type<string[]>(),
 		/** The issue label it starts runs for; null is no label filter. */
 		label: text("label"),
+		/** The Gateweave Track member whose issues it starts runs for; null is no assignee filter. */
+		assignee: text("assignee"),
 		/** When it starts runs on its own; null for a trigger that starts on webhooks. */
 		schedule: text("schedule", { mode: "json" }).$type<TriggerSchedule>(),
 		/** When its schedule starts the next run, while it is active: the alarm wakes for it. */
