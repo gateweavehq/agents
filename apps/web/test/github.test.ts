@@ -85,6 +85,22 @@ async function deliver(event: string, payload: unknown, signature?: string) {
 	});
 }
 
+/** Waits until the workspace has `count` repositories, each scanned once and none waiting. */
+async function scansDone(workspaceId: string, count: number) {
+	const registry = await agents.registry(workspaceId);
+	await vi.waitFor(
+		async () => {
+			const repositories = await registry.listRepositories();
+			expect(repositories).toHaveLength(count);
+			for (const repository of repositories) {
+				expect(repository.scanPending).toBe(false);
+				expect(repository.scannedAt ?? repository.scanError).not.toBeNull();
+			}
+		},
+		{ timeout: 10_000, interval: 50 },
+	);
+}
+
 /** Waits until the workspace's only repository has been scanned at `commit`. */
 async function scannedAt(workspaceId: string, commit: string) {
 	const registry = await agents.registry(workspaceId);
@@ -247,6 +263,9 @@ describe("GitHub webhooks", () => {
 		const { headers } = await signUp(agents, origin, "hopper");
 		const workspaceId = await createWorkspace(agents, origin, headers, "navy");
 		expect(await connect(headers.cookie, "navy", "504", "hopper-gh")).toContain("github=connected");
+		// The scans the connection started finish first. One still running when the installation
+		// stops reaching its repository would fail, and rightly log it.
+		await scansDone(workspaceId, 2);
 
 		const installation = github.installations.get("504");
 		if (!installation) throw new Error("The installation is gone");
@@ -260,6 +279,7 @@ describe("GitHub webhooks", () => {
 		});
 		expect(changed.status).toBe(204);
 		expect(await repositoryNames(workspaceId)).toEqual(["hopper/a0", "hopper/cobol"]);
+		await scansDone(workspaceId, 2);
 
 		const removed = await deliver("installation", { action: "deleted", installation: { id: 504 } });
 		expect(removed.status).toBe(204);
