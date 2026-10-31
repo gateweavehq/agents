@@ -8,6 +8,32 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.3.0] - 2026-10-31
+
+Assign a Gateweave Track issue to an agent, and it works on it in a sandbox, opens a pull request
+and reports back on the issue. Updating a self-hosted copy applies a migration in each
+workspace's database, which runs on its own; there is no D1 migration and no new setting. The
+ready-made setup needs Gateweave Track v0.13.0 or later.
+
+### Added
+
+- A ready-made "Work on Track issues", next to triage under Agents, Ready-made. From Track's
+  address, an agent member's key, a repository, an engine and a model, it makes an agent with a
+  sandbox on that repository, Track's MCP server with the key, and a trigger for the issues
+  assigned to that member, up to 20 runs a day. The agent comments on the issue as it starts,
+  with a link to its run, moves it to In Progress, opens a pull request titled with the issue's
+  key and ending "Fixes <key>", comments with it and moves the issue to In Review. When the issue
+  is unclear, it asks whoever assigned it and stops. See `docs/track-work.md`. (#84)
+- Triggers can be limited to the issues assigned to one Track member: on `issue.updated` only
+  when the change just assigned them, and other events about an issue while it is theirs. (#84)
+- A trigger's run is told its page in the app, so an agent can link it where it reports. (#84)
+
+### Changed
+
+- The ready-made triage agent's instructions let it use a link or a short list in its comments,
+  now that Track shows them as Markdown. Agents set up before keep their instructions until you
+  edit them in the library. (#86)
+
 ## [0.2.0] - 2026-10-30
 
 OpenCode answers much sooner. It runs as a server that each sandbox starts once, instead of a new
