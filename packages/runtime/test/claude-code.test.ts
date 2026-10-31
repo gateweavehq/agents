@@ -676,6 +676,15 @@ describe("Claude Code's command", () => {
 		expect(argv).not.toContain("--mcp-config");
 		expect(argv[argv.indexOf("--allowedTools") + 1]).not.toContain("mcp__");
 	});
+
+	it("signs no commit or pull request as Claude Code's, whatever the repository's settings say", () => {
+		for (const resume of [false, true]) {
+			const argv = claudeCodeArguments({ ...base, resume, tools: true });
+			expect(argv.filter((argument) => argument === "--settings")).toHaveLength(1);
+			const settings = argv[argv.indexOf("--settings") + 1] ?? "";
+			expect(JSON.parse(settings)).toEqual({ attribution: { commit: "", pr: "" } });
+		}
+	});
 });
 
 describe("Gateweave's tools from the sandbox", () => {
