@@ -26,8 +26,9 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > proposes its work as a pull request. Ready-made agents
 > [triage Gateweave Track issues](docs/track-triage.md) and
 > [work on the ones assigned to them](docs/track-work.md), from a comment on the issue to a pull
-> request, and go on when someone comments on the issue, such as to answer the agent's question or
-> ask for a change. See [docs/spec.md](docs/spec.md) for the plan.
+> request, and go on in the same conversation and pull request when someone comments on the issue,
+> such as to answer the agent's question or ask for a change. See [docs/spec.md](docs/spec.md) for
+> the plan.
 
 ## Tech stack
 
