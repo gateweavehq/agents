@@ -740,8 +740,8 @@ export class RegistryDO extends DurableObject {
 
 	/**
 	 * Begins the run of a trigger's delivery, for the runtime alone, in the conversation
-	 * `receiveTrigger` opened for it. It is that conversation's only turn, and its message is the
-	 * trigger's, not a person's.
+	 * `receiveTrigger` opened or, for a per-issue trigger, kept for it. Only deliveries take turns
+	 * in such a conversation, one at a time, and their messages are the trigger's, not a person's.
 	 */
 	async beginTriggerTurn(
 		conversationId: string,
@@ -750,11 +750,12 @@ export class RegistryDO extends DurableObject {
 		const conversation = id.parse(conversationId);
 		const message = z.string().max(100_000).parse(text);
 		const parties = conversationParties(this.#db, conversation);
-		const delivery = deliveryOf(this.#db, conversation);
-		if (!parties || parties.triggerId === null || !delivery) {
+		if (!parties || parties.triggerId === null) {
 			return refused("This conversation was not opened by a trigger");
 		}
-		if (delivery.status !== "accepted") return refused("This delivery has had its run already");
+		if (!deliveryOf(this.#db, conversation)) {
+			return refused("This delivery has had its run already");
+		}
 		const settle = (refusal: ProviderRefusal) => {
 			this.#write(() => settleDelivery(this.#db, conversation, { error: refusal.message }));
 			return refusal;
@@ -766,7 +767,7 @@ export class RegistryDO extends DurableObject {
 		const { startedBy } = parties;
 		return this.#write(() => {
 			// A retry may have taken the delivery over while the key was opened.
-			if (deliveryOf(this.#db, conversation)?.status !== "accepted") {
+			if (!deliveryOf(this.#db, conversation)) {
 				return refused("This delivery has had its run already");
 			}
 			const now = Date.now();

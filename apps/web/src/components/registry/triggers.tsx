@@ -12,6 +12,7 @@ import { Clock, Copy, Ellipsis, Plus, Webhook } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
+import { Checkbox } from "#/components/ui/checkbox";
 import {
 	Dialog,
 	DialogContent,
@@ -195,7 +196,8 @@ function TriggerRow({
 										· on issues assigned to <code>{trigger.assignee}</code>
 									</>
 								)}{" "}
-								· signed with <code>{trigger.secretStart}…</code>
+								{trigger.perIssue && "· one conversation per issue "}· signed with{" "}
+								<code>{trigger.secretStart}…</code>
 							</>
 						)}
 					</p>
@@ -370,7 +372,10 @@ function Deliveries({ deliveries }: { deliveries: TriggerDelivery[] }) {
 	);
 }
 
-/** What the trigger dialog saves: a webhook's events, label and assignee, or a schedule. */
+/**
+ * What the trigger dialog saves: a webhook's events, label, assignee and whether it keeps a
+ * conversation per issue, or a schedule.
+ */
 interface TriggerFields {
 	name: string;
 	prompt: string;
@@ -378,6 +383,7 @@ interface TriggerFields {
 	events: string[] | null;
 	label: string | null;
 	assignee: string | null;
+	perIssue: boolean;
 	schedule: TriggerSchedule | null;
 }
 
@@ -428,6 +434,7 @@ function TriggerDialog({
 	const [events, setEvents] = useState(trigger?.events?.join(", ") ?? "");
 	const [label, setLabel] = useState(trigger?.label ?? "");
 	const [assignee, setAssignee] = useState(trigger?.assignee ?? "");
+	const [perIssue, setPerIssue] = useState(trigger?.perIssue ?? false);
 	const [cron, setCron] = useState(trigger?.schedule?.cron ?? FIRST_SCHEDULE);
 	const [timeZone, setTimeZone] = useState(
 		() => trigger?.schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -452,6 +459,7 @@ function TriggerDialog({
 				events: !scheduled && types.length > 0 ? types : null,
 				label: !scheduled && label.trim() ? label.trim() : null,
 				assignee: !scheduled && assignee.trim() ? assignee.trim() : null,
+				perIssue: !scheduled && perIssue,
 				schedule: scheduled ? schedule : null,
 			});
 			onClose();
@@ -642,10 +650,26 @@ function TriggerDialog({
 							/>
 							<p className="text-xs text-muted-foreground">
 								Start a run only for issues assigned to this Gateweave Track member, by the id Track
-								gives them. On <code>issue.updated</code> only when they were just assigned. Leave
-								it empty for no assignee filter.
+								gives them. On <code>issue.updated</code> only when they were just assigned, and on
+								a comment only when a person wrote it. Leave it empty for no assignee filter.
 							</p>
 						</div>
+					)}
+					{!scheduled && (
+						<Label className="flex cursor-pointer items-start gap-3 font-normal">
+							<Checkbox
+								className="mt-0.5"
+								checked={perIssue}
+								onCheckedChange={(checked) => setPerIssue(checked === true)}
+							/>
+							<span className="space-y-1">
+								<span className="block text-sm font-medium">One conversation per issue</span>
+								<span className="block text-xs text-muted-foreground">
+									An event about a Gateweave Track issue continues the conversation of its earlier
+									events, with its sandbox's branch and pull request, rather than starting anew.
+								</span>
+							</span>
+						</Label>
 					)}
 					<div className="space-y-2">
 						<Label htmlFor="trigger-per-day">Runs a day</Label>

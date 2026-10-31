@@ -71,9 +71,11 @@ describe("Track work", () => {
 			name: "Assigned issues",
 			prompt: TRACK_WORK_PROMPT,
 			target: { kind: "agent", agentId: agent.id },
-			events: ["issue.created", "issue.updated"],
+			// A person's comment on one of its issues continues that issue's conversation.
+			events: ["issue.created", "issue.updated", "comment.created"],
 			label: null,
 			assignee: "member-coder",
+			perIssue: true,
 			perDay: TRACK_WORK_RUNS_PER_DAY,
 			active: true,
 		});

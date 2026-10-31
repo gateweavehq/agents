@@ -74,8 +74,10 @@ export function setUpTrackWork(
 			perDay: TRACK_WORK_RUNS_PER_DAY,
 			events: [...TRACK_WORK_EVENTS],
 			label: null,
-			// Only an issue just assigned to the agent member starts a run.
+			// Only an issue just assigned to the agent member starts a run, or a person's comment on
+			// one, which continues the conversation of that issue.
 			assignee: plan.memberId,
+			perIssue: true,
 			schedule: null,
 			sealed: plan.sealedSecret,
 			secretStart: plan.secretStart,
