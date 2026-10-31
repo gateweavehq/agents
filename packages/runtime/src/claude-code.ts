@@ -19,6 +19,10 @@
  * - per-request limits of HTTP servers and automatic backgrounding:
  *   https://code.claude.com/docs/en/env-vars (`MCP_TOOL_TIMEOUT`,
  *   `CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS`)
+ * - `--settings` above the repository's own settings files, and `attribution`:
+ *   https://code.claude.com/docs/en/settings and the settings reference. Checked 2026-10-31 against
+ *   Claude Code 2.1.308 and a fake Anthropic API: with it, the instructions the CLI sends the model
+ *   no longer ask for the Co-Authored-By trailer or the "Generated with Claude Code" line
  * - the events' shapes: `SDKMessage` in `sdk.d.ts` of @anthropic-ai/claude-agent-sdk 0.3.312
  * - which usage each event carries: Claude Code 2.1.308 against a fake Anthropic API. An
  *   `assistant` event has the usage of the request's start, a `stream_event` with `message_delta`
@@ -82,6 +86,14 @@ export const CLAUDE_CODE_ENV: Record<string, string> = {
 };
 
 /**
+ * The `--settings` the CLI runs with, over the repository's own. Claude Code would sign its work:
+ * a Co-Authored-By trailer on commits and a "Generated with Claude Code" line in pull requests. The
+ * pull requests an agent opens are the workspace's, and their run page already says how they came
+ * about, so it signs nothing.
+ */
+export const CLAUDE_CODE_SETTINGS = JSON.stringify({ attribution: { commit: "", pr: "" } });
+
+/**
  * The `--mcp-config` that names Gateweave's tools server. Its `timeout`, the turn's own limit,
  * lifts the 60 seconds an HTTP server's request may take otherwise: a delegated task can take that
  * long. `alwaysLoad` gives the model the tools in its first request, as Gateweave's loop does.
@@ -130,6 +142,8 @@ export function claudeCodeArguments(options: {
 		allowed.join(","),
 		"--max-turns",
 		String(CLAUDE_CODE_TURNS),
+		"--settings",
+		CLAUDE_CODE_SETTINGS,
 		"--strict-mcp-config",
 		...(options.tools ? ["--mcp-config", claudeCodeMcpConfig(ENGINE_SECONDS * 1000)] : []),
 		...(options.system === "" ? [] : ["--append-system-prompt", options.system]),

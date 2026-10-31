@@ -532,7 +532,11 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   It runs in `dontAsk` mode with Bash, the file tools and
   skills allowed, since nobody is there to approve a call; `bypassPermissions` refuses to run as
   root, which the sandbox's commands are. The message goes on its input, the agent's instructions
-  and where it runs follow its own system prompt, and it may take 100 turns and an hour.
+  and where it runs follow its own system prompt, and it may take 100 turns and an hour. Its
+  `--settings`, which outrank the repository's settings files, turn its attribution off
+  (`CLAUDE_CODE_SETTINGS`): no Co-Authored-By trailer on a commit and no "Generated with Claude
+  Code" line in a pull request (AGT-57). Codex adds none when it runs with an API key, as it does
+  here, and OpenCode adds none at all.
   - **Its events are the turn.** The conversation reads the CLI's events as they come
     (`ClaudeCodeTurn`): the main conversation's text goes to the chat, and its tool calls as
     `claude-code__<tool>`, their results clipped to 4,000 characters. Each model request becomes a
