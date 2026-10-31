@@ -21,8 +21,8 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > and reporting to each other along the edges of a graph. Members chat with an agent or a team,
 > and every answer is a run with its trace and estimated cost, the runs a team's agents led to
 > nested inside it. Triggers start an agent's runs from another service's signed webhooks or on a
-> schedule, if wanted only for issues with a label or a given assignee, and can also keep one
-> conversation per issue, and an agent with a sandbox works in a checkout of its repository and
+> schedule, if wanted only for issues with a label or a given assignee, and can keep one
+> conversation per issue. An agent with a sandbox works in a checkout of its repository and
 > proposes its work as a pull request. Ready-made agents
 > [triage Gateweave Track issues](docs/track-triage.md) and
 > [work on the ones assigned to them](docs/track-work.md), from a comment on the issue to a pull
