@@ -8,13 +8,15 @@ workspace's GitHub settings say that GitHub is not set up.
 
 ## What the app asks for
 
-| Permission                 | Access         | Why                                                                  |
-| -------------------------- | -------------- | -------------------------------------------------------------------- |
-| Repository → Metadata      | Read           | Required by GitHub. Lists the repositories the app reaches           |
-| Repository → Contents      | Read and write | Reads the files that configure agents; commits a setup's to a branch |
-| Repository → Pull requests | Read and write | Opens the pull request that applies a setup, and follows its state   |
+| Permission                 | Access         | Why                                                                       |
+| -------------------------- | -------------- | ------------------------------------------------------------------------- |
+| Repository → Metadata      | Read           | Required by GitHub. Lists the repositories the app reaches                |
+| Repository → Contents      | Read and write | Reads the files that configure agents; commits a setup's to a branch      |
+| Repository → Pull requests | Read and write | Opens the pull request that applies a setup, and follows its state        |
+| Organization → Members     | Read           | Checks that whoever links an installation is an admin of its organization |
 
-No account permissions. Writing is only ever a new branch named `gateweave/…` and a pull request
+Only that one account permission. Without it, an organization's installation cannot be linked
+(a user's own account still can). Writing is only ever a new branch named `gateweave/…` and a pull request
 from it: the app never writes to a default branch, and a commit changes only the files the setup
 writes (see [Applying a setup](#applying-a-setup)). It subscribes to three events, **Push** (to
 read a default branch again when it changes), **Repository** (renames and default branch changes)
