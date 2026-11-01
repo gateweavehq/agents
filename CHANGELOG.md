@@ -8,6 +8,20 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.4.1] - 2026-11-01
+
+A trigger limited to one Track member's issues shows that member by name. Updating a self-hosted
+copy applies a migration in each workspace's database, which runs on its own; there is no D1
+migration and no new setting.
+
+### Changed
+
+- A trigger's assignee shows by the name Track gives them, with their id as a hint, in the
+  agent's trigger list and in the trigger dialog. "Work on Track issues" stores the agent
+  member's name when it sets up, and Track's events about the member's issues keep it current,
+  so a trigger set up earlier gets a name the next time Track tells it about one of their issues.
+  This needs Gateweave Track 0.14.1 or later. (#94)
+
 ## [0.4.0] - 2026-10-31
 
 An agent working on an assigned Track issue now goes on when a person comments on it: it answers
