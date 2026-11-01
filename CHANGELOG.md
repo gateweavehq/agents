@@ -8,6 +8,21 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.5.1] - 2026-11-01
+
+A security fix: only someone who controls a GitHub account can connect its installation of the
+GitHub App to a workspace. Updating a self-hosted copy needs no migration and no new setting, but
+its GitHub App needs one more permission.
+
+### Security
+
+- Connecting a GitHub App installation now needs control of the account it is installed on: an
+  active admin of the organization, or the owner of the personal account. Before, any person
+  GitHub lists the installation for could connect it, and GitHub lists it for anyone with read
+  access to one of its repositories. Add the **Organization › Members: Read** permission to the
+  app, and have each organization accept it; until then, connecting an organization is refused.
+  Installations already connected stay connected. (#100)
+
 ## [0.5.0] - 2026-11-01
 
 An agent's model requests from its sandbox are now counted as they leave it, so the Runs page
