@@ -1,10 +1,21 @@
-import { MODEL_PROVIDER_NAMES, type RunSpan, type TeamEdgeKind } from "@gateweave/agents-model";
+import {
+	MODEL_PROVIDER_NAMES,
+	type RunSpan,
+	sandboxCost,
+	type TeamEdgeKind,
+} from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import type { UIMessage } from "ai";
 import { ChevronRight, GitPullRequestArrow, MessagesSquare, Webhook } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Transcript } from "#/components/chat/conversation-view";
-import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
+import {
+	RunStatusBadge,
+	runDuration,
+	SandboxCost,
+	TotalCost,
+	tokensUsed,
+} from "#/components/runs/run-labels";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
@@ -95,6 +106,7 @@ function RunPage() {
 					<span className="text-foreground">
 						<TotalCost total={run.total} />
 					</span>
+					<SandboxCost total={run.total} />
 				</p>
 			)}
 			<section className="space-y-3">
@@ -173,6 +185,21 @@ function Summary({ run }: { run: RunEntry }) {
 					formatCost(run.cost)
 				),
 		},
+		...(run.sandboxSeconds === null
+			? []
+			: [
+					{
+						label: "Sandbox",
+						value: (
+							<>
+								{formatDuration(run.sandboxSeconds * 1000)}
+								<span className="ml-1.5 text-xs font-normal text-muted-foreground">
+									{formatCost(sandboxCost(run.sandboxSeconds))}
+								</span>
+							</>
+						),
+					},
+				]),
 		{
 			label: MODEL_PROVIDER_NAMES[run.provider],
 			value: <span className="font-mono text-sm font-normal">{run.model}</span>,
@@ -448,6 +475,7 @@ function NestedRun({ id, run }: { id: string; run: RunEntry | null }) {
 				</span>
 				<span className="tabular-nums">
 					<TotalCost total={run.total} />
+					<SandboxCost total={run.total} />
 				</span>
 				<span className="text-muted-foreground">{link}</span>
 			</div>

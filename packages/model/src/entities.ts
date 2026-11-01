@@ -533,6 +533,12 @@ export interface Run {
 	cachedInputTokens: number;
 	/** Estimated cost in millionths of a dollar; null when a model it used has no prices. */
 	cost: number | null;
+	/**
+	 * The sandbox time the run accounts for, in seconds; null for a run without a sandbox. Its
+	 * conversation's sandbox runs from the turn until the next one, or until `SANDBOX_IDLE_MINUTES`
+	 * after it ends, so each second of it belongs to one run (`sandboxRunSeconds`).
+	 */
+	sandboxSeconds: number | null;
 	startedAt: number;
 	endedAt: number | null;
 	/**
@@ -585,6 +591,10 @@ export interface RunUsage {
 export interface RunTotal extends RunUsage {
 	/** Runs among them still going. */
 	running: number;
+	/** Their sandbox time, in seconds. */
+	sandboxSeconds: number;
+	/** That time's estimated cost, in millionths of a dollar (`sandboxCost`), apart from `cost`. */
+	sandboxCost: number;
 }
 
 /** A run, with its total: for one outside a team, what it used by itself. */

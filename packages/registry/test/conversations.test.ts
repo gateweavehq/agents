@@ -464,6 +464,35 @@ describe("sandbox time", () => {
 		expect(await stub.sandboxSecondsToday()).toBe(minutes * 60);
 	});
 
+	it("gives each run the sandbox time until its conversation's next turn, adding up to the day's", async () => {
+		const stub = registry();
+		const [first = ""] = await builderConversations(stub, 1);
+		const plain = await withAgent(stub);
+		const chat = (await stub.startConversation(plain.id, ADA))?.id ?? "";
+		const at = midnight() + 60 * MINUTE;
+		const ids = await withSandboxes(stub, async (instance) => {
+			const one = await turn(instance, first);
+			const two = await turn(instance, first);
+			const none = await turn(instance, chat);
+			moveRun(instance, one, at, at + 10 * MINUTE);
+			moveRun(instance, two, at + 20 * MINUTE, at + 30 * MINUTE);
+			moveRun(instance, none, at, at + 10 * MINUTE);
+			return { one, two, none };
+		});
+		const seconds = async (id: string) => (await stub.getRun(id))?.sandboxSeconds;
+		// The first turn's sandbox ran on until the second turn took it over.
+		expect(await seconds(ids.one)).toBe(20 * 60);
+		expect(await seconds(ids.two)).toBe((10 + IDLE) * 60);
+		expect(await seconds(ids.none)).toBeNull();
+		// Each second of the sandbox belongs to one run, so the runs add up to what the limits count.
+		expect((30 + IDLE) * 60).toBe(await stub.sandboxSecondsToday());
+		const total = (await stub.getRun(ids.two))?.total;
+		expect(total).toMatchObject({
+			sandboxSeconds: (10 + IDLE) * 60,
+			sandboxCost: Math.round((10 + IDLE) * 60 * SANDBOX_SECOND_PRICE * 1_000_000),
+		});
+	});
+
 	it("are refused once the workspace has used the day's minutes", async () => {
 		const stub = registry();
 		const [first = "", second = ""] = await builderConversations(stub, 2);

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { SANDBOX_SECOND_PRICE, sandboxLimits, sandboxOfferTo } from "../src";
+import {
+	SANDBOX_SECOND_PRICE,
+	sandboxCost,
+	sandboxLimits,
+	sandboxOfferTo,
+	sandboxRunSeconds,
+} from "../src";
 
 describe("sandbox settings", () => {
 	const binding = {};
@@ -48,5 +54,29 @@ describe("sandbox settings", () => {
 	it("prices a second of sandbox at the most its machine costs", () => {
 		// $0.074 an hour: 4 GiB of memory, half a vCPU kept busy and 8 GB of disk.
 		expect(SANDBOX_SECOND_PRICE * 3600).toBeCloseTo(0.074016, 6);
+	});
+});
+
+describe("sandboxRunSeconds", () => {
+	const MINUTE = 60_000;
+	const run = { sandbox: true, status: "succeeded", startedAt: 0, endedAt: 10 * MINUTE };
+
+	it("counts a run until its conversation's sandbox sleeps, or its next turn takes it over", () => {
+		expect(sandboxRunSeconds(run, null, 60 * MINUTE)).toBe(25 * 60);
+		expect(sandboxRunSeconds(run, 12 * MINUTE, 60 * MINUTE)).toBe(12 * 60);
+	});
+
+	it("counts a run still going until now, and one that never reported back until it timed out", () => {
+		const going = { ...run, status: "running", endedAt: null };
+		expect(sandboxRunSeconds(going, null, 3 * MINUTE)).toBe(3 * 60);
+		expect(sandboxRunSeconds(going, null, 5 * 60 * MINUTE)).toBe((60 + 15) * 60);
+	});
+
+	it("gives a run without a sandbox none", () => {
+		expect(sandboxRunSeconds({ ...run, sandbox: false }, null, 60 * MINUTE)).toBeNull();
+	});
+
+	it("prices sandbox time in millionths of a dollar, as runs count cost", () => {
+		expect(sandboxCost(3600)).toBe(Math.round(SANDBOX_SECOND_PRICE * 3600 * 1_000_000));
 	});
 });
