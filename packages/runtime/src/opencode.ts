@@ -3,9 +3,9 @@
  * conversation's sandbox in place of Gateweave's own loop, with the agent's Anthropic, OpenAI or
  * Google model. Its server runs in the sandbox, and each turn is a message to it
  * (`./opencode-server.ts`), whose events come out as `opencode run --format json` prints them. It
- * reads the repository's AGENTS.md and opencode.json as it would on a laptop. Each of its model
- * requests becomes a model span with the request's own usage, and each of its tool calls a tool
- * span. One conversation is one OpenCode session, which each turn continues while the sandbox has
+ * reads the repository's AGENTS.md and opencode.json as it would on a laptop. Its model requests
+ * are metered where they leave the sandbox (`./meter.ts`), one span each, those of the subagents
+ * its `task` tool starts too, and each of its tool calls is a tool span. One conversation is one OpenCode session, which each turn continues while the sandbox has
  * it.
  *
  * Gateweave's tools reach it as the MCP server `gateweave` (`./engine-tools.ts`), whose tools it
@@ -17,9 +17,8 @@
  * - `opencode run` and its flags: `packages/opencode/src/cli/cmd/run.ts`. With `--format json` it
  *   prints each step's start and finish, a text once it is whole and a tool call once it has its
  *   result, of its own session alone: a subagent's session, which its `task` tool starts, prints
- *   nothing, so the turn turns that tool off and every request is in the trace
- * - a step is one model request, and its finish has the request's usage, with the input less the
- *   cached input and the output less the reasoning (`getUsage` in `session/session.ts`)
+ *   nothing, so the chat and the tool spans have only the main session's
+ * - a step is one model request
  * - settings: those of `OPENCODE_CONFIG_CONTENT` are read after the repository's `opencode.json`,
  *   so theirs win (`config/config.ts`), and `instructions` takes only files, which follow the
  *   repository's AGENTS.md in the system prompt (`session/instruction.ts`)
@@ -84,8 +83,7 @@ const PROVIDER_URLS: Partial<Record<ModelProvider, string>> = {
  * Its settings for a turn, read after the repository's. The agent's model, the only one it calls,
  * with the placeholder for a key: even for the small tasks it would give a cheaper model. Nothing
  * else it would send gets out of the sandbox, so it sends none: no updates or shared sessions. Its
- * `task` tool stays off, as its subagents' requests would not be in the trace, and so does
- * `webfetch`, as the sandbox reaches no website. Its snapshots of the work, for undoing it in its
+ * `webfetch` tool stays off, as the sandbox reaches no website. Its snapshots of the work, for undoing it in its
  * own interface, are left out too.
  */
 export function openCodeConfig(options: {
@@ -115,7 +113,7 @@ export function openCodeConfig(options: {
 		autoupdate: false,
 		share: "disabled",
 		snapshot: false,
-		tools: { task: false, webfetch: false },
+		tools: { webfetch: false },
 		...(options.instructions ? { instructions: [OPENCODE_INSTRUCTIONS] } : {}),
 		// A delegated task can take as long as the turn may: the timeout covers each call.
 		...(options.tools
@@ -169,19 +167,12 @@ const TRACE_ERROR_LIMIT = 500;
 /** The longest part of OpenCode's own words a failure it has no name for quotes. */
 const FAILURE_DETAIL_LIMIT = 300;
 
-const tokensSchema = z.object({
-	input: z.number(),
-	output: z.number(),
-	reasoning: z.number().optional(),
-	cache: z.object({ read: z.number(), write: z.number() }).optional(),
-});
-
 const timeSchema = z.object({ start: z.number(), end: z.number() });
 
 const stepStart = z.object({ type: z.literal("step_start") });
 const stepFinish = z.object({
 	type: z.literal("step_finish"),
-	part: z.object({ reason: z.string().nullish(), tokens: tokensSchema }),
+	part: z.object({ reason: z.string().nullish() }),
 });
 const textEvent = z.object({
 	type: z.literal("text"),
@@ -225,22 +216,15 @@ type OpenCodeError = z.infer<typeof errorSchema>;
 
 /**
  * Follows one turn of OpenCode, an event at a time. Its text and tool calls go to the chat, and its
- * model requests and tool calls to the trace.
+ * tool calls to the trace.
  */
 export class OpenCodeTurn implements EngineTurn {
 	readonly #sink: ChunkSink;
 	readonly #run: RunRecorder;
 	readonly #agent: AgentSnapshot;
-	/** The step under way, or the last one: one model request and the tools it called. */
-	#step = -1;
-	/** Whether the step's model span and the chat's step are open. */
+	/** Whether the chat's step is open: one model request and the tools it called. */
 	#open = false;
-	/**
-	 * When the step's last tool started, which is about when the model's answer to the request
-	 * ended: each tool starts as soon as its call has come, while the answer goes on. The step itself
-	 * ends once its tools have.
-	 */
-	#toolsFrom: number | null = null;
+	/** When the step began, before which none of its tools did. */
 	#stepFrom = 0;
 	/** Whether a request finished, so the turn did not stop before its first answer. */
 	#answered = false;
@@ -262,12 +246,9 @@ export class OpenCodeTurn implements EngineTurn {
 			return;
 		}
 		if (stepStart.safeParse(event).success) {
-			this.#closeStep(now);
-			this.#step += 1;
+			this.#closeStep();
 			this.#open = true;
 			this.#stepFrom = now;
-			this.#toolsFrom = null;
-			this.#run.stepStarted(this.#step, now);
 			this.#sink.write({ type: "start-step" });
 			return;
 		}
@@ -287,20 +268,21 @@ export class OpenCodeTurn implements EngineTurn {
 		}
 		const finish = stepFinish.safeParse(event);
 		if (finish.success) {
-			this.#finishStep(finish.data.part, now);
+			if (this.#open) this.#answered = true;
+			this.#closeStep();
 			return;
 		}
 		const error = errorEvent.safeParse(event);
 		if (error.success) {
 			this.#failure = error.data.error;
-			this.#closeStep(now);
+			this.#closeStep();
 		}
 	}
 
 	/** Ends what is still open and says how the turn went. */
-	end(now = Date.now()): EngineOutcome {
+	end(): EngineOutcome {
 		const stopped = this.#open;
-		this.#closeStep(now);
+		this.#closeStep();
 		if (this.#failure !== null) return failed(describeFailure(this.#agent, this.#failure));
 		return this.#answered && !stopped ? { status: "succeeded" } : UNFINISHED;
 	}
@@ -313,9 +295,6 @@ export class OpenCodeTurn implements EngineTurn {
 		const { callID: id, tool, state } = part;
 		const took = Math.max(0, state.time.end - state.time.start);
 		const started = Math.max(this.#stepFrom, now - took);
-		if (this.#open && (this.#toolsFrom === null || started > this.#toolsFrom)) {
-			this.#toolsFrom = started;
-		}
 		const gateweave = tool.startsWith(OPENCODE_TOOL_PREFIX);
 		// Gateweave's tools go by their own names, so the chat shows them as it does in Gateweave's
 		// loop: a pull request as its link, an edge as the member it reached. They record their own
@@ -355,39 +334,10 @@ export class OpenCodeTurn implements EngineTurn {
 		});
 	}
 
-	/** Ends the step's model span with the request's usage, and the chat's step. */
-	#finishStep(part: z.infer<typeof stepFinish>["part"], now: number): void {
+	/** Ends the chat's step, if it is open. */
+	#closeStep(): void {
 		if (!this.#open) return;
 		this.#open = false;
-		this.#answered = true;
-		const { tokens } = part;
-		const cacheRead = tokens.cache?.read ?? 0;
-		const cacheWrite = tokens.cache?.write ?? 0;
-		this.#run.requestEnded(
-			this.#step,
-			{
-				model: this.#agent.model,
-				// OpenCode counts the cached input and the reasoning apart; the trace counts them in.
-				tokens: {
-					input: tokens.input + cacheRead + cacheWrite,
-					output: tokens.output + (tokens.reasoning ?? 0),
-					cacheRead,
-					cacheWrite,
-				},
-				finishReason: part.reason ?? null,
-				firstTokenMs: null,
-				gatewayLogId: null,
-			},
-			this.#toolsFrom ?? now,
-		);
-		this.#sink.write({ type: "finish-step" });
-	}
-
-	/** Ends a step whose request never finished, as one that failed. */
-	#closeStep(now: number): void {
-		if (!this.#open) return;
-		this.#open = false;
-		this.#run.stepFailed(this.#step, describeFailure(this.#agent, this.#failure), now);
 		this.#sink.write({ type: "finish-step" });
 	}
 }

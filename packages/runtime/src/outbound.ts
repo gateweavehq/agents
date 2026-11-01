@@ -47,6 +47,9 @@ const GOOGLE_MODEL_PATH = /^\/v1beta\/models\/[^/:]+:(generateContent|streamGene
 
 const GOOGLE_STREAM_QUERY = "?alt=sse";
 
+/** Anthropic's count of a request's tokens, which no model answers and costs nothing. */
+const ANTHROPIC_COUNT = "/v1/messages/count_tokens";
+
 /**
  * The paths of each provider's API that the engines' requests for the model use: Anthropic's
  * Messages API, OpenAI's Responses API over HTTPS (`./codex.ts` turns Codex's WebSocket off),
@@ -57,7 +60,7 @@ const MODEL_APIS: readonly ModelApi[] = [
 	{
 		provider: "anthropic",
 		host: ANTHROPIC_API,
-		paths: new Set(["/v1/messages", "/v1/messages/count_tokens"]),
+		paths: new Set(["/v1/messages", ANTHROPIC_COUNT]),
 	},
 	{ provider: "openai", host: OPENAI_API, paths: new Set(["/v1/responses"]) },
 	{ provider: "google", host: GOOGLE_API, paths: GOOGLE_MODEL_PATH },
@@ -81,6 +84,11 @@ function isModelRequest(api: ModelApi, method: string, url: URL): boolean {
 		return url.search === (streams ? GOOGLE_STREAM_QUERY : "");
 	}
 	return api.paths.has(url.pathname);
+}
+
+/** Whether an engine's request to a provider is one the model answers, which the trace meters. */
+export function isMeteredRequest(url: URL): boolean {
+	return !(url.hostname === ANTHROPIC_API && url.pathname === ANTHROPIC_COUNT);
 }
 
 /**

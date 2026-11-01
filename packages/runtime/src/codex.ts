@@ -1,8 +1,8 @@
 /**
  * Codex as an agent's engine (`./engines.ts`): OpenAI's Codex CLI, run in the conversation's
  * sandbox in place of Gateweave's own loop. It reads the repository's AGENTS.md as it would on a
- * laptop. Its events name no model request, so a turn is one model span, with the turn's usage;
- * each of its commands, patches and MCP calls is a tool span. One conversation is one Codex
+ * laptop. Its model requests are metered where they leave the sandbox (`./meter.ts`), one span
+ * each; each of its commands, patches and MCP calls is a tool span. One conversation is one Codex
  * thread, which each turn resumes while the sandbox has it.
  *
  * Gateweave's tools reach it as the MCP server `gateweave` (`./engine-tools.ts`). Their calls come
@@ -12,9 +12,7 @@
  * CLI against a fake Responses API:
  * - `codex exec`, `exec resume` and their flags: `codex-rs/exec/src/cli.rs`. `-c` takes a TOML value
  *   for a key of `config.toml`, after `exec` and `resume` as before them
- * - the events: `codex-rs/exec/src/exec_events.rs`. `turn.completed` has the thread's usage so far,
- *   which a resumed thread carries on from (`usage_from_last_total` in
- *   `event_processor_with_jsonl_output.rs`), and its input counts the cached input too
+ * - the events: `codex-rs/exec/src/exec_events.rs`
  * - OpenAI's built-in provider ignores `OPENAI_BASE_URL`, opens a WebSocket to the Responses API
  *   first and lists models at chatgpt.com. A provider of Gateweave's own (`model_providers`) sends
  *   only `POST /v1/responses`, compactions included, with the key from its `env_key`
@@ -36,7 +34,6 @@ import {
 	ENGINE_SECONDS,
 	type EngineCommand,
 	type EngineJob,
-	type EngineMemory,
 	type EngineOutcome,
 	type EngineTurn,
 	enginePrompt,
@@ -147,26 +144,7 @@ const TRACE_ERROR_LIMIT = 500;
 /** The longest part of Codex's own words a failure it has no name for quotes. */
 const FAILURE_DETAIL_LIMIT = 300;
 
-/** Where a thread's usage so far is kept between turns, in the conversation's storage. */
-const USAGE_KEY = "codex-usage";
-
-const usageSchema = z.object({
-	input_tokens: z.number(),
-	cached_input_tokens: z.number(),
-	cache_write_input_tokens: z.number().optional(),
-	output_tokens: z.number(),
-});
-
-type Usage = z.infer<typeof usageSchema>;
-
-/** A thread's usage after its last turn that completed. */
-interface ThreadUsage {
-	thread: string;
-	usage: Usage;
-}
-
-const threadStarted = z.object({ type: z.literal("thread.started"), thread_id: z.string() });
-const turnCompleted = z.object({ type: z.literal("turn.completed"), usage: usageSchema });
+const turnCompleted = z.object({ type: z.literal("turn.completed") });
 const turnFailed = z.object({
 	type: z.literal("turn.failed"),
 	error: z.object({ message: z.string() }),
@@ -209,16 +187,14 @@ interface ToolCall {
 
 /**
  * Follows one turn of Codex, an event at a time. Its text and tool calls go to the chat, and its
- * usage, its commands, patches and MCP calls to the trace.
+ * commands, patches and MCP calls to the trace.
  */
 export class CodexTurn implements EngineTurn {
 	readonly #sink: ChunkSink;
 	readonly #run: RunRecorder;
 	readonly #agent: AgentSnapshot;
-	readonly #memory: EngineMemory;
 	readonly #tools = new Map<string, ToolCall>();
-	#thread: string | null = null;
-	/** Whether the turn's model span and the chat's step are open. */
+	/** Whether the chat's step is open. */
 	#open = false;
 	#completed = false;
 	/** Why the turn failed, in Codex's words. */
@@ -226,12 +202,10 @@ export class CodexTurn implements EngineTurn {
 	/** What Codex last said of an error it went on from, which a failure it has no words for quotes. */
 	#detail: string | null = null;
 
-	/** `memory` keeps the thread's usage so far, which each turn's own usage is counted from. */
-	constructor(sink: ChunkSink, run: RunRecorder, agent: AgentSnapshot, memory: EngineMemory) {
+	constructor(sink: ChunkSink, run: RunRecorder, agent: AgentSnapshot) {
 		this.#sink = sink;
 		this.#run = run;
 		this.#agent = agent;
-		this.#memory = memory;
 	}
 
 	/** Takes one line of Codex's output. Anything not an event it knows is left alone. */
@@ -251,25 +225,19 @@ export class CodexTurn implements EngineTurn {
 		const type = typeof event === "object" && event !== null && "type" in event ? event.type : null;
 		if (type === "turn.started") {
 			this.#open = true;
-			this.#run.stepStarted(0, now);
 			this.#sink.write({ type: "start-step" });
 			return;
 		}
 		const completed = turnCompleted.safeParse(event);
 		if (completed.success) {
 			this.#completed = true;
-			this.#endModel(this.#turnUsage(completed.data.usage), "stop", now);
+			this.#endStep();
 			return;
 		}
 		const failure = turnFailed.safeParse(event);
 		if (failure.success) {
 			this.#failure = failure.data.error.message;
-			this.#endModel(null, "error", now);
-			return;
-		}
-		const thread = threadStarted.safeParse(event);
-		if (thread.success) {
-			this.#thread = thread.data.thread_id;
+			this.#endStep();
 			return;
 		}
 		// One it went on from, such as a reconnection; a fatal one is the turn's failure.
@@ -278,8 +246,8 @@ export class CodexTurn implements EngineTurn {
 	}
 
 	/** Ends what is still open and says how the turn went. */
-	end(now = Date.now()): EngineOutcome {
-		this.#endModel(null, "error", now);
+	end(): EngineOutcome {
+		this.#endStep();
 		if (this.#completed) return { status: "succeeded" };
 		const words = this.#failure ?? this.#detail;
 		if (words === null) return UNFINISHED;
@@ -407,47 +375,10 @@ export class CodexTurn implements EngineTurn {
 		});
 	}
 
-	/**
-	 * The turn's own usage: the thread's so far, less what it was after its last turn that
-	 * completed. A thread the sandbox no longer has starts over. A turn that failed reports no
-	 * usage, so what it used counts with the next one that completes.
-	 */
-	#turnUsage(total: Usage): Usage {
-		const kept = this.#memory.get<ThreadUsage>(USAGE_KEY);
-		const before = kept && kept.thread === this.#thread ? kept.usage : null;
-		if (this.#thread !== null)
-			this.#memory.put<ThreadUsage>(USAGE_KEY, { thread: this.#thread, usage: total });
-		const less = (field: keyof Usage) => Math.max(0, (total[field] ?? 0) - (before?.[field] ?? 0));
-		return {
-			input_tokens: less("input_tokens"),
-			cached_input_tokens: less("cached_input_tokens"),
-			cache_write_input_tokens: less("cache_write_input_tokens"),
-			output_tokens: less("output_tokens"),
-		};
-	}
-
-	/** Ends the turn's model span and the chat's step, if they are open. */
-	#endModel(usage: Usage | null, finishReason: "stop" | "error", now: number): void {
+	/** Ends the chat's step, if it is open. */
+	#endStep(): void {
 		if (!this.#open) return;
 		this.#open = false;
-		this.#run.requestEnded(
-			0,
-			{
-				model: this.#agent.model,
-				// OpenAI counts cached input in the input, as the trace does.
-				tokens: {
-					input: usage?.input_tokens ?? 0,
-					output: usage?.output_tokens ?? 0,
-					cacheRead: usage?.cached_input_tokens ?? 0,
-					cacheWrite: usage?.cache_write_input_tokens ?? 0,
-				},
-				finishReason,
-				firstTokenMs: null,
-				gatewayLogId: null,
-				summed: true,
-			},
-			now,
-		);
 		this.#sink.write({ type: "finish-step" });
 	}
 }

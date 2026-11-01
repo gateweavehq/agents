@@ -539,13 +539,8 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   here, and OpenCode adds none at all.
   - **Its events are the turn.** The conversation reads the CLI's events as they come
     (`ClaudeCodeTurn`): the main conversation's text goes to the chat, and its tool calls as
-    `claude-code__<tool>`, their results clipped to 4,000 characters. Each model request becomes a
-    model span, with its tokens and cost from Anthropic's usage, cached input counted in the input.
-    An `assistant` event carries only the usage of the request's start, so the CLI also passes on the
-    API's streaming events (`--include-partial-messages`), whose `message_delta` has the request's
-    final output tokens, and whose `message_start` says how long the first token took. A request's
-    span runs from when it was sent, that long before its `message_start`, to its `message_stop`,
-    before its tools run. Each tool call
+    `claude-code__<tool>`, their results clipped to 4,000 characters. Its model requests are
+    metered where they leave the sandbox (below), so its events give no model spans. Each tool call
     becomes a tool span under the server name `claude-code`, a subagent's too. A
     result that is an error fails the turn, in the same words as Gateweave's loop uses. A message
     the CLI writes itself (its model is `<synthetic>`, as for a refused key) is meant for a terminal:
@@ -596,13 +591,6 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     included, and `SandboxOutbound` puts the workspace's key on it (`openaiRequest`), through AI
     Gateway when the deployment names one. Update checks, analytics, feedback and web search are
     off. Codex trusts the sandbox's certificate through `SSL_CERT_FILE`.
-  - **One span for the turn.** Codex's events name no model request, so the turn is one model
-    span: `turn.completed` carries the thread's usage so far, and the conversation keeps it
-    (`ctx.storage.kv`) to count the next turn of the same thread from it; OpenAI counts cached
-    input in the input already. The span is priced at the standard rates, since no one request's
-    size is known (`requestCost`'s `summed`). A turn that fails reports no usage, so its tokens
-    count with the next turn that completes. Metering each request where it leaves the sandbox
-    will replace this (AGT-49).
   - **Its items are the chat.** An `agent_message` is text; a command (`codex__shell`), a patch
     (`codex__apply_patch`) and another MCP server's call are tool calls with spans under the
     server name `codex`; a call of Gateweave's `gateweave` server shows under its own name and
@@ -654,15 +642,10 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     repository's `AGENTS.md` in its system prompt, and the server reads them at each message. A
     new session gets the title `Gateweave`, which spares the request to a small model OpenCode makes
     for one otherwise.
-  - **One span per request.** Each of its steps is one model request, and the step's finish has
-    that request's usage, so each becomes a model span priced on its own, with no summing. OpenCode
-    counts the cached input and the reasoning apart; the trace counts them in the input and the
-    output. It prints a tool call only once it has its result, so the tool span starts back by how
-    long the call took, and the request's span ends where its last tool began, which keeps the
-    sandbox's clock out of the trace: each tool starts as soon as its call has come, while the
-    answer goes on, so the last one starts about when the answer ends. Its `task` tool is off: a subagent's session prints nothing,
-    so its requests would be missing from the trace. So is `webfetch`, since the sandbox reaches no
-    website.
+  - **Its tools.** It prints a tool call only once it has its result, so the tool span starts
+    back by how long the call took, which keeps the sandbox's clock out of the trace. Its `task`
+    tool is on: a subagent's session prints nothing, but its requests are metered like the others
+    (below). `webfetch` is off, since the sandbox reaches no website.
   - **The key never enters the sandbox,** as with the others: `decideOutbound` opens the API of the
     agent's provider to the running turn, `POST /v1/messages` to `api.anthropic.com`,
     `POST /v1/responses` to `api.openai.com`, or, for Google, `POST
@@ -681,6 +664,26 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     under `lite`'s limits (256 MiB, 1/16 vCPU) ran out of memory before its first answer; under
     `basic`'s (1 GiB, 1/4 vCPU) a turn took about half a minute and used 415 MiB at most. The
     sandbox starts as `standard-1`, so keep it at `basic` or above. Claude Code fits in `lite`.
+- **Model requests are metered where they leave the sandbox** (AGT-49,
+  `packages/runtime/src/meter.ts`). A CLI's events leave out what it does not print: OpenCode's
+  subagents, Claude Code's in part, and Codex's requests one by one, of which it prints only the
+  thread's total. `SandboxOutbound` sees every request for the model, since it adds the key, so the
+  trace takes its model spans from there and the engines' events give only the chat and the tool
+  spans.
+  - A request that goes out first asks the conversation for a step (`engineRequestStarted`), with
+    the turn's token, which the engine's later tool calls belong to. Anthropic's `count_tokens`,
+    which no model answers, is not metered.
+  - The answer streams on to the CLI as it comes. A copy of each chunk is read on the side: the
+    usage at Anthropic's `message_start` and `message_delta`, in OpenAI's `response.completed`, in
+    Google's last chunk, or in an answer that is not a stream. Only the usage, the model, how the
+    answer ended, its first bytes' time and AI Gateway's log id are kept, never a body.
+  - When the answer ends, or the CLI stops reading it, the Worker reports it
+    (`engineRequestEnded`, under `waitUntil`), and the span is priced at the model's list price. A
+    refused request (a status that is not 2xx), one that failed as it streamed, and one cut off
+    are spans that failed, with what they had used. The conversation checks the report against a
+    schema and records nothing without the turn's token, or once the turn has ended.
+  - A turn's CLI can end a moment before its last request is reported, so the turn waits up to
+    five seconds for the requests still open before it closes the run.
 
 ## Chat
 
@@ -1090,8 +1093,7 @@ provider keys.
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
-- **After cloud runners** (phase 5, AGT-9, done): model requests metered where they leave the
-  sandbox (AGT-49), and container cost on Runs (AGT-53). Sandboxes will also run the MCP servers
+- **After cloud runners** (phase 5, AGT-9, done): container cost on Runs (AGT-53). Sandboxes will also run the MCP servers
   that are local commands.
 
 ## Deploys

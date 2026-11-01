@@ -4,7 +4,8 @@
  * (`./claude-code.ts`), Codex (`./codex.ts`) or OpenCode (`./opencode.ts`). The CLI reads the
  * repository's own instructions and settings as it would on a laptop and works with its own tools,
  * and the turn passes on what it does as its events come: its text and tool calls to the chat, and
- * its model requests and tool calls to the run's trace.
+ * its tool calls to the run's trace. Its model requests are metered where they leave the sandbox
+ * (`./meter.ts`), so the trace has each one, a subagent's too.
  *
  * The CLI holds no key. It sends a placeholder, and `SandboxOutbound` puts the workspace's key on
  * its requests to the model's provider on the way out, while the turn runs (`./outbound.ts`). The
@@ -37,6 +38,11 @@ export interface EngineAccess {
 	key: string;
 	metadata: GatewayMetadata;
 	tools: EngineToolsAccess | null;
+	/**
+	 * Where the turn's requests for the model are recorded as they leave the sandbox
+	 * (`./meter.ts`): the conversation, with the turn's token, the same as its tools'.
+	 */
+	meter: EngineToolsAccess;
 }
 
 /** A turn for an engine, as the conversation hands it to its sandbox. */
@@ -105,12 +111,6 @@ export type EngineOutcome =
 	| { status: "succeeded" }
 	| { status: "failed"; error: string }
 	| { status: "unfinished" };
-
-/** What a turn keeps for the conversation's next one: the conversation's own storage. */
-export interface EngineMemory {
-	get<T>(key: string): T | undefined;
-	put<T>(key: string, value: T): void;
-}
 
 /** Follows one turn of an engine, a line of its output at a time. */
 export interface EngineTurn {

@@ -1,5 +1,6 @@
 /** What the runtime's tests share: a chat socket, and a model that answers as a provider does. */
 import { vi } from "vitest";
+import type { ScriptedAnswer } from "./fake-sandbox";
 
 // Its tail is not hexadecimal, so tests that look for it in a reply never find it in a random id.
 export const KEY = "sk-ant-api03-secret-wxyz";
@@ -238,4 +239,113 @@ export function anthropicToolCall(name: string, input: object): Response {
 		.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
 		.join("");
 	return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
+
+/** What a provider's answer to an engine's request reports: its model, usage and how it ended. */
+export interface AnswerUsage {
+	model?: string;
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+	/** The provider's own word for how it ended. */
+	stop?: string;
+	/** Whether it calls tools: OpenAI and Google say so in the answer's output. */
+	toolCalls?: boolean;
+}
+
+function sse(events: object[]): string {
+	return events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+}
+
+/**
+ * Anthropic's streamed answer to an engine's request, as it reaches the sandbox: the input at
+ * `message_start`, the output as it grows, and the final usage at `message_delta`.
+ */
+export function anthropicAnswer(usage: AnswerUsage = {}): ScriptedAnswer {
+	const input = {
+		input_tokens: usage.input ?? 10,
+		cache_read_input_tokens: usage.cacheRead ?? 0,
+		cache_creation_input_tokens: usage.cacheWrite ?? 0,
+	};
+	return {
+		answer: {
+			body: sse([
+				{
+					type: "message_start",
+					message: {
+						id: `msg_${crypto.randomUUID()}`,
+						type: "message",
+						model: usage.model ?? "claude-sonnet-5-5",
+						usage: { ...input, output_tokens: 1 },
+					},
+				},
+				{ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+				{ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
+				{ type: "content_block_stop", index: 0 },
+				{
+					type: "message_delta",
+					delta: { stop_reason: usage.stop ?? "end_turn" },
+					usage: { ...input, output_tokens: usage.output ?? 5 },
+				},
+				{ type: "message_stop" },
+			]),
+		},
+	};
+}
+
+/** OpenAI's streamed answer from the Responses API: the whole usage in its last event. */
+export function openaiAnswer(usage: AnswerUsage = {}): ScriptedAnswer {
+	const response = {
+		id: `resp_${crypto.randomUUID()}`,
+		object: "response",
+		model: usage.model ?? "gpt-5.5",
+		status: usage.stop ?? "completed",
+		output: [{ type: usage.toolCalls ? "function_call" : "message" }],
+		usage: {
+			input_tokens: usage.input ?? 10,
+			input_tokens_details: { cached_tokens: usage.cacheRead ?? 0 },
+			output_tokens: usage.output ?? 5,
+		},
+	};
+	return {
+		answer: {
+			body: sse([
+				{ type: "response.created", response: { ...response, status: "in_progress" } },
+				{ type: "response.output_text.delta", delta: "Hi" },
+				{ type: "response.completed", response },
+			]),
+		},
+	};
+}
+
+/** Google's streamed answer: each chunk with the usage so far, the last with all of it. */
+export function googleAnswer(usage: AnswerUsage = {}): ScriptedAnswer {
+	const model = usage.model ?? "gemini-3.5-flash-lite";
+	const metadata = (output: number) => ({
+		promptTokenCount: usage.input ?? 10,
+		candidatesTokenCount: output,
+		cachedContentTokenCount: usage.cacheRead ?? 0,
+	});
+	return {
+		answer: {
+			body: sse([
+				{
+					candidates: [{ content: { parts: [{ text: "Hi" }] } }],
+					usageMetadata: metadata(1),
+					modelVersion: model,
+				},
+				{
+					candidates: [
+						{
+							content: { parts: usage.toolCalls ? [{ functionCall: { name: "bash" } }] : [] },
+							finishReason: usage.stop ?? "STOP",
+						},
+					],
+					usageMetadata: metadata(usage.output ?? 5),
+					modelVersion: model,
+				},
+			]),
+		},
+	};
 }
