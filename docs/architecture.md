@@ -58,8 +58,14 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
 - **Linking.** A `github_installation` row in D1 links an installation to one workspace. An
   admin links it through install, setup and callback (`apps/web/src/server/github/flow.ts`).
   The installation id that GitHub's setup redirect carries is not trusted: the link is made only
-  after a user token shows that this person can reach the installation on GitHub. The token is
-  not kept.
+  after a user token shows that this person controls the installation's account on GitHub
+  (`controlsInstallation` in `packages/github/src/app.ts`). For a personal account, that is the
+  account's own user (`GET /user`); for an organization, an active admin of it
+  (`GET /user/memberships/orgs/{org}`, which needs the app's "Members: read" organization
+  permission). Being able to see the installation is not enough: `GET /user/installations`
+  lists it for anyone with access to one of its repositories, read-only collaborators included.
+  Everyone else gets the same refusal as for an installation they cannot see. The token is not
+  kept.
 - **Writing.** Commits, branches and pull requests through the REST API
   (`packages/github/src/writes.ts`), for applying setups.
 - **Staying in step.** Linking, and webhooks for installation and repository changes, list the
