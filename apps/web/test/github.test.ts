@@ -121,11 +121,12 @@ async function connected(installationId: string, repository: FakeRepository) {
 		account: { login: repository.owner, type: "User" },
 		repositories: [repository],
 	});
-	github.people.set(`${repository.owner}-gh`, new Set([installationId]));
+	// The installation is on the person's own account.
+	github.people.set(repository.owner, new Set([installationId]));
 	const { headers } = await signUp(agents, origin, repository.owner);
 	const workspaceId = await createWorkspace(agents, origin, headers, repository.owner);
 	expect(
-		await connect(headers.cookie, repository.owner, installationId, `${repository.owner}-gh`),
+		await connect(headers.cookie, repository.owner, installationId, repository.owner),
 	).toContain("github=connected");
 	return { workspaceId, cookie: headers.cookie };
 }
@@ -140,7 +141,7 @@ function push(installationId: string, repository: FakeRepository, branch = "main
 }
 
 describe("connecting GitHub", () => {
-	it("links an installation its admin can reach, and lists its repositories", async () => {
+	it("links an organization's installation for an admin of it, and lists its repositories", async () => {
 		github.installations.set("501", {
 			account: { login: "acme-org", type: "Organization" },
 			repositories: [
@@ -149,6 +150,7 @@ describe("connecting GitHub", () => {
 			],
 		});
 		github.people.set("ada-gh", new Set(["501"]));
+		github.join("acme-org", "ada-gh", "admin");
 		const { headers } = await signUp(agents, origin, "ada");
 		const workspaceId = await createWorkspace(agents, origin, headers, "acme");
 
@@ -201,6 +203,7 @@ describe("connecting GitHub", () => {
 			repositories: [{ id: 31, name: "tools", owner: "shared" }],
 		});
 		github.people.set("grace-gh", new Set(["503"]));
+		github.join("shared", "grace-gh", "admin");
 		const { headers } = await signUp(agents, origin, "grace");
 		const first = await createWorkspace(agents, origin, headers, "first");
 		const second = await createWorkspace(agents, origin, headers, "second");
@@ -211,6 +214,84 @@ describe("connecting GitHub", () => {
 		);
 		expect(await repositoryNames(first)).toEqual(["shared/tools"]);
 		expect(await repositoryNames(second)).toEqual([]);
+	});
+
+	it("refuses an organization's installation to a collaborator who can only read one repository", async () => {
+		// GitHub lists an installation for anyone with access to one of its repositories.
+		github.installations.set("505", {
+			account: { login: "bigco", type: "Organization" },
+			repositories: [
+				{ id: 51, name: "public-docs", owner: "bigco", private: false },
+				{ id: 52, name: "payroll", owner: "bigco" },
+			],
+		});
+		github.people.set("rita-gh", new Set(["505"]));
+		const { headers } = await signUp(agents, origin, "rita");
+		const workspaceId = await createWorkspace(agents, origin, headers, "outside");
+
+		expect(await connect(headers.cookie, "outside", "505", "rita-gh")).toBe(
+			"/outside/settings/github?github=denied",
+		);
+		expect(await linkedInstallations(workspaceId)).toEqual([]);
+		expect(await repositoryNames(workspaceId)).toEqual([]);
+
+		// Refused, it stays free for the organization's own admins to link.
+		github.people.set("boss-gh", new Set(["505"]));
+		github.join("bigco", "boss-gh", "admin");
+		const boss = await signUp(agents, origin, "boss");
+		const theirs = await createWorkspace(agents, origin, boss.headers, "bigco");
+		expect(await connect(boss.headers.cookie, "bigco", "505", "boss-gh")).toBe(
+			"/bigco/settings/github?github=connected",
+		);
+		expect(await linkedInstallations(theirs)).toEqual([{ id: "505", account_login: "bigco" }]);
+	});
+
+	it("refuses an organization's installation to members who are not active admins", async () => {
+		github.installations.set("506", {
+			account: { login: "midco", type: "Organization" },
+			repositories: [{ id: 61, name: "core", owner: "midco" }],
+		});
+		for (const [login, role, state] of [
+			["mia-gh", "member", "active"],
+			["bill-gh", "billing_manager", "active"],
+			["pete-gh", "admin", "pending"],
+		] as const) {
+			github.people.set(login, new Set(["506"]));
+			github.join("midco", login, role, state);
+			const { headers } = await signUp(agents, origin, login.replace(/-gh$/, ""));
+			const slug = `midco-${login.replace(/-gh$/, "")}`;
+			const workspaceId = await createWorkspace(agents, origin, headers, slug);
+
+			expect(await connect(headers.cookie, slug, "506", login)).toBe(
+				`/${slug}/settings/github?github=denied`,
+			);
+			expect(await linkedInstallations(workspaceId)).toEqual([]);
+			expect(await repositoryNames(workspaceId)).toEqual([]);
+		}
+	});
+
+	it("links an installation on a personal account for its owner, and only for them", async () => {
+		github.installations.set("507", {
+			account: { login: "linus", type: "User" },
+			repositories: [{ id: 71, name: "kernel", owner: "linus" }],
+		});
+		// A collaborator on one of linus's repositories sees the installation too.
+		github.people.set("greg-gh", new Set(["507"]));
+		const greg = await signUp(agents, origin, "greg");
+		const gregs = await createWorkspace(agents, origin, greg.headers, "gregs");
+		expect(await connect(greg.headers.cookie, "gregs", "507", "greg-gh")).toBe(
+			"/gregs/settings/github?github=denied",
+		);
+		expect(await linkedInstallations(gregs)).toEqual([]);
+
+		github.people.set("linus", new Set(["507"]));
+		const linus = await signUp(agents, origin, "linus");
+		const workspaceId = await createWorkspace(agents, origin, linus.headers, "linus");
+		expect(await connect(linus.headers.cookie, "linus", "507", "linus")).toBe(
+			"/linus/settings/github?github=connected",
+		);
+		expect(await linkedInstallations(workspaceId)).toEqual([{ id: "507", account_login: "linus" }]);
+		expect(await repositoryNames(workspaceId)).toEqual(["linus/kernel"]);
 	});
 
 	it("lets only admins start it", async () => {
@@ -259,10 +340,10 @@ describe("GitHub webhooks", () => {
 				{ id: 42, name: "flowmatic", owner: "hopper" },
 			],
 		});
-		github.people.set("hopper-gh", new Set(["504"]));
+		github.people.set("hopper", new Set(["504"]));
 		const { headers } = await signUp(agents, origin, "hopper");
 		const workspaceId = await createWorkspace(agents, origin, headers, "navy");
-		expect(await connect(headers.cookie, "navy", "504", "hopper-gh")).toContain("github=connected");
+		expect(await connect(headers.cookie, "navy", "504", "hopper")).toContain("github=connected");
 		// The scans the connection started finish first. One still running when the installation
 		// stops reaching its repository would fail, and rightly log it.
 		await scansDone(workspaceId, 2);
@@ -742,10 +823,10 @@ describe("registry pages", () => {
 			account: { login: "backus", type: "User" },
 			repositories: [repository],
 		});
-		github.people.set("backus-gh", new Set(["701"]));
+		github.people.set("backus", new Set(["701"]));
 		const { headers } = await signUp(agents, origin, "backus");
 		const workspaceId = await createWorkspace(agents, origin, headers, "backus");
-		await connect(headers.cookie, "backus", "701", "backus-gh");
+		await connect(headers.cookie, "backus", "701", "backus");
 		const registry = await agents.registry(workspaceId);
 		const detail = await vi.waitFor(
 			async () => {

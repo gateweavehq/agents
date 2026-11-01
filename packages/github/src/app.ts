@@ -178,20 +178,88 @@ export function sharedApp(config: GitHubAppConfig): GitHubApp {
 	return shared.app;
 }
 
-/** Every installation the user behind a user access token can reach, by id. */
-export async function userInstallationIds(userToken: string): Promise<Set<string>> {
+/** An installation as a user's token lists it, with the account it is installed on. */
+export interface UserInstallation {
+	id: string;
+	account: { id: string; login: string; type: string };
+}
+
+// An account GitHub describes some other way (an enterprise's has no login) is kept as null, so
+// one odd entry does not fail the whole list.
+const userInstallationSchema = z.object({
+	id: z.number().int(),
+	account: z
+		.object({ id: z.number().int(), login: z.string(), type: z.string() })
+		.nullable()
+		.catch(null),
+});
+
+/**
+ * Every installation GitHub lists for the user behind a user access token. GitHub lists one
+ * when the person has any explicit permission on any repository it reaches, read access
+ * included, so being listed shows only that they can see the installation, not that it is
+ * theirs to link: see `controlsInstallation`.
+ */
+export async function userInstallations(userToken: string): Promise<UserInstallation[]> {
 	const page = z.object({
 		total_count: z.number(),
-		installations: z.array(z.object({ id: z.number().int() })),
+		installations: z.array(userInstallationSchema),
 	});
-	const ids = new Set<string>();
+	const found = new Map<string, UserInstallation>();
 	for (let number = 1; ; number++) {
 		const { total_count, installations } = page.parse(
 			await request(`/user/installations?per_page=100&page=${number}`, userToken),
 		);
-		for (const installation of installations) ids.add(String(installation.id));
-		if (installations.length < 100 || ids.size >= total_count) return ids;
+		for (const { id, account } of installations) {
+			if (!account) continue;
+			found.set(String(id), {
+				id: String(id),
+				account: { id: String(account.id), login: account.login, type: account.type },
+			});
+		}
+		if (installations.length < 100 || found.size >= total_count) return [...found.values()];
 	}
+}
+
+const userSchema = z.object({ id: z.number().int() });
+
+const membershipSchema = z.object({ state: z.string(), role: z.string() });
+
+/**
+ * Whether the user behind a user access token controls the installation's account: they are
+ * that account, for one on a personal account, or an active admin of the organization. Anyone
+ * else, collaborators and plain members included, does not. Reading an organization membership
+ * needs the app's "Members: read" organization permission; without it GitHub answers 403, and
+ * the answer is no.
+ */
+export async function controlsInstallation(
+	userToken: string,
+	installation: UserInstallation,
+): Promise<boolean> {
+	const { account } = installation;
+	if (account.type === "User") {
+		const user = userSchema.parse(await request("/user", userToken));
+		return String(user.id) === account.id;
+	}
+	if (account.type !== "Organization") return false;
+	let membership: z.infer<typeof membershipSchema>;
+	try {
+		membership = membershipSchema.parse(
+			await request(`/user/memberships/orgs/${encodeURIComponent(account.login)}`, userToken),
+		);
+	} catch (error) {
+		// 404: not a member. 403: the app may not read memberships, or the organization blocks it.
+		if (error instanceof GitHubError && (error.status === 404 || error.status === 403)) {
+			if (error.status === 403) {
+				console.warn(
+					`github: GitHub refused to show a membership of ${account.login}; does the app have the "Members: read" organization permission?`,
+				);
+			}
+			return false;
+		}
+		throw error;
+	}
+	return membership.state === "active" && membership.role === "admin";
 }
 
 /** A REST call to the GitHub API. */

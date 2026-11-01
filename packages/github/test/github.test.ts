@@ -4,6 +4,7 @@ import {
 	appJwt,
 	branchCommit,
 	branchHead,
+	controlsInstallation,
 	createBranch,
 	createCommit,
 	GitHubApp,
@@ -16,6 +17,7 @@ import {
 	readTexts,
 	readTree,
 	updatePullRequest,
+	userInstallations,
 	verifyWebhook,
 } from "../src";
 
@@ -305,6 +307,74 @@ describe("repository writes", () => {
 		await expect(createBranch("ghs_x", repository, "x", sha("d"))).rejects.toMatchObject({
 			status: 403,
 		});
+	});
+});
+
+describe("who may link an installation", () => {
+	const org = { id: "5", account: { id: "50", login: "acme org", type: "Organization" } };
+
+	it("lists every page of a user's installations with their accounts", async () => {
+		const calls: string[] = [];
+		vi.stubGlobal("fetch", async (input: string) => {
+			calls.push(input);
+			const page = Number(new URL(input).searchParams.get("page"));
+			const ids = page === 1 ? Array.from({ length: 100 }, (_, index) => index + 1) : [101];
+			return Response.json({
+				total_count: 101,
+				installations: ids.map((id) => ({
+					id,
+					// An enterprise's account has no login; it is left out rather than failing the list.
+					account:
+						id === 7 ? { id: 1, slug: "big" } : { id: id * 10, login: `a${id}`, type: "User" },
+				})),
+			});
+		});
+		const found = await userInstallations("ghu_x");
+		expect(found).toHaveLength(100);
+		expect(found.at(-1)).toEqual({
+			id: "101",
+			account: { id: "1010", login: "a101", type: "User" },
+		});
+		expect(calls).toHaveLength(2);
+	});
+
+	it("lets an active organization admin link, and no other member", async () => {
+		for (const [membership, expected] of [
+			[{ state: "active", role: "admin" }, true],
+			[{ state: "pending", role: "admin" }, false],
+			[{ state: "active", role: "member" }, false],
+			[{ state: "active", role: "billing_manager" }, false],
+		] as const) {
+			const calls: string[] = [];
+			vi.stubGlobal("fetch", async (input: string) => {
+				calls.push(input);
+				return Response.json(membership);
+			});
+			expect(await controlsInstallation("ghu_x", org)).toBe(expected);
+			expect(calls).toEqual(["https://api.github.com/user/memberships/orgs/acme%20org"]);
+		}
+	});
+
+	it("refuses when GitHub does not show a membership, and fails when GitHub does", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		for (const status of [404, 403]) {
+			vi.stubGlobal("fetch", async () => Response.json({ message: "No" }, { status }));
+			expect(await controlsInstallation("ghu_x", org)).toBe(false);
+		}
+		expect(warn).toHaveBeenCalledOnce();
+		warn.mockRestore();
+		vi.stubGlobal("fetch", async () => Response.json({ message: "Down" }, { status: 502 }));
+		await expect(controlsInstallation("ghu_x", org)).rejects.toMatchObject({ status: 502 });
+	});
+
+	it("lets only the owner of a personal account link it", async () => {
+		vi.stubGlobal("fetch", async () => Response.json({ id: 50, login: "ada" }));
+		const personal = { id: "6", account: { id: "50", login: "ada", type: "User" } };
+		expect(await controlsInstallation("ghu_x", personal)).toBe(true);
+		vi.stubGlobal("fetch", async () => Response.json({ id: 51, login: "greg" }));
+		expect(await controlsInstallation("ghu_x", personal)).toBe(false);
+		const enterprise = { id: "8", account: { id: "50", login: "ada", type: "Enterprise" } };
+		expect(await controlsInstallation("ghu_x", enterprise)).toBe(false);
 	});
 });
 

@@ -13,6 +13,7 @@ workspace's GitHub settings say that GitHub is not set up.
 | Repository → Metadata      | Read           | Required by GitHub. Lists the repositories the app reaches           |
 | Repository → Contents      | Read and write | Reads the files that configure agents; commits a setup's to a branch |
 | Repository → Pull requests | Read and write | Opens the pull request that applies a setup, and follows its state   |
+| Organization → Members     | Read           | Checks that the person connecting an organization is an admin of it  |
 
 No account permissions. Writing is only ever a new branch named `gateweave/…` and a pull request
 from it: the app never writes to a default branch, and a commit changes only the files the setup
@@ -25,6 +26,11 @@ An app created before setups could be applied has only read access. Add the two 
 permissions and the **Pull request** event on its settings page; each account that installed it
 then accepts the new permissions on GitHub before setups can be applied there. Reading goes on
 working in the meantime.
+
+An app created before connecting checked organization admins lacks **Organization → Members:
+Read**. Add it on the app's settings page; each organization that installed the app then accepts
+it on GitHub. Until it does, connecting that organization again is refused. Installations already
+connected stay connected.
 
 ## Create the app
 
@@ -45,6 +51,7 @@ https://github.com/organizations/ORGANIZATION/settings/apps/new?name=Gateweave%2
   &metadata=read
   &contents=write
   &pull_requests=write
+  &members=read
   &events[]=push
   &events[]=repository
   &events[]=pull_request
@@ -111,8 +118,16 @@ the old one.
 2. GitHub sends them back to the setup URL with the installation's id. Anyone can open that URL
    with any id, so the server does not trust it yet and sends them on to authorize the app.
 3. GitHub sends them back to the callback URL with a code. The server trades it for a user
-   token, checks that the installation is one this person can reach on GitHub, and only then
-   links it to the workspace and lists its repositories. It does not keep the token.
+   token, checks that this person controls the installation's account, and only then links it
+   to the workspace and lists its repositories. It does not keep the token.
+
+Who may connect an installation:
+
+- **On a personal account**, only that account's owner.
+- **On an organization**, only an admin of the organization (an owner, in GitHub's terms).
+  Members, billing managers, outside collaborators and people whose invitation is still pending
+  are refused, even when they can open some of its repositories. An organization member without
+  admin rights can still request the app on GitHub; an admin then installs and connects it.
 
 Every member of the workspace sees the agent configuration found in the repositories the
 admin connects, private ones included, whether or not they can open those repositories on
