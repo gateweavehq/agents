@@ -12,7 +12,7 @@ import {
 import { openaiRequest } from "../src/models";
 import { decideOutbound } from "../src/outbound";
 import type { FakeSandbox } from "./fake-sandbox";
-import { ask, connect, type Turn } from "./support";
+import { ask, connect, openaiAnswer, type Turn } from "./support";
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -111,10 +111,11 @@ function answering(thread: string, text: string, total: ReturnType<typeof usage>
 	];
 }
 
-/** A turn that lists the files, adds one, then answers. */
+/** A turn that lists the files, adds one, then answers: two requests for the model. */
 const LISTING = [
 	event("thread.started", { thread_id: "thread-1" }),
 	event("turn.started"),
+	openaiAnswer({ input: 600, cacheRead: 500, output: 30, toolCalls: true }),
 	item("item.completed", { id: "item_0", type: "agent_message", text: "Let me look. " }),
 	command("item_1", "in_progress"),
 	command("item_1", "completed", "a.txt\nb.txt\n", 0),
@@ -124,6 +125,7 @@ const LISTING = [
 		changes: [{ path: "/workspace/repo/c.txt", kind: "add" }],
 		status: "completed",
 	}),
+	openaiAnswer({ input: 600, cacheRead: 500, output: 20 }),
 	item("item.completed", { id: "item_3", type: "agent_message", text: "There are three files." }),
 	event("turn.completed", { usage: usage(1_200, 1_000, 50) }),
 ];
@@ -159,10 +161,10 @@ describe("an agent whose engine is Codex", () => {
 		expect(seen.engine[0]?.system).toContain("Be brief.");
 
 		const [run] = await registry.listRuns();
-		// One model span for the turn, priced at the standard rates: 200 uncached, 1,000 cached.
+		// A model span for each request, priced at the standard rates: 200 uncached, 1,000 cached.
 		expect(run).toMatchObject({
 			status: "succeeded",
-			steps: 1,
+			steps: 2,
 			inputTokens: 1_200,
 			outputTokens: 50,
 			cachedInputTokens: 1_000,
@@ -170,7 +172,8 @@ describe("an agent whose engine is Codex", () => {
 		});
 		const trace = await stub.runTrace(run?.id ?? "");
 		expect(trace.filter((span) => span.kind === "model")).toMatchObject([
-			{ step: 0, status: "ok", finishReason: "stop", firstTokenMs: null },
+			{ step: 0, status: "ok", model: "gpt-5.5", finishReason: "tool-calls" },
+			{ step: 1, status: "ok", model: "gpt-5.5", finishReason: "stop" },
 		]);
 		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([
 			{ step: 0, status: "ok", server: "codex", tool: "shell", error: null },
@@ -178,25 +181,25 @@ describe("an agent whose engine is Codex", () => {
 		]);
 	});
 
-	it("counts a resumed thread's turn from where its last turn left it, and a new thread anew", async () => {
+	it("counts what each request's answer reports, never the thread's totals Codex prints", async () => {
 		const { registry, stub, machine } = await conversation();
-		await machine.scriptEngine({ lines: answering("thread-1", "One.", usage(1_200, 1_000, 50)) });
-		// Codex reports the thread's usage so far, which the resumed turn carries on from.
-		await machine.scriptEngine({ lines: answering("thread-1", "Two.", usage(3_000, 2_500, 120)) });
-		// A sandbox that lost the thread starts another, from nothing.
-		await machine.scriptEngine({ lines: answering("thread-2", "Three.", usage(500, 0, 10)) });
+		const lines = (text: string, total: ReturnType<typeof usage>, input: number) => {
+			const [started = "", turn = "", ...rest] = answering("thread-1", text, total);
+			return [started, turn, openaiAnswer({ input, output: 10 }), ...rest];
+		};
+		// Codex reports the thread's usage so far, which the second turn carries on from.
+		await machine.scriptEngine({ lines: lines("One.", usage(1_200, 1_000, 50), 300) });
+		await machine.scriptEngine({ lines: lines("Two.", usage(3_000, 2_500, 120), 400) });
 		const socket = await connect(stub);
 		await ask(socket, "One?");
 		await ask(socket, "Two?");
-		await ask(socket, "Three?");
 		socket.close();
 
 		const runs = await registry.listRuns();
-		const tokens = runs.map((run) => [run.inputTokens, run.cachedInputTokens, run.outputTokens]);
+		const tokens = runs.map((run) => [run.inputTokens, run.outputTokens]);
 		expect(tokens.sort((a, b) => (a[0] ?? 0) - (b[0] ?? 0))).toEqual([
-			[500, 0, 10],
-			[1_200, 1_000, 50],
-			[1_800, 1_500, 70],
+			[300, 10],
+			[400, 10],
 		]);
 	});
 
@@ -287,6 +290,15 @@ describe("an agent whose engine is Codex", () => {
 			lines: [
 				event("thread.started", { thread_id: "thread-1" }),
 				event("turn.started"),
+				{
+					answer: {
+						status: 401,
+						contentType: "application/json",
+						body: JSON.stringify({
+							error: { message: "Incorrect API key provided: sk-gatew****lder." },
+						}),
+					},
+				},
 				event("error", { message: words }),
 				event("turn.failed", { error: { message: words } }),
 			],
@@ -301,8 +313,9 @@ describe("an agent whose engine is Codex", () => {
 		expect(run).toMatchObject({ status: "failed", error: refusal });
 		const trace = await stub.runTrace(run?.id ?? "");
 		expect(trace.filter((span) => span.kind === "model")).toMatchObject([
-			{ status: "error", inputTokens: 0 },
+			{ status: "error", inputTokens: 0, error: "OpenAI refused the workspace's key." },
 		]);
+		expect(JSON.stringify(trace)).not.toContain("sk-gatew");
 	});
 
 	it("names the limit when OpenAI limits the workspace's requests", async () => {
@@ -432,6 +445,7 @@ describe("Codex's command", () => {
 				key: KEY,
 				metadata: { workspace: "w", agent: "a", conversation: "c" },
 				tools: null,
+				meter: { conversation: "c", token: "t" },
 			},
 		};
 		const fresh = codexCommand(job, false);

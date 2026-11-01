@@ -34,7 +34,6 @@ import { edgeTools } from "./edges";
 import { serveEngineTools } from "./engine-tools";
 import {
 	type ChunkSink,
-	type EngineMemory,
 	type EnginePort,
 	type EngineTurn,
 	engineNote,
@@ -43,6 +42,7 @@ import {
 	type SandboxEngine,
 	settle,
 } from "./engines";
+import { type MeteredRequest, meteredRequest } from "./meter";
 import {
 	describeFailure,
 	failureForLogs,
@@ -80,6 +80,19 @@ interface Sandbox extends CheckoutPort, PushPort, EnginePort {
 }
 
 const SEPARATOR = ":";
+
+/** The longest a turn of an engine waits for its last requests' ends to be recorded. */
+const METERED_WAIT_MS = 5_000;
+
+/** A request whose report did not check out: it is recorded as failed, with nothing used. */
+const UNREAD_REQUEST: MeteredRequest = {
+	model: null,
+	tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	finishReason: "error",
+	firstTokenMs: null,
+	gatewayLogId: null,
+	error: null,
+};
 
 /** The model requests one turn may make: the first, and one after each round of tool calls. */
 export const MAX_STEPS = 10;
@@ -162,8 +175,18 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	#stopNested: AbortController | null = null;
 	/** Why the turn under way failed, in the app's words; null while it has not. */
 	#failure: string | null = null;
-	/** The tools of the turn an engine is running, which its sandbox reaches with the token. */
-	#engineTools: { token: string; tools: ToolSet; signal: AbortSignal } | null = null;
+	/**
+	 * The turn an engine is running, which its sandbox reaches with the token: its tools, if it has
+	 * any, and its run, where its requests for the model are recorded as they leave the sandbox,
+	 * with the steps of those still under way.
+	 */
+	#engineTurnState: {
+		token: string;
+		tools: ToolSet | null;
+		signal: AbortSignal;
+		run: RunRecorder;
+		requests: Set<number>;
+	} | null = null;
 
 	override async onStart(): Promise<void> {
 		// A restart cut these runs short: they will not end on their own.
@@ -258,11 +281,51 @@ ${runPageNote(runs, turn.runId)}`
 	 * as does any once the turn has ended.
 	 */
 	async engineTools(token: string, request: Request): Promise<Response> {
-		const turn = this.#engineTools;
-		if (!turn || typeof token !== "string" || token !== turn.token) {
-			return new Response(null, { status: 404 });
-		}
+		const turn = this.#engineTurnFor(token);
+		if (!turn?.tools) return new Response(null, { status: 404 });
 		return serveEngineTools(turn.tools, request, turn.signal);
+	}
+
+	/**
+	 * A request of the engine's for the model left the sandbox (`SandboxOutbound`, `./meter.ts`):
+	 * its span starts. Returns its step, or null without the turn's token or once the turn ended.
+	 */
+	engineRequestStarted(token: string): number | null {
+		const turn = this.#engineTurnFor(token);
+		if (!turn) return null;
+		const step = turn.run.meteredStarted();
+		turn.requests.add(step);
+		return step;
+	}
+
+	/** A request `engineRequestStarted` began has ended, with what its answer reported. */
+	engineRequestEnded(token: string, step: number, request: MeteredRequest): void {
+		const turn = this.#engineTurnFor(token);
+		if (!turn?.requests.has(step)) return;
+		const checked = meteredRequest.safeParse(request);
+		turn.requests.delete(step);
+		turn.run.meteredEnded(
+			step,
+			checked.success
+				? checked.data
+				: { ...UNREAD_REQUEST, error: "What the answer reported could not be read." },
+		);
+	}
+
+	#engineTurnFor(token: string) {
+		const turn = this.#engineTurnState;
+		return turn && typeof token === "string" && token === turn.token ? turn : null;
+	}
+
+	/**
+	 * Waits, a while at most, for the turn's requests that left the sandbox to be recorded: the
+	 * engine can end its turn a moment before the Worker reports its last request's end.
+	 */
+	async #meteredRequests(requests: Set<number>): Promise<void> {
+		const until = Date.now() + METERED_WAIT_MS;
+		while (requests.size > 0 && Date.now() < until) {
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
 	}
 
 	/**
@@ -441,8 +504,15 @@ ${runPageNote(runs, turn.runId)}`
 				const offered = Object.keys(tools).length > 0;
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
-				if (offered) this.#engineTools = { token, tools, signal: calls.signal };
-				const turn = engineTurn(engine, writer, run, agent, this.ctx.storage.kv);
+				const requests = new Set<number>();
+				this.#engineTurnState = {
+					token,
+					tools: offered ? tools : null,
+					signal: calls.signal,
+					run,
+					requests,
+				};
+				const turn = engineTurn(engine, writer, run, agent);
 				const stop = () => {
 					calls.abort();
 					sandbox.stopEngine().catch(() => {});
@@ -468,6 +538,7 @@ ${runPageNote(runs, turn.runId)}`
 								conversation: conversationId,
 							},
 							tools: offered ? { conversation: this.name, token } : null,
+							meter: { conversation: this.name, token },
 						},
 					});
 					for await (const line of linesOf(events)) turn.take(line);
@@ -475,7 +546,8 @@ ${runPageNote(runs, turn.runId)}`
 					console.error(`${ENGINE_NAMES[engine]}'s turn failed`, failureForLogs(error));
 				} finally {
 					signal?.removeEventListener("abort", stop);
-					if (this.#engineTools?.token === token) this.#engineTools = null;
+					await this.#meteredRequests(requests);
+					if (this.#engineTurnState?.token === token) this.#engineTurnState = null;
 					calls.abort();
 					await toolbox.close();
 				}
@@ -655,13 +727,12 @@ function engineTurn(
 	sink: ChunkSink,
 	run: RunRecorder,
 	agent: AgentSnapshot,
-	memory: EngineMemory,
 ): EngineTurn {
 	switch (engine) {
 		case "claude-code":
 			return new ClaudeCodeTurn(sink, run, agent);
 		case "codex":
-			return new CodexTurn(sink, run, agent, memory);
+			return new CodexTurn(sink, run, agent);
 		case "opencode":
 			return new OpenCodeTurn(sink, run, agent);
 	}

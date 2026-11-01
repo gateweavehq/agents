@@ -39,6 +39,7 @@ import {
 	type SandboxEngine,
 	TIMED_OUT_STATUS,
 } from "./engines";
+import { type EngineMeter, meterModelRequest } from "./meter";
 import {
 	anthropicRequest,
 	failureForLogs,
@@ -64,6 +65,7 @@ import {
 	ENGINE_TOOLS_HOST,
 	type GitAccess,
 	GOOGLE_API,
+	isMeteredRequest,
 	OPENAI_API,
 	type PushWindow,
 	pushedRefs,
@@ -775,8 +777,9 @@ interface ToolsConversation {
  * the Worker, and the rest get a 403 whose text says why, which the command prints. A fetch of the
  * conversation's repository goes out with a token minted for that repository alone, to read it,
  * and the push `RunnerSandbox.push` makes with one that writes, once its ref updates are checked.
- * While an engine runs a turn, its requests to the model go out with the workspace's key, and
- * those to Gateweave's tools never go out: the conversation answers them, with the turn's token.
+ * While an engine runs a turn, its requests to the model go out with the workspace's key, and the
+ * conversation records each in the run's trace with the usage its answer reports (`./meter.ts`).
+ * Those to Gateweave's tools never go out: the conversation answers them, with the turn's token.
  */
 export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundProps> {
 	override async fetch(request: Request): Promise<Response> {
@@ -795,13 +798,23 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		const env = this.env as unknown as OutboundEnv;
 		const toModel = MODEL_REQUESTS.get(decision.credentials);
 		if (toModel && running) {
-			const { key, metadata } = running.access;
+			const { key, metadata, meter } = running.access;
+			let outgoing: Request;
 			try {
-				return await fetch(toModel(request, key, env, metadata));
+				outgoing = toModel(request, key, env, metadata);
 			} catch (error) {
 				if (error instanceof SettingsError) return refused(error.message, 502);
 				throw error;
 			}
+			if (!isMeteredRequest(url)) return fetch(outgoing);
+			const conversation = env.CONVERSATIONS.getByName(meter.conversation);
+			return meterModelRequest(
+				conversation as unknown as EngineMeter,
+				meter.token,
+				running.provider,
+				() => fetch(outgoing),
+				(promise) => this.ctx.waitUntil(promise),
+			);
 		}
 		if (decision.credentials === "tools" && tools) {
 			const conversation = env.CONVERSATIONS.getByName(tools.conversation);

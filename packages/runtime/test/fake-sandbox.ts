@@ -4,10 +4,11 @@
  * the test Worker binds as `SANDBOX`, so a conversation reaches it as it would a real one. An
  * engine writes what a test scripted for it.
  */
-import { DurableObject } from "cloudflare:workers";
+import { DurableObject, env } from "cloudflare:workers";
 import type { SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
 import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
+import { type EngineMeter, meterModelRequest } from "../src/meter";
 import type { CommitAuthor, PushPort, PushResult } from "../src/pull-requests";
 import type { CommandResult, ReadResult, WriteResult } from "../src/sandbox-tools";
 
@@ -68,11 +69,24 @@ export class MemorySandbox implements CheckoutPort, PushPort {
 }
 
 /**
- * What a turn of an engine writes, whether it then waits until it is stopped, and how its CLI
- * ended, as `engineExit` says it.
+ * A request the engine makes for the model, and the provider's answer to it, which goes through
+ * the same metering as a request that leaves a real sandbox (`../src/meter.ts`).
+ */
+export interface ScriptedAnswer {
+	answer: { status?: number; contentType?: string; body: string; headers?: Record<string, string> };
+	/**
+	 * How long after the answer's end the Worker reports it, for a turn whose CLI ends first. The
+	 * script goes on at once.
+	 */
+	lateMs?: number;
+}
+
+/**
+ * What a turn of an engine writes, with the model requests it makes between its lines, whether it
+ * then waits until it is stopped, and how its CLI ended, as `engineExit` says it.
  */
 export interface EngineScript {
-	lines: string[];
+	lines: (string | ScriptedAnswer)[];
 	untilStopped?: boolean;
 	exit?: EngineExit;
 }
@@ -120,15 +134,46 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 		const writer = writable.getWriter();
 		const encoder = new TextEncoder();
 		void (async () => {
-			for (const line of lines)
-				await writer.write(
-					encoder.encode(`${line}
-`),
-				);
+			for (const line of lines) {
+				if (typeof line === "string") await writer.write(encoder.encode(`${line}\n`));
+				else await this.#answer(job, line);
+			}
 			if (untilStopped) await new Promise<void>((resolve) => (this.#release = resolve));
 			await writer.close();
 		})();
 		return readable;
+	}
+
+	/** Makes a request for the model, which the CLI reads to its end, and waits for its record. */
+	async #answer(job: EngineJob, { answer, lateMs }: ScriptedAnswer): Promise<void> {
+		const conversation = (env as unknown as { CONVERSATIONS: DurableObjectNamespace })
+			.CONVERSATIONS;
+		const stub = conversation.getByName(job.access.meter.conversation) as unknown as EngineMeter;
+		const meter: EngineMeter = {
+			engineRequestStarted: (token) => stub.engineRequestStarted(token),
+			engineRequestEnded: async (token, step, request) => {
+				if (lateMs) await new Promise((resolve) => setTimeout(resolve, lateMs));
+				return stub.engineRequestEnded(token, step, request);
+			},
+		};
+		const recorded: Promise<unknown>[] = [];
+		const response = await meterModelRequest(
+			meter,
+			job.access.meter.token,
+			job.provider,
+			async () =>
+				new Response(answer.body, {
+					status: answer.status ?? 200,
+					headers: { "content-type": answer.contentType ?? "text/event-stream", ...answer.headers },
+				}),
+			(promise) => recorded.push(promise),
+		);
+		await response.text();
+		if (lateMs) {
+			this.ctx.waitUntil(Promise.all(recorded));
+			return;
+		}
+		await Promise.all(recorded);
 	}
 
 	async engineExit(): Promise<EngineExit | null> {
