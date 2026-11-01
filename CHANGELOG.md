@@ -8,6 +8,28 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.5.0] - 2026-11-01
+
+An agent's model requests from its sandbox are now counted as they leave it, so the Runs page
+shows every request Claude Code, Codex and OpenCode make, those of their subagents too, and each
+run shows the sandbox time it took and what that is estimated to cost. Updating a self-hosted copy
+needs no migration and no new setting.
+
+### Added
+
+- Each run with a sandbox shows the sandbox time it accounts for: from its start until its
+  conversation's next turn, or until the sandbox's 15 idle minutes after it ended, so the runs
+  add up to what the daily limit counts. Runs and a run's page show what it is estimated to cost
+  at the machine's list price, apart from the models' cost. (#97)
+
+### Changed
+
+- The model requests of an agent whose engine is Claude Code, Codex or OpenCode are metered where
+  they leave the sandbox, with the usage each answer reports, instead of from what the CLI prints.
+  A Codex turn now shows one span per request rather than one for the whole turn, and requests
+  that were refused, failed or cut off are in the trace with what they used. (#96)
+- OpenCode's `task` tool is on again: its subagents' requests are counted like any other. (#96)
+
 ## [0.4.1] - 2026-11-01
 
 A trigger limited to one Track member's issues shows that member by name. Updating a self-hosted
