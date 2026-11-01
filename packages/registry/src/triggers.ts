@@ -11,6 +11,7 @@
  * (`dueSchedules`), and the run is admitted the same way, under the same limits.
  */
 import {
+	assigneeNameOf,
 	assigneeSkip,
 	eventType,
 	issueOfEvent,
@@ -173,6 +174,7 @@ export function insertTrigger(
 		events: string[] | null;
 		label: string | null;
 		assignee: string | null;
+		assigneeName: string | null;
 		perIssue: boolean;
 		schedule: TriggerSchedule | null;
 		sealed: string;
@@ -196,6 +198,7 @@ export function insertTrigger(
 			// about no issue.
 			label: row.schedule ? null : row.label,
 			assignee: row.schedule ? null : row.assignee,
+			assigneeName: row.schedule || row.assignee === null ? null : row.assigneeName,
 			perIssue: row.schedule ? false : row.perIssue,
 			nextRunAt: row.schedule && nextScheduledRun(row.schedule, now),
 			createdAt: now,
@@ -217,6 +220,7 @@ export function updateTrigger(
 		events?: string[] | null;
 		label?: string | null;
 		assignee?: string | null;
+		assigneeName?: string | null;
 		perIssue?: boolean;
 		schedule?: TriggerSchedule | null;
 		active?: boolean;
@@ -224,11 +228,20 @@ export function updateTrigger(
 	now: number,
 ): Trigger | null {
 	const current = db
-		.select({ schedule: triggers.schedule, active: triggers.active })
+		.select({ schedule: triggers.schedule, active: triggers.active, assignee: triggers.assignee })
 		.from(triggers)
 		.where(eq(triggers.id, id))
 		.get();
 	if (!current) return null;
+	// A name is of the member the trigger takes: with none there is no name, and another member has
+	// none until one is given or an event names them.
+	const assignee = patch.assignee === undefined ? current.assignee : patch.assignee;
+	const renamed =
+		assignee === null
+			? { assigneeName: null }
+			: assignee !== current.assignee
+				? { assigneeName: patch.assigneeName ?? null }
+				: {};
 	const schedule = patch.schedule === undefined ? current.schedule : patch.schedule;
 	const active = patch.active ?? current.active;
 	// A schedule given, changed or resumed counts from now: a resumed one does not run at once for
@@ -240,10 +253,10 @@ export function updateTrigger(
 	// A schedule's runs all start the same way, so it has no event types, label or assignee, and
 	// they are about no issue.
 	const webhookOnly = schedule
-		? { events: null, label: null, assignee: null, perIssue: false }
+		? { events: null, label: null, assignee: null, assigneeName: null, perIssue: false }
 		: {};
 	db.update(triggers)
-		.set({ ...patch, ...timing, ...webhookOnly, updatedAt: now })
+		.set({ ...patch, ...renamed, ...timing, ...webhookOnly, updatedAt: now })
 		.where(eq(triggers.id, id))
 		.run();
 	return getTrigger(db, id);
@@ -339,6 +352,26 @@ export function admitScheduledRun(
 	return { ...admitted, text: triggerMessage(trigger.prompt, body) };
 }
 
+/**
+ * Keeps the name of a trigger's assignee as Track has it: a signed event about an issue assigned
+ * to them names them, whether or not it starts a run. So a trigger made before names were kept
+ * gets one, and a rename in Track shows here.
+ */
+function learnAssigneeName(
+	db: Db,
+	trigger: NonNullable<ReturnType<typeof triggerRow>>,
+	body: string,
+): void {
+	if (trigger.assignee === null) return;
+	const name = assigneeNameOf(trigger.assignee, body);
+	if (name === null || name === trigger.assigneeName) return;
+	// Track renamed them, not the trigger's owner, so the trigger counts as unchanged.
+	db.update(triggers)
+		.set({ assigneeName: name })
+		.where(and(eq(triggers.id, trigger.id), eq(triggers.assignee, trigger.assignee)))
+		.run();
+}
+
 /** What `admitDelivery` decided, before the message is made. */
 export type Admission =
 	| { status: "start"; conversationId: string }
@@ -397,6 +430,7 @@ export function admitDelivery(
 		}
 	}
 	const event = eventType(delivery.body);
+	learnAssigneeName(db, trigger, delivery.body);
 	const record = (
 		status: TriggerDelivery["status"],
 		values: { error?: string | null; conversationId?: string | null } = {},

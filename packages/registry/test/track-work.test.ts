@@ -44,6 +44,7 @@ function plan(repositoryId: string, rest: Partial<TrackWorkPlan> = {}): TrackWor
 		repositoryId,
 		instructions: "Work on the issues assigned to you.\n",
 		memberId: "member-coder",
+		memberName: "Coder",
 		...rest,
 	};
 }
@@ -75,6 +76,8 @@ describe("Track work", () => {
 			events: ["issue.created", "issue.updated", "comment.created"],
 			label: null,
 			assignee: "member-coder",
+			// Shown in place of the id, as Track calls the member.
+			assigneeName: "Coder",
 			perIssue: true,
 			perDay: TRACK_WORK_RUNS_PER_DAY,
 			active: true,

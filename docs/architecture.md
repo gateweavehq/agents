@@ -869,6 +869,11 @@ many runs it may start a day.
   (`data.actor.type`): Track sends no change of the agent member a webhook is for, and one by
   another agent or by Track itself is skipped, so two agents cannot keep each other going. Other
   events about an issue start a run while it is theirs. A scheduled trigger takes no assignee.
+  The trigger also keeps what Track calls the member (`triggers.assignee_name`), which the app
+  shows in place of the id: a setup gives it, and every signed event about an issue assigned to
+  them names them as of the event (`data.issue.assignee`, read by `assigneeNameOf`), whether or
+  not it starts a run, so a trigger made without a name gets one and a rename in Track shows. A
+  change of assignee drops the name of the one before.
 - **Its own conversation.** An admitted delivery opens a conversation for its run alone, started
   by `trigger:<id>` rather than a member (`conversations.trigger_id`), titled after the trigger
   and the event's `type`, unless its trigger keeps one per issue.
@@ -959,7 +964,7 @@ server).
   chosen repository and engine, and the registry holds them to the usual rules (an engine calls
   only its providers' models, and the repository must be one the GitHub App reaches), so a
   refusal throws and undoes the write. The trigger takes `issue.created`, `issue.updated` and
-  `comment.created`, with the member's id as its assignee and one conversation per issue, at most
+  `comment.created`, with the member's id and name as its assignee and one conversation per issue, at most
   20 runs a day, since each can hold a sandbox for an hour.
 - **It reports on the issue.** A trigger's run is told its page in the app, after the trigger's
   message (`triggerTurn`'s `runs`, from `apps/web/src/server/runs-page.ts`: `BETTER_AUTH_URL`'s

@@ -80,6 +80,7 @@ export function setUpTrackTriage(
 			events: [TRACK_TRIAGE_EVENT],
 			label: null,
 			assignee: null,
+			assigneeName: null,
 			// Each new issue is triaged once, in a conversation of its own.
 			perIssue: false,
 			schedule: null,

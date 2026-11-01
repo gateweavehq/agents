@@ -204,6 +204,13 @@
       "when": 1793450608989,
       "tag": "0028_trigger_per_issue",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1793547534967,
+      "tag": "0029_square_trish_tilby",
+      "breakpoints": true
     }
   ]
 }

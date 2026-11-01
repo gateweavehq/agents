@@ -193,7 +193,12 @@ function TriggerRow({
 								{trigger.assignee && (
 									<>
 										{" "}
-										· on issues assigned to <code>{trigger.assignee}</code>
+										· on issues assigned to{" "}
+										{trigger.assigneeName ? (
+											<span title={trigger.assignee}>{trigger.assigneeName}</span>
+										) : (
+											<code>{trigger.assignee}</code>
+										)}
 									</>
 								)}{" "}
 								{trigger.perIssue && "· one conversation per issue "}· signed with{" "}
@@ -653,6 +658,12 @@ function TriggerDialog({
 								gives them. On <code>issue.updated</code> only when they were just assigned, and on
 								a comment only when a person wrote it. Leave it empty for no assignee filter.
 							</p>
+							{trigger?.assigneeName && assignee.trim() === trigger.assignee && (
+								<p className="text-xs text-muted-foreground">
+									Track calls this member{" "}
+									<span className="text-foreground">{trigger.assigneeName}</span>.
+								</p>
+							)}
 						</div>
 					)}
 					{!scheduled && (

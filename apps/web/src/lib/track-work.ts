@@ -61,7 +61,7 @@ export const setUpTrackWork = createServerFn({ method: "POST" })
 		const { default: instructions } = await import("#/server/track-work.md?raw");
 		const { name, email, id } = member.user;
 		const made = await registry.setUpTrackWork(
-			{ ...data.work, instructions, memberId: identity.memberId },
+			{ ...data.work, instructions, memberId: identity.memberId, memberName: identity.name },
 			id,
 			name || email,
 		);
