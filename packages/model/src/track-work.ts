@@ -9,7 +9,7 @@
 import { z } from "zod";
 import { agentDefinitionInput, MAX_WRITTEN_LENGTH } from "./inputs";
 import { trackAgentKey, trackUrlInput } from "./track-triage";
-import { triggerAssignee } from "./triggers";
+import { triggerAssignee, triggerAssigneeName } from "./triggers";
 import { AGENT_ENGINES, MODEL_PROVIDERS } from "./vocabulary";
 
 /**
@@ -66,10 +66,11 @@ export type TrackWorkInput = z.input<typeof trackWorkInput>;
 
 /**
  * What the registry takes to set it up: the input, with the instructions the app bundles and the
- * agent member's id in Track, which the app read with the key.
+ * agent member's id and name in Track, which the app read with the key.
  */
 export const trackWorkPlan = trackWorkInput.extend({
 	instructions: z.string().min(1).max(MAX_WRITTEN_LENGTH),
 	memberId: triggerAssignee.unwrap(),
+	memberName: triggerAssigneeName.unwrap(),
 });
 export type TrackWorkPlan = z.input<typeof trackWorkPlan>;

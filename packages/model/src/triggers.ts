@@ -97,6 +97,12 @@ export interface Trigger {
 	 */
 	assignee: string | null;
 	/**
+	 * What Track calls that member, to show in place of the id: given by the setup that made the
+	 * trigger, and kept current from Track's events about their issues (`assigneeNameOf`). Null
+	 * when the trigger has no assignee or nothing has named them yet.
+	 */
+	assigneeName: string | null;
+	/**
 	 * Whether it keeps one conversation per Gateweave Track issue (`issueOfEvent`): an event about an
 	 * issue it already has a conversation for continues that one, with what was said and worked on
 	 * there, its sandbox's branch and pull request included. An event about no issue starts a
@@ -255,6 +261,18 @@ export const triggerAssignee = z
 	.regex(/^[A-Za-z0-9_-]+$/, "Give the member's id as Track gives it: letters, digits, - and _")
 	.nullable();
 
+/** The longest name of an assignee a trigger keeps. Track's names are far shorter. */
+export const MAX_ASSIGNEE_NAME = 200;
+
+/** What Track calls a trigger's assignee, to show; it names the member `assignee` holds. */
+export const triggerAssigneeName = z.string().trim().min(1).max(MAX_ASSIGNEE_NAME).nullable();
+
+/** A name is of the member the trigger takes, so there is none without one. */
+const NAME_NEEDS_ASSIGNEE = {
+	message: "Give the member's id with their name",
+	path: ["assigneeName"],
+};
+
 /** Only webhooks name an assignee: a schedule's runs are about no issue. */
 const NO_ASSIGNEE = {
 	message: "A scheduled trigger starts on its schedule, not on assignees",
@@ -279,9 +297,11 @@ export const triggerInput = z
 		events: triggerEvents.default(null),
 		label: triggerLabel.default(null),
 		assignee: triggerAssignee.default(null),
+		assigneeName: triggerAssigneeName.default(null),
 		perIssue: z.boolean().default(false),
 		schedule: triggerSchedule.nullable().default(null),
 	})
+	.refine((input) => input.assignee !== null || input.assigneeName === null, NAME_NEEDS_ASSIGNEE)
 	.refine((input) => input.schedule === null || input.events === null, ONE_KIND)
 	.refine((input) => input.schedule === null || input.label === null, NO_LABEL)
 	.refine((input) => input.schedule === null || input.assignee === null, NO_ASSIGNEE)
@@ -300,10 +320,13 @@ export const triggerPatch = z
 		events: triggerEvents.optional(),
 		label: triggerLabel.optional(),
 		assignee: triggerAssignee.optional(),
+		/** Left out, a changed assignee loses the name of the one before. */
+		assigneeName: triggerAssigneeName.optional(),
 		perIssue: z.boolean().optional(),
 		schedule: triggerSchedule.nullable().optional(),
 		active: z.boolean().optional(),
 	})
+	.refine((patch) => patch.assignee !== null || !patch.assigneeName, NAME_NEEDS_ASSIGNEE)
 	.refine((patch) => !patch.schedule || !patch.events, ONE_KIND)
 	.refine((patch) => !patch.schedule || !patch.label, NO_LABEL)
 	.refine((patch) => !patch.schedule || !patch.assignee, NO_ASSIGNEE)
@@ -432,6 +455,20 @@ export function assigneeSkip(assignee: string, body: string): string | null {
 		}
 	}
 	return null;
+}
+
+/**
+ * What an event calls the member `assignee`, when it is about an issue assigned to them: Gateweave
+ * Track's events name an issue's assignee as of the event. Null when the issue is someone else's,
+ * or the event names nobody. The body is whatever the sender sent, so every field is checked
+ * before it is used.
+ */
+export function assigneeNameOf(assignee: string, body: string): string | null {
+	const issue = recordOf(recordOf(recordOf(parseJson(body))?.data)?.issue);
+	const named = recordOf(issue?.assignee);
+	if (!named || named.id !== assignee || typeof named.name !== "string") return null;
+	const name = named.name.trim();
+	return name.length > 0 && name.length <= MAX_ASSIGNEE_NAME ? name : null;
 }
 
 /** The longest workspace or issue id `issueOfEvent` takes; Track's are far shorter. */

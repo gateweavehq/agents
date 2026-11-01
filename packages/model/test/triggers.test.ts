@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+	assigneeNameOf,
 	assigneeSkip,
 	eventType,
 	issueOfEvent,
@@ -290,6 +291,39 @@ it("trims a trigger's assignee, refuses what is not an id, and refuses one on a 
 	expect(triggerPatch.parse({ assignee: null }).assignee).toBeNull();
 	expect(triggerPatch.safeParse({ schedule, assignee: "coder" }).success).toBe(false);
 	expect(triggerPatch.safeParse({ schedule, assignee: null }).success).toBe(true);
+});
+
+it("takes a name for a trigger's assignee only with the assignee", () => {
+	const base = { name: "Assigned issues", prompt: "Work on it", target };
+	expect(
+		triggerInput.parse({ ...base, assignee: "coder", assigneeName: "  Coder " }),
+	).toMatchObject({ assignee: "coder", assigneeName: "Coder" });
+	expect(triggerInput.parse({ ...base, assignee: "coder" }).assigneeName).toBeNull();
+	for (const assigneeName of ["   ", "x".repeat(201)]) {
+		expect(triggerInput.safeParse({ ...base, assignee: "coder", assigneeName }).success).toBe(
+			false,
+		);
+	}
+	expect(triggerInput.safeParse({ ...base, assigneeName: "Coder" }).error?.issues[0]).toMatchObject(
+		{ path: ["assigneeName"], message: "Give the member's id with their name" },
+	);
+	expect(triggerPatch.parse({ assignee: "maya" }).assigneeName).toBeUndefined();
+	expect(triggerPatch.safeParse({ assignee: null, assigneeName: "Maya" }).success).toBe(false);
+	expect(triggerPatch.safeParse({ assignee: null, assigneeName: null }).success).toBe(true);
+});
+
+it("reads what an event calls the member an issue is assigned to", () => {
+	const about = (assignee: unknown) =>
+		JSON.stringify({ type: "issue.updated", data: { issue: { id: "issue-1", assignee } } });
+	expect(assigneeNameOf("coder", about({ id: "coder", name: " Coder Bot " }))).toBe("Coder Bot");
+	// Someone else's issue, nobody's, or a name that is not one, names no one.
+	expect(assigneeNameOf("coder", about({ id: "maya", name: "Maya" }))).toBeNull();
+	expect(assigneeNameOf("coder", about(null))).toBeNull();
+	for (const name of [7, "  ", "x".repeat(201)]) {
+		expect(assigneeNameOf("coder", about({ id: "coder", name }))).toBeNull();
+	}
+	expect(assigneeNameOf("coder", "not json")).toBeNull();
+	expect(assigneeNameOf("coder", JSON.stringify({ type: "schedule", data: {} }))).toBeNull();
 });
 
 it("names the issue an event is about across workspaces, and nothing for other events", () => {

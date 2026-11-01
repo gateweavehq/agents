@@ -35,11 +35,18 @@ describe("Track work input", () => {
 		expect(trackWorkInput.safeParse({ ...INPUT, agentKey: "sk-ant-x" }).success).toBe(false);
 	});
 
-	it("takes the member's id as Track gives it, for the trigger's assignee", () => {
-		const plan = { ...INPUT, instructions: "Work on it.", memberId: "Ab3_x-9" };
-		expect(trackWorkPlan.parse(plan).memberId).toBe("Ab3_x-9");
+	it("takes the member's id and name as Track gives them, for the trigger's assignee", () => {
+		const plan = {
+			...INPUT,
+			instructions: "Work on it.",
+			memberId: "Ab3_x-9",
+			memberName: "Coder",
+		};
+		expect(trackWorkPlan.parse(plan)).toMatchObject({ memberId: "Ab3_x-9", memberName: "Coder" });
 		expect(trackWorkPlan.safeParse({ ...plan, memberId: "" }).success).toBe(false);
 		expect(trackWorkPlan.safeParse({ ...plan, memberId: null }).success).toBe(false);
+		expect(trackWorkPlan.safeParse({ ...plan, memberName: " " }).success).toBe(false);
+		expect(trackWorkPlan.safeParse({ ...plan, memberName: null }).success).toBe(false);
 	});
 });
 

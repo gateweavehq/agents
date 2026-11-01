@@ -435,6 +435,67 @@ describe("triggers", () => {
 		});
 	});
 
+	it("keep their member's name as Track's signed events give it, whether or not a run starts", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub, "Coder");
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger, secret } = await create(stub, {
+			name: "Assigned issues",
+			prompt: "Work on {{data.issue.key}}",
+			target: { kind: "agent", agentId },
+			events: ["issue.created", "issue.updated"],
+			assignee: "member-coder",
+			assigneeName: "Coder",
+		});
+		expect(trigger.assigneeName).toBe("Coder");
+		const about = (assignee: { id: string; name: string } | null, rest = {}) =>
+			JSON.stringify({
+				type: "issue.updated",
+				data: {
+					issue: { id: "i-7", key: "ENG-7", assigneeId: assignee?.id ?? null, assignee },
+					...rest,
+				},
+			});
+		const nameNow = async () =>
+			(await stub.listTriggers()).find((entry) => entry.id === trigger.id)?.assigneeName;
+
+		// An edit to one of its issues starts nothing, but names the member as Track does now.
+		const renamed = about(
+			{ id: "member-coder", name: "Coder Bot" },
+			{ updatedFrom: { title: "x" } },
+		);
+		expect(await deliver(stub, trigger.id, secret, { body: renamed })).toEqual({
+			status: "skipped",
+		});
+		expect(await nameNow()).toBe("Coder Bot");
+		// Someone else's issue, or an event that names nobody, leaves the name as it was.
+		await deliver(stub, trigger.id, secret, { body: about({ id: "member-maya", name: "Maya" }) });
+		await deliver(stub, trigger.id, secret, {
+			body: JSON.stringify({
+				type: "issue.updated",
+				data: { issue: { assigneeId: "member-coder" } },
+			}),
+		});
+		expect(await nameNow()).toBe("Coder Bot");
+
+		// The name is of the member: another one has none until an event names them.
+		expect(await stub.updateTrigger(trigger.id, { name: "Renamed" })).toMatchObject({
+			assigneeName: "Coder Bot",
+		});
+		expect(await stub.updateTrigger(trigger.id, { assignee: "member-maya" })).toMatchObject({
+			assignee: "member-maya",
+			assigneeName: null,
+		});
+		await deliver(stub, trigger.id, secret, { body: about({ id: "member-maya", name: "Maya" }) });
+		expect(await nameNow()).toBe("Maya");
+		expect(
+			await stub.updateTrigger(trigger.id, { assignee: "member-coder", assigneeName: "Coder" }),
+		).toMatchObject({ assigneeName: "Coder" });
+		expect(await stub.updateTrigger(trigger.id, { assignee: null })).toMatchObject({
+			assigneeName: null,
+		});
+	});
+
 	it("keep one conversation per issue, which later events about it continue a turn at a time", async () => {
 		const stub = registry();
 		const agentId = await withAgent(stub, "Coder");

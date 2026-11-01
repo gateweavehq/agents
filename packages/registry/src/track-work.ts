@@ -77,6 +77,7 @@ export function setUpTrackWork(
 			// Only an issue just assigned to the agent member starts a run, or a person's comment on
 			// one, which continues the conversation of that issue.
 			assignee: plan.memberId,
+			assigneeName: plan.memberName,
 			perIssue: true,
 			schedule: null,
 			sealed: plan.sealedSecret,

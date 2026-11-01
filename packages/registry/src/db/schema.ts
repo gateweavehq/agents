@@ -555,6 +555,8 @@ export const triggers = sqliteTable(
 		label: text("label"),
 		/** The Gateweave Track member whose issues it starts runs for; null is no assignee filter. */
 		assignee: text("assignee"),
+		/** What Track calls that member, to show; null when nothing has named them yet. */
+		assigneeName: text("assignee_name"),
 		/** Whether an event about an issue continues the conversation it keeps for that issue. */
 		perIssue: integer("per_issue", { mode: "boolean" }).notNull().default(false),
 		/** When it starts runs on its own; null for a trigger that starts on webhooks. */
