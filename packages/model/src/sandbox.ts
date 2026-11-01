@@ -40,6 +40,39 @@ export const SANDBOX_SECOND_PRICE = 4 * 0.0000025 + 0.5 * 0.00002 + 8 * 0.000000
 /** Minutes without a request after which a sandbox stops, and its files go with it. */
 export const SANDBOX_IDLE_MINUTES = 15;
 
+/** The estimated cost of `seconds` of sandbox time, in millionths of a dollar, as runs count cost. */
+export function sandboxCost(seconds: number): number {
+	return Math.round(seconds * SANDBOX_SECOND_PRICE * 1_000_000);
+}
+
+/** The longest a run goes on before it is taken as cut short, and will not report back. */
+export const RUN_TIMEOUT_MS = 60 * 60 * 1000;
+
+/**
+ * The sandbox time a run accounts for, in seconds: from its start until its conversation's next
+ * turn with a sandbox (`nextTurn`), or until `SANDBOX_IDLE_MINUTES` after it ended, whichever comes
+ * first. The minutes after a turn count as soon as it ends, as the limits count them, since the
+ * sandbox runs them anyway. A run still going counts until `now`; one that never reported back
+ * until `RUN_TIMEOUT_MS` cut it short. Null for a run without a sandbox.
+ */
+export function sandboxRunSeconds(
+	run: { sandbox: boolean; status: string; startedAt: number; endedAt: number | null },
+	nextTurn: number | null,
+	now: number,
+): number | null {
+	if (!run.sandbox) return null;
+	const { startedAt } = run;
+	let end: number;
+	if (run.endedAt === null && run.status === "running" && now - startedAt < RUN_TIMEOUT_MS) {
+		end = Math.max(now, startedAt);
+	} else {
+		const ended = run.endedAt ?? startedAt + RUN_TIMEOUT_MS;
+		end = ended + SANDBOX_IDLE_MINUTES * 60_000;
+	}
+	if (nextTurn !== null) end = Math.min(end, nextTurn);
+	return Math.max(0, end - startedAt) / 1000;
+}
+
 /**
  * Most sandboxes one workspace's conversations have at once. A sandbox counts from its first turn
  * until `SANDBOX_IDLE_MINUTES` after its last; the deployment's account pays for each.

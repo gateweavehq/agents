@@ -69,3 +69,19 @@ export function TotalCost({ total }: { total: RunTotal }) {
 		</>
 	);
 }
+
+/**
+ * The sandbox time a run and the runs nested under it took, and what it is estimated to cost at
+ * the machine's list price, apart from the models' cost; nothing when none had a sandbox.
+ */
+export function SandboxCost({ total }: { total: RunTotal }) {
+	if (total.sandboxSeconds === 0) return null;
+	return (
+		<span
+			className="block text-xs text-muted-foreground"
+			title={`${formatDuration(total.sandboxSeconds * 1000)} of sandbox time`}
+		>
+			+ {formatCost(total.sandboxCost)} sandbox
+		</span>
+	);
+}

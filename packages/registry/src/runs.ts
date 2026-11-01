@@ -6,6 +6,7 @@
  */
 import {
 	type AgentSnapshot,
+	RUN_TIMEOUT_MS,
 	RUNS_PER_PAGE,
 	type Run,
 	type RunCursor,
@@ -14,6 +15,8 @@ import {
 	type RunTotal,
 	type RunUsage,
 	SANDBOX_IDLE_MINUTES,
+	sandboxCost,
+	sandboxRunSeconds,
 	type TeamEdgeKind,
 	type TotaledRun,
 	triggerOf,
@@ -38,7 +41,7 @@ import { agents, runs, triggers } from "./db/schema";
 import type { Db } from "./state";
 
 /** A run still going after this long was cut short and will not report back. */
-export const RUN_TIMEOUT = 60 * 60 * 1000;
+export const RUN_TIMEOUT = RUN_TIMEOUT_MS;
 
 /** Where a nested run sits: the run that called it over an edge, and the run at the top. */
 export interface RunParent {
@@ -311,6 +314,7 @@ export function activeRuns(db: Db, conversationId: string): Run[] {
 function withTotals(db: Db, list: Run[]): TotaledRun[] {
 	if (list.length === 0) return [];
 	const tops = [...new Set(list.map((run) => run.rootRunId ?? run.id))];
+	const now = Date.now();
 	const family = db
 		.select({
 			id: runs.id,
@@ -319,10 +323,18 @@ function withTotals(db: Db, list: Run[]): TotaledRun[] {
 			inputTokens: runs.inputTokens,
 			outputTokens: runs.outputTokens,
 			cost: runs.cost,
+			sandbox: runs.sandbox,
+			startedAt: runs.startedAt,
+			endedAt: runs.endedAt,
+			nextTurn: nextSandboxTurn(),
 		})
 		.from(runs)
 		.where(inArray(runs.rootRunId, tops))
-		.all();
+		.all()
+		.map(({ nextTurn, ...run }) => ({
+			...run,
+			sandboxSeconds: sandboxRunSeconds(run, nextTurn, now),
+		}));
 	const called = new Map<string, typeof family>();
 	for (const run of family) {
 		if (run.parentRunId === null) continue;
@@ -336,11 +348,16 @@ function withTotals(db: Db, list: Run[]): TotaledRun[] {
 			outputTokens: 0,
 			cost: 0,
 			unpriced: 0,
+			sandboxSeconds: 0,
+			sandboxCost: 0,
 		};
-		const add = (one: Pick<Run, "id" | "status" | "inputTokens" | "outputTokens" | "cost">) => {
+		const add = (
+			one: Pick<Run, "id" | "status" | "inputTokens" | "outputTokens" | "cost" | "sandboxSeconds">,
+		) => {
 			total.runs++;
 			total.inputTokens += one.inputTokens;
 			total.outputTokens += one.outputTokens;
+			total.sandboxSeconds += one.sandboxSeconds ?? 0;
 			// A run still going has no cost yet, which says nothing of its prices.
 			if (one.status === "running") total.running++;
 			else if (one.cost === null) total.unpriced++;
@@ -348,6 +365,7 @@ function withTotals(db: Db, list: Run[]): TotaledRun[] {
 			for (const next of called.get(one.id) ?? []) add(next);
 		};
 		add(run);
+		total.sandboxCost = sandboxCost(total.sandboxSeconds);
 		return { ...run, total };
 	});
 }
@@ -394,9 +412,24 @@ export function expireRuns(db: Db, now: number): void {
 		.run();
 }
 
+/**
+ * When the run's conversation next took a turn with its sandbox, which ends the sandbox time the
+ * run accounts for; null when it has not. The later run is read under another name.
+ */
+function nextSandboxTurn() {
+	return sql<number | null>`(SELECT min(later.started_at) FROM runs AS later
+		WHERE later.conversation_id = ${runs.conversationId} AND later.sandbox = 1
+			AND later.started_at > ${runs.startedAt})`;
+}
+
 function selectRuns(db: Db) {
 	return db
-		.select({ run: runs, agentName: agents.name, triggerName: triggers.name })
+		.select({
+			run: runs,
+			agentName: agents.name,
+			triggerName: triggers.name,
+			nextTurn: nextSandboxTurn(),
+		})
 		.from(runs)
 		.innerJoin(agents, eq(agents.id, runs.agentId))
 		.leftJoin(triggers, eq(triggers.id, runs.triggerId))
@@ -407,10 +440,17 @@ function toRun({
 	run,
 	agentName,
 	triggerName,
+	nextTurn,
 }: {
 	run: typeof runs.$inferSelect;
 	agentName: string;
 	triggerName: string | null;
+	nextTurn: number | null;
 }): Run {
-	return { ...run, agentName, triggerName };
+	return {
+		...run,
+		agentName,
+		triggerName,
+		sandboxSeconds: sandboxRunSeconds(run, nextTurn, Date.now()),
+	};
 }
