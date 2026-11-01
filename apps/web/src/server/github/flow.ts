@@ -18,7 +18,7 @@ import {
 	authorizeUrl,
 	exchangeCode,
 	pkcePair,
-	userInstallationIds,
+	userControlsInstallation,
 	verifyWebhook,
 	type WebhookPayload,
 	webhookPayload,
@@ -143,7 +143,7 @@ export async function finishVerify(request: Request): Promise<Response> {
 			redirectUri: callbackUrl(request),
 			verifier,
 		});
-		if (!(await userInstallationIds(token)).has(state.installationId)) return finish("denied");
+		if (!(await userControlsInstallation(token, state.installationId))) return finish("denied");
 		const installation = await config.app.installation(state.installationId);
 		// state.userId is the signed-in user, checked above.
 		if ((await linkInstallation(state.workspaceId, installation, state.userId)) === "taken") {

@@ -78,6 +78,12 @@ export class FakeGitHub {
 	readonly installations = new Map<string, FakeInstallation>();
 	/** The installations each GitHub login can reach. */
 	readonly people = new Map<string, Set<string>>();
+	/**
+	 * Organizations (by login) in which a GitHub login is only a member, as one with read access
+	 * to a repository: the installation is listed for them, but they are no admin. The key is
+	 * `<login>/<organization>`.
+	 */
+	readonly members = new Set<string>();
 
 	readonly #keys = generateKeyPairSync("rsa", {
 		modulusLength: 2048,
@@ -269,11 +275,39 @@ export class FakeGitHub {
 				}
 				return Response.json({
 					total_count: reachable.size,
-					installations: [...reachable].map((id) => ({ id: Number(id) })),
+					installations: [...reachable].map((id) => ({
+						id: Number(id),
+						account: this.installations.get(id)?.account,
+					})),
 				});
 			}
-			default:
+			case "GET api.github.com/user": {
+				// People are keyed by `<login>-gh`; their GitHub login is the part before it.
+				const person = bearer.replace(/^ghu_/, "");
+				if (!bearer.startsWith("ghu_") || !this.people.has(person)) {
+					return Response.json({ message: "Bad credentials" }, { status: 401 });
+				}
+				return Response.json({ login: person.replace(/-gh$/, "") });
+			}
+			default: {
+				const org = /^GET api\.github\.com\/user\/memberships\/orgs\/([^/]+)$/.exec(route)?.[1];
+				if (org !== undefined) {
+					const person = bearer.replace(/^ghu_/, "");
+					const reachable = this.people.get(person);
+					if (!bearer.startsWith("ghu_") || !reachable) {
+						return Response.json({ message: "Bad credentials" }, { status: 401 });
+					}
+					const inOrg = [...reachable].some(
+						(id) => this.installations.get(id)?.account.login === org,
+					);
+					if (!inOrg) return Response.json({ message: "Not Found" }, { status: 404 });
+					return Response.json({
+						state: "active",
+						role: this.members.has(`${person}/${org}`) ? "member" : "admin",
+					});
+				}
 				return Response.json({ message: `No fake for ${route}` }, { status: 404 });
+			}
 		}
 	}
 

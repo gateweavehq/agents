@@ -178,19 +178,62 @@ export function sharedApp(config: GitHubAppConfig): GitHubApp {
 	return shared.app;
 }
 
-/** Every installation the user behind a user access token can reach, by id. */
-export async function userInstallationIds(userToken: string): Promise<Set<string>> {
+/**
+ * Whether the user behind a user access token controls the installation's account: it is their
+ * own user account, or they are an active admin of its organization. `/user/installations`
+ * alone is not proof, because it lists an installation for anyone with read access to one of its
+ * repositories, and linking an installation lets a workspace scan and open pull requests on all
+ * of them. Anything GitHub will not confirm, such as an app without the "Members: read"
+ * permission, counts as no.
+ */
+export async function userControlsInstallation(
+	userToken: string,
+	installationId: string,
+): Promise<boolean> {
 	const page = z.object({
 		total_count: z.number(),
-		installations: z.array(z.object({ id: z.number().int() })),
+		installations: z.array(
+			z.object({
+				id: z.number().int(),
+				account: z.object({ login: z.string(), type: z.string() }).nullish(),
+			}),
+		),
 	});
-	const ids = new Set<string>();
+	let seen = 0;
 	for (let number = 1; ; number++) {
 		const { total_count, installations } = page.parse(
 			await request(`/user/installations?per_page=100&page=${number}`, userToken),
 		);
-		for (const installation of installations) ids.add(String(installation.id));
-		if (installations.length < 100 || ids.size >= total_count) return ids;
+		const found = installations.find(({ id }) => String(id) === installationId);
+		if (found) return controlsAccount(userToken, found.account);
+		seen += installations.length;
+		if (installations.length < 100 || seen >= total_count) return false;
+	}
+}
+
+async function controlsAccount(
+	userToken: string,
+	account: { login: string; type: string } | null | undefined,
+): Promise<boolean> {
+	if (!account) return false;
+	if (account.type === "User") {
+		const me = z.object({ login: z.string() }).parse(await request("/user", userToken));
+		return me.login.toLowerCase() === account.login.toLowerCase();
+	}
+	if (account.type !== "Organization") return false;
+	try {
+		const membership = z
+			.object({ state: z.string(), role: z.string() })
+			.parse(
+				await request(`/user/memberships/orgs/${encodeURIComponent(account.login)}`, userToken),
+			);
+		return membership.state === "active" && membership.role === "admin";
+	} catch (error) {
+		// Not a member, or no permission to see: neither is control. Other failures are GitHub's.
+		if (error instanceof GitHubError && (error.status === 403 || error.status === 404)) {
+			return false;
+		}
+		throw error;
 	}
 }
 

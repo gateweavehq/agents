@@ -195,6 +195,39 @@ describe("connecting GitHub", () => {
 		expect(await repositoryNames(workspaceId)).toEqual([]);
 	});
 
+	it("refuses an installation whose organization the person only has read access to", async () => {
+		// GitHub lists an installation for anyone with read access to one of its repositories.
+		github.installations.set("505", {
+			account: { login: "big-org", type: "Organization" },
+			repositories: [{ id: 41, name: "internal", owner: "big-org" }],
+		});
+		github.people.set("reader-gh", new Set(["505"]));
+		github.members.add("reader-gh/big-org");
+		const { headers } = await signUp(agents, origin, "reader");
+		const workspaceId = await createWorkspace(agents, origin, headers, "readers");
+
+		expect(await connect(headers.cookie, "readers", "505", "reader-gh")).toBe(
+			"/readers/settings/github?github=denied",
+		);
+		expect(await linkedInstallations(workspaceId)).toEqual([]);
+		expect(await repositoryNames(workspaceId)).toEqual([]);
+	});
+
+	it("refuses another user's account that GitHub lists for the person", async () => {
+		github.installations.set("506", {
+			account: { login: "someone-else", type: "User" },
+			repositories: [{ id: 51, name: "notes", owner: "someone-else" }],
+		});
+		github.people.set("nosy-gh", new Set(["506"]));
+		const { headers } = await signUp(agents, origin, "nosy");
+		const workspaceId = await createWorkspace(agents, origin, headers, "nosy");
+
+		expect(await connect(headers.cookie, "nosy", "506", "nosy-gh")).toBe(
+			"/nosy/settings/github?github=denied",
+		);
+		expect(await linkedInstallations(workspaceId)).toEqual([]);
+	});
+
 	it("keeps an installation in the workspace that linked it first", async () => {
 		github.installations.set("503", {
 			account: { login: "shared", type: "Organization" },

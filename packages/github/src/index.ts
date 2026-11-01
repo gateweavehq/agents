@@ -7,7 +7,7 @@ export {
 	type Installation,
 	type RepositoryPermission,
 	sharedApp,
-	userInstallationIds,
+	userControlsInstallation,
 } from "./app";
 export {
 	type BranchHead,
