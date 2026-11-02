@@ -69,5 +69,10 @@ declare namespace Cloudflare {
 		 * (EMAIL_FROM). Keep it a secret, so the address stays out of the repository.
 		 */
 		SANDBOX_ALERT_EMAIL?: string;
+		/**
+		 * Where a workspace asks for an invitation to Workers AI or sandboxes, when the server offers
+		 * them by invitation: an email address or an https URL. Settings > Models links to it.
+		 */
+		INVITATION_CONTACT?: string;
 	}
 }
