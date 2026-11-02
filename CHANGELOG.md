@@ -8,6 +8,39 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.7.0] - 2026-11-02
+
+Two more coding agents in scans, MCP servers that run as a local command, run traces in your own
+observability tool, replaying a run from a step, and usage across workspaces for whoever runs the
+server. Updating a self-hosted copy applies migrations in each workspace's registry, which run on
+their own, and needs no new setting; the usage events are optional (see below).
+
+### Added
+
+- Scans find GitHub Copilot (`.github/copilot-instructions.md`, path-specific instructions,
+  prompt files, custom agents, chat modes, `.vscode/mcp.json` and skills) and Devin, which
+  Windsurf became (`.devin/rules`, Windsurf's rules as legacy, global rules and
+  `.devin/config.json`). Both are read-only: setups do not write them yet. (#116)
+- An agent with a sandbox can use MCP servers that run as a local command, such as
+  `npx -y @acme/mcp`: each turn starts the command in the conversation's sandbox and talks to it
+  over its standard input and output. Its environment takes the agent's environment set's
+  variables, never a secret, since the sandbox holds none: a server that names a secret is left
+  out of the turn, saying which. (#118)
+- Settings > Telemetry sends each run's trace to an OpenTelemetry endpoint over OTLP/HTTP, such
+  as Honeycomb, Grafana or Datadog: the run, its model requests with GenAI attributes for model,
+  tokens and cost, its tool calls and its team's calls, a team's turn as one trace. No message
+  text and no tool input or output is sent; the endpoint's headers are encrypted. A failed send
+  is tried again a few times, and the page shows how the last one went. (#119)
+- On a run's page, "Replay from here" on a model request starts a new conversation with the
+  run's conversation up to that request, answered by the agent as it is now, so a change to its
+  instructions or model shows. The replay links back to the run, which lists its replays. Only
+  whoever started a run may replay it, and owners and admins a trigger's run too. Runs from
+  before this version, and runs of Claude Code, Codex and OpenCode, cannot be replayed. (#120)
+- A server can bind a Workers Analytics Engine dataset as `USAGE` to get one event per run that
+  ends, indexed by workspace, with its agent, model, tokens, cost and sandbox time, for charts
+  and billing across workspaces; `docs/self-hosting.md` has the fields and a query. Gateweave
+  Cloud binds one. (#117)
+
 ## [0.6.2] - 2026-11-02
 
 A small fix to run traces, and a safer test dependency. Updating a self-hosted copy needs no
