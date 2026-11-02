@@ -7,6 +7,7 @@ import {
 	type ProviderModel,
 	SANDBOX_IDLE_MINUTES,
 	type SandboxOffer,
+	type WorkersAiOffer,
 } from "@gateweave/agents-model";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -33,6 +34,7 @@ import {
 	removeProviderKey,
 	type SandboxTime,
 	saveProviderKey,
+	type WorkersAiSpend,
 } from "#/lib/providers";
 import { useDocumentTitle } from "#/lib/title";
 
@@ -78,7 +80,11 @@ function ModelsPage() {
 					README in the repository.
 				</Notice>
 			)}
-			<WorkersAi offered={data.workersAi} models={data.workersAiModels} />
+			<WorkersAi
+				offer={data.workersAiOffer}
+				spend={data.workersAiSpend}
+				models={data.workersAiModels}
+			/>
 			<Sandboxes offer={data.sandbox} time={data.sandboxTime} />
 		</div>
 	);
@@ -119,14 +125,18 @@ function KeyedProviders({ keys, admin }: { keys: ProviderKey[]; admin: boolean }
  * their own Cloudflare account. So the page only says whether it is on, and which models it has.
  */
 function WorkersAi({
-	offered,
+	offer,
+	spend,
 	models,
 }: {
-	offered: boolean;
+	offer: WorkersAiOffer;
+	spend: WorkersAiSpend | null;
 	/** The models, or why they could not be listed; null when the server does not offer it. */
 	models: ProviderModel[] | string | null;
 }) {
 	const name = MODEL_PROVIDER_NAMES["workers-ai"];
+	const offered = offer === "offered";
+	const limit = spend?.limit ?? null;
 
 	return (
 		<section aria-labelledby="workers-ai-heading" className="space-y-3">
@@ -136,10 +146,19 @@ function WorkersAi({
 				</h2>
 				<p className="text-sm text-muted-foreground">
 					{offered
-						? "This server offers Workers AI models to every workspace. They need no key: whoever runs the server pays for their runs."
-						: "This server does not offer Workers AI. Whoever runs it can turn it on by setting WORKERS_AI_TOKEN, and CLOUDFLARE_ACCOUNT_ID unless AI_GATEWAY_URL names the account; see the README in the repository."}
+						? `This server offers Workers AI models to this workspace. They need no key: whoever runs the server pays for their runs${limit === null ? "" : `, up to $${limit} a day`}.`
+						: offer === "by-invitation"
+							? "This server offers Workers AI only to the workspaces it invites. Whoever runs it can invite this one."
+							: "This server does not offer Workers AI. Whoever runs it can turn it on by setting WORKERS_AI_TOKEN, and CLOUDFLARE_ACCOUNT_ID unless AI_GATEWAY_URL names the account; see the README in the repository."}
 				</p>
 			</div>
+			{spend && (
+				<p className="rounded-lg border p-3 text-sm">
+					{limit === null
+						? `${dollars(spend.dollars)} of Workers AI today (UTC), at its list prices.`
+						: `${dollars(spend.dollars)} of $${limit} used today (UTC), at Workers AI's list prices.${spend.dollars >= limit ? " Workers AI agents answer again tomorrow." : ""}`}
+				</p>
+			)}
 			{offered && models !== null && (
 				<div className="rounded-lg border p-3 text-sm">
 					{typeof models === "string" ? (
@@ -190,6 +209,10 @@ function Sandboxes({ offer, time }: { offer: SandboxOffer; time: SandboxTime | n
 			)}
 		</section>
 	);
+}
+
+function dollars(amount: number) {
+	return `$${amount.toFixed(amount < 1 ? 4 : 2)}`;
 }
 
 function minutes(count: number) {

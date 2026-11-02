@@ -1230,9 +1230,12 @@ provider keys.
 
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
   [Track triage](#track-triage) and [Track issue work](#track-issue-work).
-- **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
-  Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
-  them.
+- **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). Cloud can turn it
+  on with its token now: AGT-75 limits it to the workspaces the deployment invites
+  (`WORKERS_AI_WORKSPACES`, which Cloud sets to `sandbox`, its sandbox invitations) and to
+  `WORKERS_AI_DAILY_DOLLARS` a day each ($20 on Cloud), counted from the workspace's runs at
+  Workers AI's list prices. `#prepareTurn` refuses a turn past either, and Settings > Models shows
+  the day's spend.
 - **After cloud runners** (phase 5, AGT-9, done): container cost on Runs (AGT-53).
 
 ## Deploys

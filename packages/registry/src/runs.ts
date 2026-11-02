@@ -96,6 +96,25 @@ export function beginRun(
 	return id;
 }
 
+/**
+ * What a provider's runs that started between `from` and `to` cost, in millionths of a dollar, at
+ * list prices: those still going count what they reported so far, which is nothing until they end.
+ */
+export function providerCost(db: Db, provider: string, from: number, to: number): number {
+	const row = db
+		.select({ cost: sum(runs.cost) })
+		.from(runs)
+		.where(
+			and(
+				eq(runs.provider, provider as Run["provider"]),
+				gte(runs.startedAt, from),
+				lt(runs.startedAt, to),
+			),
+		)
+		.get();
+	return Number(row?.cost ?? 0);
+}
+
 /** Whether a conversation has had a run: the first run of a replay's conversation is the replay. */
 export function hasRuns(db: Db, conversationId: string): boolean {
 	return (

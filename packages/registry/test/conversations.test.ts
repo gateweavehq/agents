@@ -186,6 +186,84 @@ describe("turns with Workers AI", () => {
 		expect(await stub.listProviderKeys()).toEqual([]);
 	});
 
+	/** Runs `fn` on a registry whose server set these Workers AI settings. */
+	async function withSettings<T>(
+		stub: ReturnType<typeof registry>,
+		added: Record<string, string>,
+		fn: (instance: RegistryDO) => Promise<T>,
+	) {
+		return runInDurableObject(stub, async (instance: RegistryDO) => {
+			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
+			Object.assign(settings, added);
+			try {
+				return await fn(instance);
+			} finally {
+				for (const name of Object.keys(added)) delete settings[name];
+			}
+		});
+	}
+
+	it("are only for the workspaces the server invites", async () => {
+		const workspace = crypto.randomUUID();
+		const stub = env.REGISTRY.getByName(workspace);
+		const id = await workersAiConversation(stub);
+		const refused = {
+			status: "refused",
+			message:
+				"This server offers Workers AI only to the workspaces it invites, so Scout cannot answer.",
+		};
+		await withSettings(stub, { WORKERS_AI_WORKSPACES: "someone-else" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toEqual(refused);
+		});
+		await withSettings(stub, { WORKERS_AI_WORKSPACES: `other, ${workspace}` }, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toHaveProperty("runId");
+		});
+		// `sandbox` invites the sandbox's invitations, and nobody when there are none.
+		await withSettings(
+			stub,
+			{ WORKERS_AI_WORKSPACES: "sandbox", SANDBOX_WORKSPACES: workspace },
+			async (instance) => {
+				expect(await instance.beginTurn(id, "Hello")).toHaveProperty("runId");
+			},
+		);
+		await withSettings(stub, { WORKERS_AI_WORKSPACES: "sandbox" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toEqual(refused);
+		});
+	});
+
+	it("stop for the day once the workspace spent its daily limit", async () => {
+		const stub = registry();
+		const id = await workersAiConversation(stub);
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		// $1.50 at list prices.
+		await stub.finishRun(first.runId, {
+			status: "succeeded",
+			error: null,
+			steps: 1,
+			inputTokens: 10,
+			outputTokens: 5,
+			cachedInputTokens: 0,
+			cost: 1_500_000,
+			endedAt: Date.now(),
+		});
+		expect(await stub.workersAiSpentToday()).toBeCloseTo(1.5, 6);
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "2" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Again")).toHaveProperty("runId");
+		});
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "1.5" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Again")).toEqual({
+				status: "refused",
+				message:
+					"This workspace has used its Workers AI for today, $1.5, so Scout cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.",
+			});
+		});
+		// A limit that is not a number allows nothing.
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "twenty" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Again")).toHaveProperty("status", "refused");
+		});
+	});
+
 	it("are refused up front on a server that did not turn it on", async () => {
 		const stub = registry();
 		const id = await workersAiConversation(stub);

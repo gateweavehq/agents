@@ -145,7 +145,7 @@ it("shows Settings > Models that the server offers Workers AI, with models that 
 	await createWorkspace(on, origin, ada, "wai-settings");
 
 	const html = await page(on, "/wai-settings/settings/models", ada.cookie);
-	expect(html).toContain("This server offers Workers AI models to every workspace");
+	expect(html).toContain("This server offers Workers AI models to this workspace");
 	expect(html).toContain("2 models that can use tools");
 	expect(html).toContain(SCOUT);
 	expect(html).toContain("@cf/openai/gpt-oss-20b");
@@ -199,7 +199,7 @@ it("takes the account from the AI Gateway address when none is named", async () 
 		const { headers: ada } = await signUp(gateway, origin, "ada-wai-gw");
 		await createWorkspace(gateway, origin, ada, "wai-gw");
 		const html = await page(gateway, "/wai-gw/settings/models", ada.cookie);
-		expect(html).toContain("This server offers Workers AI models to every workspace");
+		expect(html).toContain("This server offers Workers AI models to this workspace");
 	} finally {
 		await gateway.dispose();
 	}

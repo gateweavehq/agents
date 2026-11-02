@@ -123,9 +123,13 @@ import {
 	triggerPatch,
 	triggerSecret,
 	turnVia,
+	WORKERS_AI_DAY_USED,
+	WORKERS_AI_NOT_INVITED,
 	type WorkersAiSettings,
 	type WrittenAssetInput,
+	workersAiDailyLimit,
 	workersAiOffered,
+	workersAiOfferTo,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
@@ -222,6 +226,7 @@ import {
 	listNestedRuns,
 	listReplays,
 	listRuns,
+	providerCost,
 	recordRunPullRequest,
 	runHadSandbox,
 	runUsage,
@@ -940,6 +945,18 @@ export class RegistryDO extends DurableObject {
 			return refused(
 				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
 			);
+		} else {
+			const settings = this.env as WorkersAiSettings;
+			// Each registry is named for its workspace (`registryFor` in the app).
+			if (workersAiOfferTo(settings, this.ctx.id.name ?? "") !== "offered") {
+				return refused(`${WORKERS_AI_NOT_INVITED}, so ${agent.name} cannot answer.`);
+			}
+			const limit = workersAiDailyLimit(settings);
+			if (limit !== null && this.workersAiSpentToday() >= limit) {
+				return refused(
+					`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
+				);
+			}
 		}
 		// An ask has no tools, so it needs no sandbox either, but an engine such as Claude Code runs
 		// only in one.
@@ -1042,6 +1059,15 @@ export class RegistryDO extends DurableObject {
 			);
 		}
 		return closed;
+	}
+
+	/**
+	 * US dollars the workspace's runs spent on Workers AI today (UTC), at its list prices, for the
+	 * deployment's daily limit. The deployment pays for them.
+	 */
+	workersAiSpentToday(): number {
+		const today = utcDay(Date.now());
+		return providerCost(this.#db, "workers-ai", today.start, today.end) / 1_000_000;
 	}
 
 	/** Seconds of sandbox time the workspace's conversations use today (UTC), for its limit. */

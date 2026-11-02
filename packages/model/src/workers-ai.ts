@@ -13,6 +13,46 @@ export interface WorkersAiSettings {
 	CLOUDFLARE_ACCOUNT_ID?: string;
 	/** `https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>`. */
 	AI_GATEWAY_URL?: string;
+	/**
+	 * The ids of the workspaces that may use Workers AI, separated by commas or spaces; every
+	 * workspace when unset. `sandbox` invites the workspaces `SANDBOX_WORKSPACES` invites.
+	 */
+	WORKERS_AI_WORKSPACES?: string;
+	/** US dollars each workspace may spend on Workers AI in a day (UTC). No limit when unset. */
+	WORKERS_AI_DAILY_DOLLARS?: string;
+	SANDBOX_WORKSPACES?: string;
+}
+
+/** Whether the deployment offers Workers AI to a workspace: to all, by invitation, or not at all. */
+export type WorkersAiOffer = "offered" | "by-invitation" | "none";
+
+/** Why a workspace the deployment did not invite cannot use Workers AI. */
+export const WORKERS_AI_NOT_INVITED =
+	"This server offers Workers AI only to the workspaces it invites";
+
+/** Why a workspace that spent its Workers AI for the day cannot use more until the day ends. */
+export const WORKERS_AI_DAY_USED = "This workspace has used its Workers AI for today";
+
+export function workersAiOfferTo(settings: WorkersAiSettings, workspaceId: string): WorkersAiOffer {
+	if (!workersAiOffered(settings)) return "none";
+	const named = (settings.WORKERS_AI_WORKSPACES ?? "").trim();
+	const list = named === "sandbox" ? (settings.SANDBOX_WORKSPACES ?? "") : named;
+	const invited = list.split(/[\s,]+/).filter(Boolean);
+	// `sandbox` with no sandbox invitations invites nobody, rather than everyone.
+	if (named === "sandbox" && invited.length === 0) return "by-invitation";
+	return invited.length === 0 || invited.includes(workspaceId) ? "offered" : "by-invitation";
+}
+
+/**
+ * Each workspace's daily Workers AI spend, in US dollars, at Workers AI's prices; null when there
+ * is no limit. A setting that is not a number allows nothing, so a mistyped limit never lifts it.
+ */
+export function workersAiDailyLimit(settings: WorkersAiSettings): number | null {
+	// Wrangler passes a number in `vars` as a number.
+	const text = String(settings.WORKERS_AI_DAILY_DOLLARS ?? "").trim();
+	if (text === "") return null;
+	const value = Number(text);
+	return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
 /** Why an agent that uses Workers AI cannot answer on a server that did not turn it on. */
