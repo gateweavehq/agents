@@ -61,6 +61,7 @@ import {
 	type PushPort,
 	pullRequestTools,
 } from "./pull-requests";
+import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
 import { SANDBOX_ROOT, sandboxTools } from "./sandbox-tools";
 import { createOutbox, queueExport, sendDue } from "./telemetry-export";
 import { connectTools } from "./tools";
@@ -242,6 +243,40 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		return { runId: turn.runId, answer: answerOf(this.messages, turn.agent.name) };
 	}
 
+	/**
+	 * This conversation's messages up to a run's model request `step`, as JSON, for a replay of the
+	 * run in a conversation of its own (`./replay.ts`). Null when the run is not this conversation's,
+	 * or began before runs remembered their message. The app checks first that the caller may.
+	 */
+	replaySource(runId: string, step: number): string | null {
+		if (typeof runId !== "string" || !Number.isInteger(step) || step < 0) return null;
+		const messageId = runMessageOf(this.#sql, runId);
+		if (messageId === null) return null;
+		const history = replayHistory(this.messages, messageId, step);
+		return history ? JSON.stringify(history) : null;
+	}
+
+	/**
+	 * Takes the first turn of a replay: this new conversation gets `history`, the JSON of the replayed
+	 * conversation's messages up to the step (`replaySource`), and the agent answers from there. The
+	 * registry begins the run, which it links to the run replayed. Nobody waits for the answer.
+	 */
+	async replayTurn(history: string): Promise<TriggerTurnOutcome> {
+		const { conversationId, registry } = this.#parties();
+		if (this.messages.length > 0) {
+			return { runId: null, error: "This conversation has begun already" };
+		}
+		const messages = JSON.parse(history) as UIMessage[];
+		const turn = await registry.beginTurn(conversationId, lastUserText(messages));
+		if ("status" in turn) return { runId: null, error: turn.message };
+		this.#begun = turn;
+		const done = this.saveMessages(() => messages);
+		this.keepAliveWhile(() => done).catch((error: unknown) =>
+			console.error("A replay's turn failed", failureForLogs(error)),
+		);
+		return { runId: turn.runId };
+	}
+
 	/** Stops the nested turn under way. */
 	stopNestedTurn(): void {
 		this.#stopNested?.abort();
@@ -353,6 +388,7 @@ ${runPageNote(runs, turn.runId)}`
 		const turn = begun ?? (await registry.beginTurn(conversationId, lastUserText(this.messages)));
 		if ("status" in turn) return failed(turn.message);
 		const { agent, key, mcpServers, edges, repository, runId } = turn;
+		recordRunMessage(this.#sql, runId, this.messages);
 		const sandbox = turn.sandbox ? this.#sandbox() : null;
 		const branch = conversationBranch(conversationId);
 		const run = new RunRecorder(this.#sql, runId, agent);
@@ -695,6 +731,7 @@ ${runPageNote(runs, turn.runId)}`
 		if (!this.#traceTables) {
 			createTraceTables(sql);
 			createOutbox(sql);
+			createRunMessages(sql);
 			this.#traceTables = true;
 		}
 		return sql;

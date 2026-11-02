@@ -61,6 +61,7 @@ export function beginRun(
 		teamPath = null,
 		parent = null,
 		sandbox = false,
+		replayOf = null,
 	}: {
 		agent: AgentSnapshot;
 		conversationId: string;
@@ -68,6 +69,8 @@ export function beginRun(
 		teamPath?: string[] | null;
 		parent?: RunParent | null;
 		sandbox?: boolean;
+		/** The run this one replays, for the first run of a replay's conversation. */
+		replayOf?: string | null;
 	},
 	now: number,
 ): string {
@@ -86,10 +89,29 @@ export function beginRun(
 			// A trigger's runs keep it by id, nested ones too, to show its name.
 			triggerId: triggerOf(startedBy),
 			sandbox,
+			replayOf,
 			...parent,
 		})
 		.run();
 	return id;
+}
+
+/** Whether a conversation has had a run: the first run of a replay's conversation is the replay. */
+export function hasRuns(db: Db, conversationId: string): boolean {
+	return (
+		db.select({ id: runs.id }).from(runs).where(eq(runs.conversationId, conversationId)).get() !==
+		undefined
+	);
+}
+
+/** The runs that replay a run, oldest first. */
+export function listReplays(db: Db, runId: string): TotaledRun[] {
+	const replays = selectRuns(db)
+		.where(eq(runs.replayOf, runId))
+		.orderBy(asc(runs.startedAt), asc(runs.id))
+		.all()
+		.map(toRun);
+	return withTotals(db, replays);
 }
 
 /**

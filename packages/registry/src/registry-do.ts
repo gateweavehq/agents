@@ -149,6 +149,7 @@ import {
 	removeConversation,
 	startConversation,
 	startNestedConversation,
+	startReplay,
 	startTeamConversation,
 } from "./conversations";
 import * as schema from "./db/schema";
@@ -217,7 +218,9 @@ import {
 	expireRuns,
 	finishRun,
 	getRun,
+	hasRuns,
 	listNestedRuns,
+	listReplays,
 	listRuns,
 	recordRunPullRequest,
 	runHadSandbox,
@@ -774,6 +777,8 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => {
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
 			if (over) return over;
+			const replayOf =
+				parties.replayOf !== null && !hasRuns(this.#db, conversation) ? parties.replayOf : null;
 			const runId = beginRun(
 				this.#db,
 				{
@@ -782,6 +787,7 @@ export class RegistryDO extends DurableObject {
 					startedBy: parties.startedBy,
 					teamPath: position?.path ?? null,
 					sandbox: prepared.sandbox,
+					replayOf,
 				},
 				Date.now(),
 			);
@@ -1072,6 +1078,53 @@ export class RegistryDO extends DurableObject {
 		const run = id.parse(runId);
 		this.#write(() => expireRuns(this.#db, Date.now()));
 		return getRun(this.#db, run);
+	}
+
+	/**
+	 * Starts a conversation that replays a run from its model request `step` (AGT-73), for the runtime
+	 * to fill with the run's conversation up to there and answer with the agent as it is now. Only
+	 * whoever started a run may replay it, since that copies their conversation's words, and an owner
+	 * or admin (`admin`) a trigger's run, whose words they read on the run already. A run of an engine
+	 * in the sandbox is refused: its session lives in the CLI.
+	 */
+	replayRun(
+		runId: string,
+		step: number,
+		member: string,
+		admin: boolean,
+	): { conversationId: string } | ProviderRefusal {
+		const run = getRun(this.#db, id.parse(runId));
+		const at = z.number().int().nonnegative().parse(step);
+		const by = id.parse(member);
+		if (!run || (run.startedBy !== by && !(admin === true && run.triggerId !== null))) {
+			return refused("Only whoever started a run can replay it, and owners and admins a trigger's");
+		}
+		if (run.parentRunId !== null) {
+			return refused("This run was a turn a team's edge asked for: replay the run at the top");
+		}
+		if (run.conversationId === null) {
+			return refused("Its conversation was deleted, so there is nothing to replay");
+		}
+		if (run.status === "running") return refused("Wait for the run to end before replaying it");
+		if (at >= Math.max(run.steps, 1)) return refused("The run has no such step");
+		const agent = getAgent(this.#db, run.agentId);
+		if (!agent?.definition) return refused(`${run.agentName} was removed, so it cannot answer`);
+		if (agent.definition.engine !== "gateweave") {
+			return refused(
+				`${agent.agent.name} runs in the sandbox's ${agent.definition.engine}, whose runs cannot be replayed yet`,
+			);
+		}
+		const { conversationId } = run;
+		const started = this.#write(() =>
+			startReplay(this.#db, { id: run.id, agentId: run.agentId, conversationId }, by, Date.now()),
+		);
+		if (!started) return refused(`${run.agentName} was removed, so it cannot answer`);
+		return { conversationId: started.id };
+	}
+
+	/** The runs that replay a run, oldest first. */
+	listReplays(runId: string): TotaledRun[] {
+		return listReplays(this.#db, id.parse(runId));
 	}
 
 	/** The runs one run called over its team's edges, in the order it called them. */
