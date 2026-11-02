@@ -98,9 +98,9 @@ The registry reads and writes each agent's own files, so teams keep using the to
 - **Gemini CLI:** `GEMINI.md` and its settings.
 - **Cursor:** `.cursor/rules`.
 - **GitHub Copilot:** `.github/copilot-instructions.md`, `.github/instructions`, prompt files,
-  custom agents and `.vscode/mcp.json` (read only, for now).
+  custom agents and `.vscode/mcp.json`.
 - **Devin**, which Windsurf became: `.devin/rules` and Windsurf's `.windsurf/rules` and
-  `.windsurfrules` (read only, for now).
+  `.windsurfrules`; setups write it `AGENTS.md`.
 
 Each format is a small adapter with tests, so adding an agent does not touch the core. Formats
 change often; each adapter tracks the vendor's current documentation.
