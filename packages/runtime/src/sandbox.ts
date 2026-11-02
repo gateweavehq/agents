@@ -39,6 +39,7 @@ import {
 	type SandboxEngine,
 	TIMED_OUT_STATUS,
 } from "./engines";
+import type { LocalCommand, LocalServerPort } from "./local-servers";
 import type { EngineMeter } from "./meter";
 import { readAtMost, sendModelRequest } from "./model-requests";
 import { failureForLogs, type GatewaySettings } from "./models";
@@ -74,6 +75,9 @@ import {
 	type SandboxPort,
 	type WriteResult,
 } from "./sandbox-tools";
+
+/** Where local MCP servers' own messages go, for whoever looks into the sandbox. */
+const MCP_SERVER_LOG = "/tmp/gateweave-mcp-servers.log";
 
 /** The largest file `readFile` opens: the model reads a bigger one with a command. */
 export const READ_BYTES = 5_000_000;
@@ -168,7 +172,10 @@ interface SandboxState extends DurableObjectState {
 	};
 }
 
-export class RunnerSandbox extends DurableObject implements SandboxPort, EnginePort {
+export class RunnerSandbox
+	extends DurableObject
+	implements SandboxPort, EnginePort, LocalServerPort
+{
 	readonly #container: Container | undefined;
 	readonly #outbound: Fetcher;
 	/** The container's start under way, which every call waits for. */
@@ -478,6 +485,55 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 			await input.close();
 		}
 		if (!process.stdout) throw new Error("The engine's output could not be read");
+		return process.stdout as ReadableStream<Uint8Array>;
+	}
+
+	/**
+	 * Starts a local MCP server's command in the sandbox's root, with `input` as its standard input,
+	 * and returns its standard output (`./local-servers.ts`). Its own messages go to a log, so its
+	 * output holds only its messages. It stops when its input ends, as the turn closes it, and after
+	 * `ENGINE_SECONDS` at most. Its downloads go out as any command's do: package registries only.
+	 */
+	async startMcpServer(
+		server: LocalCommand,
+		input: ReadableStream<Uint8Array>,
+	): Promise<ReadableStream<Uint8Array>> {
+		const container = await this.#ready();
+		const process = await container.exec(
+			[
+				"timeout",
+				"--kill-after=10s",
+				`${ENGINE_SECONDS}s`,
+				"bash",
+				"-c",
+				`exec "$0" "$@" 2>>${MCP_SERVER_LOG}`,
+				server.command,
+				...server.args,
+			],
+			{
+				cwd: SANDBOX_ROOT,
+				// What the sandbox needs to reach the internet stays as it is.
+				env: { ...server.env, ...COMMAND_ENV },
+				stdin: "pipe",
+				stdout: "pipe",
+				stderr: "ignore",
+			},
+		);
+		const stop = () => {
+			try {
+				process.kill(SIGTERM);
+			} catch {
+				// It has exited already.
+			}
+		};
+		if (!process.stdin || !process.stdout) {
+			stop();
+			throw new Error("The command's input and output could not be opened");
+		}
+		input
+			.pipeTo(process.stdin)
+			.catch(() => {})
+			.finally(() => setTimeout(stop, STOP_GRACE_MS));
 		return process.stdout as ReadableStream<Uint8Array>;
 	}
 

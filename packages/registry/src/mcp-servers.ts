@@ -11,6 +11,7 @@ import {
 	MCP_SERVER_FILE,
 	type McpCheck,
 	type McpCheckResult,
+	type McpServerConnection,
 	type McpServerEntry,
 	type Metadata,
 	type mcpServerEditInput,
@@ -147,30 +148,43 @@ function fileOf(db: Db, settings: Settings): FileEntry {
 	return storeFile(db, { path: MCP_SERVER_FILE, content: text });
 }
 
-/** A server an agent run by Gateweave can reach: over the network, at an address it accepts. */
+/** A server an agent run by Gateweave reaches over the network, at an address it accepts. */
 export type RemoteServer = Extract<McpConnection, { transport: "http" | "sse" }>;
 
+/** A server that runs as a local command, which an agent's sandbox starts for its turns. */
+export type LocalServer = Extract<McpConnection, { transport: "stdio" }>;
+
+export type StoredServer = RemoteServer | LocalServer;
+
+/** Why a local command cannot run where there is no sandbox to start it in. */
+export const LOCAL_SERVER_NEEDS_SANDBOX =
+	"It runs as a local command, which starts in the sandbox of an agent that has one";
+
 /** How an agent reaches a stored server, or why it cannot. */
-export function remoteServer(
+export function storedServer(
 	files: { path: string; content: string | null }[],
-): { server: RemoteServer } | { problem: string } {
+): { server: StoredServer } | { problem: string } {
 	const reading = readMcpConnection(files);
 	if (!reading.ok) return { problem: reading.message };
 	const { connection } = reading;
-	if (connection.transport === "stdio") {
-		return {
-			problem: "It runs as a local command, which agents run by Gateweave cannot start yet",
-		};
-	}
+	if (connection.transport === "stdio") return { server: connection };
 	const url = mcpServerUrl.safeParse(connection.url);
 	if (!url.success) return { problem: url.error.issues[0]?.message ?? "Its URL is not supported" };
 	return { server: connection };
 }
 
-/** The variables a server's headers name, sorted. */
-export function serverVariables(server: RemoteServer): string[] {
-	const names = server.headers.flatMap((header) =>
-		typeof header.value === "string" ? [] : [header.value.variable],
+/** Where a server is, as pages show it: never a value of its headers or environment. */
+export function serverConnection(server: StoredServer): McpServerConnection {
+	return server.transport === "stdio"
+		? { transport: "stdio", command: server.command, args: server.args }
+		: { transport: server.transport, url: server.url };
+}
+
+/** The variables a server's headers, or its command's environment, name, sorted. */
+export function serverVariables(server: StoredServer): string[] {
+	const values = server.transport === "stdio" ? server.env : server.headers;
+	const names = values.flatMap((entry) =>
+		typeof entry.value === "string" ? [] : [entry.value.variable],
 	);
 	return [...new Set(names)].sort(compare);
 }
@@ -181,12 +195,11 @@ export function agentMcpServer(
 	files: { path: string; content: string | null }[],
 	available: ReadonlySet<string>,
 ): AgentMcpServer {
-	const reading = remoteServer(files);
+	const reading = storedServer(files);
 	if ("problem" in reading) return { ...pinned, connection: reading, variables: [] };
-	const { transport, url } = reading.server;
 	return {
 		...pinned,
-		connection: { transport, url },
+		connection: serverConnection(reading.server),
 		variables: serverVariables(reading.server).map((name) => ({
 			name,
 			state: available.has(name) ? "set" : "missing",
@@ -200,7 +213,7 @@ export function agentServers(
 	agentId: string,
 ): {
 	name: string;
-	reading: { server: RemoteServer } | { problem: string };
+	reading: { server: StoredServer } | { problem: string };
 	tools: string[] | null;
 }[] {
 	return db
@@ -218,32 +231,38 @@ export function agentServers(
 		.map(({ id, name, version, tools }) => ({
 			name,
 			tools,
-			reading: remoteServer(getAssetVersion(db, id, version)?.files ?? []),
+			reading: storedServer(getAssetVersion(db, id, version)?.files ?? []),
 		}));
 }
 
 /**
- * A server as one turn reaches it: each header's variable replaced with its value from the
- * agent's environment set. A server whose variables are not all there is left out, with why.
+ * A server as one turn reaches it: each variable its headers, or its command's environment, name
+ * replaced with its value from the agent's environment set. A server whose variables are not all
+ * there is left out, with why.
  */
 export function turnServer(
 	{ name, reading, tools }: ReturnType<typeof agentServers>[number],
 	environment: ResolvedEnvironment | null,
 ): TurnMcpServer {
 	if ("problem" in reading) return { name, problem: reading.problem };
-	const { transport, url } = reading.server;
-	const headers: Record<string, string> = {};
+	const { server } = reading;
+	const entries = server.transport === "stdio" ? server.env : server.headers;
+	const filled: Record<string, string> = {};
 	const missing: string[] = [];
-	for (const header of reading.server.headers) {
-		if (typeof header.value === "string") {
-			headers[header.name] = header.value;
+	for (const entry of entries) {
+		if (typeof entry.value === "string") {
+			filled[entry.name] = entry.value;
 			continue;
 		}
-		const value = environment?.values[header.value.variable];
-		if (value === undefined) missing.push(header.value.variable);
-		else headers[header.name] = `${header.value.prefix}${value}`;
+		const value = environment?.values[entry.value.variable];
+		if (value === undefined) missing.push(entry.value.variable);
+		else filled[entry.name] = `${entry.value.prefix}${value}`;
 	}
-	if (missing.length === 0) return { name, transport, url, headers, tools };
+	if (missing.length === 0) {
+		return server.transport === "stdio"
+			? { name, transport: "stdio", command: server.command, args: server.args, env: filled, tools }
+			: { name, transport: server.transport, url: server.url, headers: filled, tools };
+	}
 	const names = [...new Set(missing)].sort(compare);
 	return {
 		name,
@@ -273,12 +292,17 @@ export function turnServers(
 	db: Db,
 	servers: ReturnType<typeof agentServers>,
 	opened: OpenedEnvironment | null,
+	sandbox: boolean,
 ): TurnMcpServer[] {
 	const assetId = opened?.assetId ?? null;
 	const sends = assetId ? secretSends(db, assetId) : new Map<string, SecretSend>();
 	return servers.map((server) => {
+		if (!("problem" in server.reading) && server.reading.server.transport === "stdio") {
+			return localTurnServer(server, opened, sandbox);
+		}
 		const turn = turnServer(server, opened?.environment ?? null);
-		if ("problem" in turn || "problem" in server.reading || !opened || !assetId) return turn;
+		if ("problem" in turn || turn.transport === "stdio" || !opened || !assetId) return turn;
+		if ("problem" in server.reading) return turn;
 		const origin = new URL(turn.url).origin;
 		const secrets = serverVariables(server.reading.server).filter((name) =>
 			opened.opened.has(name),
@@ -324,6 +348,29 @@ export function turnServers(
 	});
 }
 
+/**
+ * A local command as one turn starts it in its sandbox. The sandbox holds no secret of the
+ * workspace's, so that nothing a command runs there can leak one: its environment takes the set's
+ * variables, and a server that names a secret is left out, with why.
+ */
+function localTurnServer(
+	server: ReturnType<typeof agentServers>[number],
+	opened: OpenedEnvironment | null,
+	sandbox: boolean,
+): TurnMcpServer {
+	if (!sandbox) return { name: server.name, problem: LOCAL_SERVER_NEEDS_SANDBOX };
+	if ("problem" in server.reading) return { name: server.name, problem: server.reading.problem };
+	const secrets = serverVariables(server.reading.server).filter((name) => opened?.opened.has(name));
+	if (secrets.length > 0) {
+		const one = secrets.length === 1;
+		return {
+			name: server.name,
+			problem: `${secrets.join(", ")} ${one ? "is a secret" : "are secrets"} of the agent's environment set, and secrets never go into the sandbox, where it runs. Make ${one ? "it a variable" : "them variables"} if ${one ? "it is" : "they are"} not secret.`,
+		};
+	}
+	return turnServer(server, opened?.environment ?? null);
+}
+
 /** The name `registry_passes` keeps `bindUnsentSecrets` under (see `passes.ts`). */
 export const BIND_UNSENT_SECRETS = "bind-unsent-secrets";
 
@@ -360,12 +407,12 @@ export function bindUnsentSecrets(db: Db): void {
 		.innerJoin(assets, eq(assets.id, agentMcpServers.assetId))
 		.where(isNull(agents.removedAt))
 		.all();
-	const readings = new Map<string, ReturnType<typeof remoteServer>>();
+	const readings = new Map<string, ReturnType<typeof storedServer>>();
 	const reading = (server: string, version: number) => {
 		const key = `${server}@${version}`;
 		let found = readings.get(key);
 		if (!found) {
-			found = remoteServer(getAssetVersion(db, server, version)?.files ?? []);
+			found = storedServer(getAssetVersion(db, server, version)?.files ?? []);
 			readings.set(key, found);
 		}
 		return found;
@@ -376,7 +423,8 @@ export function bindUnsentSecrets(db: Db): void {
 		if (set === null) continue;
 		for (const version of new Set([use.pinned, use.current])) {
 			const read = reading(use.server, version);
-			if ("problem" in read) continue;
+			// A local command is never sent a secret (`localTurnServer`).
+			if ("problem" in read || read.server.transport === "stdio") continue;
 			const origin = new URL(read.server.url).origin;
 			for (const name of serverVariables(read.server)) {
 				const key = secretKey(set, name);
@@ -446,7 +494,7 @@ export function mcpCheckPlan(
 	const agent = users.find((user) => user.version === asset.version) ?? users[0];
 	return {
 		name: asset.name,
-		reading: remoteServer(getAssetVersion(db, asset.id)?.files ?? []),
+		reading: storedServer(getAssetVersion(db, asset.id)?.files ?? []),
 		agentId: agent?.id ?? null,
 	};
 }
@@ -492,14 +540,11 @@ export function listMcpServers(db: Db): McpServerEntry[] {
 			.map((row) => [row.assetId, row]),
 	);
 	return rows.map((row) => {
-		const reading = remoteServer(getAssetVersion(db, row.id)?.files ?? []);
+		const reading = storedServer(getAssetVersion(db, row.id)?.files ?? []);
 		const check = checks.get(row.id);
 		return {
 			asset: toAsset(row),
-			connection:
-				"problem" in reading
-					? reading
-					: { transport: reading.server.transport, url: reading.server.url },
+			connection: "problem" in reading ? reading : serverConnection(reading.server),
 			variables: "problem" in reading ? [] : serverVariables(reading.server),
 			agents: pinners(db, row.id),
 			check: check

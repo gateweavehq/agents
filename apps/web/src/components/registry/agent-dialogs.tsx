@@ -358,7 +358,8 @@ export function AgentDialog({
 							<ul className="max-h-48 divide-y overflow-y-auto rounded-lg border">
 								{serverChoices.map((asset) => {
 									const kept = pinnedServers.find((server) => server.asset.id === asset.id);
-									const local = !kept && runsLocally(asset.metadata);
+									// A local command starts in the agent's sandbox, so it needs one.
+									const local = !kept && !sandbox && runsLocally(asset.metadata);
 									const full = !servers.has(asset.id) && servers.size >= MAX_AGENT_MCP_SERVERS;
 									return (
 										<li key={asset.id}>
@@ -373,7 +374,7 @@ export function AgentDialog({
 													{kept
 														? `v${kept.version}${kept.removed ? ", left the library" : ""}`
 														: local
-															? "runs locally"
+															? "needs the sandbox"
 															: `v${asset.version}`}
 												</span>
 											</Label>
@@ -392,8 +393,8 @@ export function AgentDialog({
 							</ul>
 						)}
 						<p className="text-xs text-muted-foreground">
-							Their tools become the agent's. A server that runs as a local command cannot be
-							reached by Gateweave yet.
+							Their tools become the agent's. A server that runs as a local command starts in the
+							agent's sandbox, with the environment set's variables but none of its secrets.
 						</p>
 					</fieldset>
 					<div className="space-y-2">

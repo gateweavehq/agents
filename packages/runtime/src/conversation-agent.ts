@@ -42,6 +42,7 @@ import {
 	type SandboxEngine,
 	settle,
 } from "./engines";
+import type { LocalServerPort } from "./local-servers";
 import { type MeteredRequest, meteredRequest } from "./meter";
 import {
 	describeFailure,
@@ -75,7 +76,7 @@ interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 }
 
 /** What a conversation reaches of its sandbox over RPC. */
-interface Sandbox extends CheckoutPort, PushPort, EnginePort {
+interface Sandbox extends CheckoutPort, PushPort, EnginePort, LocalServerPort {
 	destroy(): Promise<void>;
 }
 
@@ -355,7 +356,7 @@ ${runPageNote(runs, turn.runId)}`
 		if (agent.engine !== "gateweave") {
 			return this.#engineTurn(agent.engine, turn, run, options?.abortSignal);
 		}
-		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
+		const toolbox = await connectTools(mcpServers, run, options?.abortSignal, sandbox);
 		const checkedOut = sandbox && repository ? withCheckout(sandbox, repository, branch) : null;
 		const github = repository ? this.#pullRequests(repository) : null;
 		// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with them. An
@@ -474,7 +475,7 @@ ${runPageNote(runs, turn.runId)}`
 				const checkedOut = repository ? withCheckout(sandbox, repository, branch) : null;
 				const [problem, toolbox] = await Promise.all([
 					checkedOut ? checkedOut.ready() : null,
-					connectTools(mcpServers, run, signal),
+					connectTools(mcpServers, run, signal, sandbox),
 				]);
 				if (problem) {
 					await toolbox.close();

@@ -14,9 +14,6 @@ export const Route = createFileRoute("/$workspace/mcp")({
 	component: McpPage,
 });
 
-/** How the registry words a server that runs as a local command. */
-const LOCAL_COMMAND = "It runs as a local command";
-
 function message(error: unknown) {
 	return error instanceof Error ? error.message : "Something went wrong";
 }
@@ -83,15 +80,25 @@ function ServerCard({ server }: { server: McpServerEntry }) {
 						v{asset.version}
 					</span>
 				</h2>
-				{"problem" in connection ? null : <CheckButton server={server} />}
+				{"problem" in connection || connection.transport === "stdio" ? null : (
+					<CheckButton server={server} />
+				)}
 			</div>
 
 			{"problem" in connection ? (
-				<p className="text-sm text-muted-foreground">
-					{connection.problem.startsWith(LOCAL_COMMAND)
-						? "Runs as a local command: unavailable until cloud runners"
-						: connection.problem}
-				</p>
+				<p className="text-sm text-muted-foreground">{connection.problem}</p>
+			) : connection.transport === "stdio" ? (
+				<div className="space-y-0.5 text-sm">
+					<p>
+						<span className="text-xs uppercase text-muted-foreground">command</span>{" "}
+						<span className="break-all font-mono text-xs">
+							{[connection.command, ...connection.args].join(" ")}
+						</span>
+					</p>
+					<p className="text-xs text-muted-foreground">
+						Starts in the sandbox of each agent with one that uses it, so it is checked there.
+					</p>
+				</div>
 			) : (
 				<p className="text-sm">
 					<span className="text-xs uppercase text-muted-foreground">{connection.transport}</span>{" "}

@@ -74,10 +74,13 @@ function fail(message: string): never {
 
 /** How the runtime reaches a stored MCP server. */
 export type McpConnection =
-	| { transport: "stdio"; command: string }
+	| { transport: "stdio"; command: string; args: string[]; env: McpHeader[] }
 	| { transport: "http" | "sse"; url: string; headers: McpHeader[] };
 
-/** A request header: text, or a variable whose value goes after `prefix`. */
+/**
+ * A request header, or a variable of a local command's environment: text, or a variable whose
+ * value goes after `prefix`.
+ */
 export interface McpHeader {
 	name: string;
 	value: string | { variable: string; prefix: string };
@@ -99,18 +102,30 @@ export function readMcpConnection(
 		throw error;
 	}
 	const { transport } = server;
+	const named = (values: Map<string, Value>) =>
+		[...values]
+			.sort(([a], [b]) => compare(a, b))
+			.map(
+				([name, value]): McpHeader => ({
+					name,
+					value: typeof value === "string" ? value : { variable: value.ref, prefix: value.prefix },
+				}),
+			);
 	if (transport.kind === "stdio") {
-		return { ok: true, connection: { transport: "stdio", command: transport.command } };
+		return {
+			ok: true,
+			connection: {
+				transport: "stdio",
+				command: transport.command,
+				args: transport.args ?? [],
+				env: named(server.env),
+			},
+		};
 	}
-	const headers = [...server.headers]
-		.sort(([a], [b]) => compare(a, b))
-		.map(
-			([name, value]): McpHeader => ({
-				name,
-				value: typeof value === "string" ? value : { variable: value.ref, prefix: value.prefix },
-			}),
-		);
-	return { ok: true, connection: { transport: transport.kind, url: transport.url, headers } };
+	return {
+		ok: true,
+		connection: { transport: transport.kind, url: transport.url, headers: named(server.headers) },
+	};
 }
 
 export function writeMcpServers(
