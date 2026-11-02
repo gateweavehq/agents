@@ -10,9 +10,9 @@ notes. Publishing a release deploys it to Gateweave Cloud.
 
 ## [0.6.1] - 2026-11-02
 
-A security follow-up to v0.6.0: secrets stored before it are tied to their servers' address too.
-Updating a self-hosted copy applies a migration in each workspace's registry, which runs on its
-own, and needs no new setting. (#108)
+A security follow-up to v0.6.0: secrets stored before it are tied to their servers' address too,
+and stay closed if that fails. Updating a self-hosted copy applies a migration in each
+workspace's registry, which runs on its own, and needs no new setting. (#108, #110)
 
 ### Security
 
@@ -21,6 +21,10 @@ own, and needs no new setting. (#108)
   those secrets once, as it first starts after the update, to the address of the servers that
   use them. A secret whose servers sit at more than one address is marked as contested on the
   Environment page and goes only to one of those addresses until someone enters it again. (#108)
+- If that one-time pass fails in a workspace, its secrets that have no address yet are refused
+  to every address until someone enters them again, and the workspace's owners and admins see
+  when it failed. A copy self-hosted from `main` between #108 and #110 whose pass had already
+  failed is not closed after the fact: enter those secrets again. (#110)
 - The registry no longer has a call that hands out opened secret values; they leave it only for
   a check or a turn, after the address check. (#108)
 
