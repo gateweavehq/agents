@@ -14,6 +14,8 @@ import type {
 	EnvSetEditInput,
 	EnvSetEntry,
 	EnvSetInput,
+	GitLabConnection,
+	GitLabConnectionInput,
 	LibraryEditInput,
 	LibraryTarget,
 	McpCheck,
@@ -110,6 +112,11 @@ export interface RegistryStub {
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
 	listProviderKeys(): Promise<ProviderKey[]>;
+	gitlabConnect(
+		input: GitLabConnectionInput,
+		by: string,
+	): Promise<{ connection: GitLabConnection; webhookSecret: string } | ProviderRefusal>;
+	gitlabConnections(): Promise<GitLabConnection[]>;
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
 	createMcpServer(input: McpServerInput): Promise<string>;
 	editMcpServer(input: McpServerEditInput): Promise<number>;

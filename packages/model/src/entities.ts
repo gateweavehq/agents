@@ -29,9 +29,13 @@ export interface Repository {
 	id: string;
 	provider: RepositoryProvider;
 	externalId: string;
+	/** What reaches it: a GitHub App installation, or a GitLab connection. */
 	installationId: string | null;
+	/** On GitHub, the account; on GitLab, the project's namespace, such as `group/subgroup`. */
 	owner: string;
 	name: string;
+	/** Its page on a GitLab, which may be self-managed. Null on GitHub, whose address is known. */
+	webUrl: string | null;
 	defaultBranch: string;
 	private: boolean;
 	projectIds: string[];
@@ -49,6 +53,28 @@ export interface Repository {
 	problems: ScanProblem[];
 	createdAt: number;
 	updatedAt: number;
+}
+
+/**
+ * A GitLab the workspace reaches with an access token. The token never leaves the registry:
+ * `tokenHint` is its last four characters.
+ */
+export interface GitLabConnection {
+	id: string;
+	/** Such as `https://gitlab.com`, or a self-managed GitLab's address. */
+	baseUrl: string;
+	/** Who the token acts as, such as a project's bot user. */
+	account: string;
+	tokenHint: string;
+	/** The live repositories it reaches. */
+	repositories: number;
+	createdBy: string;
+	createdAt: number;
+	/** When its projects were last listed, and why that failed if it did. */
+	syncedAt: number | null;
+	syncError: string | null;
+	/** When GitLab last sent a push that the secret token let in. */
+	lastDeliveryAt: number | null;
 }
 
 export interface Agent {

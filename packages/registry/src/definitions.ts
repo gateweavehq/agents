@@ -231,6 +231,9 @@ function checkRepository(db: Db, input: Definition, chosenId: string | null): vo
 /** Why the workspace's GitHub App cannot check out a repository for a sandbox; null if it can. */
 function repositoryProblem(repository: typeof repositories.$inferSelect): string | null {
 	const name = `${repository.owner}/${repository.name}`;
+	if (repository.provider === "gitlab") {
+		return `${name} is on GitLab: sandboxes check out GitHub repositories only, for now`;
+	}
 	if (repository.provider !== "github" || repository.installationId === null) {
 		return `${name} is not reached through the workspace's GitHub App`;
 	}

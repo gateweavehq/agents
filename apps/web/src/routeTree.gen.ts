@@ -34,6 +34,7 @@ import { Route as WorkspaceRunsIndexRouteImport } from './routes/$workspace/runs
 import { Route as WorkspaceRunsRunIdRouteImport } from './routes/$workspace/runs.$runId'
 import { Route as WorkspaceSettingsIndexRouteImport } from './routes/$workspace/settings.index'
 import { Route as WorkspaceSettingsGithubRouteImport } from './routes/$workspace/settings.github'
+import { Route as WorkspaceSettingsGitlabRouteImport } from './routes/$workspace/settings.gitlab'
 import { Route as WorkspaceSettingsMembersRouteImport } from './routes/$workspace/settings.members'
 import { Route as WorkspaceSettingsModelsRouteImport } from './routes/$workspace/settings.models'
 import { Route as WorkspaceSettingsTelemetryRouteImport } from './routes/$workspace/settings.telemetry'
@@ -50,6 +51,7 @@ import { Route as ApiGithubWebhooksRouteImport } from './routes/api/github/webho
 import { Route as ApiMcpOauthCallbackRouteImport } from './routes/api/mcp-oauth/callback'
 import { Route as ApiMcpOauthConnectRouteImport } from './routes/api/mcp-oauth/connect'
 import { Route as ApiTriggersWorkspaceIdTriggerIdRouteImport } from './routes/api/triggers/$workspaceId.$triggerId'
+import { Route as ApiGitlabWebhooksWorkspaceIdConnectionIdRouteImport } from './routes/api/gitlab/webhooks.$workspaceId.$connectionId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -180,6 +182,11 @@ const WorkspaceSettingsGithubRoute = WorkspaceSettingsGithubRouteImport.update({
   path: '/github',
   getParentRoute: () => WorkspaceSettingsRoute,
 } as any)
+const WorkspaceSettingsGitlabRoute = WorkspaceSettingsGitlabRouteImport.update({
+  id: '/gitlab',
+  path: '/gitlab',
+  getParentRoute: () => WorkspaceSettingsRoute,
+} as any)
 const WorkspaceSettingsMembersRoute =
   WorkspaceSettingsMembersRouteImport.update({
     id: '/members',
@@ -264,6 +271,12 @@ const ApiTriggersWorkspaceIdTriggerIdRoute =
     path: '/api/triggers/$workspaceId/$triggerId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiGitlabWebhooksWorkspaceIdConnectionIdRoute =
+  ApiGitlabWebhooksWorkspaceIdConnectionIdRouteImport.update({
+    id: '/api/gitlab/webhooks/$workspaceId/$connectionId',
+    path: '/api/gitlab/webhooks/$workspaceId/$connectionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -285,6 +298,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
+  '/$workspace/settings/gitlab': typeof WorkspaceSettingsGitlabRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
   '/$workspace/settings/telemetry': typeof WorkspaceSettingsTelemetryRoute
@@ -307,6 +321,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
   '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
+  '/api/gitlab/webhooks/$workspaceId/$connectionId': typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -325,6 +340,7 @@ export interface FileRoutesByTo {
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
+  '/$workspace/settings/gitlab': typeof WorkspaceSettingsGitlabRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
   '/$workspace/settings/telemetry': typeof WorkspaceSettingsTelemetryRoute
@@ -347,6 +363,7 @@ export interface FileRoutesByTo {
   '/$workspace/setups': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams': typeof WorkspaceTeamsIndexRoute
   '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
+  '/api/gitlab/webhooks/$workspaceId/$connectionId': typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -369,6 +386,7 @@ export interface FileRoutesById {
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
+  '/$workspace/settings/gitlab': typeof WorkspaceSettingsGitlabRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
   '/$workspace/settings/telemetry': typeof WorkspaceSettingsTelemetryRoute
@@ -391,6 +409,7 @@ export interface FileRoutesById {
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
   '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
+  '/api/gitlab/webhooks/$workspaceId/$connectionId': typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -414,6 +433,7 @@ export interface FileRouteTypes {
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/runs/$runId'
     | '/$workspace/settings/github'
+    | '/$workspace/settings/gitlab'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
     | '/$workspace/settings/telemetry'
@@ -436,6 +456,7 @@ export interface FileRouteTypes {
     | '/$workspace/setups/'
     | '/$workspace/teams/'
     | '/api/triggers/$workspaceId/$triggerId'
+    | '/api/gitlab/webhooks/$workspaceId/$connectionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -454,6 +475,7 @@ export interface FileRouteTypes {
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/runs/$runId'
     | '/$workspace/settings/github'
+    | '/$workspace/settings/gitlab'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
     | '/$workspace/settings/telemetry'
@@ -476,6 +498,7 @@ export interface FileRouteTypes {
     | '/$workspace/setups'
     | '/$workspace/teams'
     | '/api/triggers/$workspaceId/$triggerId'
+    | '/api/gitlab/webhooks/$workspaceId/$connectionId'
   id:
     | '__root__'
     | '/'
@@ -497,6 +520,7 @@ export interface FileRouteTypes {
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/runs/$runId'
     | '/$workspace/settings/github'
+    | '/$workspace/settings/gitlab'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
     | '/$workspace/settings/telemetry'
@@ -519,6 +543,7 @@ export interface FileRouteTypes {
     | '/$workspace/setups/'
     | '/$workspace/teams/'
     | '/api/triggers/$workspaceId/$triggerId'
+    | '/api/gitlab/webhooks/$workspaceId/$connectionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -536,6 +561,7 @@ export interface RootRouteChildren {
   ApiMcpOauthCallbackRoute: typeof ApiMcpOauthCallbackRoute
   ApiMcpOauthConnectRoute: typeof ApiMcpOauthConnectRoute
   ApiTriggersWorkspaceIdTriggerIdRoute: typeof ApiTriggersWorkspaceIdTriggerIdRoute
+  ApiGitlabWebhooksWorkspaceIdConnectionIdRoute: typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -715,6 +741,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceSettingsGithubRouteImport
       parentRoute: typeof WorkspaceSettingsRoute
     }
+    '/$workspace/settings/gitlab': {
+      id: '/$workspace/settings/gitlab'
+      path: '/gitlab'
+      fullPath: '/$workspace/settings/gitlab'
+      preLoaderRoute: typeof WorkspaceSettingsGitlabRouteImport
+      parentRoute: typeof WorkspaceSettingsRoute
+    }
     '/$workspace/settings/members': {
       id: '/$workspace/settings/members'
       path: '/members'
@@ -827,6 +860,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiTriggersWorkspaceIdTriggerIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/gitlab/webhooks/$workspaceId/$connectionId': {
+      id: '/api/gitlab/webhooks/$workspaceId/$connectionId'
+      path: '/api/gitlab/webhooks/$workspaceId/$connectionId'
+      fullPath: '/api/gitlab/webhooks/$workspaceId/$connectionId'
+      preLoaderRoute: typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -846,6 +886,7 @@ const WorkspaceChatRouteWithChildren = WorkspaceChatRoute._addFileChildren(
 
 interface WorkspaceSettingsRouteChildren {
   WorkspaceSettingsGithubRoute: typeof WorkspaceSettingsGithubRoute
+  WorkspaceSettingsGitlabRoute: typeof WorkspaceSettingsGitlabRoute
   WorkspaceSettingsMembersRoute: typeof WorkspaceSettingsMembersRoute
   WorkspaceSettingsModelsRoute: typeof WorkspaceSettingsModelsRoute
   WorkspaceSettingsTelemetryRoute: typeof WorkspaceSettingsTelemetryRoute
@@ -855,6 +896,7 @@ interface WorkspaceSettingsRouteChildren {
 
 const WorkspaceSettingsRouteChildren: WorkspaceSettingsRouteChildren = {
   WorkspaceSettingsGithubRoute: WorkspaceSettingsGithubRoute,
+  WorkspaceSettingsGitlabRoute: WorkspaceSettingsGitlabRoute,
   WorkspaceSettingsMembersRoute: WorkspaceSettingsMembersRoute,
   WorkspaceSettingsModelsRoute: WorkspaceSettingsModelsRoute,
   WorkspaceSettingsTelemetryRoute: WorkspaceSettingsTelemetryRoute,
@@ -929,6 +971,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiMcpOauthCallbackRoute: ApiMcpOauthCallbackRoute,
   ApiMcpOauthConnectRoute: ApiMcpOauthConnectRoute,
   ApiTriggersWorkspaceIdTriggerIdRoute: ApiTriggersWorkspaceIdTriggerIdRoute,
+  ApiGitlabWebhooksWorkspaceIdConnectionIdRoute:
+    ApiGitlabWebhooksWorkspaceIdConnectionIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

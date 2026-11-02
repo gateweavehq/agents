@@ -43,7 +43,10 @@ describe("secrets", () => {
 		const other = await sealerFor({ SECRETS_KEY }, "workspace-b");
 		if ("unavailable" in other) throw new Error(other.unavailable);
 		await expect(other.open("provider-keys/anthropic", sealed)).rejects.toThrow();
-		const changed = `${sealed.slice(0, -2)}${sealed.endsWith("A") ? "B" : "A"}A`;
+		// The data's first character: every one of its bits counts, unlike the last one's, whose
+		// spare bits decode to nothing.
+		const [version, iv, data = ""] = sealed.split(".");
+		const changed = `${version}.${iv}.${data.startsWith("A") ? "B" : "A"}${data.slice(1)}`;
 		await expect(sealer.open("provider-keys/anthropic", changed)).rejects.toThrow();
 		await expect(sealer.open("provider-keys/anthropic", "v2.abc.def")).rejects.toThrow();
 	});

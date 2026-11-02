@@ -22,7 +22,7 @@ function RepositoriesPage() {
 	if (repositories.length === 0) {
 		return (
 			<Notice title="No repositories yet">
-				Repositories appear here once GitHub is connected in the workspace's settings.
+				Repositories appear here once GitHub or GitLab is connected in the workspace's settings.
 			</Notice>
 		);
 	}
@@ -32,8 +32,8 @@ function RepositoriesPage() {
 			<header className="space-y-1">
 				<h1 className="text-xl font-semibold tracking-tight">Repositories</h1>
 				<p className="text-sm text-muted-foreground">
-					{repositories.length === 1 ? "1 repository" : `${repositories.length} repositories`} from
-					GitHub, with the coding agents configured in each.
+					{repositories.length === 1 ? "1 repository" : `${repositories.length} repositories`}, with
+					the coding agents configured in each.
 				</p>
 			</header>
 			<ul className="divide-y rounded-lg border">

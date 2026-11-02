@@ -302,7 +302,10 @@ function SetupActions() {
 	if (!data) return null;
 	const { setup } = data;
 	const close = () => setOpen(null);
-	const connected = data.repositories.filter((repository) => repository.installationId !== null);
+	// Setups are applied by pull request, which only GitHub repositories take for now.
+	const connected = data.repositories.filter(
+		(repository) => repository.provider === "github" && repository.installationId !== null,
+	);
 	const openIn = new Set(
 		data.applications
 			.filter(({ application }) => application.state === "open")

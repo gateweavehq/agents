@@ -23,6 +23,10 @@ export interface SourceEnv {
 
 export const GITHUB_NOT_SET_UP = "GitHub is not set up on this server";
 
+/** Setups are applied by pull request, which GitLab repositories cannot take yet (AGT-79). */
+export const GITLAB_CANNOT_WRITE_YET =
+	"Setups can be applied to GitHub repositories only, for now; GitLab merge requests are planned";
+
 /** Whether the server can act as its GitHub App: read, write and mint tokens for sandboxes. */
 export function githubSetUp(env: SourceEnv): boolean {
 	return Boolean(env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY);
@@ -46,6 +50,7 @@ export function writerFor(
 ): RepositoryWriter | { unavailable: string } {
 	const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
 	const { installationId, defaultBranch } = repository;
+	if (repository.provider === "gitlab") return { unavailable: GITLAB_CANNOT_WRITE_YET };
 	if (repository.provider !== "github" || installationId === null) {
 		return { unavailable: "No GitHub App installation reaches this repository" };
 	}

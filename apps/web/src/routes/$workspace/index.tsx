@@ -102,8 +102,9 @@ function GetStarted() {
 		<section className="space-y-3 rounded-lg border p-6">
 			<h2 className="text-sm font-medium">No repositories yet</h2>
 			<p className="text-sm text-muted-foreground">
-				Connect GitHub and choose repositories. Gateweave Agents reads the agent configuration in
-				each one and lists it here, and reads it again on every push to the default branch.
+				Connect GitHub or GitLab and choose repositories. Gateweave Agents reads the agent
+				configuration in each one and lists it here, and reads it again on every push to the default
+				branch.
 			</p>
 			<ul className="flex flex-wrap gap-2">
 				{FORMATS.map((format) => (
@@ -113,13 +114,22 @@ function GetStarted() {
 				))}
 			</ul>
 			{admin ? (
-				<Button asChild size="sm">
-					<Link to="/$workspace/settings/github" params={{ workspace: slug }}>
-						Connect GitHub
-					</Link>
-				</Button>
+				<div className="flex flex-wrap gap-2">
+					<Button asChild size="sm">
+						<Link to="/$workspace/settings/github" params={{ workspace: slug }}>
+							Connect GitHub
+						</Link>
+					</Button>
+					<Button asChild size="sm" variant="outline">
+						<Link to="/$workspace/settings/gitlab" params={{ workspace: slug }}>
+							Connect GitLab
+						</Link>
+					</Button>
+				</div>
 			) : (
-				<p className="text-sm text-muted-foreground">An owner or admin can connect GitHub.</p>
+				<p className="text-sm text-muted-foreground">
+					An owner or admin can connect GitHub or GitLab.
+				</p>
 			)}
 		</section>
 	);

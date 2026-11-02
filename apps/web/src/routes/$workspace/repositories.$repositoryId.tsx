@@ -4,7 +4,13 @@ import { ExternalLink, Lock, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { DriftRow } from "#/components/registry/drift";
-import { PullState, RuntimeBadge, repositoryUrl, ScanStatus } from "#/components/registry/labels";
+import {
+	commitUrl,
+	PullState,
+	RuntimeBadge,
+	repositoryUrl,
+	ScanStatus,
+} from "#/components/registry/labels";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
@@ -53,7 +59,7 @@ function RepositoryPage() {
 						</span>
 						{repository.scannedCommit && (
 							<a
-								href={`${repositoryUrl(repository)}/commit/${repository.scannedCommit}`}
+								href={commitUrl(repository, repository.scannedCommit)}
 								target="_blank"
 								rel="noreferrer"
 								className="font-mono hover:underline"
@@ -69,7 +75,7 @@ function RepositoryPage() {
 					<Button asChild variant="ghost" size="sm">
 						<a href={repositoryUrl(repository)} target="_blank" rel="noreferrer">
 							<ExternalLink />
-							GitHub
+							{repository.provider === "gitlab" ? "GitLab" : "GitHub"}
 						</a>
 					</Button>
 				</div>
