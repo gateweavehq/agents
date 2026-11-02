@@ -55,10 +55,12 @@ export const repositories = sqliteTable(
 		id: text("id").primaryKey(),
 		provider: text("provider", { enum: REPOSITORY_PROVIDERS }).notNull(),
 		externalId: text("external_id").notNull(),
-		/** The GitHub App installation that reaches it. */
+		/** What reaches it: a GitHub App installation, or a GitLab connection's id. */
 		installationId: text("installation_id"),
 		owner: text("owner").notNull(),
 		name: text("name").notNull(),
+		/** Its page on a GitLab, which may be self-managed. Null on GitHub. */
+		webUrl: text("web_url"),
 		defaultBranch: text("default_branch").notNull(),
 		private: integer("private", { mode: "boolean" }).notNull(),
 		scannedCommit: text("scanned_commit"),
@@ -666,8 +668,28 @@ export const mcpOAuth = sqliteTable("mcp_oauth", {
 	connectedAt: integer("connected_at"),
 });
 
+/**
+ * A GitLab reached with an access token (AGT-79). The token and the webhook's secret token are
+ * sealed (`secrets.ts`); the token is opened only to read the repositories, and the secret only to
+ * check a delivery.
+ */
+export const gitlabConnections = sqliteTable("gitlab_connections", {
+	id: text("id").primaryKey(),
+	baseUrl: text("base_url").notNull(),
+	account: text("account").notNull(),
+	sealedToken: text("sealed_token").notNull(),
+	tokenHint: text("token_hint").notNull(),
+	sealedWebhookSecret: text("sealed_webhook_secret").notNull(),
+	createdBy: text("created_by").notNull(),
+	createdAt: integer("created_at").notNull(),
+	syncedAt: integer("synced_at"),
+	syncError: text("sync_error"),
+	lastDeliveryAt: integer("last_delivery_at"),
+});
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
+export type GitLabConnectionRow = typeof gitlabConnections.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
 export type AgentDefinitionRow = typeof agentDefinitions.$inferSelect;

@@ -21,6 +21,9 @@ import {
 	envSecretInput,
 	envSetEditInput,
 	envSetInput,
+	type GitLabConnection,
+	type GitLabConnectionInput,
+	gitlabConnectionInput,
 	isKeyedProvider,
 	KEYED_PROVIDERS,
 	type KeyedProvider,
@@ -54,6 +57,7 @@ import {
 	projectPatch,
 	providerKeyInput,
 	providerMissing,
+	REPOSITORY_PROVIDERS,
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
@@ -175,6 +179,27 @@ import {
 	secretPlace,
 	storeEnvSecret,
 } from "./environment";
+import {
+	type GitLabAccess,
+	GitLabError,
+	gitlabBranchHead,
+	gitlabProjects,
+	gitlabTexts,
+	gitlabTree,
+	gitlabUser,
+} from "./gitlab/client";
+import {
+	connectionCount,
+	connectionRow,
+	forgetConnection,
+	gitlabExternalId,
+	gitlabPlace,
+	listConnections,
+	MAX_GITLAB_CONNECTIONS,
+	projectInputs,
+	recordDelivery,
+	recordSync,
+} from "./gitlab/connections";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import {
 	beginOAuth,
@@ -250,7 +275,7 @@ import {
 	utcDay,
 	utcMonth,
 } from "./sandbox-meter";
-import { scanRepository } from "./scanner";
+import { type RepositorySource, scanRepository } from "./scanner";
 import {
 	applyScan,
 	reconcileInstallation,
@@ -1642,6 +1667,201 @@ export class RegistryDO extends DurableObject {
 		this.#write(() => removeInstallation(this.#db, installation, Date.now()));
 	}
 
+	// GitLab connections (AGT-79): a token an owner or admin pastes, kept sealed.
+
+	gitlabConnections(): GitLabConnection[] {
+		return listConnections(this.#db);
+	}
+
+	/**
+	 * Connects a GitLab: the token is tried, and its projects become repositories, queued for a
+	 * scan. Returns the secret token for the push webhook, which is shown this once.
+	 */
+	async gitlabConnect(
+		input: GitLabConnectionInput,
+		by: string,
+	): Promise<{ connection: GitLabConnection; webhookSecret: string } | ProviderRefusal> {
+		const { baseUrl, token } = gitlabConnectionInput.parse(input);
+		const creator = z.string().trim().min(1).max(200).parse(by);
+		if (connectionCount(this.#db) >= MAX_GITLAB_CONNECTIONS) {
+			return refused(`A workspace connects at most ${MAX_GITLAB_CONNECTIONS} GitLabs`);
+		}
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const access: GitLabAccess = { baseUrl, token };
+		let account: string;
+		let projects: Awaited<ReturnType<typeof gitlabProjects>>["projects"];
+		try {
+			account = await gitlabUser(access);
+			projects = (await gitlabProjects(access)).projects;
+		} catch (error) {
+			return refused(gitlabMessage(error));
+		}
+		const connectionId = crypto.randomUUID();
+		const webhookSecret = randomSecret();
+		const sealedToken = await sealer.seal(gitlabPlace(connectionId, "token"), token);
+		const sealedWebhookSecret = await sealer.seal(
+			gitlabPlace(connectionId, "webhook"),
+			webhookSecret,
+		);
+		const now = Date.now();
+		this.#write(() => {
+			this.#db
+				.insert(schema.gitlabConnections)
+				.values({
+					id: connectionId,
+					baseUrl,
+					account: account.slice(0, 255),
+					sealedToken,
+					tokenHint: token.slice(-4),
+					sealedWebhookSecret,
+					createdBy: creator,
+					createdAt: now,
+					syncedAt: now,
+				})
+				.run();
+			reconcileInstallation(
+				this.#db,
+				connectionId,
+				projectInputs(connectionId, baseUrl, projects),
+				now,
+			);
+		});
+		await this.#scheduleAlarm();
+		const connection = listConnections(this.#db).find((found) => found.id === connectionId);
+		if (!connection) return refused("The connection was not kept");
+		return { connection, webhookSecret };
+	}
+
+	/** Lists the connection's projects again: new ones are scanned, gone ones removed. */
+	async gitlabSync(connectionId: string): Promise<GitLabConnection | ProviderRefusal> {
+		const connection = id.parse(connectionId);
+		const opened = await this.#gitlabAccess(connection);
+		if ("status" in opened) return opened;
+		const now = Date.now();
+		try {
+			const { projects } = await gitlabProjects(opened);
+			this.#write(() => {
+				reconcileInstallation(
+					this.#db,
+					connection,
+					projectInputs(connection, opened.baseUrl, projects),
+					now,
+				);
+				recordSync(this.#db, connection, { at: now, error: null });
+			});
+		} catch (error) {
+			const message = gitlabMessage(error);
+			this.#write(() => recordSync(this.#db, connection, { at: now, error: message }));
+			return refused(message);
+		}
+		await this.#scheduleAlarm();
+		return (
+			listConnections(this.#db).find((found) => found.id === connection) ??
+			refused("That GitLab is not connected")
+		);
+	}
+
+	/** A new secret token for the push webhook, shown this once; the old one stops working. */
+	async gitlabNewWebhookSecret(connectionId: string): Promise<string | ProviderRefusal> {
+		const connection = id.parse(connectionId);
+		if (!connectionRow(this.#db, connection)) return refused("That GitLab is not connected");
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const secret = randomSecret();
+		const sealed = await sealer.seal(gitlabPlace(connection, "webhook"), secret);
+		this.#write(() =>
+			this.#db
+				.update(schema.gitlabConnections)
+				.set({ sealedWebhookSecret: sealed })
+				.where(eq(schema.gitlabConnections.id, connection))
+				.run(),
+		);
+		return secret;
+	}
+
+	/** Forgets the token. Its repositories are removed; what scans found stays for their return. */
+	gitlabDisconnect(connectionId: string): boolean {
+		const connection = id.parse(connectionId);
+		return this.#write(() => {
+			removeInstallation(this.#db, connection, Date.now());
+			return forgetConnection(this.#db, connection);
+		});
+	}
+
+	/**
+	 * A delivery from GitLab's push webhook. The secret token must match before anything is read;
+	 * a push to a project's default branch then queues its scan. "unknown" and "unauthorized"
+	 * answer the same to the sender.
+	 */
+	async gitlabDelivery(
+		connectionId: string,
+		secretToken: string,
+		event: unknown,
+	): Promise<"unknown" | "unauthorized" | "ignored" | "queued"> {
+		const connection = z.string().min(1).max(100).safeParse(connectionId);
+		const row = connection.success ? connectionRow(this.#db, connection.data) : null;
+		if (!row) return "unknown";
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return "unauthorized";
+		let expected: string;
+		try {
+			expected = await sealer.open(gitlabPlace(row.id, "webhook"), row.sealedWebhookSecret);
+		} catch {
+			return "unauthorized";
+		}
+		if (!(await sameSecret(expected, String(secretToken)))) return "unauthorized";
+		this.#write(() => recordDelivery(this.#db, row.id, Date.now()));
+		const push = gitlabPush.safeParse(event);
+		if (!push.success) return "ignored";
+		const { ref, after, project } = push.data;
+		// Only the default branch is scanned. A push that deletes the branch has nothing to read.
+		if (ref !== `refs/heads/${project.default_branch}` || /^0+$/.test(after)) return "ignored";
+		const queued = await this.requestScanOf(
+			"gitlab",
+			gitlabExternalId(row.baseUrl, String(project.id)),
+		);
+		return queued ? "queued" : "ignored";
+	}
+
+	/** The connection's address and opened token, for this request's memory only. */
+	async #gitlabAccess(connectionId: string): Promise<GitLabAccess | ProviderRefusal> {
+		const row = connectionRow(this.#db, connectionId);
+		if (!row) return refused("That GitLab is not connected");
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		try {
+			const token = await sealer.open(gitlabPlace(row.id, "token"), row.sealedToken);
+			return { baseUrl: row.baseUrl, token };
+		} catch {
+			return refused("The GitLab token can no longer be opened; connect the GitLab again");
+		}
+	}
+
+	/** Where a scan reads a GitLab repository from, or why it cannot. */
+	async #gitlabSource(
+		repository: schema.RepositoryRow,
+	): Promise<RepositorySource | { unavailable: string }> {
+		if (repository.installationId === null) {
+			return { unavailable: "No GitLab connection reaches this repository" };
+		}
+		const access = await this.#gitlabAccess(repository.installationId);
+		if ("status" in access) return { unavailable: access.message };
+		const projectId = repository.externalId.slice(repository.externalId.lastIndexOf(":") + 1);
+		const wrap = async <T>(read: () => Promise<T>) => {
+			try {
+				return await read();
+			} catch (error) {
+				throw new Error(gitlabMessage(error));
+			}
+		};
+		return {
+			head: () => wrap(() => gitlabBranchHead(access, projectId, repository.defaultBranch)),
+			files: (tree) => wrap(() => gitlabTree(access, projectId, tree)),
+			texts: (blobIds) => wrap(() => gitlabTexts(access, projectId, blobIds)),
+		};
+	}
+
 	/**
 	 * Queues a scan of each repository. A forced one reads the repository even if nothing was
 	 * pushed since the last scan. Returns how many are live and queued.
@@ -1742,7 +1962,10 @@ export class RegistryDO extends DurableObject {
 			this.#write(() => finishScan(this.#db, request));
 			return;
 		}
-		const source = sourceFor(this.env as SourceEnv, repository);
+		const source =
+			repository.provider === "gitlab"
+				? await this.#gitlabSource(repository)
+				: sourceFor(this.env as SourceEnv, repository);
 		if ("unavailable" in source) {
 			// Trying again changes nothing until the server is set up differently.
 			this.#write(() => {
@@ -1777,7 +2000,7 @@ export class RegistryDO extends DurableObject {
 			.from(schema.repositories)
 			.where(
 				and(
-					eq(schema.repositories.provider, z.enum(["github"]).parse(provider)),
+					eq(schema.repositories.provider, z.enum(REPOSITORY_PROVIDERS).parse(provider)),
 					eq(schema.repositories.externalId, z.string().min(1).max(100).parse(externalId)),
 					isNull(schema.repositories.removedAt),
 				),
@@ -1915,6 +2138,44 @@ export class RegistryDO extends DurableObject {
 
 function refused(message: string): ProviderRefusal {
 	return { status: "refused", message };
+}
+
+/** The part of GitLab's push event a scan needs. */
+const gitlabPush = z.object({
+	object_kind: z.literal("push"),
+	ref: z.string(),
+	after: z.string(),
+	project: z.object({ id: z.number(), default_branch: z.string() }),
+});
+
+/** GitLab's own words where they help a person, and a plain failure otherwise. */
+function gitlabMessage(error: unknown): string {
+	if (error instanceof GitLabError) return error.message;
+	console.error("registry: GitLab answered unexpectedly", error);
+	return "GitLab answered with something the registry could not read";
+}
+
+/** A webhook's secret token: 32 random bytes, base64url. */
+function randomSecret(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(32));
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+}
+
+/**
+ * Compares two secrets in constant time, whatever their lengths: WebCrypto's HMAC `verify`
+ * compares the given secret's MAC with the expected one's under a key made for this call.
+ */
+async function sameSecret(expected: string, given: string): Promise<boolean> {
+	const encoder = new TextEncoder();
+	const key = (await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, [
+		"sign",
+		"verify",
+	])) as CryptoKey;
+	const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(expected));
+	return crypto.subtle.verify("HMAC", key, mac, encoder.encode(given));
 }
 
 /** What the OAuth client kept for a server, opened for the app's provider. */

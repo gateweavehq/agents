@@ -11,7 +11,7 @@ Gateweave Agents is part of [Gateweave](https://gateweave.com), the family of op
 tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gateweavehq/track).
 
 > **Status: early development.** Accounts, workspaces, members and invitations work. Workspaces
-> connect to GitHub, and the agents configured in each repository (Claude Code, Codex, Gemini
+> connect to GitHub or GitLab (gitlab.com or self-managed), and the agents configured in each repository (Claude Code, Codex, Gemini
 > CLI, Cursor, GitHub Copilot, Devin) and what they read are found and kept up to date on every
 > push, and can be browsed by project, by repository, by agent and by asset. A workspace library keeps versions of the
 > assets worth sharing and shows which repositories carry each one and which are behind, and
@@ -54,7 +54,9 @@ pnpm dev         # http://localhost:4720
 
 Sign up with any email and password, then create a workspace. To enable "Sign in with GitHub",
 uncomment and fill in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.dev.vars`. To connect
-workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes.
+workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes. GitLab
+needs nothing on the server: an owner or admin connects it in Settings > GitLab with an access
+token, which the server keeps encrypted, so `SECRETS_KEY` must be set.
 
 Workspaces keep their model provider keys and environment secrets encrypted with the server's
 `SECRETS_KEY`, which `pnpm dev:setup` generates for local development. On a deployed Worker, set

@@ -145,7 +145,7 @@ export function RepositoriesDialog({
 					<DialogTitle>Repositories in {project.name}</DialogTitle>
 					<DialogDescription>
 						{repositories.length === 0
-							? "Connect GitHub in the workspace's settings to list repositories here."
+							? "Connect GitHub or GitLab in the workspace's settings to list repositories here."
 							: "The agents of the repositories you choose show on the project's page."}
 					</DialogDescription>
 				</DialogHeader>

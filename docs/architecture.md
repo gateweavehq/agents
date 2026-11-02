@@ -84,6 +84,37 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
   verified with the app's secret; deliveries for installations no workspace linked are
   acknowledged and dropped.
 
+## GitLab
+
+A workspace can also read the projects of a GitLab, gitlab.com or a self-managed one (AGT-79).
+GitLab has no app to install, so an owner or admin connects it on Settings > GitLab with an
+access token: a project, group or personal token with `read_api` and `read_repository` and at
+least the Reporter role. The client is `packages/registry/src/gitlab/client.ts`; the connections
+are `gitlab_connections` rows in the registry (`gitlab/connections.ts`).
+
+- **The token is a secret of the workspace.** The registry tries it (`GET /user`), seals it with
+  `secrets.ts` and opens it only to read repositories. The page shows its last four characters.
+  Requests send it in `PRIVATE-TOKEN` to the connection's own address only, with redirects
+  refused, so it cannot be led elsewhere; the address must be https.
+- **Projects are repositories.** The projects the token's user is a member of with Reporter
+  access, not archived or empty, become repositories with `provider: "gitlab"`, the connection's
+  id as their `installationId` and their page as `webUrl`, made from the connection's address so
+  a link only ever leads to that GitLab, reconciled as an installation's are. GitLab numbers projects per instance, so a repository's `externalId` is the host and the
+  project's id (`gitlab.example.com:42`). Listing them again is a button on the page.
+- **Scans read what GitHub's do.** The branch's head, the commit's tree (keyset pages of 100, at
+  most 20,000 entries) and raw blobs, a few at a time. The tree gives Git's blob ids, so files and
+  assets hash the same as on GitHub. It gives no sizes: a blob too large or binary is found when
+  it is read.
+- **A push webhook rescans.** The page shows the webhook's URL
+  (`/api/gitlab/webhooks/:workspaceId/:connectionId`) and, once, its secret token, which the
+  registry keeps sealed. GitLab sends it in `X-Gitlab-Token`. The gateway
+  (`apps/web/src/server/gitlab.ts`) turns away unknown workspaces, and the registry compares the
+  token in constant time before reading the event; a mismatch gets the same 404 as a missing
+  connection. A push to the default branch queues a scan.
+- **Not yet.** Setups are applied by pull request, and sandboxes check out through the GitHub
+  App, so both offer GitHub repositories only and say so for GitLab ones. Merge requests come
+  next.
+
 ## Format adapters
 
 `packages/adapters` turns a repository's files into the agents and assets of a scan. It is pure
@@ -1259,6 +1290,7 @@ traces go (Telemetry), its model provider keys, and, for owners, deleting the wo
   Workers AI's list prices. `#prepareTurn` refuses a turn past either, and Settings > Models shows
   the day's spend.
 - **After cloud runners** (phase 5, AGT-9, done): container cost on Runs (AGT-53).
+- **GitLab, step two** (AGT-79): applying setups as merge requests, and sandboxes on GitLab.
 
 ## Deploys
 
