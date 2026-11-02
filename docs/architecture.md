@@ -344,9 +344,11 @@ admins manage them on the Environment page (`packages/registry/src/environment.t
 - **An agent picks one set**, pinned to a version like its instructions (`agent_definitions`,
   and `agent_assets` for the asset's page). A new version changes nothing until the pin moves.
   `agentSnapshot` does not carry it.
-- **The runtime opens it.** `resolveEnvironment(agentId)` returns the pinned version's variables
-  and the opened secrets, with the names that have no value (or whose value no longer opens)
-  as `missing`. No page or server function calls it; the others only see `set` or `missing`.
+- **The runtime opens it.** The registry's private `#openEnvironment(agentId)` opens the pinned
+  version's variables and secrets, with the names that have no value (or whose value no longer
+  opens) as `missing`. No RPC returns what it opens: values leave the registry only in an MCP
+  server's headers, through `turnServers`, for `beginTurn` and `mcpCheckTarget`. Pages and
+  server functions only see `set` or `missing`.
 - **Without `SECRETS_KEY`** the page says so and values cannot be set; sets with only variables
   work as they are.
 
@@ -415,11 +417,13 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   are read and made in the write that ends `beginTurn` or `mcpCheckTarget`, and a value entered
   again while the environment was being opened is not sent: that server waits for the next turn.
   Values stored before then were tied once, as each registry first woke after the deploy
-  (AGT-65, `bindUnsentSecrets`, recorded in `registry_passes`): each to the origin of the servers
-  that could send it, the version each live agent pins and the current version a check sends to.
-  One named at different origins stays unbound, and the Environment page lists those origins on
-  it until it is tied or entered again. Opened values leave the registry only through
-  `turnServers`: `#openEnvironment` is private, with no RPC that returns them.
+  (AGT-65, `bindUnsentSecrets`): each to the origin of the servers that could send it, the
+  version each live agent pins and the current version a check sends to. One named at different
+  origins stays unbound with those origins (`env_secrets.contested`): it is sent only to one of
+  them, the first a check or a turn uses, and the Environment page lists them on it until it is
+  tied or entered again. One-time passes like this one run through `runPassOnce`
+  (`packages/registry/src/passes.ts`), recorded in `registry_passes`: one that throws is rolled
+  back, logged and recorded as failed with why, and the registry wakes all the same.
 
 ## Sandboxes
 

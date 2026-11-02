@@ -451,11 +451,13 @@ export const envSecrets = sqliteTable(
 
 /**
  * One-time passes over a workspace's own data that a SQL migration cannot express, by name, with
- * when each ran, so each runs once (see `RegistryDO`'s constructor).
+ * when each ran and whether it failed, so each runs once (see `passes.ts`).
  */
 export const registryPasses = sqliteTable("registry_passes", {
 	name: text("name").primaryKey(),
 	ranAt: integer("ran_at").notNull(),
+	/** Why it failed, when it did. A failed pass is not tried again; its work stays undone. */
+	failure: text("failure"),
 });
 
 /**

@@ -291,6 +291,8 @@ export function pinnedEnvironment(
 export interface SecretSend {
 	sealed: string;
 	sentTo: string | null;
+	/** The only origins an unbound value may be tied to, when `bindUnsentSecrets` left it so. */
+	contested: string[] | null;
 }
 
 /** Leaves a stored secret unbound, noting the origins of the servers that name it (AGT-65). */
@@ -307,11 +309,16 @@ export function contestSecret(db: Db, assetId: string, name: string, origins: st
 export function secretSends(db: Db, assetId: string): Map<string, SecretSend> {
 	return new Map(
 		db
-			.select({ name: envSecrets.name, sealed: envSecrets.sealed, sentTo: envSecrets.sentTo })
+			.select({
+				name: envSecrets.name,
+				sealed: envSecrets.sealed,
+				sentTo: envSecrets.sentTo,
+				contested: envSecrets.contested,
+			})
 			.from(envSecrets)
 			.where(eq(envSecrets.assetId, assetId))
 			.all()
-			.map(({ name, sealed, sentTo }) => [name, { sealed, sentTo }] as const),
+			.map(({ name, ...send }) => [name, send] as const),
 	);
 }
 

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "29ddaa94-e069-4f96-8f8e-cc6452ce0c3c",
+  "id": "08974bf9-4295-45fa-aff5-2f3a372512cf",
   "prevId": "06c8d774-4620-420c-9b8b-76a3956d7b48",
   "tables": {
     "agent_assets": {
@@ -1145,6 +1145,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "failure": {
+          "name": "failure",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         }
       },

@@ -30,7 +30,6 @@ import {
 	envSecrets,
 	type FileEntry,
 	mcpChecks,
-	registryPasses,
 } from "./db/schema";
 import { bindSecret, contestSecret, type SecretSend, secretSends } from "./environment";
 import { assetHash } from "./hash";
@@ -290,6 +289,10 @@ export function turnServers(
 			const send = sends.get(name);
 			if (!send || send.sealed !== opened.opened.get(name)) changed.push(name);
 			else if (send.sentTo !== null && send.sentTo !== origin) elsewhere.push(name);
+			// Stored before ties, and named at several origins then (AGT-65): one of those alone.
+			else if (send.sentTo === null && send.contested && !send.contested.includes(origin)) {
+				elsewhere.push(name);
+			}
 		}
 		if (changed.length > 0) {
 			return { name: turn.name, problem: `${changed.join(", ")} changed as this began; try again` };
@@ -305,13 +308,13 @@ export function turnServers(
 			const send = sends.get(name);
 			if (!send || send.sentTo !== null) continue;
 			bindSecret(db, assetId, name, origin);
-			sends.set(name, { ...send, sentTo: origin });
+			sends.set(name, { ...send, sentTo: origin, contested: null });
 		}
 		return turn;
 	});
 }
 
-/** The name `registry_passes` keeps `bindUnsentSecrets` under. */
+/** The name `registry_passes` keeps `bindUnsentSecrets` under (see `passes.ts`). */
 export const BIND_UNSENT_SECRETS = "bind-unsent-secrets";
 
 /**
@@ -321,16 +324,10 @@ export const BIND_UNSENT_SECRETS = "bind-unsent-secrets";
  * The servers that count are those an agent run by Gateweave could send it to: the version each
  * live agent pins, and the current version, which a check sends to, of servers its environment
  * set fills. A value they name at different origins is left unbound, with those origins, for an
- * admin to look at on the Environment page. Runs in a write.
+ * admin to look at on the Environment page, and `turnServers` sends it to one of those alone.
+ * Runs in a write, once, through `runPassOnce`.
  */
-export function bindUnsentSecrets(db: Db, now: number): void {
-	const ran = db
-		.select({ name: registryPasses.name })
-		.from(registryPasses)
-		.where(eq(registryPasses.name, BIND_UNSENT_SECRETS))
-		.get();
-	if (ran) return;
-	db.insert(registryPasses).values({ name: BIND_UNSENT_SECRETS, ranAt: now }).run();
+export function bindUnsentSecrets(db: Db): void {
 	const unsent = new Set(
 		db
 			.select({ assetId: envSecrets.assetId, name: envSecrets.name })

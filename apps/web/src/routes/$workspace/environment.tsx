@@ -277,8 +277,9 @@ function SecretRow({
 					// Stored before values were tied to one origin, and named at several (AGT-65).
 					<p className="text-xs text-amber-600 dark:text-amber-500">
 						Stored before values were tied to one server address, and named by servers at{" "}
-						<span className="break-all">{contested.join(", ")}</span>. It goes to whichever an agent
-						or a check uses first, and then only there: make sure each of them should have it.
+						<span className="break-all">{contested.join(", ")}</span>. It is sent only to one of
+						these, the first an agent or a check uses, and then only there. Enter it again to send
+						it anywhere else.
 					</p>
 				)}
 			</div>

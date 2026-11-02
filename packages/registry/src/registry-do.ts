@@ -166,6 +166,7 @@ import {
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import {
 	agentServers,
+	BIND_UNSENT_SECRETS,
 	bindUnsentSecrets,
 	createMcpServer,
 	editMcpServer,
@@ -175,6 +176,7 @@ import {
 	recordMcpCheck,
 	turnServers,
 } from "./mcp-servers";
+import { runPassOnce } from "./passes";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	keyPlace,
@@ -311,7 +313,13 @@ export class RegistryDO extends DurableObject {
 		void ctx.blockConcurrencyWhile(async () => {
 			await migrate(this.#db, migrations);
 			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
-			this.#write(() => bindUnsentSecrets(this.#db, Date.now()));
+			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`).
+			runPassOnce(
+				this.#db,
+				(fn) => this.#write(fn),
+				BIND_UNSENT_SECRETS,
+				() => bindUnsentSecrets(this.#db),
+			);
 			// A migration may queue scans, as 0008 does.
 			await this.#scheduleAlarm();
 		});
