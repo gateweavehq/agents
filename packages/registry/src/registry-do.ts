@@ -271,6 +271,7 @@ import {
 	updateTrigger,
 	verifyDelivery,
 } from "./triggers";
+import { type UsageSettings, usagePoint, writeUsage } from "./usage";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
@@ -1004,6 +1005,11 @@ export class RegistryDO extends DurableObject {
 		const run = id.parse(runId);
 		const data = runFinish.parse(finish);
 		const closed = this.#write(() => finishRun(this.#db, run, data));
+		if (closed) {
+			const done = getRun(this.#db, run);
+			// Each registry is named for its workspace (`registryFor` in the app).
+			if (done) this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done));
+		}
 		const { monthlyBudget } = sandboxLimits(this.env as SandboxSettings);
 		if (closed && monthlyBudget !== null && runHadSandbox(this.#db, run)) {
 			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
@@ -1553,6 +1559,14 @@ export class RegistryDO extends DurableObject {
 		console.warn(
 			`registry: sandboxes have spent ${passed.share}% of the budget for ${passed.month}: $${passed.spent.toFixed(2)} of $${passed.budget}`,
 		);
+	}
+
+	/**
+	 * Copies a closed run's usage to the deployment's Analytics Engine dataset, when it binds one
+	 * as `USAGE`. A test's registry overrides it to read what was written.
+	 */
+	protected recordUsage(point: AnalyticsEngineDataPoint): void {
+		writeUsage((this.env as UsageSettings).USAGE, point);
 	}
 
 	/**

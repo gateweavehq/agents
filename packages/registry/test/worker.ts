@@ -11,6 +11,7 @@ export interface StartedTurn {
 
 const STARTED_KEY = "test:started-turns";
 const BUDGET_KEY = "test:budget-passed";
+const USAGE_KEY = "test:usage";
 
 /**
  * The registry, beginning scheduled runs as the app's does, but with no runtime: the run begins in
@@ -35,6 +36,17 @@ export class RegistryDO extends Registry {
 	protected override async sandboxBudgetPassed(passed: SandboxBudgetPassed): Promise<void> {
 		const heard = this.ctx.storage.kv.get<SandboxBudgetPassed[]>(BUDGET_KEY) ?? [];
 		this.ctx.storage.kv.put(BUDGET_KEY, [...heard, passed]);
+	}
+
+	protected override recordUsage(point: AnalyticsEngineDataPoint): void {
+		const written = this.ctx.storage.kv.get<AnalyticsEngineDataPoint[]>(USAGE_KEY) ?? [];
+		this.ctx.storage.kv.put(USAGE_KEY, [...written, point]);
+		super.recordUsage(point);
+	}
+
+	/** The usage events this registry wrote, as the deployment's dataset would get them. */
+	usageWritten(): AnalyticsEngineDataPoint[] {
+		return this.ctx.storage.kv.get<AnalyticsEngineDataPoint[]>(USAGE_KEY) ?? [];
 	}
 
 	/** The shares of the sandbox budget this registry told of, as the app emails them. */

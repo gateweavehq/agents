@@ -18,6 +18,8 @@
 			{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
 		]
 	},
+	// The deployment's usage events (USAGE); Miniflare keeps none of what is written.
+	"analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "agents_registry_test_usage" }],
 	"exports": {
 		"RegistryDO": { "type": "durable-object", "storage": "sqlite" },
 		"SandboxMeterDO": { "type": "durable-object", "storage": "sqlite" }
