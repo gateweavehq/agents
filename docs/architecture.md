@@ -697,7 +697,8 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     of those (Codex's MCP tools) or `tool_search`, which looks only through the request's own
     deferred tools; or `web_search_options`, or a stored `prompt`, whose tools the request does
     not show; or reads what the workspace's organization stored (`previous_response_id`,
-    `conversation`, a `file_id`), which Codex and OpenCode never do, as they store nothing; or a
+    `conversation`, a `file_id`, an `item_reference` input item, typed or not), which Codex and
+    OpenCode never do, as they store nothing; or a
     `service_tier` other than `auto` or `default`;
   - for Google, has a tool other than `functionDeclarations`, `cachedContent` (which brings its
     own instructions and tools), or a `fileData` part with a URI anywhere in the body;

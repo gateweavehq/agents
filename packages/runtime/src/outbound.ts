@@ -281,6 +281,12 @@ function checkOpenAI(model: string, body: Record<string, unknown>): string | nul
 	if (someBlock(body.input, isOpenAIStoredFile) || someBlock(body.messages, isOpenAIStoredFile)) {
 		return `This sandbox's requests to ${name} read no stored file (file_id)`;
 	}
+	if (
+		listOf(body.input).some(isUntypedItemReference) ||
+		someBlock(body.input, (block) => block.type === "item_reference")
+	) {
+		return `This sandbox's requests to ${name} read no stored item (item_reference)`;
+	}
 	// The input of the Responses API, and the messages of chat completions.
 	if (someBlock(body.input, isOpenAIUrlInput) || someBlock(body.messages, isOpenAIUrlInput)) {
 		return `This sandbox's requests to ${name} fetch no image or file by URL`;
@@ -364,6 +370,19 @@ function isOpenAIStoredFile(block: Record<string, unknown>): boolean {
 		return block.file_id !== undefined && block.file_id !== null;
 	}
 	return block.type === "file" && isObject(block.file) && "file_id" in block.file;
+}
+
+/**
+ * A Responses API input item that is only the id of one OpenAI stored: an `item_reference`, whose
+ * `type` may be left out. A message without a type has a `role`; every other item has a type.
+ */
+function isUntypedItemReference(item: unknown): boolean {
+	return (
+		isObject(item) &&
+		(item.type === undefined || item.type === null) &&
+		"id" in item &&
+		!("role" in item)
+	);
 }
 
 /** An OpenAI image or file given by a URL other than a `data:` one, which OpenAI would fetch. */
