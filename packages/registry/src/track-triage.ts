@@ -131,9 +131,17 @@ export function makeTrackAccess(
 		now,
 		plan.envSetId,
 	);
+	const url = trackMcpUrl(plan.trackUrl);
 	storeEnvSecret(
 		db,
-		{ assetId: environment, name: TRACK_KEY_VARIABLE, sealed: plan.sealedKey, setBy: plan.setBy },
+		{
+			assetId: environment,
+			name: TRACK_KEY_VARIABLE,
+			sealed: plan.sealedKey,
+			setBy: plan.setBy,
+			// The key is for this Track alone, from the start (AGT-64).
+			sentTo: new URL(url).origin,
+		},
 		now,
 	);
 	const mcpServer = createMcpServer(
@@ -141,7 +149,7 @@ export function makeTrackAccess(
 		{
 			name: freeName(db, "mcp-server", plan.names.mcpServer),
 			transport: "http",
-			url: trackMcpUrl(plan.trackUrl),
+			url,
 			// The header names the variable, not the key: the runtime fills it in from the env set.
 			headers: [{ name: "Authorization", value: `Bearer \${${TRACK_KEY_VARIABLE}}` }],
 		},
