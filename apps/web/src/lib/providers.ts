@@ -16,6 +16,7 @@ import {
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { invitationLink } from "#/lib/invitation";
 
 // Workers AI has no key to check or remove.
 const provider = z.enum(KEYED_PROVIDERS);
@@ -59,6 +60,11 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 			workersAi: boolean;
 			workersAiOffer: WorkersAiOffer;
 			workersAiSpend: WorkersAiSpend | null;
+			/**
+			 * Where to ask for an invitation to what the server offers by invitation: a link, or
+			 * null when it names nowhere (`INVITATION_CONTACT`).
+			 */
+			invitation: string | null;
 			sandbox: SandboxOffer;
 			sandboxTime: SandboxTime | null;
 		} | null> => {
@@ -80,6 +86,10 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 				workersAi: offer === "offered",
 				workersAiOffer: offer,
 				workersAiSpend: dollars === null ? null : { dollars, limit: workersAiDailyLimit(env) },
+				invitation: invitationLink(env.INVITATION_CONTACT, {
+					id: workspaceId,
+					name: found.member.membership.workspaceName,
+				}),
 				sandbox,
 				sandboxTime:
 					seconds === null

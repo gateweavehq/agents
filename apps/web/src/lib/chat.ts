@@ -84,17 +84,22 @@ export const getChats = createServerFn({ method: "GET" })
 			conversations: Conversation[];
 			agents: ChatAgent[];
 			teams: ChatTeam[];
+			/** Whether any model can answer here: the workspace has a key, or the server offers Workers AI. */
+			hasModels: boolean;
 		} | null> => {
 			const member = await memberOf(slug);
 			if (!member) return null;
-			const [conversations, agents, teams] = await Promise.all([
+			const [conversations, agents, teams, keys, { offersWorkersAi }] = await Promise.all([
 				member.registry.listConversations(member.userId),
 				chatAgents(member.registry, member.workspaceId),
 				member.registry.listTeams(),
+				member.registry.listProviderKeys(),
+				import("#/server/workers-ai"),
 			]);
 			return {
 				conversations,
 				agents,
+				hasModels: keys.length > 0 || offersWorkersAi(member.workspaceId),
 				teams: teams.map(
 					({ team, lead, members }): ChatTeam => ({
 						id: team.id,

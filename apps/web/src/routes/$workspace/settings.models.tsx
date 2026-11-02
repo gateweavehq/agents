@@ -84,8 +84,9 @@ function ModelsPage() {
 				offer={data.workersAiOffer}
 				spend={data.workersAiSpend}
 				models={data.workersAiModels}
+				invitation={data.invitation}
 			/>
-			<Sandboxes offer={data.sandbox} time={data.sandboxTime} />
+			<Sandboxes offer={data.sandbox} time={data.sandboxTime} invitation={data.invitation} />
 		</div>
 	);
 }
@@ -128,9 +129,11 @@ function WorkersAi({
 	offer,
 	spend,
 	models,
+	invitation,
 }: {
 	offer: WorkersAiOffer;
 	spend: WorkersAiSpend | null;
+	invitation: string | null;
 	/** The models, or why they could not be listed; null when the server does not offer it. */
 	models: ProviderModel[] | string | null;
 }) {
@@ -151,6 +154,7 @@ function WorkersAi({
 							? "This server offers Workers AI only to the workspaces it invites. Whoever runs it can invite this one."
 							: "This server does not offer Workers AI. Whoever runs it can turn it on by setting WORKERS_AI_TOKEN, and CLOUDFLARE_ACCOUNT_ID unless AI_GATEWAY_URL names the account; see the README in the repository."}
 				</p>
+				{offer === "by-invitation" && <AskForInvitation href={invitation} />}
 			</div>
 			{spend && (
 				<p className="rounded-lg border p-3 text-sm">
@@ -184,7 +188,15 @@ function WorkersAi({
 }
 
 /** Sandboxes are paid for by whoever runs the server, so the page says what this workspace may use. */
-function Sandboxes({ offer, time }: { offer: SandboxOffer; time: SandboxTime | null }) {
+function Sandboxes({
+	offer,
+	time,
+	invitation,
+}: {
+	offer: SandboxOffer;
+	time: SandboxTime | null;
+	invitation: string | null;
+}) {
 	const limit = time?.limit ?? null;
 	return (
 		<section aria-labelledby="sandboxes-heading" className="space-y-3">
@@ -199,6 +211,7 @@ function Sandboxes({ offer, time }: { offer: SandboxOffer; time: SandboxTime | n
 							? "This server runs sandboxes only for the workspaces it invites. Whoever runs it can invite this one."
 							: "This server does not run sandboxes. Whoever runs it can turn them on; see the README in the repository."}
 				</p>
+				{offer === "by-invitation" && <AskForInvitation href={invitation} />}
 			</div>
 			{time && (
 				<p className="rounded-lg border p-3 text-sm">
@@ -208,6 +221,18 @@ function Sandboxes({ offer, time }: { offer: SandboxOffer; time: SandboxTime | n
 				</p>
 			)}
 		</section>
+	);
+}
+
+/** A link to ask whoever runs the server for an invitation, when it names where. */
+function AskForInvitation({ href }: { href: string | null }) {
+	if (!href) return null;
+	return (
+		<p className="text-sm">
+			<a href={href} className="font-medium underline underline-offset-4">
+				Ask for an invitation
+			</a>
+		</p>
 	);
 }
 

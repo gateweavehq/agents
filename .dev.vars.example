@@ -39,6 +39,9 @@ BETTER_AUTH_SECRET=
 # SANDBOX_WORKSPACES invites), and each up to this many US dollars a day (UTC).
 # WORKERS_AI_WORKSPACES=
 # WORKERS_AI_DAILY_DOLLARS=
+# Optional: where a workspace asks to be invited to Workers AI or sandboxes, an email address or an
+# https URL. Settings > Models links to it when they are by invitation.
+# INVITATION_CONTACT=
 
 # Optional: pins the app's URL. Leave it out to accept any host, for example from your phone.
 # BETTER_AUTH_URL=

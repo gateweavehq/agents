@@ -25,6 +25,7 @@ export const OPTIONAL_SECRETS = [
 	"SANDBOX_DAILY_MINUTES",
 	"SANDBOX_MONTHLY_BUDGET",
 	"SANDBOX_ALERT_EMAIL",
+	"INVITATION_CONTACT",
 ] as const;
 
 /** What local dev loads from .dev.vars: the required secrets, and the optional ones it sets. */
