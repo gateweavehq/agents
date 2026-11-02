@@ -243,3 +243,9 @@ runtime is designed alongside it, so the data model fits both.
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the
   repository all show correctly after the next scan. Two library assets that share a version both
   claim the repository assets that carry it, and the asset page lists both.
+- **No Docker cloud sandboxes for Gateweave Cloud** (AGT-55, 2026-11-02). Docker's cloud
+  sandboxes would fit the runtime's sandbox ports, but Docker's terms license them for a
+  customer's internal use and bar offering them to third parties or in competition, and the API
+  is experimental. Gateweave Cloud keeps its own containers. A backend for self-hosters who bring
+  their own Docker token may follow once the API is generally available, on the conditions in
+  [docker-sandboxes.md](docker-sandboxes.md).
