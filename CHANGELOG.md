@@ -8,6 +8,22 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.6.1] - 2026-11-02
+
+A security follow-up to v0.6.0: secrets stored before it are tied to their servers' address too.
+Updating a self-hosted copy applies a migration in each workspace's registry, which runs on its
+own, and needs no new setting. (#108)
+
+### Security
+
+- A secret stored before v0.6.0 had no address yet, so until it was first used, an admin could
+  point a server that names it at their own host and check it there. Each workspace now ties
+  those secrets once, as it first starts after the update, to the address of the servers that
+  use them. A secret whose servers sit at more than one address is marked as contested on the
+  Environment page and goes only to one of those addresses until someone enters it again. (#108)
+- The registry no longer has a call that hands out opened secret values; they leave it only for
+  a check or a turn, after the address check. (#108)
+
 ## [0.6.0] - 2026-11-02
 
 Sandboxes are held tighter: what an agent's model requests may ask of the provider is checked
