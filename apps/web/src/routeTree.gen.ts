@@ -36,6 +36,7 @@ import { Route as WorkspaceSettingsIndexRouteImport } from './routes/$workspace/
 import { Route as WorkspaceSettingsGithubRouteImport } from './routes/$workspace/settings.github'
 import { Route as WorkspaceSettingsMembersRouteImport } from './routes/$workspace/settings.members'
 import { Route as WorkspaceSettingsModelsRouteImport } from './routes/$workspace/settings.models'
+import { Route as WorkspaceSettingsTelemetryRouteImport } from './routes/$workspace/settings.telemetry'
 import { Route as WorkspaceSetupsIndexRouteImport } from './routes/$workspace/setups.index'
 import { Route as WorkspaceSetupsSetupIdRouteImport } from './routes/$workspace/setups.$setupId'
 import { Route as WorkspaceTeamsIndexRouteImport } from './routes/$workspace/teams.index'
@@ -187,6 +188,12 @@ const WorkspaceSettingsModelsRoute = WorkspaceSettingsModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => WorkspaceSettingsRoute,
 } as any)
+const WorkspaceSettingsTelemetryRoute =
+  WorkspaceSettingsTelemetryRouteImport.update({
+    id: '/telemetry',
+    path: '/telemetry',
+    getParentRoute: () => WorkspaceSettingsRoute,
+  } as any)
 const WorkspaceSetupsIndexRoute = WorkspaceSetupsIndexRouteImport.update({
   id: '/setups/',
   path: '/setups/',
@@ -261,6 +268,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
+  '/$workspace/settings/telemetry': typeof WorkspaceSettingsTelemetryRoute
   '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
   '/$workspace/teams/$teamId': typeof WorkspaceTeamsTeamIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -297,6 +305,7 @@ export interface FileRoutesByTo {
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
+  '/$workspace/settings/telemetry': typeof WorkspaceSettingsTelemetryRoute
   '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
   '/$workspace/teams/$teamId': typeof WorkspaceTeamsTeamIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -337,6 +346,7 @@ export interface FileRoutesById {
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
   '/$workspace/settings/models': typeof WorkspaceSettingsModelsRoute
+  '/$workspace/settings/telemetry': typeof WorkspaceSettingsTelemetryRoute
   '/$workspace/setups/$setupId': typeof WorkspaceSetupsSetupIdRoute
   '/$workspace/teams/$teamId': typeof WorkspaceTeamsTeamIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -378,6 +388,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
+    | '/$workspace/settings/telemetry'
     | '/$workspace/setups/$setupId'
     | '/$workspace/teams/$teamId'
     | '/api/auth/$'
@@ -414,6 +425,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
+    | '/$workspace/settings/telemetry'
     | '/$workspace/setups/$setupId'
     | '/$workspace/teams/$teamId'
     | '/api/auth/$'
@@ -453,6 +465,7 @@ export interface FileRouteTypes {
     | '/$workspace/settings/github'
     | '/$workspace/settings/members'
     | '/$workspace/settings/models'
+    | '/$workspace/settings/telemetry'
     | '/$workspace/setups/$setupId'
     | '/$workspace/teams/$teamId'
     | '/api/auth/$'
@@ -677,6 +690,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceSettingsModelsRouteImport
       parentRoute: typeof WorkspaceSettingsRoute
     }
+    '/$workspace/settings/telemetry': {
+      id: '/$workspace/settings/telemetry'
+      path: '/telemetry'
+      fullPath: '/$workspace/settings/telemetry'
+      preLoaderRoute: typeof WorkspaceSettingsTelemetryRouteImport
+      parentRoute: typeof WorkspaceSettingsRoute
+    }
     '/$workspace/setups/': {
       id: '/$workspace/setups/'
       path: '/setups'
@@ -768,6 +788,7 @@ interface WorkspaceSettingsRouteChildren {
   WorkspaceSettingsGithubRoute: typeof WorkspaceSettingsGithubRoute
   WorkspaceSettingsMembersRoute: typeof WorkspaceSettingsMembersRoute
   WorkspaceSettingsModelsRoute: typeof WorkspaceSettingsModelsRoute
+  WorkspaceSettingsTelemetryRoute: typeof WorkspaceSettingsTelemetryRoute
   WorkspaceSettingsIndexRoute: typeof WorkspaceSettingsIndexRoute
 }
 
@@ -775,6 +796,7 @@ const WorkspaceSettingsRouteChildren: WorkspaceSettingsRouteChildren = {
   WorkspaceSettingsGithubRoute: WorkspaceSettingsGithubRoute,
   WorkspaceSettingsMembersRoute: WorkspaceSettingsMembersRoute,
   WorkspaceSettingsModelsRoute: WorkspaceSettingsModelsRoute,
+  WorkspaceSettingsTelemetryRoute: WorkspaceSettingsTelemetryRoute,
   WorkspaceSettingsIndexRoute: WorkspaceSettingsIndexRoute,
 }
 

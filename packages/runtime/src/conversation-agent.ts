@@ -62,6 +62,7 @@ import {
 	pullRequestTools,
 } from "./pull-requests";
 import { SANDBOX_ROOT, sandboxTools } from "./sandbox-tools";
+import { createOutbox, queueExport, sendDue } from "./telemetry-export";
 import { connectTools } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
@@ -170,6 +171,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	static override options = { sendIdentityOnConnect: false };
 
 	#traceTables = false;
+	/** The export of run traces under way, so two never send the same run at once. */
+	#exporting: Promise<void> | null = null;
 	/** The turn `nestedTurn` or `triggerTurn` began, which the next `onChatMessage` takes up. */
 	#begun: ConversationTurn | null = null;
 	/** Stops the nested turn under way, when the turn waiting for it stops. */
@@ -691,6 +694,7 @@ ${runPageNote(runs, turn.runId)}`
 		const sql = this.sql.bind(this) as Sql;
 		if (!this.#traceTables) {
 			createTraceTables(sql);
+			createOutbox(sql);
 			this.#traceTables = true;
 		}
 		return sql;
@@ -714,6 +718,28 @@ ${runPageNote(runs, turn.runId)}`
 		} catch (error) {
 			console.error("A run's end was not recorded", { runId, ...failureForLogs(error) });
 		}
+		queueExport(this.#sql, runId);
+		this.ctx.waitUntil(this.exportTraces());
+	}
+
+	/**
+	 * Sends the traces of the runs that ended to the workspace's OpenTelemetry endpoint, if it has
+	 * one, and wakes again when a failed one is due to be tried again (`./telemetry-export.ts`).
+	 * Never throws: the export is a copy.
+	 */
+	async exportTraces(): Promise<void> {
+		this.#exporting ??= (async () => {
+			try {
+				const { workspaceId, registry } = this.#parties();
+				const next = await sendDue(this.#sql, registry, workspaceId);
+				if (next !== null) await this.schedule(new Date(next), "exportTraces");
+			} catch (error) {
+				console.error("Run traces were not exported", failureForLogs(error));
+			} finally {
+				this.#exporting = null;
+			}
+		})();
+		return this.#exporting;
 	}
 
 	/** Only the server changes the state, and this agent keeps none. */

@@ -757,3 +757,25 @@ export interface McpServerEntry {
 	agents: { id: string; name: string; version: number }[];
 	check: McpCheck | null;
 }
+
+/**
+ * Where the workspace's run traces go over OpenTelemetry, as pages show it: the endpoint, the
+ * names of the headers sent with it (never their values), and how the last export went.
+ */
+export interface TelemetrySettings {
+	endpoint: string;
+	headers: string[];
+	setBy: string;
+	setAt: number;
+	/** The last export of a run's trace: when, and why it failed; null before the first. */
+	lastExport: { at: number; ok: boolean; error: string | null } | null;
+}
+
+/** Where to send a trace, with the headers opened: for the runtime alone, like a model key. */
+export interface TelemetryTarget {
+	/** The full URL traces are posted to, ending in `/v1/traces`. */
+	url: string;
+	headers: Record<string, string>;
+	/** Which settings these are, for reporting how the export went (`recordTelemetryExport`). */
+	setAt: number;
+}
