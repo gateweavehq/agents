@@ -211,11 +211,12 @@ export function listEnvSets(db: Db): EnvSetEntry[] {
  */
 export function storeEnvSecret(
 	db: Db,
-	secret: { assetId: string; name: string; sealed: string; setBy: string },
+	secret: { assetId: string; name: string; sealed: string; setBy: string; sentTo?: string },
 	now: number,
 ): void {
 	checkEnvSecretName(db, secret.assetId, secret.name);
-	const row = { ...secret, setAt: now };
+	// A new value has been sent nowhere yet, unless the caller knows where it is for.
+	const row = { ...secret, sentTo: secret.sentTo ?? null, setAt: now };
 	db.insert(envSecrets)
 		.values(row)
 		.onConflictDoUpdate({ target: [envSecrets.assetId, envSecrets.name], set: row })
@@ -278,4 +279,32 @@ export function pinnedEnvironment(
 			.sort(compare)
 			.map((name) => ({ name, sealed: stored.get(name) ?? null })),
 	};
+}
+
+/** A stored secret, sealed, and the origin it was first sent to (see `turnServers`). */
+export interface SecretSend {
+	sealed: string;
+	sentTo: string | null;
+}
+
+/** Each stored secret of a set, by name. */
+export function secretSends(db: Db, assetId: string): Map<string, SecretSend> {
+	return new Map(
+		db
+			.select({ name: envSecrets.name, sealed: envSecrets.sealed, sentTo: envSecrets.sentTo })
+			.from(envSecrets)
+			.where(eq(envSecrets.assetId, assetId))
+			.all()
+			.map(({ name, sealed, sentTo }) => [name, { sealed, sentTo }] as const),
+	);
+}
+
+/** Ties a stored secret to the origin it is being sent to, if it is not tied to one yet. */
+export function bindSecret(db: Db, assetId: string, name: string, origin: string): void {
+	db.update(envSecrets)
+		.set({ sentTo: origin })
+		.where(
+			and(eq(envSecrets.assetId, assetId), eq(envSecrets.name, name), isNull(envSecrets.sentTo)),
+		)
+		.run();
 }

@@ -405,6 +405,15 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   headers live in that request's memory and never reach the browser; the check keeps no header
   value and nothing the server said but its tools' names and descriptions. Servers that run as a
   local command are listed as unavailable and cannot be checked until cloud runners (AGT-9).
+- **A secret goes to one origin** (AGT-64, `turnServers` in `packages/registry/src/mcp-servers.ts`).
+  Anyone who may edit a server may change its URL, and the secrets its headers name were often
+  entered by someone else. So `env_secrets.sent_to` keeps the origin a value was first sent to,
+  by a check or a turn, and from then on a server at any other origin is left out, saying which
+  secret was entered for another address. Entering the value again clears it; Track triage ties
+  its key to Track's origin as it stores it. Tying the value rather than watching servers' URLs
+  covers a new server that names an existing secret, and versions an agent pins, alike. The ties
+  are read and made in the write that ends `beginTurn` or `mcpCheckTarget`, and a value entered
+  again while the environment was being opened is not sent: that server waits for the next turn.
 
 ## Sandboxes
 

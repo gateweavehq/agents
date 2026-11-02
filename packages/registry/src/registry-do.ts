@@ -171,8 +171,9 @@ import {
 	editMcpServer,
 	listMcpServers,
 	mcpCheckPlan,
+	type OpenedEnvironment,
 	recordMcpCheck,
-	turnServer,
+	turnServers,
 } from "./mcp-servers";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
@@ -592,8 +593,10 @@ export class RegistryDO extends DurableObject {
 	async mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null> {
 		const plan = mcpCheckPlan(this.#db, id.parse(assetId));
 		if (!plan) return null;
-		const environment = plan.agentId ? await this.resolveEnvironment(plan.agentId) : null;
-		return turnServer({ name: plan.name, reading: plan.reading, tools: null }, environment);
+		const environment = plan.agentId ? await this.#openEnvironment(plan.agentId) : null;
+		const server = { name: plan.name, reading: plan.reading, tools: null };
+		const [target] = this.#write(() => turnServers(this.#db, [server], environment));
+		return target ?? null;
 	}
 
 	/** Keeps how checking a server went as its last check. Null when it is not in the library. */
@@ -630,10 +633,16 @@ export class RegistryDO extends DurableObject {
 	 * changed, counts as missing: it has to be set again. Null when there is no such live agent.
 	 */
 	async resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null> {
-		const pinned = pinnedEnvironment(this.#db, id.parse(agentId));
+		return (await this.#openEnvironment(id.parse(agentId)))?.environment ?? null;
+	}
+
+	/** `resolveEnvironment`, and which sealed value each secret was opened from, for `turnServers`. */
+	async #openEnvironment(agentId: string): Promise<OpenedEnvironment | null> {
+		const pinned = pinnedEnvironment(this.#db, agentId);
 		if (!pinned) return null;
 		const values = { ...pinned.variables };
 		const missing: string[] = [];
+		const opened = new Map<string, string>();
 		const stored = pinned.secrets.filter((secret) => secret.sealed !== null);
 		const sealer = stored.length > 0 ? await this.#sealerOf() : null;
 		for (const { name, sealed } of pinned.secrets) {
@@ -643,11 +652,12 @@ export class RegistryDO extends DurableObject {
 			}
 			try {
 				values[name] = await sealer.open(secretPlace(pinned.assetId, name), sealed);
+				opened.set(name, sealed);
 			} catch {
 				missing.push(name);
 			}
 		}
-		return { values, missing };
+		return { environment: { values, missing }, assetId: pinned.assetId, opened };
 	}
 
 	// Conversations with agents run by Gateweave. Each is private to the member who started it,
@@ -941,10 +951,10 @@ export class RegistryDO extends DurableObject {
 			// Workers AI has no key of the workspace's: the runtime uses the deployment's token, which
 			// never passes through here.
 			isKeyedProvider(provider) ? this.#openKey(provider) : { key: null },
-			servers.length > 0 ? this.resolveEnvironment(agent.agentId) : null,
+			servers.length > 0 ? this.#openEnvironment(agent.agentId) : null,
 		]);
 		if ("status" in opened) return opened;
-		const mcpServers = servers.map((server) => turnServer(server, environment));
+		const mcpServers = this.#write(() => turnServers(this.#db, servers, environment));
 		return { agent, key: opened.key, mcpServers, edges, sandbox, repository };
 	}
 

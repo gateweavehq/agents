@@ -466,3 +466,120 @@ describe("MCP servers", () => {
 		expect(await stub.recordMcpCheck(acme, { ok: true, tools: [] })).toBeNull();
 	});
 });
+
+describe("secrets in MCP servers' headers", () => {
+	const TOKEN = "acme-token-entered-by-an-owner";
+	const ELSEWHERE = "https://mcp.elsewhere.example/mcp";
+
+	/** ACME, an environment set with its token, and an agent that pins version 1 of it. */
+	async function pinnedAcme(stub: ReturnType<typeof registry>) {
+		const acme = await stub.createMcpServer(ACME);
+		const set = await stub.createEnvSet({
+			name: "prod",
+			variables: { ACME_TEAM: "platform" },
+			secrets: ["ACME_TOKEN"],
+		});
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: TOKEN }, "Ada");
+		const input = (mcpServers: AgentDefinitionInput["mcpServers"]) => ({
+			...reviewer(mcpServers),
+			environment: { assetId: set, version: 1 },
+		});
+		const agent = await stub.createAgent(input([{ assetId: acme, version: 1 }]));
+		return { acme, set, agent, input };
+	}
+
+	const moveAcme = (stub: ReturnType<typeof registry>, assetId: string, url: string) =>
+		stub.editMcpServer({ assetId, transport: "http", url, headers: ACME.headers });
+
+	it("go to a check only at the origin they were first sent to, until entered again", async () => {
+		const stub = registry();
+		const { acme, set } = await pinnedAcme(stub);
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			headers: { Authorization: `Bearer ${TOKEN}` },
+		});
+		// Another path at the same origin is the same server.
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v2");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			url: "https://mcp.acme.dev/v2",
+			headers: { Authorization: `Bearer ${TOKEN}` },
+		});
+
+		// Another origin is not: the token stays home, and the check says why.
+		await moveAcme(stub, acme, ELSEWHERE);
+		const moved = await stub.mcpCheckTarget(acme);
+		expect(moved).toEqual({
+			name: "acme",
+			problem:
+				"ACME_TOKEN was entered for another server address, so it is not sent to https://mcp.elsewhere.example. An owner or admin can enter it again in the agent's environment set to send it there.",
+		});
+		expect(JSON.stringify(moved)).not.toContain(TOKEN);
+
+		// Entered again, the new value goes there, and then only there.
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "new-token" }, "Grace");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			url: ELSEWHERE,
+			headers: { Authorization: "Bearer new-token", "X-Team": "platform" },
+		});
+		await moveAcme(stub, acme, ACME.url);
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+		});
+	});
+
+	it("go to a turn's servers only at the origin they were first sent to", async () => {
+		const stub = registry();
+		const { acme, agent, input } = await pinnedAcme(stub);
+		// A server at another origin that names the same secret, and one that names a variable.
+		const mirror = await stub.createMcpServer({
+			name: "mirror",
+			transport: "http",
+			url: ELSEWHERE,
+			headers: [{ name: "Authorization", value: "Bearer ${ACME_TOKEN}" }],
+		});
+		const team = await stub.createMcpServer({
+			name: "team",
+			transport: "http",
+			url: "https://team.elsewhere.example/mcp",
+			headers: [{ name: "X-Team", value: "${ACME_TEAM}" }],
+		});
+		await stub.updateAgent(
+			agent.id,
+			input([
+				{ assetId: acme, version: 1 },
+				{ assetId: mirror, version: 1 },
+				{ assetId: team, version: 1 },
+			]),
+		);
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const conversation = (await stub.startConversation(agent.id, "user-ada"))?.id ?? "";
+		const servers = async () => {
+			const turn = await stub.beginTurn(conversation, "Hello");
+			if ("status" in turn) throw new Error(turn.message);
+			return turn.mcpServers;
+		};
+
+		const first = await servers();
+		expect(first).toEqual([
+			expect.objectContaining({ name: "acme", headers: expect.any(Object) }),
+			{
+				name: "mirror",
+				problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+			},
+			expect.objectContaining({ name: "team", headers: { "X-Team": "platform" } }),
+		]);
+		expect(JSON.stringify(first[1])).not.toContain(TOKEN);
+		expect(await servers()).toEqual(first);
+
+		// Moving the server itself and pinning that version sends nothing either.
+		await moveAcme(stub, acme, "https://acme.elsewhere.example/mcp");
+		await stub.updateAgent(agent.id, input([{ assetId: acme, version: 2 }]));
+		const moved = await servers();
+		expect(moved).toEqual([
+			{
+				name: "acme",
+				problem: expect.stringContaining("not sent to https://acme.elsewhere.example"),
+			},
+		]);
+		expect(JSON.stringify(moved)).not.toContain(TOKEN);
+	});
+});

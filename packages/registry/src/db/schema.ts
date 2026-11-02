@@ -434,6 +434,11 @@ export const envSecrets = sqliteTable(
 		sealed: text("sealed").notNull(),
 		setBy: text("set_by").notNull(),
 		setAt: integer("set_at").notNull(),
+		/**
+		 * The origin of the MCP server this value was first sent to in a header, and the only one it
+		 * is sent to after (AGT-64). Null until then; entering the value again clears it.
+		 */
+		sentTo: text("sent_to"),
 	},
 	(table) => [primaryKey({ columns: [table.assetId, table.name] })],
 );
