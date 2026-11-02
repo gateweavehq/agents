@@ -8,6 +8,37 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.6.0] - 2026-11-02
+
+Sandboxes are held tighter: what an agent's model requests may ask of the provider is checked
+before the workspace's key goes on, and the limits on sandboxes hold when turns begin together.
+MCP servers' header secrets are tied to the address they were first sent to. Agents also has
+its own icon. Updating a self-hosted copy applies a migration in each workspace's registry, which
+runs on its own, and needs no new setting. (#104, #105, #107)
+
+### Security
+
+- A model request from a sandbox is read before the workspace's key is added. It must be plain
+  JSON of at most 16 MB, name the agent's own model, and use only tools the engine runs itself:
+  no provider-run tools such as MCP connectors, web search or code execution, no images or files
+  fetched by URL, and nothing that reads what the provider stored (OpenAI's previous responses,
+  item references and files, Google's cached content) or costs more (priority tiers, faster or
+  regional inference). Headers are an allowlist. A refused request answers 403 and shows in the
+  run's trace with the reason. Claude Code's turns set each of its model variables to the agent's
+  model, so it no longer reaches for Haiku or another fallback. (#105, #107)
+- A secret named in an MCP server's headers is sent only to the origin it was first sent to.
+  Anyone who may edit a library MCP server could point it at another host, while its secrets were
+  often entered by someone else; a server at another origin is now left out of checks and turns,
+  saying which secret was entered for another address, until someone enters the value again.
+  Secrets stored before the update are tied to the origin of their next send. (#107)
+- The limit on a workspace's sandboxes and its daily sandbox minutes are checked again inside
+  the write that starts a run, so turns that begin together can no longer go past them. (#105)
+
+### Added
+
+- Agents has its own icon, a team of three agents, linked, on the dark tile of the new Gateweave
+  mark, and an Apple touch icon for the home screen. (#104)
+
 ## [0.5.1] - 2026-11-01
 
 A security fix: only someone who controls a GitHub account can connect its installation of the
