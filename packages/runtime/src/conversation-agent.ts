@@ -43,6 +43,7 @@ import {
 	settle,
 } from "./engines";
 import type { LocalServerPort } from "./local-servers";
+import { RegistryOAuthProvider } from "./mcp-oauth";
 import { type MeteredRequest, meteredRequest } from "./meter";
 import {
 	describeFailure,
@@ -64,7 +65,7 @@ import {
 import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
 import { SANDBOX_ROOT, sandboxTools } from "./sandbox-tools";
 import { createOutbox, queueExport, sendDue } from "./telemetry-export";
-import { connectTools } from "./tools";
+import { connectTools, type OAuthProviders } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
 interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
@@ -395,7 +396,13 @@ ${runPageNote(runs, turn.runId)}`
 		if (agent.engine !== "gateweave") {
 			return this.#engineTurn(agent.engine, turn, run, options?.abortSignal);
 		}
-		const toolbox = await connectTools(mcpServers, run, options?.abortSignal, sandbox);
+		const toolbox = await connectTools(
+			mcpServers,
+			run,
+			options?.abortSignal,
+			sandbox,
+			this.#oauth(registry),
+		);
 		const checkedOut = sandbox && repository ? withCheckout(sandbox, repository, branch) : null;
 		const github = repository ? this.#pullRequests(repository) : null;
 		// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with them. An
@@ -514,7 +521,7 @@ ${runPageNote(runs, turn.runId)}`
 				const checkedOut = repository ? withCheckout(sandbox, repository, branch) : null;
 				const [problem, toolbox] = await Promise.all([
 					checkedOut ? checkedOut.ready() : null,
-					connectTools(mcpServers, run, signal, sandbox),
+					connectTools(mcpServers, run, signal, sandbox, this.#oauth(registry)),
 				]);
 				if (problem) {
 					await toolbox.close();
@@ -735,6 +742,14 @@ ${runPageNote(runs, turn.runId)}`
 			this.#traceTables = true;
 		}
 		return sql;
+	}
+
+	/**
+	 * The OAuth clients of the turn's servers connected through OAuth (AGT-78): their tokens live
+	 * in the registry, sealed, and are refreshed there.
+	 */
+	#oauth(registry: DurableObjectStub<RegistryDO>): OAuthProviders {
+		return (assetId) => new RegistryOAuthProvider(registry, assetId, {});
 	}
 
 	/** The workspace and conversation this is, from its name, and the workspace's registry. */

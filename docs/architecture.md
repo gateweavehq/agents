@@ -444,6 +444,20 @@ run as a local command.
   start and list its tools, since the sandbox may start and `npx` download first. Its downloads
   go out as any command's do, to package registries only. Closing the turn's connections ends its
   input, and the command is stopped ten seconds later if it has not exited.
+- **A server can be connected through OAuth** (AGT-78), as the MCP authorization spec
+  describes, instead of naming a key in a header. An owner or admin presses Connect on the MCP
+  page (`/api/mcp-oauth/connect`, `apps/web/src/server/mcp-oauth.ts`). The registry makes a
+  single-use state, bound to them and valid for ten minutes (`packages/registry/src/mcp-oauth.ts`),
+  and `@ai-sdk/mcp`'s `auth()` discovers the server's authorization server, registers the app as
+  a public client, and sends them to sign in with PKCE. On `/api/mcp-oauth/callback` the state
+  names the workspace and server; the registry takes it once, for the same person, while they are
+  still an admin, and the code is traded for tokens. The client registration, the verifier and
+  the tokens are sealed in `mcp_oauth`; pages see only who connected it and when. A turn or a
+  check marks the server `oauth` (`turnServers`), and the runtime's `RegistryOAuthProvider`
+  (`packages/runtime/src/mcp-oauth.ts`) gives `@ai-sdk/mcp` the token, which it refreshes when
+  the server refuses it, keeping the new one sealed. The connection is for the URL the server had
+  when it was made: after the server moves it is not sent, and the page asks to connect again.
+  Agents that pin the server act on it as the person who connected it, and the page says so.
 - **A secret goes to one origin** (AGT-64, `turnServers` in `packages/registry/src/mcp-servers.ts`).
   Anyone who may edit a server may change its URL, and the secrets its headers name were often
   entered by someone else. So `env_secrets.sent_to` keeps the origin a value was first sent to,

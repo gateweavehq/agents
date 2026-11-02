@@ -115,6 +115,7 @@ export interface RegistryStub {
 	editMcpServer(input: McpServerEditInput): Promise<number>;
 	listMcpServers(): Promise<McpServerEntry[]>;
 	mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null>;
+	mcpOAuthOpen(assetId: string): Promise<{ serverUrl: string; tokens: unknown } | null>;
 	recordMcpCheck(assetId: string, result: McpCheckResult): Promise<McpCheck | null>;
 	createEnvSet(input: EnvSetInput): Promise<string>;
 	editEnvSet(input: EnvSetEditInput): Promise<number>;

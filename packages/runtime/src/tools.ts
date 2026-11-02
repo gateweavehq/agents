@@ -5,11 +5,18 @@
  * the conversation's SQLite and keep the connection open. A server that runs as a local command
  * starts in the conversation's sandbox (`./local-servers.ts`).
  */
-import { createMCPClient, type MCPClient, MCPClientError } from "@ai-sdk/mcp";
+import {
+	createMCPClient,
+	type MCPClient,
+	MCPClientError,
+	type OAuthClientProvider,
+	UnauthorizedError,
+} from "@ai-sdk/mcp";
 import { MCP_CHECK_LIMITS, type McpCheckResult, type TurnMcpServer } from "@gateweave/agents-model";
 import type { ToolSet } from "ai";
 import { z } from "zod";
 import { LocalServerError, type LocalServerPort, SandboxStdioTransport } from "./local-servers";
+import { OAuthSignInNeeded, SIGN_IN_AGAIN } from "./mcp-oauth";
 import { failureForLogs } from "./models";
 import type { RunRecorder } from "./trace";
 
@@ -35,9 +42,10 @@ export async function connectTools(
 	run: RunRecorder,
 	signal?: AbortSignal,
 	sandbox: LocalServerPort | null = null,
+	oauth: OAuthProviders | null = null,
 ): Promise<TurnTools> {
 	const connected = await Promise.all(
-		servers.map((server) => connect(server, run, sandbox, signal)),
+		servers.map((server) => connect(server, run, sandbox, signal, oauth)),
 	);
 	const clients: MCPClient[] = [];
 	const tools: ToolSet = {};
@@ -64,11 +72,15 @@ export async function connectTools(
 export const NO_SANDBOX_FOR_LOCAL_SERVER =
 	"It runs as a local command, and this turn has no sandbox to start it in";
 
+/** The OAuth client of a library server connected through OAuth, by its id (AGT-78). */
+export type OAuthProviders = (assetId: string) => OAuthClientProvider;
+
 async function connect(
 	server: TurnMcpServer,
 	run: RunRecorder,
 	sandbox: LocalServerPort | null,
 	signal?: AbortSignal,
+	oauth: OAuthProviders | null = null,
 ) {
 	if ("problem" in server) {
 		run.serverLeftOut(server.name, server.problem);
@@ -82,7 +94,7 @@ async function connect(
 	const { deadline, options } = timeLimit(signal, server.transport === "stdio");
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
 	try {
-		opened = await openClient(server, options, sandbox);
+		opened = await openClient(server, options, sandbox, oauth);
 		const { client, definitions } = opened;
 		// The allowlist names the server's own tool names; one it does not offer is just absent.
 		const allowed = server.tools && new Set(server.tools);
@@ -110,13 +122,16 @@ async function connect(
  * the server's tool names and descriptions, which are its own public description of itself;
  * a failure is in the app's words, and neither the headers nor what the server said are kept.
  */
-export async function checkMcpServer(server: TurnMcpServer): Promise<McpCheckResult> {
+export async function checkMcpServer(
+	server: TurnMcpServer,
+	oauth: OAuthProviders | null = null,
+): Promise<McpCheckResult> {
 	if ("problem" in server) return { ok: false, error: server.problem };
 	if (server.transport === "stdio") return { ok: false, error: NO_SANDBOX_FOR_LOCAL_SERVER };
 	const { deadline, options } = timeLimit();
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
 	try {
-		opened = await openClient(server, options);
+		opened = await openClient(server, options, null, oauth);
 		return {
 			ok: true,
 			tools: opened.definitions.tools.slice(0, MCP_CHECK_LIMITS.tools).map((tool) => ({
@@ -234,6 +249,7 @@ async function openClient(
 	server: Exclude<TurnMcpServer, { problem: string }>,
 	options: { signal: AbortSignal },
 	sandbox: LocalServerPort | null = null,
+	oauth: OAuthProviders | null = null,
 ) {
 	let client: MCPClient | undefined;
 	try {
@@ -251,6 +267,7 @@ async function openClient(
 							url: server.url,
 							headers: server.headers,
 							fetch: fetchWithoutRedirects,
+							...(server.oauth && oauth ? { authProvider: oauth(server.oauth) } : {}),
 						},
 			initializationOptions: options,
 		});
@@ -340,6 +357,8 @@ export function describeServerFailure(
 		const ms = local ? LOCAL_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS;
 		return `It did not answer within ${ms / 1000} seconds`;
 	}
+	if (error instanceof OAuthSignInNeeded || error instanceof UnauthorizedError)
+		return SIGN_IN_AGAIN;
 	if (local) {
 		return error instanceof LocalServerError
 			? error.message

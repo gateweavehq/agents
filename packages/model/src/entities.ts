@@ -716,6 +716,11 @@ export type TurnMcpServer =
 			headers: Record<string, string>;
 			/** The tools the agent may use, by the server's names; null is all of them. */
 			tools: string[] | null;
+			/**
+			 * The library server whose OAuth connection the turn signs in with (AGT-78), through
+			 * the registry, which keeps and refreshes its token; absent when it has none.
+			 */
+			oauth?: string;
 	  }
 	| {
 			name: string;
@@ -758,6 +763,11 @@ export interface McpServerEntry {
 	/** The live agents run by Gateweave that pin it, and the version each pins. */
 	agents: { id: string; name: string; version: number }[];
 	check: McpCheck | null;
+	/**
+	 * The workspace's OAuth connection to it (AGT-78): who made it and when, and whether it is for
+	 * the URL the server has now, so turns send it. Null when it has none.
+	 */
+	oauth: { connectedBy: string; connectedAt: number; current: boolean } | null;
 }
 
 /**

@@ -239,6 +239,13 @@
       "when": 1793620140265,
       "tag": "0033_sticky_ozymandias",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1793626935273,
+      "tag": "0034_square_rafael_vega",
+      "breakpoints": true
     }
   ]
 }

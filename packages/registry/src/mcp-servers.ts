@@ -35,6 +35,7 @@ import {
 import { bindSecret, contestSecret, type SecretSend, secretSends } from "./environment";
 import { assetHash } from "./hash";
 import { libraryKey } from "./library";
+import { connectedFor, oauthRow } from "./mcp-oauth";
 import { getAssetVersion } from "./queries";
 import { MAX_KEPT_FILE_BYTES, storeFile } from "./scans";
 import { type Db, toAsset } from "./state";
@@ -212,6 +213,7 @@ export function agentServers(
 	db: Db,
 	agentId: string,
 ): {
+	assetId: string;
 	name: string;
 	reading: { server: StoredServer } | { problem: string };
 	tools: string[] | null;
@@ -229,6 +231,7 @@ export function agentServers(
 		.orderBy(asc(assets.name), asc(assets.id))
 		.all()
 		.map(({ id, name, version, tools }) => ({
+			assetId: id,
 			name,
 			tools,
 			reading: storedServer(getAssetVersion(db, id, version)?.files ?? []),
@@ -296,7 +299,9 @@ export function turnServers(
 ): TurnMcpServer[] {
 	const assetId = opened?.assetId ?? null;
 	const sends = assetId ? secretSends(db, assetId) : new Map<string, SecretSend>();
-	return servers.map((server) => {
+	return servers.map((server) => withOAuth(db, server.assetId, turnOf(server)));
+
+	function turnOf(server: ReturnType<typeof agentServers>[number]): TurnMcpServer {
 		if (!("problem" in server.reading) && server.reading.server.transport === "stdio") {
 			return localTurnServer(server, opened, sandbox);
 		}
@@ -345,7 +350,17 @@ export function turnServers(
 			sends.set(name, { ...send, sentTo: origin, contested: null });
 		}
 		return turn;
-	});
+	}
+}
+
+/**
+ * A remote server as a turn reaches it, marked to use the workspace's OAuth connection to it when
+ * there is one for the URL it has now (AGT-78). The runtime gets the token itself, through the
+ * registry, so that it can refresh it.
+ */
+function withOAuth(db: Db, assetId: string, turn: TurnMcpServer): TurnMcpServer {
+	if ("problem" in turn || turn.transport === "stdio") return turn;
+	return connectedFor(db, assetId, turn.url) ? { ...turn, oauth: assetId } : turn;
 }
 
 /**
@@ -457,6 +472,21 @@ function pinners(db: Db, assetId: string): { id: string; name: string; version: 
 		.all();
 }
 
+/** A live library server that agents reach at a URL, at its current version, or why it is not one. */
+export function remoteLibraryServer(
+	db: Db,
+	assetId: string,
+): { url: string; name: string } | { problem: string } {
+	const asset = liveServer(db, assetId);
+	if (!asset) return { problem: "That MCP server is not in the library" };
+	const reading = storedServer(getAssetVersion(db, asset.id)?.files ?? []);
+	if ("problem" in reading) return reading;
+	if (reading.server.transport === "stdio") {
+		return { problem: "It runs as a local command, which has nothing to sign in to" };
+	}
+	return { url: reading.server.url, name: asset.name };
+}
+
 /** A live library `mcp-server` asset, or null. */
 function liveServer(db: Db, assetId: string) {
 	return (
@@ -484,6 +514,7 @@ export function mcpCheckPlan(
 	db: Db,
 	assetId: string,
 ): {
+	assetId: string;
 	name: string;
 	reading: ReturnType<typeof agentServers>[number]["reading"];
 	agentId: string | null;
@@ -493,6 +524,7 @@ export function mcpCheckPlan(
 	const users = pinners(db, assetId);
 	const agent = users.find((user) => user.version === asset.version) ?? users[0];
 	return {
+		assetId: asset.id,
 		name: asset.name,
 		reading: storedServer(getAssetVersion(db, asset.id)?.files ?? []),
 		agentId: agent?.id ?? null,
@@ -542,6 +574,9 @@ export function listMcpServers(db: Db): McpServerEntry[] {
 	return rows.map((row) => {
 		const reading = storedServer(getAssetVersion(db, row.id)?.files ?? []);
 		const check = checks.get(row.id);
+		const oauth = oauthRow(db, row.id);
+		const url =
+			"problem" in reading || reading.server.transport === "stdio" ? null : reading.server.url;
 		return {
 			asset: toAsset(row),
 			connection: "problem" in reading ? reading : serverConnection(reading.server),
@@ -556,6 +591,14 @@ export function listMcpServers(db: Db): McpServerEntry[] {
 						error: check.error,
 					}
 				: null,
+			oauth:
+				oauth?.sealedTokens && oauth.connectedBy !== null && oauth.connectedAt !== null
+					? {
+							connectedBy: oauth.connectedBy,
+							connectedAt: oauth.connectedAt,
+							current: oauth.serverUrl === url,
+						}
+					: null,
 		};
 	});
 }

@@ -642,6 +642,30 @@ export const telemetry = sqliteTable("telemetry", {
 	lastExportError: text("last_export_error"),
 });
 
+/**
+ * A library MCP server connected for the workspace through OAuth (AGT-78): what `@ai-sdk/mcp`'s
+ * OAuth client keeps between the steps of the flow and between turns. The client registration,
+ * the PKCE verifier and the tokens are sealed (see `secrets.ts`). The connection is for the URL
+ * the server had when it was made, and is not sent anywhere else.
+ */
+export const mcpOAuth = sqliteTable("mcp_oauth", {
+	assetId: text("asset_id").primaryKey(),
+	serverUrl: text("server_url").notNull(),
+	/** The authorization server, as discovered: not a secret. */
+	authorizationServer: text("authorization_server", { mode: "json" }).$type<
+		Record<string, unknown>
+	>(),
+	sealedClient: text("sealed_client"),
+	sealedVerifier: text("sealed_verifier"),
+	sealedTokens: text("sealed_tokens"),
+	/** The flow under way: its state, who started it and until when it may finish. */
+	state: text("state"),
+	stateBy: text("state_by"),
+	stateExpiresAt: integer("state_expires_at"),
+	connectedBy: text("connected_by"),
+	connectedAt: integer("connected_at"),
+});
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;

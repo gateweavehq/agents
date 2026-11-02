@@ -1,15 +1,28 @@
 import type { McpCheck, McpServerEntry } from "@gateweave/agents-model";
-import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { z } from "zod";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
-import { checkMcpServer, getMcpServers } from "#/lib/registry";
+import { checkMcpServer, disconnectMcpServer, getMcpServers } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
+const OAUTH_RESULTS = ["connected", "denied", "failed", "forbidden", "expired"] as const;
+
+/** What the OAuth flow's callback says about how it went (`apps/web/src/server/mcp-oauth.ts`). */
+const OAUTH_MESSAGES: Record<(typeof OAUTH_RESULTS)[number], [ok: boolean, text: string]> = {
+	connected: [true, "Connected. Agents that pin the server now sign in with your account on it"],
+	denied: [false, "The server was not given access"],
+	failed: [false, "The server could not be connected. Check that it supports OAuth sign-in"],
+	forbidden: [false, "Only owners and admins can connect MCP servers"],
+	expired: [false, "That sign-in had expired or was not yours. Try connecting again"],
+};
+
 export const Route = createFileRoute("/$workspace/mcp")({
+	validateSearch: z.object({ oauth: z.enum(OAUTH_RESULTS).optional().catch(undefined) }),
 	loader: ({ params }) => getMcpServers({ data: params.workspace }),
 	component: McpPage,
 });
@@ -21,7 +34,23 @@ function message(error: unknown) {
 function McpPage() {
 	const servers = Route.useLoaderData();
 	const { slug } = useWorkspace();
+	const { oauth } = Route.useSearch();
+	const navigate = useNavigate();
 	useDocumentTitle("MCP servers");
+
+	// Say once how connecting went, then drop it from the address.
+	useEffect(() => {
+		if (!oauth) return;
+		const [ok, text] = OAUTH_MESSAGES[oauth];
+		if (ok) toast.success(text);
+		else toast.error(text);
+		void navigate({
+			to: "/$workspace/mcp",
+			params: { workspace: slug },
+			search: {},
+			replace: true,
+		});
+	}, [oauth, navigate, slug]);
 
 	if (!servers) {
 		return (
@@ -106,6 +135,10 @@ function ServerCard({ server }: { server: McpServerEntry }) {
 				</p>
 			)}
 
+			{!("problem" in connection) && connection.transport !== "stdio" && (
+				<OAuthConnection server={server} />
+			)}
+
 			<section aria-label={`Variables of ${asset.name}`} className="space-y-1">
 				<h3 className="text-xs text-muted-foreground">Variables it needs · {variables.length}</h3>
 				{variables.length === 0 ? (
@@ -153,6 +186,71 @@ function ServerCard({ server }: { server: McpServerEntry }) {
 				)}
 			</section>
 		</li>
+	);
+}
+
+/**
+ * The workspace's OAuth connection to a remote server (AGT-78): who made it, and Connect or
+ * Disconnect for owners and admins. Connecting sends them through the server's own sign-in.
+ */
+function OAuthConnection({ server }: { server: McpServerEntry }) {
+	const { slug } = useWorkspace();
+	const router = useRouter();
+	const admin = isAdmin(useMyRole());
+	const [pending, setPending] = useState(false);
+	const { oauth, asset } = server;
+	const connect = `/api/mcp-oauth/connect?${new URLSearchParams({ workspace: slug, server: asset.id })}`;
+
+	async function disconnect() {
+		setPending(true);
+		try {
+			await disconnectMcpServer({ data: { slug, assetId: asset.id } });
+			toast.success(`${asset.name} is no longer connected`);
+			await router.invalidate();
+		} catch (failure) {
+			toast.error(message(failure));
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<section aria-label={`Sign-in to ${asset.name}`} className="space-y-1">
+			<h3 className="text-xs text-muted-foreground">OAuth</h3>
+			{oauth ? (
+				<p className="text-sm">
+					{oauth.current ? (
+						<>
+							Connected by {oauth.connectedBy}{" "}
+							<span className="text-muted-foreground" title={formatDateTime(oauth.connectedAt)}>
+								{formatRelative(oauth.connectedAt)}
+							</span>
+							. Agents that pin it act as them on the server.
+						</>
+					) : (
+						<span className="text-amber-600 dark:text-amber-500">
+							Connected for an earlier URL, so it is not used. Connect again for this one.
+						</span>
+					)}
+				</p>
+			) : (
+				<p className="text-sm text-muted-foreground">
+					Not connected. A server that signs in with OAuth needs no key in a header.
+				</p>
+			)}
+			{admin && (
+				<div className="flex gap-2 pt-1">
+					<Button asChild variant="outline" size="sm">
+						<a href={connect}>{oauth ? "Connect again" : "Connect"}</a>
+					</Button>
+					{oauth && (
+						<Button variant="ghost" size="sm" onClick={disconnect} disabled={pending}>
+							Disconnect
+						</Button>
+					)}
+				</div>
+			)}
+		</section>
 	);
 }
 
