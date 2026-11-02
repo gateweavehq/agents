@@ -8,6 +8,7 @@ import { DurableObject, env } from "cloudflare:workers";
 import type { SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
 import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
+import type { LocalCommand, LocalServerPort } from "../src/local-servers";
 import { type EngineMeter, meterModelRequest } from "../src/meter";
 import type { CommitAuthor, PushPort, PushResult } from "../src/pull-requests";
 import type { CommandResult, ReadResult, WriteResult } from "../src/sandbox-tools";
@@ -91,7 +92,88 @@ export interface EngineScript {
 	exit?: EngineExit;
 }
 
-export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort, EnginePort {
+/**
+ * A local MCP server as the fake sandbox runs it: it answers MCP's methods one line at a time,
+ * offers one tool, `echo`, that answers with what it was given and the environment's `GREETING`,
+ * and writes a line that is not JSON-RPC first, as some servers log on starting. The command
+ * `missing` exits at once, as a command that is not installed does.
+ */
+function localServer(
+	command: LocalCommand,
+	input: ReadableStream<Uint8Array>,
+	record: { heard: string[]; exited: boolean },
+): ReadableStream<Uint8Array> {
+	const { heard } = record;
+	const { readable, writable } = new IdentityTransformStream();
+	const writer = writable.getWriter();
+	const encoder = new TextEncoder();
+	const write = (message: object) => writer.write(encoder.encode(`${JSON.stringify(message)}\n`));
+	void (async () => {
+		if (command.command === "missing") {
+			await input.cancel();
+			record.exited = true;
+			await writer.close();
+			return;
+		}
+		await writer.write(encoder.encode("Starting the echo server…\n"));
+		const decoder = new TextDecoder();
+		let buffered = "";
+		const reader = input.getReader();
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffered += decoder.decode(value, { stream: true });
+			let end = buffered.indexOf("\n");
+			while (end !== -1) {
+				const message = JSON.parse(buffered.slice(0, end)) as {
+					id?: number;
+					method: string;
+					params?: { arguments?: { text?: string } };
+				};
+				buffered = buffered.slice(end + 1);
+				end = buffered.indexOf("\n");
+				heard.push(message.method);
+				if (message.id === undefined) continue;
+				const result = (value: unknown) => write({ jsonrpc: "2.0", id: message.id, result: value });
+				if (message.method === "initialize") {
+					await result({
+						protocolVersion: "2025-11-25",
+						capabilities: { tools: {} },
+						serverInfo: { name: "echo", version: "1.0.0" },
+					});
+				} else if (message.method === "tools/list") {
+					await result({
+						tools: [
+							{
+								name: "echo",
+								description: "Says it back",
+								inputSchema: { type: "object", properties: { text: { type: "string" } } },
+							},
+						],
+					});
+				} else if (message.method === "tools/call") {
+					const text = `${command.env.GREETING ?? "Hello"}: ${message.params?.arguments?.text ?? ""}`;
+					await result({ content: [{ type: "text", text }] });
+				} else {
+					await write({
+						jsonrpc: "2.0",
+						id: message.id,
+						error: { code: -32601, message: "Method not found" },
+					});
+				}
+			}
+		}
+		// Its input ended, as the turn closed it: it exits.
+		record.exited = true;
+		await writer.close();
+	})();
+	return readable;
+}
+
+export class FakeSandbox
+	extends DurableObject
+	implements CheckoutPort, PushPort, EnginePort, LocalServerPort
+{
 	readonly #memory = new MemorySandbox();
 	#destroyed = false;
 	readonly #jobs: EngineJob[] = [];
@@ -119,6 +201,18 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 
 	push(branch: string, message: string, author: CommitAuthor) {
 		return this.#memory.push(branch, message, author);
+	}
+
+	/** The local MCP servers started, with the methods each heard, and whether each has exited. */
+	readonly #servers: { command: LocalCommand; heard: string[]; exited: boolean }[] = [];
+
+	async startMcpServer(
+		command: LocalCommand,
+		input: ReadableStream<Uint8Array>,
+	): Promise<ReadableStream<Uint8Array>> {
+		const started = { command, heard: [] as string[], exited: false };
+		this.#servers.push(started);
+		return localServer(command, input, started);
 	}
 
 	/** What the next turn of an engine writes; one without a script writes nothing. */
@@ -191,8 +285,8 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 	}
 
 	/**
-	 * What the tests check: files, commands, checkouts, pushes, and whether the conversation
-	 * destroyed it.
+	 * What the tests check: files, commands, checkouts, pushes, local MCP servers, and whether
+	 * the conversation destroyed it.
 	 */
 	seen() {
 		return {
@@ -203,6 +297,7 @@ export class FakeSandbox extends DurableObject implements CheckoutPort, PushPort
 			engine: this.#jobs,
 			stops: this.#stops,
 			destroyed: this.#destroyed,
+			mcpServers: this.#servers,
 		};
 	}
 }

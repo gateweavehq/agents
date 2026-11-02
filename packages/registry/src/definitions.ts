@@ -26,7 +26,7 @@ import {
 	assets,
 	repositories,
 } from "./db/schema";
-import { remoteServer } from "./mcp-servers";
+import { storedServer } from "./mcp-servers";
 import { getAssetVersion } from "./queries";
 import { type Db, toAgent } from "./state";
 
@@ -38,7 +38,7 @@ type Definition = z.output<typeof agentDefinitionInput>;
 export function createAgent(db: Db, input: Definition, now: number): Agent {
 	checkInstructions(db, input.instructions, null);
 	checkEnvironment(db, input.environment, null);
-	checkMcpServers(db, input.mcpServers, new Set());
+	checkMcpServers(db, input, new Set());
 	checkRepository(db, input, null);
 	checkEngine(input);
 	const id = crypto.randomUUID();
@@ -67,7 +67,7 @@ export function updateAgent(db: Db, id: string, input: Definition, now: number):
 	if (!current) return null;
 	checkInstructions(db, input.instructions, current.instructionsAssetId);
 	checkEnvironment(db, input.environment, current.envSetAssetId);
-	checkMcpServers(db, input.mcpServers, pinnedServers(db, id));
+	checkMcpServers(db, input, pinnedServers(db, id));
 	checkRepository(db, input, current.repositoryId);
 	checkEngine(input);
 	const row = db
@@ -301,15 +301,25 @@ function pinnedServers(db: Db, agentId: string): Set<string> {
 
 /**
  * Each MCP server must be a version of a library asset of kind `mcp-server` that an agent can
- * reach (see `remoteServer`); the same leave rule.
+ * reach (see `storedServer`): one that runs as a local command only with the agent's sandbox,
+ * which starts it. The same leave rule.
  */
-function checkMcpServers(db: Db, pins: Definition["mcpServers"], pinned: Set<string>): void {
+function checkMcpServers(
+	db: Db,
+	{ mcpServers: pins, sandbox }: Pick<Definition, "mcpServers" | "sandbox">,
+	pinned: Set<string>,
+): void {
 	for (const pin of pins) {
 		const asset = checkPin(db, pin, pinned.has(pin.assetId) ? pin.assetId : null, (name, kind) =>
 			kind === "mcp-server" ? null : `${name} is not an MCP server`,
 		);
-		const reading = remoteServer(getAssetVersion(db, pin.assetId, pin.version)?.files ?? []);
+		const reading = storedServer(getAssetVersion(db, pin.assetId, pin.version)?.files ?? []);
 		if ("problem" in reading) throw new AgentError(`${asset.name}: ${reading.problem}`);
+		if (reading.server.transport === "stdio" && !sandbox) {
+			throw new AgentError(
+				`${asset.name} runs as a local command, which starts in the agent's sandbox: turn the sandbox on`,
+			);
+		}
 	}
 }
 

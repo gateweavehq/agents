@@ -360,8 +360,9 @@ admins manage them on the Environment page (`packages/registry/src/environment.t
 
 ## MCP servers
 
-An agent run by Gateweave gets its tools from remote MCP servers in the library
-(`packages/registry/src/mcp-servers.ts`).
+An agent run by Gateweave gets its tools from MCP servers in the library
+(`packages/registry/src/mcp-servers.ts`): remote ones, and, for an agent with a sandbox, ones that
+run as a local command.
 
 - **A server is a library asset** of kind `mcp-server` with one file, `.mcp.json`, holding one
   server in the shape Claude Code reads: `{ "headers": {…}, "type": "http" | "sse", "url": "…" }`,
@@ -376,9 +377,10 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   (`readMcpConnection` in `packages/adapters`).
 - **An agent pins up to ten servers**, each to a version like its instructions
   (`agent_mcp_servers`, and `agent_assets` for the asset's page). Pinning refuses a server the
-  runtime could not reach: one that runs as a local command, or whose URL breaks the rules above.
-  The agent's page shows each server's transport and URL, or why it cannot be reached, and the
-  variables its headers use, each marked set or missing in the agent's environment set.
+  runtime could not reach: one whose URL breaks the rules above, or one that runs as a local
+  command, for an agent without a sandbox. The agent's page shows each server's transport and URL,
+  or its command, or why it cannot be reached, and the variables its headers (or its command's
+  environment) use, each marked set or missing in the agent's environment set.
 - **A pin can limit the agent to some of the server's tools** (`tools` on the pin, a JSON list of
   the server's own tool names; null is all of them). An agent that reads text nobody vetted, such
   as issue bodies, should hold only the tools its job needs, so a prompt hidden in that text
@@ -411,8 +413,23 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   keeps the result with `recordMcpCheck` in `mcp_checks`: when, which version, whether it worked,
   the tools with their descriptions (cut to a sensible size), and the error in our words. The
   headers live in that request's memory and never reach the browser; the check keeps no header
-  value and nothing the server said but its tools' names and descriptions. Servers that run as a
-  local command are listed as unavailable and cannot be checked until cloud runners (AGT-9).
+  value and nothing the server said but its tools' names and descriptions. A server that runs as
+  a local command has no Check button: it starts only in an agent's sandbox (below).
+- **A local command starts in the agent's sandbox** (AGT-71). A server stored with a `command`
+  (`npx -y @acme/mcp`, `uvx …`), as scans find them in `.mcp.json` and the other formats, keeps
+  its arguments and its `env`, whose values name variables of the agent's environment set as
+  headers do (a scan keeps no `env` value). `beginTurn` fills them in only for a turn with a
+  sandbox, and never with a secret: the sandbox holds none, so that nothing a command there runs
+  can leak one. A server whose environment names a secret is left out of the turn, saying which,
+  and a turn without a sandbox leaves every local server out. The runtime asks the conversation's
+  sandbox to start the command (`startMcpServer` in `packages/runtime/src/sandbox.ts`) in
+  `/workspace`, under `timeout`, with its own messages in a log; the two streams of its standard
+  input and output cross from the sandbox to the conversation over RPC, and
+  `SandboxStdioTransport` (`packages/runtime/src/local-servers.ts`) speaks MCP's stdio framing,
+  one JSON-RPC message per line, over them for `@ai-sdk/mcp`. A local server has 90 seconds to
+  start and list its tools, since the sandbox may start and `npx` download first. Its downloads
+  go out as any command's do, to package registries only. Closing the turn's connections ends its
+  input, and the command is stopped ten seconds later if it has not exited.
 - **A secret goes to one origin** (AGT-64, `turnServers` in `packages/registry/src/mcp-servers.ts`).
   Anyone who may edit a server may change its URL, and the secrets its headers name were often
   entered by someone else. So `env_secrets.sent_to` keeps the origin a value was first sent to,
@@ -1149,10 +1166,10 @@ workspace.
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
   and remove values.
-- **MCP** lists the library's MCP servers: transport and URL (or why an agent cannot reach it, with
-  local commands marked unavailable until cloud runners), the variables its headers need, the
-  agents that pin it with their versions, and its last check with the tools it listed. Members see
-  all of it; owners and admins get a Check button per remote server.
+- **MCP** lists the library's MCP servers: transport and URL, or the command a local one runs (or
+  why an agent cannot reach it), the variables its headers or environment need, the agents that
+  pin it with their versions, and its last check with the tools it listed. Members see all of it;
+  owners and admins get a Check button per remote server.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind. Owners and admins write instructions, prompts
   and skills there, and add MCP servers.
@@ -1182,8 +1199,7 @@ provider keys.
 - **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
   Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
   them.
-- **After cloud runners** (phase 5, AGT-9, done): container cost on Runs (AGT-53). Sandboxes will also run the MCP servers
-  that are local commands.
+- **After cloud runners** (phase 5, AGT-9, done): container cost on Runs (AGT-53).
 
 ## Deploys
 

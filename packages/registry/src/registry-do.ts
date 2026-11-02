@@ -619,7 +619,8 @@ export class RegistryDO extends DurableObject {
 		if (!plan) return null;
 		const environment = plan.agentId ? await this.#openEnvironment(plan.agentId) : null;
 		const server = { name: plan.name, reading: plan.reading, tools: null };
-		const [target] = this.#write(() => turnServers(this.#db, [server], environment));
+		// A check has no sandbox, so it cannot start a local command.
+		const [target] = this.#write(() => turnServers(this.#db, [server], environment, false));
 		return target ?? null;
 	}
 
@@ -975,7 +976,7 @@ export class RegistryDO extends DurableObject {
 			servers.length > 0 ? this.#openEnvironment(agent.agentId) : null,
 		]);
 		if ("status" in opened) return opened;
-		const mcpServers = this.#write(() => turnServers(this.#db, servers, environment));
+		const mcpServers = this.#write(() => turnServers(this.#db, servers, environment, sandbox));
 		return { agent, key: opened.key, mcpServers, edges, sandbox, repository };
 	}
 

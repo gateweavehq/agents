@@ -80,13 +80,27 @@ it("reads a reference that a stored header still has", () => {
 it("says what a local server runs, and why a server cannot be read", () => {
 	const config = JSON.stringify({
 		mcpServers: {
-			local: { command: "npx", args: ["-y", "@acme/mcp"] },
+			local: {
+				command: "npx",
+				args: ["-y", "@acme/mcp"],
+				env: { ACME_TOKEN: "${ACME_TOKEN}", ACME_REGION: "eu", ACME_KEY: "acme-live-key-123" },
+			},
 			leaky: { url: "https://mcp.acme.dev/mcp?token=ghp_abcdefghijklmnopqrstuvwxyz0123456789" },
 		},
 	});
 	expect(connectionOf({ ".mcp.json": config }, ".mcp.json#local")).toEqual({
 		ok: true,
-		connection: { transport: "stdio", command: "npx" },
+		connection: {
+			transport: "stdio",
+			command: "npx",
+			args: ["-y", "@acme/mcp"],
+			// A scan keeps no value of a command's environment: each becomes the variable of its name.
+			env: [
+				{ name: "ACME_KEY", value: { variable: "ACME_KEY", prefix: "" } },
+				{ name: "ACME_REGION", value: { variable: "ACME_REGION", prefix: "" } },
+				{ name: "ACME_TOKEN", value: { variable: "ACME_TOKEN", prefix: "" } },
+			],
+		},
 	});
 	expect(connectionOf({ ".mcp.json": config }, ".mcp.json#leaky")).toEqual({
 		ok: false,

@@ -339,11 +339,23 @@ export interface AgentDefinition {
 	engine: AgentEngine;
 }
 
+/**
+ * How an agent reaches an MCP server: at a URL, or as a local command its sandbox starts. Or why
+ * it cannot.
+ */
+export type McpServerConnection =
+	| { transport: "http" | "sse"; url: string }
+	| { transport: "stdio"; command: string; args: string[] }
+	| { problem: string };
+
 /** An MCP server an agent run by Gateweave uses. */
 export interface AgentMcpServer extends PinnedAsset {
 	/** Where the agent reaches it, or why it cannot. */
-	connection: { transport: "http" | "sse"; url: string } | { problem: string };
-	/** The variables its headers name, each with whether the agent's environment set has it. */
+	connection: McpServerConnection;
+	/**
+	 * The variables its headers, or its command's environment, name, each with whether the agent's
+	 * environment set has it.
+	 */
 	variables: { name: string; state: "set" | "missing" }[];
 	/** The tools the agent may use, by the server's names; null is all of them. */
 	tools: string[] | null;
@@ -703,6 +715,16 @@ export type TurnMcpServer =
 			/** The tools the agent may use, by the server's names; null is all of them. */
 			tools: string[] | null;
 	  }
+	| {
+			name: string;
+			/** A local command, started in the conversation's sandbox for the turn. */
+			transport: "stdio";
+			command: string;
+			args: string[];
+			/** Its environment, from the agent's environment set: variables only, never a secret. */
+			env: Record<string, string>;
+			tools: string[] | null;
+	  }
 	| { name: string; problem: string };
 
 /** A tool an MCP server offers, as a check listed it. */
@@ -728,8 +750,8 @@ export interface McpServerEntry {
 	/** `asset.version` is the current version. */
 	asset: Asset;
 	/** Where an agent reaches it, or why it cannot. */
-	connection: { transport: "http" | "sse"; url: string } | { problem: string };
-	/** The variables its headers name, sorted. */
+	connection: McpServerConnection;
+	/** The variables its headers, or its command's environment, name, sorted. */
 	variables: string[];
 	/** The live agents run by Gateweave that pin it, and the version each pins. */
 	agents: { id: string; name: string; version: number }[];

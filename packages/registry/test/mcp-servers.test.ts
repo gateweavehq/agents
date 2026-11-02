@@ -322,7 +322,7 @@ describe("MCP servers", () => {
 		});
 		await inside(stub, (instance) => {
 			expect(() => instance.createAgent(reviewer([{ assetId: local, version: 1 }]))).toThrow(
-				"local: It runs as a local command, which agents run by Gateweave cannot start yet",
+				"local runs as a local command, which starts in the agent's sandbox: turn the sandbox on",
 			);
 			expect(() => instance.createAgent(reviewer([{ assetId: plain, version: 1 }]))).toThrow(
 				"plain: The URL must start with https://",
@@ -332,6 +332,77 @@ describe("MCP servers", () => {
 			);
 		});
 		expect(await stub.listAgents()).toEqual([]);
+	});
+
+	it("that run as a local command start in the agent's sandbox, with no secret", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const local = await scannedServer(stub, "local", {
+			command: "npx",
+			args: ["-y", "@acme/mcp"],
+			env: { ACME_REGION: "${ACME_REGION}" },
+		});
+		const leaky = await scannedServer(stub, "leaky", {
+			command: "uvx",
+			args: ["acme-mcp"],
+			env: { ACME_REGION: "eu", ACME_TOKEN: "${ACME_TOKEN}" },
+		});
+		const set = await stub.createEnvSet({
+			name: "prod",
+			variables: { ACME_REGION: "eu-west" },
+			secrets: ["ACME_TOKEN"],
+		});
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "acme-secret" }, "Ada");
+		const agent = await stub.createAgent({
+			...reviewer([
+				{ assetId: local, version: 1 },
+				{ assetId: leaky, version: 1 },
+			]),
+			environment: { assetId: set, version: 1 },
+			sandbox: true,
+		});
+		const conversation = (await stub.startConversation(agent.id, "user-ada"))?.id ?? "";
+		const turn = await runInDurableObject(stub, async (instance: RegistryDO) => {
+			// `env` is protected; a sandbox is offered only where the deployment binds one.
+			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
+			settings.SANDBOX = {};
+			try {
+				return await instance.beginTurn(conversation, "Hello");
+			} finally {
+				delete settings.SANDBOX;
+			}
+		});
+		if ("status" in turn) throw new Error(turn.message);
+		expect(turn.mcpServers).toEqual([
+			{
+				name: "leaky",
+				problem:
+					"ACME_TOKEN is a secret of the agent's environment set, and secrets never go into the sandbox, where it runs. Make it a variable if it is not secret.",
+			},
+			{
+				name: "local",
+				transport: "stdio",
+				command: "npx",
+				args: ["-y", "@acme/mcp"],
+				env: { ACME_REGION: "eu-west" },
+				tools: null,
+			},
+		]);
+		expect(JSON.stringify(turn.mcpServers)).not.toContain("acme-secret");
+
+		// A check has no sandbox to start it in.
+		expect(await stub.mcpCheckTarget(local)).toEqual({
+			name: "local",
+			problem: "It runs as a local command, which starts in the sandbox of an agent that has one",
+		});
+		// The agent's page shows the command and which variables the set has.
+		expect((await stub.getAgent(agent.id))?.definition?.mcpServers).toMatchObject([
+			{
+				connection: { transport: "stdio", command: "uvx", args: ["acme-mcp"] },
+				variables: [{ name: "ACME_TOKEN", state: "set" }],
+			},
+			{ connection: { transport: "stdio", command: "npx" } },
+		]);
 	});
 
 	it("are checked with the environment set of an agent that pins them", async () => {
@@ -432,7 +503,7 @@ describe("MCP servers", () => {
 			check: null,
 		});
 		expect(before[1]).toMatchObject({
-			connection: { problem: expect.stringContaining("local command") },
+			connection: { transport: "stdio", command: "npx", args: ["-y", "@acme/mcp"] },
 			variables: [],
 			agents: [],
 		});
