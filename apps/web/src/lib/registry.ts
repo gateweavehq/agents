@@ -523,8 +523,39 @@ export const setSetupAssets = createServerFn({ method: "POST" })
 export const getMcpServers = createServerFn({ method: "GET" })
 	.validator(z.string().min(1))
 	.handler(async ({ data: slug }): Promise<McpServerEntry[] | null> => {
-		const registry = await registryOf(slug);
-		return registry ? registry.listMcpServers() : null;
+		const { currentMember } = await import("#/server/access");
+		const member = await currentMember(slug);
+		if (!member) return null;
+		const [{ registryFor }, { db }, { memberNames }] = await Promise.all([
+			import("#/server/registry"),
+			import("#/server/auth"),
+			import("#/server/workspaces"),
+		]);
+		const { workspaceId } = member.membership;
+		const [servers, names] = await Promise.all([
+			registryFor(workspaceId).listMcpServers(),
+			memberNames(db, workspaceId),
+		]);
+		// An OAuth connection is shown by the name of whoever made it, not their user id.
+		return servers.map((server) =>
+			server.oauth
+				? {
+						...server,
+						oauth: {
+							...server.oauth,
+							connectedBy: names.get(server.oauth.connectedBy) ?? "A former member",
+						},
+					}
+				: server,
+		);
+	});
+
+/** Forgets a library MCP server's OAuth connection (AGT-78). Owners and admins only. */
+export const disconnectMcpServer = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), assetId: id }))
+	.handler(async ({ data }): Promise<boolean> => {
+		const registry = await managedRegistryOf(data.slug);
+		return registry.mcpOAuthDisconnect(data.assetId);
 	});
 
 /**
@@ -538,8 +569,12 @@ export const checkMcpServer = createServerFn({ method: "POST" })
 		const registry = await managedRegistryOf(data.slug);
 		const target = await registry.mcpCheckTarget(data.assetId);
 		if (!target) throw new Error("That MCP server is not in the library");
-		const { checkMcpServer: check } = await import("@gateweave/agents-runtime");
-		const recorded = await registry.recordMcpCheck(data.assetId, await check(target));
+		const { checkMcpServer: check, RegistryOAuthProvider } = await import(
+			"@gateweave/agents-runtime"
+		);
+		// A server connected through OAuth signs in with its connection, which may refresh.
+		const oauth = (assetId: string) => new RegistryOAuthProvider(registry, assetId, {});
+		const recorded = await registry.recordMcpCheck(data.assetId, await check(target, oauth));
 		if (!recorded) throw new Error("That MCP server is not in the library");
 		return recorded;
 	});

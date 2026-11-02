@@ -177,6 +177,15 @@ import {
 } from "./environment";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import {
+	beginOAuth,
+	forgetOAuth,
+	markConnected,
+	oauthPlace,
+	oauthRow,
+	saveOAuth,
+	takeState,
+} from "./mcp-oauth";
+import {
 	agentServers,
 	BIND_UNSENT_SECRETS,
 	bindUnsentSecrets,
@@ -186,6 +195,7 @@ import {
 	mcpCheckPlan,
 	type OpenedEnvironment,
 	recordMcpCheck,
+	remoteLibraryServer,
 	turnServers,
 } from "./mcp-servers";
 import { passFailedAt, runPassOnce } from "./passes";
@@ -641,10 +651,110 @@ export class RegistryDO extends DurableObject {
 		const plan = mcpCheckPlan(this.#db, id.parse(assetId));
 		if (!plan) return null;
 		const environment = plan.agentId ? await this.#openEnvironment(plan.agentId) : null;
-		const server = { name: plan.name, reading: plan.reading, tools: null };
+		const server = { assetId: plan.assetId, name: plan.name, reading: plan.reading, tools: null };
 		// A check has no sandbox, so it cannot start a local command.
 		const [target] = this.#write(() => turnServers(this.#db, [server], environment, false));
 		return target ?? null;
+	}
+
+	// MCP servers connected through OAuth (AGT-78, `./mcp-oauth.ts`). These are for the app's
+	// server functions and its OAuth provider alone; none returns a secret to a page.
+
+	/**
+	 * Starts connecting a library server through OAuth, for `by`: a fresh, single-use state, bound
+	 * to them. Refused for a server that is not a remote one in the library.
+	 */
+	mcpOAuthBegin(
+		assetId: string,
+		by: string,
+	): { state: string; serverUrl: string } | ProviderRefusal {
+		const asset = id.parse(assetId);
+		const member = id.parse(by);
+		return this.#write(() => {
+			const server = remoteLibraryServer(this.#db, asset);
+			if ("problem" in server) return refused(server.problem);
+			const state = randomToken();
+			beginOAuth(
+				this.#db,
+				{ assetId: asset, serverUrl: server.url, by: member },
+				state,
+				Date.now(),
+			);
+			return { state, serverUrl: server.url };
+		});
+	}
+
+	/** Uses up the flow's state as the server sends it back: true when it is good, for `by`. */
+	mcpOAuthTakeState(assetId: string, state: string, by: string): boolean {
+		const asset = id.parse(assetId);
+		const given = z.string().min(1).max(200).parse(state);
+		const member = id.parse(by);
+		return this.#write(() => takeState(this.#db, asset, given, member, Date.now()));
+	}
+
+	/**
+	 * What the OAuth client kept for a server, opened, for the app's provider in this request's
+	 * memory: like `beginTurn`'s key, never for a page. Null when there is nothing.
+	 */
+	async mcpOAuthOpen(assetId: string): Promise<McpOAuthOpened | null> {
+		const asset = id.parse(assetId);
+		const row = oauthRow(this.#db, asset);
+		if (!row) return null;
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return null;
+		const open = async (part: "client" | "verifier" | "tokens", sealed: string | null) => {
+			if (sealed === null) return null;
+			try {
+				return JSON.parse(await sealer.open(oauthPlace(asset, part), sealed)) as unknown;
+			} catch {
+				return null;
+			}
+		};
+		return {
+			serverUrl: row.serverUrl,
+			authorizationServer: row.authorizationServer,
+			client: await open("client", row.sealedClient),
+			verifier: (await open("verifier", row.sealedVerifier)) as string | null,
+			tokens: await open("tokens", row.sealedTokens),
+		};
+	}
+
+	/** Keeps, sealed, what the OAuth client saves for a server; null clears a part. */
+	async mcpOAuthSave(assetId: string, parts: McpOAuthParts): Promise<boolean> {
+		const asset = id.parse(assetId);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return false;
+		const seal = async (part: "client" | "verifier" | "tokens", value: unknown) =>
+			value === undefined
+				? undefined
+				: value === null
+					? null
+					: await sealer.seal(oauthPlace(asset, part), JSON.stringify(value));
+		const sealed = {
+			sealedClient: await seal("client", parts.client),
+			sealedVerifier: await seal("verifier", parts.verifier),
+			sealedTokens: await seal("tokens", parts.tokens),
+			...(parts.authorizationServer === undefined
+				? {}
+				: { authorizationServer: parts.authorizationServer }),
+		};
+		const defined = Object.fromEntries(
+			Object.entries(sealed).filter(([, value]) => value !== undefined),
+		);
+		return this.#write(() => saveOAuth(this.#db, asset, defined));
+	}
+
+	/** Marks a server connected by `by`, once the flow kept its first tokens. */
+	mcpOAuthConnected(assetId: string, by: string): void {
+		const asset = id.parse(assetId);
+		const member = id.parse(by);
+		this.#write(() => markConnected(this.#db, asset, member, Date.now()));
+	}
+
+	/** Forgets a server's OAuth connection. False when it had none. */
+	mcpOAuthDisconnect(assetId: string): boolean {
+		const asset = id.parse(assetId);
+		return this.#write(() => forgetOAuth(this.#db, asset));
 	}
 
 	/** Keeps how checking a server went as its last check. Null when it is not in the library. */
@@ -1805,4 +1915,30 @@ export class RegistryDO extends DurableObject {
 
 function refused(message: string): ProviderRefusal {
 	return { status: "refused", message };
+}
+
+/** What the OAuth client kept for a server, opened for the app's provider. */
+export interface McpOAuthOpened {
+	serverUrl: string;
+	authorizationServer: Record<string, unknown> | null;
+	client: unknown;
+	verifier: string | null;
+	tokens: unknown;
+}
+
+/** What the OAuth client saves; a part left out stays, and null clears it. */
+export interface McpOAuthParts {
+	client?: unknown;
+	verifier?: string | null;
+	tokens?: unknown;
+	authorizationServer?: Record<string, unknown> | null;
+}
+
+/** 32 random bytes in base64url, for an OAuth state. */
+function randomToken(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(32));
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
 }
