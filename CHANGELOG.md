@@ -8,6 +8,24 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.11.0] - 2026-11-02
+
+Workspaces can read GitLab repositories, from gitlab.com or a self-managed GitLab. Updating a
+self-hosted copy applies a migration in each workspace's registry, which runs on its own, and
+needs no new setting.
+
+### Added
+
+- Settings, GitLab connects a GitLab with an access token (`read_api` and `read_repository`),
+  which is encrypted and never shown again. Its projects become repositories, scanned for agents
+  and assets as GitHub repositories are, and a push webhook, whose secret token the page shows
+  once, rescans the default branch on every push. Applying setups and sandboxes stay with GitHub
+  repositories for now, and say so for GitLab ones. (#131)
+
+### Fixed
+
+- On a phone, the settings tabs scroll sideways; the last ones could not be reached. (#131)
+
 ## [0.10.0] - 2026-11-02
 
 MCP servers that sign in with OAuth connect with a button instead of an API key. Updating a
