@@ -8,6 +8,31 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.9.0] - 2026-11-02
+
+Owners can delete a workspace, and a new workspace shows how to get going. Updating a
+self-hosted copy needs no migration; `INVITATION_CONTACT` is an optional new setting.
+
+### Added
+
+- An owner can delete a workspace in Settings > Workspace, after typing its name. It deletes its
+  members and invitations, its registry with its keys and secrets, and every conversation with
+  its messages, traces and sandbox. The GitHub App installation stays on GitHub until someone
+  uninstalls it there. (#126)
+- `INVITATION_CONTACT`, an email address or an https URL, is where a workspace asks to be invited
+  to Workers AI or sandboxes. Settings > Models links to it when they are by invitation, with the
+  workspace's name and id in the message. (#127)
+
+### Changed
+
+- The empty Chat page tells an admin of a workspace with no model key to add one first, and
+  links to Settings > Models. (#127)
+
+### Fixed
+
+- Deleting a workspace deleted its registry but left each conversation's messages, traces and
+  sandbox behind, where nothing could reach them. (#126)
+
 ## [0.8.0] - 2026-11-02
 
 Setups write GitHub Copilot and Devin files, and a server can offer Workers AI to the workspaces it
