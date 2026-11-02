@@ -30,6 +30,7 @@ import {
 	type FileEntry,
 	mcpChecks,
 } from "./db/schema";
+import { bindSecret, type SecretSend, secretSends } from "./environment";
 import { assetHash } from "./hash";
 import { libraryKey } from "./library";
 import { getAssetVersion } from "./queries";
@@ -247,6 +248,65 @@ export function turnServer(
 		name,
 		problem: `${names.join(", ")} ${names.length === 1 ? "has" : "have"} no value in the agent's environment set`,
 	};
+}
+
+/**
+ * An agent's environment as `RegistryDO` opened it for a turn or a check: the values, and the
+ * set's secrets that were opened, by name, with the sealed value each was opened from.
+ */
+export interface OpenedEnvironment {
+	environment: ResolvedEnvironment;
+	assetId: string | null;
+	opened: ReadonlyMap<string, string>;
+}
+
+/**
+ * The servers of one turn or check, as `turnServer` fills them in, with each secret their headers
+ * name sent only to the origin it was first sent to (AGT-64). Whoever may edit a server could
+ * otherwise point it at their own host and receive a key someone else entered. A secret sent
+ * nowhere yet is tied to the origin of the first server that sends it; to send it to another,
+ * someone enters it again. Runs in a write, after the environment was opened, so the ties it reads
+ * and makes are current, and a value entered again meanwhile is not sent as the one it replaced.
+ */
+export function turnServers(
+	db: Db,
+	servers: ReturnType<typeof agentServers>,
+	opened: OpenedEnvironment | null,
+): TurnMcpServer[] {
+	const assetId = opened?.assetId ?? null;
+	const sends = assetId ? secretSends(db, assetId) : new Map<string, SecretSend>();
+	return servers.map((server) => {
+		const turn = turnServer(server, opened?.environment ?? null);
+		if ("problem" in turn || "problem" in server.reading || !opened || !assetId) return turn;
+		const origin = new URL(turn.url).origin;
+		const secrets = serverVariables(server.reading.server).filter((name) =>
+			opened.opened.has(name),
+		);
+		const changed: string[] = [];
+		const elsewhere: string[] = [];
+		for (const name of secrets) {
+			const send = sends.get(name);
+			if (!send || send.sealed !== opened.opened.get(name)) changed.push(name);
+			else if (send.sentTo !== null && send.sentTo !== origin) elsewhere.push(name);
+		}
+		if (changed.length > 0) {
+			return { name: turn.name, problem: `${changed.join(", ")} changed as this began; try again` };
+		}
+		if (elsewhere.length > 0) {
+			const one = elsewhere.length === 1;
+			return {
+				name: turn.name,
+				problem: `${elsewhere.join(", ")} ${one ? "was" : "were"} entered for another server address, so ${one ? "it is" : "they are"} not sent to ${origin}. An owner or admin can enter ${one ? "it" : "them"} again in the agent's environment set to send ${one ? "it" : "them"} there.`,
+			};
+		}
+		for (const name of secrets) {
+			const send = sends.get(name);
+			if (!send || send.sentTo !== null) continue;
+			bindSecret(db, assetId, name, origin);
+			sends.set(name, { ...send, sentTo: origin });
+		}
+		return turn;
+	});
 }
 
 /** The live agents run by Gateweave that pin a server, by name. */

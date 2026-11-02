@@ -28,6 +28,7 @@ import m0026 from "./0026_agent_engine.sql";
 import m0027 from "./0027_trigger_assignee.sql";
 import m0028 from "./0028_trigger_per_issue.sql";
 import m0029 from "./0029_square_trish_tilby.sql";
+import m0030 from "./0030_conscious_titania.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -63,5 +64,6 @@ export default {
 		m0027,
 		m0028,
 		m0029,
+		m0030,
 	},
 };

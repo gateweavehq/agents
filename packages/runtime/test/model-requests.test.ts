@@ -557,6 +557,9 @@ describe("a model request the sandbox may not make", () => {
 					{ type: "message", role: "user", content: [{ type: "input_file", file_id: "file_1" }] },
 				],
 			},
+			{ input: [{ type: "item_reference", id: "msg_1" }] },
+			// An item reference may leave out its type.
+			{ input: [{ id: "msg_1" }] },
 		];
 		for (const fields of stored) {
 			await refused(post(RESPONSES, codexRequest(fields)), "openai", codex, /stored/);
