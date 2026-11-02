@@ -670,6 +670,39 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     under `lite`'s limits (256 MiB, 1/16 vCPU) ran out of memory before its first answer; under
     `basic`'s (1 GiB, 1/4 vCPU) a turn took about half a minute and used 415 MiB at most. The
     sandbox starts as `standard-1`, so keep it at `basic` or above. Claude Code fits in `lite`.
+- **What a model request may carry** (AGT-62, `checkModelRequest` and `forwardedHeaders` in
+  `packages/runtime/src/outbound.ts`, `sendModelRequest` in `packages/runtime/src/model-requests.ts`).
+  A request for the model is the one way out whose contents the sandbox chooses, and it leaves
+  with the workspace's key. The providers run tools of their own for a request (MCP connectors,
+  web search and fetch, code execution, file search), which would send what it holds wherever it
+  says. So before the key goes on, the Worker reads the body, at most 32 MB, unencoded, and
+  refuses with a 403 one that is not a JSON object or that:
+  - names a model other than the agent's (`model`, or Google's path);
+  - for Anthropic, has `mcp_servers` or `container`, or a tool with a `type` other than `custom`
+    (Claude Code's and OpenCode's tools have none);
+  - for OpenAI, has a tool other than `function`, `custom` (Codex's `apply_patch`), a `namespace`
+    of those (Codex's MCP tools) or `tool_search`, which looks only through the request's own
+    deferred tools; or `web_search_options`, or a stored `prompt`, whose tools the request does
+    not show;
+  - for Google, has a tool other than `functionDeclarations`;
+  - has the provider fetch an image, document or file by URL (`data:` URLs are fine).
+
+  What goes out is the checked JSON, written out again, so the provider reads what was checked.
+  Its headers are `content-type`, `accept`, `user-agent`, and for Anthropic `anthropic-version`
+  and the betas in `ANTHROPIC_BETAS`: those Claude Code 2.1.308 and OpenCode 1.19.5 send that
+  change how the model answers, thinks or caches. Betas of other APIs (files, batches, MCP
+  servers, environments), of server tools (web search, the advisor) and those that let Anthropic
+  answer with another model or price (server-side fallback, fast mode) are dropped, as is every
+  other header: a CLI's telemetry and session ids, `OpenAI-Organization`, and `OpenAI-Beta`,
+  which Codex sends only on the WebSocket it does not use here. A refusal is a failed model span
+  in the run's trace with the reason, like a request the provider refused.
+  - Claude Code would use other models for small tasks and subagents (Haiku, by its aliases), and
+    fall back to another when one is overloaded. Its turn runs with each of those set to the
+    agent's model (`claudeCodeModelEnv`), and `CLAUDE_CODE_NO_MODEL_FALLBACK`. OpenCode's
+    `small_model` is the agent's already, and Codex calls only its `--model`.
+  - No engine needs a server tool here. Claude Code's `WebSearch` would send Anthropic's
+    `web_search` tool, but it is not among the turn's allowed tools, and its `WebFetch` fetches
+    from the sandbox, which reaches no website. Codex's web search is off. Both would be refused.
 - **Model requests are metered where they leave the sandbox** (AGT-49,
   `packages/runtime/src/meter.ts`). A CLI's events leave out what it does not print: OpenCode's
   subagents, Claude Code's in part, and Codex's requests one by one, of which it prints only the

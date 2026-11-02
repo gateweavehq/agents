@@ -7,6 +7,16 @@
  * (`./engines.ts`), its provider's API is open to the CLI's requests for the model, and so is the
  * host where it finds Gateweave's tools, which only the Worker answers (`./engine-tools.ts`).
  * Nothing else is, so what the sandbox holds cannot be sent anywhere.
+ *
+ * A request for the model is the one way out that carries what the sandbox chooses, with the
+ * workspace's key added, so its contents are checked too (`checkModelRequest`), before the key is
+ * (AGT-62). The providers run tools of their own on a request's behalf: Anthropic's MCP connector,
+ * web search and fetch, code execution; OpenAI's MCP, web search, file search, code interpreter;
+ * Google's search, URL context and code execution. Any of them would send what the request holds
+ * to an address the request names, or run it elsewhere. So a request names only tools the CLI
+ * runs itself, fetches no file or image by URL, calls only the turn's model, and goes out with
+ * only the headers the engines need (`forwardedHeaders`), the betas among them by name. A request
+ * that does otherwise gets a 403 and a failed span in the run's trace that says why.
  */
 import {
 	MODEL_PROVIDER_NAMES,
@@ -89,6 +99,259 @@ function isModelRequest(api: ModelApi, method: string, url: URL): boolean {
 /** Whether an engine's request to a provider is one the model answers, which the trace meters. */
 export function isMeteredRequest(url: URL): boolean {
 	return !(url.hostname === ANTHROPIC_API && url.pathname === ANTHROPIC_COUNT);
+}
+
+/** The providers whose APIs an engine calls from the sandbox. */
+export type EngineProvider = ModelApi["provider"];
+
+/** The most of a request for the model the Worker reads to check it: Anthropic's own limit. */
+export const MAX_MODEL_REQUEST_BYTES = 32_000_000;
+
+/**
+ * The headers a request for the model keeps, for every provider: the rest, such as a CLI's
+ * telemetry, session ids and organization or project headers, stay in the Worker. The key goes on
+ * after (`./models.ts`).
+ */
+const FORWARDED_HEADERS = ["content-type", "accept", "user-agent"];
+
+/**
+ * Anthropic's betas that a request may use, by name; the header goes out with the others dropped.
+ * The engines' own: Claude Code 2.1.308 (the betas its binary names, checked 2026-11-02), and
+ * OpenCode 1.19.5 with `@ai-sdk/anthropic`. These change how the model answers, thinks, caches or
+ * counts. Left out are those of other APIs (files, batches, environments, managed agents, MCP
+ * servers and tunnels, memory), server tools (web search, advisor), and those that let the
+ * provider answer with another model or at another price (server-side fallback, fast mode).
+ */
+export const ANTHROPIC_BETAS: ReadonlySet<string> = new Set([
+	"claude-code-20250219",
+	"interleaved-thinking-2025-05-14",
+	"fine-grained-tool-streaming-2025-05-14",
+	"context-1m-2025-08-07",
+	"context-management-2025-06-27",
+	"structured-outputs-2025-11-13",
+	"structured-outputs-2025-12-15",
+	"effort-2025-11-24",
+	"task-budgets-2026-03-13",
+	"pdfs-2024-09-25",
+	"compact-2026-01-12",
+	"extended-cache-ttl-2025-04-11",
+	"prompt-caching-scope-2026-01-05",
+	"prompt-caching-evict-2026-05-12",
+	"cache-keepalive-2026-09-03",
+	"cache-diagnosis-2026-04-07",
+	"redact-thinking-2026-02-12",
+	"thinking-resumption-2026-07-17",
+	"thinking-token-count-2026-05-13",
+	"thinking-display-updates-2026-08-18",
+	"thinking-binding-controls-2026-08-01",
+	"context-hint-2026-04-09",
+	"mid-conversation-system-2026-04-07",
+	"mid-conversation-system-clear-at-2026-08-21",
+	"mid-conversation-tool-changes-2026-07-01",
+	"per-turn-control-2026-07-01",
+	"timing-2026-09-09",
+	"inline-tools-2026-09-15",
+	// Deferred tools and the `tool_reference` blocks Claude Code's own tool search answers with.
+	// The search tools that run on Anthropic's side are refused as any server tool is.
+	"advanced-tool-use-2025-11-20",
+	"tool-search-tool-2025-10-19",
+]);
+
+/**
+ * The headers a request for the model goes out with: `FORWARDED_HEADERS`, Anthropic's version, and
+ * the betas of `ANTHROPIC_BETAS` it names. OpenAI's `OpenAI-Beta` is left out: Codex sends it only
+ * on the WebSocket it does not use here.
+ */
+export function forwardedHeaders(provider: EngineProvider, headers: Headers): Headers {
+	const kept = new Headers();
+	for (const name of FORWARDED_HEADERS) {
+		const value = headers.get(name);
+		if (value !== null) kept.set(name, value);
+	}
+	if (provider === "anthropic") {
+		const version = headers.get("anthropic-version");
+		if (version !== null) kept.set("anthropic-version", version);
+		const betas = (headers.get("anthropic-beta") ?? "")
+			.split(",")
+			.map((beta) => beta.trim())
+			.filter((beta) => ANTHROPIC_BETAS.has(beta));
+		if (betas.length > 0) kept.set("anthropic-beta", [...new Set(betas)].join(","));
+	}
+	return kept;
+}
+
+/**
+ * The tool types OpenAI's API may take from the sandbox: those the CLI runs itself, `function`
+ * and `custom` (Codex's `apply_patch`); a `namespace` of them (Codex groups an MCP server's tools
+ * so); and `tool_search`, which looks only through the request's own deferred tools. Codex 0.165
+ * names these; OpenCode sends `function` alone.
+ */
+const OPENAI_TOOLS: ReadonlySet<string> = new Set(["function", "custom", "tool_search"]);
+
+/**
+ * Why a request for the model may not go out, or null when it may: its body, already parsed, as
+ * JSON. `model` is the turn's agent's, the only one the request may call.
+ */
+export function checkModelRequest(
+	provider: EngineProvider,
+	model: string,
+	url: URL,
+	body: unknown,
+): string | null {
+	if (!isObject(body)) return "A request for the model from this sandbox must be a JSON object";
+	// Each provider takes its tools as a list; anything else would go unchecked.
+	if (body.tools !== undefined && !Array.isArray(body.tools)) {
+		return "A request for the model from this sandbox gives its tools as a list";
+	}
+	switch (provider) {
+		case "anthropic":
+			return checkAnthropic(model, body);
+		case "openai":
+			return checkOpenAI(model, body);
+		case "google":
+			return checkGoogle(model, url, body);
+	}
+}
+
+function checkAnthropic(model: string, body: Record<string, unknown>): string | null {
+	const name = MODEL_PROVIDER_NAMES.anthropic;
+	if ("mcp_servers" in body) {
+		return `This sandbox's requests to ${name} name no MCP servers: ${name} would call them`;
+	}
+	if ("container" in body) {
+		return `This sandbox's requests to ${name} use no container: it would run code on ${name}'s side`;
+	}
+	const wrong = checkModel(name, model, body.model);
+	if (wrong) return wrong;
+	for (const tool of listOf(body.tools)) {
+		const type = isObject(tool) ? tool.type : undefined;
+		if (type !== undefined && type !== null && type !== "custom") {
+			return `This sandbox's requests to ${name} take only tools the engine runs, not ${describe(type)}, which runs on ${name}'s side`;
+		}
+	}
+	if (
+		someBlock(body.messages, isAnthropicUrlSource) ||
+		someBlock(body.system, isAnthropicUrlSource)
+	) {
+		return `This sandbox's requests to ${name} fetch no image or document by URL`;
+	}
+	return null;
+}
+
+function checkOpenAI(model: string, body: Record<string, unknown>): string | null {
+	const name = MODEL_PROVIDER_NAMES.openai;
+	const wrong = checkModel(name, model, body.model);
+	if (wrong) return wrong;
+	for (const tool of listOf(body.tools)) {
+		const problem = openAIToolProblem(tool);
+		if (problem) return `This sandbox's requests to ${name} ${problem}`;
+	}
+	if ("web_search_options" in body) {
+		return `This sandbox's requests to ${name} take only tools the engine runs, not its web search`;
+	}
+	// A stored prompt brings tools of its own, which the request does not show.
+	if ("prompt" in body) return `This sandbox's requests to ${name} use no stored prompt`;
+	// The input of the Responses API, and the messages of chat completions.
+	if (someBlock(body.input, isOpenAIUrlInput) || someBlock(body.messages, isOpenAIUrlInput)) {
+		return `This sandbox's requests to ${name} fetch no image or file by URL`;
+	}
+	return null;
+}
+
+function openAIToolProblem(tool: unknown): string | null {
+	const type = isObject(tool) ? tool.type : undefined;
+	if (type === "namespace" && isObject(tool)) {
+		for (const inner of listOf(tool.tools)) {
+			const problem = openAIToolProblem(inner);
+			if (problem) return problem;
+		}
+		return null;
+	}
+	if (typeof type === "string" && OPENAI_TOOLS.has(type)) return null;
+	return `take only tools the engine runs, not ${describe(type)}, which runs on ${MODEL_PROVIDER_NAMES.openai}'s side`;
+}
+
+function checkGoogle(model: string, url: URL, body: Record<string, unknown>): string | null {
+	const name = MODEL_PROVIDER_NAMES.google;
+	const wrong = checkModel(name, model, googleModel(url));
+	if (wrong) return wrong;
+	for (const tool of listOf(body.tools)) {
+		const others = isObject(tool)
+			? Object.keys(tool).filter((key) => key !== "functionDeclarations")
+			: [];
+		if (!isObject(tool) || others.length > 0) {
+			return `This sandbox's requests to ${name} take only the engine's function declarations as tools, not ${others.join(", ") || "that"}, which run on ${name}'s side`;
+		}
+	}
+	// Google takes its fields in snake case too.
+	if (someBlock(body.contents, (part) => "fileData" in part || "file_data" in part)) {
+		return `This sandbox's requests to ${name} fetch no file by URL`;
+	}
+	return null;
+}
+
+/** The model a request to Google names in its path, as `GOOGLE_MODEL_PATH` takes it. */
+function googleModel(url: URL): string | null {
+	const named = /^\/v1beta\/models\/([^/:]+):/.exec(url.pathname)?.[1];
+	if (named === undefined) return null;
+	try {
+		return decodeURIComponent(named);
+	} catch {
+		return null;
+	}
+}
+
+function checkModel(name: string, model: string, named: unknown): string | null {
+	return named === model
+		? null
+		: `This sandbox calls only the agent's model ${model} from ${name}, not ${describe(named)}`;
+}
+
+/** An Anthropic image or document whose source is a URL, which Anthropic would fetch. */
+function isAnthropicUrlSource(block: Record<string, unknown>): boolean {
+	return isObject(block.source) && block.source.type === "url";
+}
+
+/** An OpenAI image or file given by a URL other than a `data:` one, which OpenAI would fetch. */
+function isOpenAIUrlInput(block: Record<string, unknown>): boolean {
+	for (const key of ["image_url", "file_url"]) {
+		const value = block[key];
+		const target = isObject(value) ? value.url : value;
+		if (target !== undefined && target !== null && !String(target).startsWith("data:")) return true;
+	}
+	return false;
+}
+
+/**
+ * Whether any object in a request's messages is one `test` finds: content blocks, parts, and those
+ * in tool results, at any depth. A tool call's own arguments are skipped (Anthropic's `tool_use`
+ * input, Google's `functionCall`): the model wrote them, and the provider acts on none of it.
+ */
+function someBlock(value: unknown, test: (block: Record<string, unknown>) => boolean): boolean {
+	if (Array.isArray(value)) return value.some((item) => someBlock(item, test));
+	if (!isObject(value)) return false;
+	if (test(value)) return true;
+	return Object.entries(value).some(
+		([key, inner]) =>
+			!(key === "input" && value.type === "tool_use") &&
+			key !== "functionCall" &&
+			key !== "function_call" &&
+			someBlock(inner, test),
+	);
+}
+
+function listOf(value: unknown): unknown[] {
+	return Array.isArray(value) ? value : [];
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A value from a request, quoted for a refusal: short, and only if it is a string. */
+function describe(value: unknown): string {
+	if (typeof value !== "string") return "none";
+	return JSON.stringify(value.length > 80 ? `${value.slice(0, 80)}…` : value);
 }
 
 /**
