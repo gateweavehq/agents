@@ -678,19 +678,27 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   A request for the model is the one way out whose contents the sandbox chooses, and it leaves
   with the workspace's key. The providers run tools of their own for a request (MCP connectors,
   web search and fetch, code execution, file search), which would send what it holds wherever it
-  says. So before the key goes on, the Worker reads the body, at most 32 MB, unencoded, and
-  refuses with a 403 one that is not a JSON object or that:
+  says. So before the key goes on, the Worker reads the body, unencoded, and refuses with a 403
+  one that is not a JSON object or that:
   - names a model other than the agent's (`model`, or Google's path);
   - for Anthropic, has `mcp_servers` or `container`, or a tool with a `type` other than `custom`
-    (Claude Code's and OpenCode's tools have none);
+    (Claude Code's and OpenCode's tools have none), or `inference_geo` or a `speed` other than
+    `standard`, which cost more;
   - for OpenAI, has a tool other than `function`, `custom` (Codex's `apply_patch`), a `namespace`
     of those (Codex's MCP tools) or `tool_search`, which looks only through the request's own
     deferred tools; or `web_search_options`, or a stored `prompt`, whose tools the request does
-    not show;
-  - for Google, has a tool other than `functionDeclarations`;
+    not show; or reads what the workspace's organization stored (`previous_response_id`,
+    `conversation`, a `file_id`), which Codex and OpenCode never do, as they store nothing; or a
+    `service_tier` other than `auto` or `default`;
+  - for Google, has a tool other than `functionDeclarations`, `cachedContent` (which brings its
+    own instructions and tools), or a `fileData` part with a URI anywhere in the body;
   - has the provider fetch an image, document or file by URL (`data:` URLs are fine).
 
   What goes out is the checked JSON, written out again, so the provider reads what was checked.
+  A body is at most 16 MB (413 otherwise), under Anthropic's own 32 MB: checking holds its text
+  and its parsed value at once, about four times its size, in an isolate of 128 MB that serves
+  other requests too. The body is decoded as it streams, so no chunk is kept, and each form of it
+  is let go as the next is made.
   Its headers are `content-type`, `accept`, `user-agent`, and for Anthropic `anthropic-version`
   and the betas in `ANTHROPIC_BETAS`: those Claude Code 2.1.308 and OpenCode 1.19.5 send that
   change how the model answers, thinks or caches. Betas of other APIs (files, batches, MCP

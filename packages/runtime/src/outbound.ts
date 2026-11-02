@@ -104,8 +104,13 @@ export function isMeteredRequest(url: URL): boolean {
 /** The providers whose APIs an engine calls from the sandbox. */
 export type EngineProvider = ModelApi["provider"];
 
-/** The most of a request for the model the Worker reads to check it: Anthropic's own limit. */
-export const MAX_MODEL_REQUEST_BYTES = 32_000_000;
+/**
+ * The most of a request for the model the Worker reads to check it. Checking holds a request's
+ * text and its parsed value at once, about four times its size, and a Worker's isolate has
+ * 128 MB for every request it serves: so less than Anthropic's own 32 MB. A long context of text
+ * is a few MB; images are what come near it.
+ */
+export const MAX_MODEL_REQUEST_BYTES = 16_000_000;
 
 /**
  * The headers a request for the model keeps, for every provider: the rest, such as a CLI's
@@ -223,6 +228,13 @@ function checkAnthropic(model: string, body: Record<string, unknown>): string | 
 	}
 	const wrong = checkModel(name, model, body.model);
 	if (wrong) return wrong;
+	// They change what the workspace pays; no engine sets them here.
+	if ("inference_geo" in body) {
+		return `This sandbox's requests to ${name} choose no region to run in: it costs more`;
+	}
+	if (body.speed !== undefined && body.speed !== "standard") {
+		return `This sandbox's requests to ${name} ask for no faster speed: it costs more`;
+	}
 	for (const tool of listOf(body.tools)) {
 		const type = isObject(tool) ? tool.type : undefined;
 		if (type !== undefined && type !== null && type !== "custom") {
@@ -251,6 +263,24 @@ function checkOpenAI(model: string, body: Record<string, unknown>): string | nul
 	}
 	// A stored prompt brings tools of its own, which the request does not show.
 	if ("prompt" in body) return `This sandbox's requests to ${name} use no stored prompt`;
+	// Both read what the workspace's organization stored: Codex and OpenCode send neither, since
+	// they store nothing (`store: false`) and send the whole conversation each time.
+	for (const field of ["previous_response_id", "conversation"]) {
+		if (field in body) {
+			return `This sandbox's requests to ${name} read no stored response or conversation (${field})`;
+		}
+	}
+	if (
+		body.service_tier !== undefined &&
+		body.service_tier !== null &&
+		body.service_tier !== "auto" &&
+		body.service_tier !== "default"
+	) {
+		return `This sandbox's requests to ${name} take the default service tier, not ${describe(body.service_tier)}`;
+	}
+	if (someBlock(body.input, isOpenAIStoredFile) || someBlock(body.messages, isOpenAIStoredFile)) {
+		return `This sandbox's requests to ${name} read no stored file (file_id)`;
+	}
 	// The input of the Responses API, and the messages of chat completions.
 	if (someBlock(body.input, isOpenAIUrlInput) || someBlock(body.messages, isOpenAIUrlInput)) {
 		return `This sandbox's requests to ${name} fetch no image or file by URL`;
@@ -284,8 +314,14 @@ function checkGoogle(model: string, url: URL, body: Record<string, unknown>): st
 		}
 	}
 	// Google takes its fields in snake case too.
-	if (someBlock(body.contents, (part) => "fileData" in part || "file_data" in part)) {
-		return `This sandbox's requests to ${name} fetch no file by URL`;
+	// Cached content brings a system instruction and tools of its own, which the request does not
+	// show.
+	if ("cachedContent" in body || "cached_content" in body) {
+		return `This sandbox's requests to ${name} use no cached content`;
+	}
+	// Anywhere in the body: the system instruction takes parts too.
+	if (someBlock(body, isGoogleFileData)) {
+		return `This sandbox's requests to ${name} name no file by its URI (fileData)`;
 	}
 	return null;
 }
@@ -307,9 +343,27 @@ function checkModel(name: string, model: string, named: unknown): string | null 
 		: `This sandbox calls only the agent's model ${model} from ${name}, not ${describe(named)}`;
 }
 
+/** A Google part that names a file by its URI, which Google would fetch or read. */
+function isGoogleFileData(part: Record<string, unknown>): boolean {
+	return [part.fileData, part.file_data].some(
+		(data) => isObject(data) && ("fileUri" in data || "file_uri" in data),
+	);
+}
+
 /** An Anthropic image or document whose source is a URL, which Anthropic would fetch. */
 function isAnthropicUrlSource(block: Record<string, unknown>): boolean {
 	return isObject(block.source) && block.source.type === "url";
+}
+
+/**
+ * An OpenAI image or file given by the id of one stored in the workspace's organization: the
+ * Responses API's `input_image` and `input_file`, and chat completions' `file`.
+ */
+function isOpenAIStoredFile(block: Record<string, unknown>): boolean {
+	if (block.type === "input_image" || block.type === "input_file") {
+		return block.file_id !== undefined && block.file_id !== null;
+	}
+	return block.type === "file" && isObject(block.file) && "file_id" in block.file;
 }
 
 /** An OpenAI image or file given by a URL other than a `data:` one, which OpenAI would fetch. */
