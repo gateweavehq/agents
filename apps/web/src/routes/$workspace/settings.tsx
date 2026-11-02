@@ -9,6 +9,7 @@ const TABS = [
 	{ to: "/$workspace/settings/github", label: "GitHub" },
 	{ to: "/$workspace/settings/models", label: "Models" },
 	{ to: "/$workspace/settings/telemetry", label: "Telemetry" },
+	{ to: "/$workspace/settings/workspace", label: "Workspace" },
 ] as const;
 
 function SettingsLayout() {

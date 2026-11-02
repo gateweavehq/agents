@@ -2,7 +2,7 @@ import { env, waitUntil } from "cloudflare:workers";
 import { createDb } from "../db";
 import { mailer } from "../email";
 import { authRateLimits } from "../rate-limit";
-import { registryFor } from "../registry";
+import { deleteWorkspaceData } from "../workspace-deletion";
 import { createAuth } from "./config";
 
 export const db = createDb(env.DB);
@@ -33,10 +33,11 @@ function buildAuth() {
 		mailer,
 		runInBackground: waitUntil,
 		rateLimitStorage: authRateLimits,
-		// The registry is deleted with its workspace. A failure is logged for the operator; until
-		// then the data stays unreachable, since only members get through and none are left.
+		// The conversations and the registry are deleted with their workspace. A failure is logged
+		// for the operator; until then the data stays unreachable, since only members get through
+		// and none are left.
 		onWorkspaceDeleted: (workspaceId) =>
-			logFailure(registryFor(workspaceId).destroy(), "workspace deletion"),
+			logFailure(deleteWorkspaceData(workspaceId), "workspace deletion"),
 	});
 }
 

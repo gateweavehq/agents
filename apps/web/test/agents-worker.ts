@@ -125,6 +125,7 @@ export interface RegistryStub {
 	startTeamConversation(teamId: string, startedBy: string): Promise<Conversation | null>;
 	getConversation(conversationId: string, startedBy: string): Promise<Conversation | null>;
 	removeConversation(conversationId: string, startedBy: string): Promise<string[]>;
+	conversationIds(): Promise<string[]>;
 	beginTurn(conversationId: string, text: string): Promise<{ runId: string } | ProviderRefusal>;
 	finishRun(runId: string, finish: RunFinish): Promise<boolean>;
 	listRuns(options?: { startedBy?: string; before?: RunCursor }): Promise<TotaledRun[]>;
@@ -356,6 +357,14 @@ export async function startAgents(
 				getByName(name: string): RegistryStub;
 			};
 			return namespace.getByName(workspaceId);
+		},
+		/** A conversation's Durable Object, to check what it holds. */
+		async conversation(workspaceId: string, conversationId: string) {
+			const namespace = (await mf.getDurableObjectNamespace("CONVERSATIONS")) as unknown as {
+				getByName(name: string): { transcript(): Promise<string> };
+			};
+			// `conversationName` in packages/runtime.
+			return namespace.getByName(`${workspaceId}:${conversationId}`);
 		},
 		dispose: () => mf.dispose(),
 	};
