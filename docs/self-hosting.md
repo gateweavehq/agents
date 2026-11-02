@@ -142,6 +142,56 @@ after its conversation's last turn. To keep the bill in hand:
   the most it can cost, so Cloudflare's bill stays under the budget. Set `SANDBOX_ALERT_EMAIL` to
   hear at 80% and at 100%.
 
+### Usage across workspaces
+
+Each workspace sees its own runs on its Usage and Runs pages. To see every workspace's usage
+together, for charts or billing, bind a
+[Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/) dataset
+as `USAGE` in `wrangler.jsonc`:
+
+```jsonc
+"analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "gateweave_agents_usage" }]
+```
+
+The dataset is created on the first write. From then on, each run that closes writes one event,
+indexed by its workspace's id. Without the binding, nothing is written. The fields are in this
+order (`packages/registry/src/usage.ts`):
+
+| Field       | What it holds                                                                    |
+| ----------- | -------------------------------------------------------------------------------- |
+| `index1`    | The workspace's id                                                               |
+| `blob1`–`8` | Run id, agent id, agent name, provider, model, status, trigger id, top run's id  |
+| `double1`   | Input tokens (cached ones included)                                              |
+| `double2`   | Output tokens                                                                    |
+| `double3`   | Cached input tokens                                                              |
+| `double4`   | Estimated model cost in US dollars, 0 when unpriced                              |
+| `double5`   | 1 when the run has a cost estimate, 0 when a model it used has no prices         |
+| `double6`   | Model requests                                                                   |
+| `double7`   | Seconds the turn took                                                            |
+| `double8`   | Sandbox seconds, with the 15 idle minutes after the turn (an upper bound summed) |
+| `double9`   | Their estimated cost in US dollars                                               |
+
+Query them with the [SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/)
+and an API token with Account Analytics Read. Analytics Engine samples heavy traffic, so weigh each
+event by `_sample_interval`. This month's usage by workspace:
+
+```sql
+SELECT
+  index1 AS workspace,
+  SUM(_sample_interval) AS runs,
+  SUM(_sample_interval * double1) AS input_tokens,
+  SUM(_sample_interval * double2) AS output_tokens,
+  SUM(_sample_interval * double4) AS model_dollars,
+  SUM(_sample_interval * double9) AS sandbox_dollars
+FROM gateweave_agents_usage
+WHERE timestamp >= toStartOfMonth(NOW())
+GROUP BY workspace
+ORDER BY model_dollars DESC
+```
+
+The events are a copy, kept for Analytics Engine's retention (three months). The registry's runs
+stay the record each workspace sees.
+
 ## Updating
 
 ```sh
