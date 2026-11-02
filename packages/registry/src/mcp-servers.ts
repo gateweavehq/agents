@@ -27,10 +27,11 @@ import {
 	agents,
 	assets,
 	assetVersions,
+	envSecrets,
 	type FileEntry,
 	mcpChecks,
 } from "./db/schema";
-import { bindSecret, type SecretSend, secretSends } from "./environment";
+import { bindSecret, contestSecret, type SecretSend, secretSends } from "./environment";
 import { assetHash } from "./hash";
 import { libraryKey } from "./library";
 import { getAssetVersion } from "./queries";
@@ -288,6 +289,10 @@ export function turnServers(
 			const send = sends.get(name);
 			if (!send || send.sealed !== opened.opened.get(name)) changed.push(name);
 			else if (send.sentTo !== null && send.sentTo !== origin) elsewhere.push(name);
+			// Stored before ties, and named at several origins then (AGT-65): one of those alone.
+			else if (send.sentTo === null && send.contested && !send.contested.includes(origin)) {
+				elsewhere.push(name);
+			}
 		}
 		if (changed.length > 0) {
 			return { name: turn.name, problem: `${changed.join(", ")} changed as this began; try again` };
@@ -303,11 +308,84 @@ export function turnServers(
 			const send = sends.get(name);
 			if (!send || send.sentTo !== null) continue;
 			bindSecret(db, assetId, name, origin);
-			sends.set(name, { ...send, sentTo: origin });
+			sends.set(name, { ...send, sentTo: origin, contested: null });
 		}
 		return turn;
 	});
 }
+
+/** The name `registry_passes` keeps `bindUnsentSecrets` under (see `passes.ts`). */
+export const BIND_UNSENT_SECRETS = "bind-unsent-secrets";
+
+/**
+ * Ties each value stored before values were tied to one origin (AGT-64), and sent nowhere since,
+ * to the origin of the servers that name it, once per workspace (AGT-65). Until it was, whoever
+ * may edit a server could point it at their own host and check it to have the value tied there.
+ * The servers that count are those an agent run by Gateweave could send it to: the version each
+ * live agent pins, and the current version, which a check sends to, of servers its environment
+ * set fills. A value they name at different origins is left unbound, with those origins, for an
+ * admin to look at on the Environment page, and `turnServers` sends it to one of those alone.
+ * Runs in a write, once, through `runPassOnce`.
+ */
+export function bindUnsentSecrets(db: Db): void {
+	const unsent = new Set(
+		db
+			.select({ assetId: envSecrets.assetId, name: envSecrets.name })
+			.from(envSecrets)
+			.where(isNull(envSecrets.sentTo))
+			.all()
+			.map(({ assetId, name }) => secretKey(assetId, name)),
+	);
+	if (unsent.size === 0) return;
+	const uses = db
+		.select({
+			set: agentDefinitions.envSetAssetId,
+			server: agentMcpServers.assetId,
+			pinned: agentMcpServers.version,
+			current: assets.version,
+		})
+		.from(agentMcpServers)
+		.innerJoin(agents, eq(agents.id, agentMcpServers.agentId))
+		.innerJoin(agentDefinitions, eq(agentDefinitions.agentId, agents.id))
+		.innerJoin(assets, eq(assets.id, agentMcpServers.assetId))
+		.where(isNull(agents.removedAt))
+		.all();
+	const readings = new Map<string, ReturnType<typeof remoteServer>>();
+	const reading = (server: string, version: number) => {
+		const key = `${server}@${version}`;
+		let found = readings.get(key);
+		if (!found) {
+			found = remoteServer(getAssetVersion(db, server, version)?.files ?? []);
+			readings.set(key, found);
+		}
+		return found;
+	};
+	const origins = new Map<string, { assetId: string; name: string; origins: Set<string> }>();
+	for (const use of uses) {
+		const { set } = use;
+		if (set === null) continue;
+		for (const version of new Set([use.pinned, use.current])) {
+			const read = reading(use.server, version);
+			if ("problem" in read) continue;
+			const origin = new URL(read.server.url).origin;
+			for (const name of serverVariables(read.server)) {
+				const key = secretKey(set, name);
+				if (!unsent.has(key)) continue;
+				const entry = origins.get(key) ?? { assetId: set, name, origins: new Set<string>() };
+				entry.origins.add(origin);
+				origins.set(key, entry);
+			}
+		}
+	}
+	for (const { assetId, name, origins: named } of origins.values()) {
+		const [only, ...others] = [...named].sort(compare);
+		if (only === undefined) continue;
+		if (others.length === 0) bindSecret(db, assetId, name, only);
+		else contestSecret(db, assetId, name, [only, ...others]);
+	}
+}
+
+const secretKey = (assetId: string, name: string) => `${assetId}\n${name}`;
 
 /** The live agents run by Gateweave that pin a server, by name. */
 function pinners(db: Db, assetId: string): { id: string; name: string; version: number }[] {

@@ -31,7 +31,6 @@ import type {
 	Repository,
 	RepositoryDetail,
 	RepositoryInput,
-	ResolvedEnvironment,
 	RunCursor,
 	RunFinish,
 	RunUsage,
@@ -121,7 +120,6 @@ export interface RegistryStub {
 	editEnvSet(input: EnvSetEditInput): Promise<number>;
 	listEnvSets(): Promise<EnvSetEntry[]>;
 	setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal>;
-	resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null>;
 	startConversation(agentId: string, startedBy: string): Promise<Conversation | null>;
 	startTeamConversation(teamId: string, startedBy: string): Promise<Conversation | null>;
 	getConversation(conversationId: string, startedBy: string): Promise<Conversation | null>;

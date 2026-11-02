@@ -182,6 +182,7 @@ function EnvSetCard({
 								set={set}
 								name={secret.name}
 								stored={secret.state === "set" ? secret : null}
+								contested={secret.contested}
 								configured={configured}
 								admin={admin}
 							/>
@@ -245,11 +246,13 @@ function SecretRow({
 	stored,
 	configured,
 	admin,
+	contested = null,
 	orphan = false,
 }: {
 	set: EnvSetEntry;
 	name: string;
 	stored: { setBy: string | null; setAt: number | null } | null;
+	contested?: string[] | null;
 	configured: boolean;
 	admin: boolean;
 	orphan?: boolean;
@@ -268,6 +271,15 @@ function SecretRow({
 					<p className="text-xs text-muted-foreground">
 						Set by {stored.setBy}{" "}
 						<span title={formatDateTime(stored.setAt)}>{formatRelative(stored.setAt)}</span>
+					</p>
+				)}
+				{contested && (
+					// Stored before values were tied to one origin, and named at several (AGT-65).
+					<p className="text-xs text-amber-600 dark:text-amber-500">
+						Stored before values were tied to one server address, and named by servers at{" "}
+						<span className="break-all">{contested.join(", ")}</span>. It is sent only to one of
+						these, the first an agent or a check uses, and then only there. Enter it again to send
+						it anywhere else.
 					</p>
 				)}
 			</div>

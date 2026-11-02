@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import type { AgentDefinitionInput, McpServerInput } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
+import { BIND_UNSENT_SECRETS } from "../src/mcp-servers";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -581,5 +582,173 @@ describe("secrets in MCP servers' headers", () => {
 			},
 		]);
 		expect(JSON.stringify(moved)).not.toContain(TOKEN);
+	});
+
+	type Stub = ReturnType<typeof registry>;
+
+	/** Makes the workspace look as it did when the deploy that ties values came: none tied yet. */
+	const beforeTies = (stub: Stub) =>
+		runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec("UPDATE env_secrets SET sent_to = NULL, contested = NULL");
+			state.storage.sql.exec("DELETE FROM registry_passes");
+		});
+
+	/**
+	 * Starts the registry afresh, as a deploy does: its constructor migrates and runs its passes.
+	 * Returns a stub of the new instance.
+	 */
+	async function restart(stub: Stub): Promise<Stub> {
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => state.abort("restart")).catch(
+			() => {},
+		);
+		const fresh = env.REGISTRY.get(stub.id);
+		await fresh.listProjects();
+		return fresh;
+	}
+
+	const sentTo = (stub: Stub) =>
+		runInDurableObject(
+			stub,
+			(_instance: RegistryDO, state) =>
+				state.storage.sql.exec<{ sent_to: string | null }>("SELECT sent_to FROM env_secrets").one()
+					.sent_to,
+		);
+
+	const passes = (stub: Stub) =>
+		runInDurableObject(stub, (_instance: RegistryDO, state) =>
+			state.storage.sql
+				.exec<{ name: string; failure: string | null }>("SELECT name, failure FROM registry_passes")
+				.toArray(),
+		);
+
+	const contested = async (stub: Stub) =>
+		(await stub.listEnvSets())[0]?.secrets.find((secret) => secret.name === "ACME_TOKEN")
+			?.contested;
+
+	/** ACME pinned at version 1, with version 2, which a check sends to, somewhere else; untied. */
+	async function contestedAcme() {
+		const stub = registry();
+		const pinned = await pinnedAcme(stub);
+		await moveAcme(stub, pinned.acme, ELSEWHERE);
+		await beforeTies(stub);
+		return { ...pinned, stub: await restart(stub) };
+	}
+
+	it("stored before they were tied, are tied as the registry wakes to the one origin naming them", async () => {
+		let stub = registry();
+		const { acme } = await pinnedAcme(stub);
+		// A newer version at the same origin, which a check would send to, and a server no agent
+		// pins at another origin, which nothing sends to.
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v2");
+		await stub.createMcpServer({
+			name: "stray",
+			transport: "http",
+			url: ELSEWHERE,
+			headers: [{ name: "Authorization", value: "Bearer ${ACME_TOKEN}" }],
+		});
+		await beforeTies(stub);
+
+		stub = await restart(stub);
+		expect(await sentTo(stub)).toBe("https://mcp.acme.dev");
+		expect(await contested(stub)).toBeNull();
+
+		// So pointing the server at another host and checking it does not tie the token there.
+		await moveAcme(stub, acme, ELSEWHERE);
+		const moved = await stub.mcpCheckTarget(acme);
+		expect(moved).toEqual({
+			name: "acme",
+			problem: expect.stringContaining(
+				"ACME_TOKEN was entered for another server address, so it is not sent to https://mcp.elsewhere.example",
+			),
+		});
+		expect(JSON.stringify(moved)).not.toContain(TOKEN);
+	});
+
+	it("stored before they were tied, stay unbound and are flagged when their servers disagree", async () => {
+		const { stub, set } = await contestedAcme();
+		expect(await sentTo(stub)).toBeNull();
+		expect(await contested(stub)).toEqual([
+			"https://mcp.acme.dev",
+			"https://mcp.elsewhere.example",
+		]);
+		expect(JSON.stringify(await stub.listEnvSets())).not.toContain(TOKEN);
+
+		// Entering the value again is a new value, sent nowhere yet, so the flag goes.
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "new-token" }, "Grace");
+		expect(await contested(stub)).toBeNull();
+	});
+
+	it("flagged as contested, go only to one of the origins that named them", async () => {
+		const { stub, acme } = await contestedAcme();
+
+		// A third origin is refused, as an origin a value is tied to would refuse it.
+		await moveAcme(stub, acme, "https://mcp.third.example/mcp");
+		const third = await stub.mcpCheckTarget(acme);
+		expect(third).toEqual({
+			name: "acme",
+			problem: expect.stringContaining(
+				"ACME_TOKEN was entered for another server address, so it is not sent to https://mcp.third.example. An owner or admin can enter it again",
+			),
+		});
+		expect(JSON.stringify(third)).not.toContain(TOKEN);
+		expect(await sentTo(stub)).toBeNull();
+
+		// One that named it is sent the value, which is tied there and no longer flagged.
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v3");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			headers: { Authorization: `Bearer ${TOKEN}` },
+		});
+		expect(await sentTo(stub)).toBe("https://mcp.acme.dev");
+		expect(await contested(stub)).toBeNull();
+		await moveAcme(stub, acme, ELSEWHERE);
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+		});
+	});
+
+	it("stored before they were tied, are tied by a pass that runs once", async () => {
+		let stub = registry();
+		await pinnedAcme(stub);
+		// The registry ran the pass as it first woke, before it held any value.
+		expect(await passes(stub)).toEqual([{ name: BIND_UNSENT_SECRETS, failure: null }]);
+		expect(await sentTo(stub)).toBeNull();
+
+		await beforeTies(stub);
+		stub = await restart(stub);
+		expect(await sentTo(stub)).toBe("https://mcp.acme.dev");
+
+		// Waking again ties nothing more.
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec("UPDATE env_secrets SET sent_to = NULL");
+		});
+		stub = await restart(stub);
+		expect(await sentTo(stub)).toBeNull();
+		expect(await passes(stub)).toEqual([{ name: BIND_UNSENT_SECRETS, failure: null }]);
+	});
+
+	it("stored before they were tied, leave the registry working when the pass fails", async () => {
+		let stub = registry();
+		const { acme } = await pinnedAcme(stub);
+		await beforeTies(stub);
+		// A server version the pass cannot read makes it throw.
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec(
+				"UPDATE asset_versions SET files = 'not json' WHERE asset_id = ?",
+				acme,
+			);
+		});
+
+		stub = await restart(stub);
+		// The wake went on: the registry answers, and the pass is recorded as failed, with why.
+		expect(await stub.listProjects()).toEqual([]);
+		expect((await stub.listEnvSets()).map((entry) => entry.asset.name)).toEqual(["prod"]);
+		const [failed] = await passes(stub);
+		expect(failed).toMatchObject({ name: BIND_UNSENT_SECRETS, failure: expect.any(String) });
+		expect(failed?.failure).not.toBe("");
+		// Its write rolled back whole, and it is not tried again on the next wake.
+		expect(await sentTo(stub)).toBeNull();
+		stub = await restart(stub);
+		expect(await passes(stub)).toEqual([failed]);
+		expect(await stub.listProjects()).toEqual([]);
 	});
 });
