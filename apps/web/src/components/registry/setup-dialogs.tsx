@@ -3,14 +3,14 @@ import {
 	ASSET_KIND_NAMES,
 	ASSET_KINDS,
 	type LibraryEntry,
-	REPOSITORY_RUNTIMES,
 	type Repository,
-	type RepositoryRuntime,
 	RUNTIME_NAMES,
+	SETUP_RUNTIMES,
 	type Setup,
 	type SetupAsset,
 	type SetupInput,
 	type SetupPins,
+	type SetupRuntime,
 } from "@gateweave/agents-model";
 import { type FormEvent, useState } from "react";
 import { Button } from "#/components/ui/button";
@@ -43,13 +43,13 @@ export function SetupDialog({
 }) {
 	const [name, setName] = useState(setup?.name ?? "");
 	const [description, setDescription] = useState(setup?.description ?? "");
-	const [runtimes, setRuntimes] = useState<Set<RepositoryRuntime>>(
-		() => new Set(setup?.runtimes ?? REPOSITORY_RUNTIMES),
+	const [runtimes, setRuntimes] = useState<Set<SetupRuntime>>(
+		() => new Set(setup?.runtimes ?? SETUP_RUNTIMES),
 	);
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	function toggle(runtime: RepositoryRuntime, on: boolean) {
+	function toggle(runtime: SetupRuntime, on: boolean) {
 		setRuntimes((current) => {
 			const next = new Set(current);
 			if (on) next.add(runtime);
@@ -66,7 +66,7 @@ export function SetupDialog({
 			await onSave({
 				name: name.trim(),
 				description: description.trim() || null,
-				runtimes: REPOSITORY_RUNTIMES.filter((runtime) => runtimes.has(runtime)),
+				runtimes: SETUP_RUNTIMES.filter((runtime) => runtimes.has(runtime)),
 			});
 			onClose();
 		} catch (failure) {
@@ -111,7 +111,7 @@ export function SetupDialog({
 					<fieldset className="space-y-2">
 						<legend className="text-sm font-medium">Coding agents</legend>
 						<div className="grid grid-cols-2 gap-2">
-							{REPOSITORY_RUNTIMES.map((runtime) => (
+							{SETUP_RUNTIMES.map((runtime) => (
 								<Label key={runtime} className="flex items-center gap-2 font-normal">
 									<Checkbox
 										checked={runtimes.has(runtime)}

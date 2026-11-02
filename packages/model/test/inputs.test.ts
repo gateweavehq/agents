@@ -13,9 +13,12 @@ import {
 	providerMissing,
 	providerMissingShort,
 	providerPickerNote,
+	REPOSITORY_RUNTIMES,
 	repositoryPath,
 	runPullRequest,
+	SETUP_RUNTIMES,
 	scanResult,
+	setupInput,
 	WORKERS_AI_NOT_OFFERED,
 	workersAiAccount,
 	workersAiBaseUrl,
@@ -377,5 +380,22 @@ describe("agent engines", () => {
 		expect(definition({ engine: "claude-code" }).data?.engine).toBe("claude-code");
 		expect(definition({ engine: "codex" }).data?.engine).toBe("codex");
 		expect(definition({ engine: "aider" }).success).toBe(false);
+	});
+});
+
+describe("setupInput", () => {
+	const base = { name: "Standard", description: null };
+
+	it("takes only the coding agents setups can write, in their order", () => {
+		expect(setupInput.parse({ ...base, runtimes: ["cursor", "claude-code"] }).runtimes).toEqual([
+			"claude-code",
+			"cursor",
+		]);
+		// The scanner reads Copilot's and Devin's files; setups do not write them yet.
+		for (const runtime of REPOSITORY_RUNTIMES.filter(
+			(each) => !(SETUP_RUNTIMES as readonly string[]).includes(each),
+		)) {
+			expect(setupInput.safeParse({ ...base, runtimes: [runtime] }).success, runtime).toBe(false);
+		}
 	});
 });

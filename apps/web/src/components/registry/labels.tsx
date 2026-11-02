@@ -16,6 +16,8 @@ const RUNTIME_DOTS: Record<AgentRuntime, string> = {
 	codex: "bg-emerald-500",
 	"gemini-cli": "bg-sky-500",
 	cursor: "bg-violet-500",
+	copilot: "bg-indigo-500",
+	devin: "bg-teal-500",
 	gateweave: "bg-zinc-500",
 };
 

@@ -10,12 +10,14 @@ import {
 import { addProblem } from "./assets";
 import { claudeCode } from "./claude-code";
 import { codex } from "./codex";
+import { copilot } from "./copilot";
 import { cursor } from "./cursor";
+import { devin } from "./devin";
 import { geminiCli } from "./gemini-cli";
 import type { Adapter, Detection, RepositoryTree, TreeFile } from "./types";
 import { compare, isEnvFile } from "./util";
 
-const ADAPTERS: readonly Adapter[] = [claudeCode, codex, geminiCli, cursor];
+const ADAPTERS: readonly Adapter[] = [claudeCode, codex, geminiCli, cursor, copilot, devin];
 
 /** What one scan may hold, as `scanResult` in the model allows. */
 const MAX_AGENTS = 500;

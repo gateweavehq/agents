@@ -10,8 +10,8 @@ import type {
 	KeyedProvider,
 	ModelProvider,
 	RepositoryProvider,
-	RepositoryRuntime,
 	RunStatus,
+	SetupRuntime,
 	TeamEdgeKind,
 } from "./vocabulary";
 
@@ -167,7 +167,7 @@ export interface Setup {
 	id: string;
 	name: string;
 	description: string | null;
-	runtimes: RepositoryRuntime[];
+	runtimes: SetupRuntime[];
 	createdAt: number;
 	updatedAt: number;
 }

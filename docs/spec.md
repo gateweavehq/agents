@@ -38,19 +38,19 @@ with a hosted version in Gateweave Cloud.
 
 ## Concepts
 
-| Concept    | What it is                                                                                                      |
-| ---------- | --------------------------------------------------------------------------------------------------------------- |
-| Workspace  | The team, shared with every Gateweave product: one account, members and roles                                   |
-| Project    | A product or initiative; groups repositories                                                                    |
-| Repository | A GitHub repository (others later), with the agent configuration found in it                                    |
-| Agent      | A configured agent: its runtime, model, instructions, tools, permissions and environment                        |
-| Runtime    | Where an agent runs: an external coding agent (Claude Code, Codex, Gemini CLI, Cursor) or the Gateweave runtime |
-| Asset      | A versioned item in the library: prompt, skill, plugin, script, MCP server or environment set                   |
-| Setup      | A bundle of assets for one or more agents that can be applied to repositories                                   |
-| Team       | A graph of agents with roles (lead, member, reviewer) and allowed communication; teams nest                     |
-| Run        | One execution of an agent or team: messages, delegations, tool calls, tokens, cost and result                   |
-| Trigger    | A signed webhook URL that starts a run of an agent or team for each event another service sends                 |
-| Connection | An integration: the GitHub app, model providers, MCP servers                                                    |
+| Concept    | What it is                                                                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace  | The team, shared with every Gateweave product: one account, members and roles                                                          |
+| Project    | A product or initiative; groups repositories                                                                                           |
+| Repository | A GitHub repository (others later), with the agent configuration found in it                                                           |
+| Agent      | A configured agent: its runtime, model, instructions, tools, permissions and environment                                               |
+| Runtime    | Where an agent runs: an external coding agent (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot, Devin) or the Gateweave runtime |
+| Asset      | A versioned item in the library: prompt, skill, plugin, script, MCP server or environment set                                          |
+| Setup      | A bundle of assets for one or more agents that can be applied to repositories                                                          |
+| Team       | A graph of agents with roles (lead, member, reviewer) and allowed communication; teams nest                                            |
+| Run        | One execution of an agent or team: messages, delegations, tool calls, tokens, cost and result                                          |
+| Trigger    | A signed webhook URL that starts a run of an agent or team for each event another service sends                                        |
+| Connection | An integration: the GitHub app, model providers, MCP servers                                                                           |
 
 Assets are versioned, and agents and setups pin versions, so a change to a shared skill is a
 reviewable update rather than a silent one.
@@ -97,6 +97,10 @@ The registry reads and writes each agent's own files, so teams keep using the to
 - **Codex** and other agents that read `AGENTS.md`.
 - **Gemini CLI:** `GEMINI.md` and its settings.
 - **Cursor:** `.cursor/rules`.
+- **GitHub Copilot:** `.github/copilot-instructions.md`, `.github/instructions`, prompt files,
+  custom agents and `.vscode/mcp.json` (read only, for now).
+- **Devin**, which Windsurf became: `.devin/rules` and Windsurf's `.windsurf/rules` and
+  `.windsurfrules` (read only, for now).
 
 Each format is a small adapter with tests, so adding an agent does not touch the core. Formats
 change often; each adapter tracks the vendor's current documentation.

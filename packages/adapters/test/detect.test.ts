@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { detect, wantsFile } from "../src";
 import { agentOf, assetOf, expectValid, repo } from "./support";
 
-const SECRETS = ["mixedEnvSecret", "mixedHeaderSecret", "mixedTomlSecret"];
+const SECRETS = ["mixedEnvSecret", "mixedHeaderSecret", "mixedTomlSecret", "mixedVscodeSecret"];
 
 const MIXED = repo({
 	"AGENTS.md": "# Agents\nShared rules.\n",
@@ -23,6 +23,11 @@ const MIXED = repo({
 	".agents/skills/shared/SKILL.md":
 		"---\nname: shared\ndescription: Used by several agents.\n---\n",
 	".agents/skills/shared/notes.md": "Notes.\n",
+	".github/copilot-instructions.md": "Copilot only.\n",
+	".vscode/mcp.json": JSON.stringify({
+		servers: { tracker: { type: "stdio", command: "t", env: { KEY: "mixedVscodeSecret" } } },
+	}),
+	".windsurf/rules/style.md": "---\ntrigger: always_on\n---\nTabs.\n",
 	"src/index.ts": "export {};\n",
 	"node_modules/pkg/CLAUDE.md": "vendored",
 });
@@ -38,6 +43,8 @@ describe("detect", () => {
 			"codex:main",
 			"gemini-cli:main",
 			"cursor:main",
+			"copilot:main",
+			"devin:main",
 		]);
 
 		// One asset per key, though three agents read AGENTS.md and four read the shared skill.
@@ -72,6 +79,18 @@ describe("detect", () => {
 			".cursor/rules/style.mdc",
 			"AGENTS.md",
 		]);
+
+		const copilot = detection.agents.find((agent) => agent.runtime === "copilot");
+		expect(copilot?.assets).toEqual([
+			".agents/skills/shared",
+			".github/copilot-instructions.md",
+			".vscode/mcp.json#tracker",
+			"AGENTS.md",
+			"CLAUDE.md",
+			"GEMINI.md",
+		]);
+		const devin = detection.agents.find((agent) => agent.runtime === "devin");
+		expect(devin?.assets).toEqual([".windsurf/rules/style.md", "AGENTS.md"]);
 
 		expect(assetOf(detection, ".agents/skills/shared").files.map((file) => file.path)).toEqual([
 			"SKILL.md",
