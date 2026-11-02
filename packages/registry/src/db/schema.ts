@@ -439,9 +439,24 @@ export const envSecrets = sqliteTable(
 		 * is sent to after (AGT-64). Null until then; entering the value again clears it.
 		 */
 		sentTo: text("sent_to"),
+		/**
+		 * The origins of the servers that named this value when the registry first tied stored values
+		 * to one origin (AGT-65), when they disagreed, so it was left unbound for an admin to look at.
+		 * Null otherwise; cleared when the value is tied or entered again.
+		 */
+		contested: text("contested", { mode: "json" }).$type<string[]>(),
 	},
 	(table) => [primaryKey({ columns: [table.assetId, table.name] })],
 );
+
+/**
+ * One-time passes over a workspace's own data that a SQL migration cannot express, by name, with
+ * when each ran, so each runs once (see `RegistryDO`'s constructor).
+ */
+export const registryPasses = sqliteTable("registry_passes", {
+	name: text("name").primaryKey(),
+	ranAt: integer("ran_at").notNull(),
+});
 
 /**
  * Conversations with agents run by Gateweave, each private to the member who started it. The

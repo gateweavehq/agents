@@ -54,11 +54,13 @@ describe("Track triage", () => {
 			asset: { name: "Track" },
 			secrets: [{ name: "TRACK_AGENT_KEY", state: "set", setBy: "Ada" }],
 		});
-		expect(await stub.resolveEnvironment(agent.id)).toMatchObject({
-			values: { TRACK_AGENT_KEY: AGENT_KEY },
-		});
 		const [server] = await stub.listMcpServers();
 		expect(server?.asset).toMatchObject({ id: mcpServerId, name: "track" });
+		// Only the runtime gets it, in the server's header.
+		expect(await stub.mcpCheckTarget(mcpServerId)).toMatchObject({
+			url: "https://track.example.com/mcp",
+			headers: { Authorization: `Bearer ${AGENT_KEY}` },
+		});
 		const pages = JSON.stringify([await stub.listEnvSets(), await stub.listMcpServers()]);
 		expect(pages).toContain("https://track.example.com/mcp");
 		expect(pages).not.toContain(AGENT_KEY);

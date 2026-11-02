@@ -175,8 +175,14 @@ export function listEnvSets(db: Db): EnvSetEntry[] {
 		const secrets: EnvSecret[] = declared.map((name) => {
 			const value = stored.get(name);
 			return value
-				? { name, state: "set", setBy: value.setBy, setAt: value.setAt }
-				: { name, state: "missing", setBy: null, setAt: null };
+				? {
+						name,
+						state: "set",
+						setBy: value.setBy,
+						setAt: value.setAt,
+						contested: value.sentTo === null ? value.contested : null,
+					}
+				: { name, state: "missing", setBy: null, setAt: null, contested: null };
 		});
 		const orphans: EnvOrphan[] = [...stored.values()]
 			.filter((secret) => !declared.includes(secret.name))
@@ -216,7 +222,7 @@ export function storeEnvSecret(
 ): void {
 	checkEnvSecretName(db, secret.assetId, secret.name);
 	// A new value has been sent nowhere yet, unless the caller knows where it is for.
-	const row = { ...secret, sentTo: secret.sentTo ?? null, setAt: now };
+	const row = { ...secret, sentTo: secret.sentTo ?? null, contested: null, setAt: now };
 	db.insert(envSecrets)
 		.values(row)
 		.onConflictDoUpdate({ target: [envSecrets.assetId, envSecrets.name], set: row })
@@ -287,6 +293,16 @@ export interface SecretSend {
 	sentTo: string | null;
 }
 
+/** Leaves a stored secret unbound, noting the origins of the servers that name it (AGT-65). */
+export function contestSecret(db: Db, assetId: string, name: string, origins: string[]): void {
+	db.update(envSecrets)
+		.set({ contested: origins })
+		.where(
+			and(eq(envSecrets.assetId, assetId), eq(envSecrets.name, name), isNull(envSecrets.sentTo)),
+		)
+		.run();
+}
+
 /** Each stored secret of a set, by name. */
 export function secretSends(db: Db, assetId: string): Map<string, SecretSend> {
 	return new Map(
@@ -302,7 +318,7 @@ export function secretSends(db: Db, assetId: string): Map<string, SecretSend> {
 /** Ties a stored secret to the origin it is being sent to, if it is not tied to one yet. */
 export function bindSecret(db: Db, assetId: string, name: string, origin: string): void {
 	db.update(envSecrets)
-		.set({ sentTo: origin })
+		.set({ sentTo: origin, contested: null })
 		.where(
 			and(eq(envSecrets.assetId, assetId), eq(envSecrets.name, name), isNull(envSecrets.sentTo)),
 		)

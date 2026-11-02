@@ -57,7 +57,6 @@ import {
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
-	type ResolvedEnvironment,
 	type Run,
 	type RunCursor,
 	type RunFinish,
@@ -167,6 +166,7 @@ import {
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import {
 	agentServers,
+	bindUnsentSecrets,
 	createMcpServer,
 	editMcpServer,
 	listMcpServers,
@@ -310,6 +310,8 @@ export class RegistryDO extends DurableObject {
 		this.#db = drizzle(ctx.storage, { schema });
 		void ctx.blockConcurrencyWhile(async () => {
 			await migrate(this.#db, migrations);
+			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
+			this.#write(() => bindUnsentSecrets(this.#db, Date.now()));
 			// A migration may queue scans, as 0008 does.
 			await this.#scheduleAlarm();
 		});
@@ -547,7 +549,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	// Environment sets, which owners and admins manage. Secret values go in and never come out:
-	// the pages see which names have one, and only `resolveEnvironment` opens them.
+	// the pages see which names have one, and only `#openEnvironment` opens them.
 
 	listEnvSets(): EnvSetEntry[] {
 		return listEnvSets(this.#db);
@@ -617,7 +619,7 @@ export class RegistryDO extends DurableObject {
 		const sealed = await sealer.seal(secretPlace(assetId, name), value);
 		const now = Date.now();
 		this.#write(() => storeEnvSecret(this.#db, { assetId, name, sealed, setBy: by }, now));
-		return { name, state: "set", setBy: by, setAt: now };
+		return { name, state: "set", setBy: by, setAt: now, contested: null };
 	}
 
 	/** Removes a stored value, even one for a name the set no longer declares. */
@@ -628,15 +630,12 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * The environment an agent runs with, secrets opened: for the runtime only. No server function
-	 * or page may return this. A value that cannot be opened, because the server's `SECRETS_KEY`
-	 * changed, counts as missing: it has to be set again. Null when there is no such live agent.
+	 * The environment an agent runs with, secrets opened, and which sealed value each secret was
+	 * opened from. Private: only `turnServers`, which sends each secret to the origin it is tied to
+	 * alone, may hand a value on, in `beginTurn` and `mcpCheckTarget`. A value that cannot be
+	 * opened, because the server's `SECRETS_KEY` changed, counts as missing: it has to be set
+	 * again. Null when there is no such live agent.
 	 */
-	async resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null> {
-		return (await this.#openEnvironment(id.parse(agentId)))?.environment ?? null;
-	}
-
-	/** `resolveEnvironment`, and which sealed value each secret was opened from, for `turnServers`. */
 	async #openEnvironment(agentId: string): Promise<OpenedEnvironment | null> {
 		const pinned = pinnedEnvironment(this.#db, agentId);
 		if (!pinned) return null;

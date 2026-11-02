@@ -414,6 +414,12 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   covers a new server that names an existing secret, and versions an agent pins, alike. The ties
   are read and made in the write that ends `beginTurn` or `mcpCheckTarget`, and a value entered
   again while the environment was being opened is not sent: that server waits for the next turn.
+  Values stored before then were tied once, as each registry first woke after the deploy
+  (AGT-65, `bindUnsentSecrets`, recorded in `registry_passes`): each to the origin of the servers
+  that could send it, the version each live agent pins and the current version a check sends to.
+  One named at different origins stays unbound, and the Environment page lists those origins on
+  it until it is tied or entered again. Opened values leave the registry only through
+  `turnServers`: `#openEnvironment` is private, with no RPC that returns them.
 
 ## Sandboxes
 

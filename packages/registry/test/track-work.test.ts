@@ -86,8 +86,10 @@ describe("Track work", () => {
 		// The key is the environment set's secret, as triage keeps it, and no page shows it.
 		const [server] = await stub.listMcpServers();
 		expect(server?.asset).toMatchObject({ id: mcpServerId, name: "track" });
-		expect(await stub.resolveEnvironment(agent.id)).toMatchObject({
-			values: { TRACK_AGENT_KEY: AGENT_KEY },
+		// Only the runtime gets it, in the server's header.
+		expect(await stub.mcpCheckTarget(mcpServerId)).toMatchObject({
+			url: "https://track.example.com/mcp",
+			headers: { Authorization: `Bearer ${AGENT_KEY}` },
 		});
 		const pages = JSON.stringify([await stub.listEnvSets(), await stub.listMcpServers()]);
 		expect(pages).toContain("https://track.example.com/mcp");

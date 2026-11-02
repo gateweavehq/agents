@@ -447,6 +447,12 @@ export interface EnvSecret {
 	/** Who stored the value, and when; null while it is missing. */
 	setBy: string | null;
 	setAt: number | null;
+	/**
+	 * The origins of the MCP servers that name a value stored before values were tied to one
+	 * origin, when they disagree: it is sent to whichever is used first, and then only there.
+	 * Null when that is not so, or once it is tied or entered again.
+	 */
+	contested: string[] | null;
 }
 
 /** A value stored for a name the set's current version no longer declares as a secret. */

@@ -1,8 +1,9 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: "${VAR}" references are what is under test
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { envSecretInput, envSetInput } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
-import type { RegistryDO } from "../src";
+import { RegistryDO } from "../src";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -19,6 +20,19 @@ async function newSet(stub: ReturnType<typeof registry>, name = "production") {
 		secrets: ["DATABASE_PASSWORD", "API_TOKEN"],
 	});
 }
+
+/** A server whose headers name every name of `newSet`, so a check shows what fills them. */
+const ECHO = {
+	name: "echo",
+	transport: "http" as const,
+	url: "https://echo.example.com/mcp",
+	headers: [
+		{ name: "X-Log-Level", value: "${LOG_LEVEL}" },
+		{ name: "X-Region", value: "${REGION}" },
+		{ name: "X-Password", value: "${DATABASE_PASSWORD}" },
+		{ name: "X-Token", value: "${API_TOKEN}" },
+	],
+};
 
 function agent(environment: { assetId: string; version: number } | null) {
 	return {
@@ -135,8 +149,8 @@ describe("environment sets", () => {
 		const stub = registry();
 		const id = await newSet(stub);
 		expect((await stub.listEnvSets())[0]?.secrets).toEqual([
-			{ name: "API_TOKEN", state: "missing", setBy: null, setAt: null },
-			{ name: "DATABASE_PASSWORD", state: "missing", setBy: null, setAt: null },
+			{ name: "API_TOKEN", state: "missing", setBy: null, setAt: null, contested: null },
+			{ name: "DATABASE_PASSWORD", state: "missing", setBy: null, setAt: null, contested: null },
 		]);
 
 		const saved = await stub.setEnvSecret(
@@ -146,8 +160,14 @@ describe("environment sets", () => {
 		expect(saved).toMatchObject({ name: "DATABASE_PASSWORD", state: "set", setBy: "Ada" });
 		const listed = await stub.listEnvSets();
 		expect(listed[0]?.secrets).toEqual([
-			{ name: "API_TOKEN", state: "missing", setBy: null, setAt: null },
-			{ name: "DATABASE_PASSWORD", state: "set", setBy: "Ada", setAt: expect.any(Number) },
+			{ name: "API_TOKEN", state: "missing", setBy: null, setAt: null, contested: null },
+			{
+				name: "DATABASE_PASSWORD",
+				state: "set",
+				setBy: "Ada",
+				setAt: expect.any(Number),
+				contested: null,
+			},
 		]);
 		// Nothing a page can read holds the value or any part of it.
 		expect(JSON.stringify(listed)).not.toContain("hunter2");
@@ -313,42 +333,60 @@ describe("agents and environment sets", () => {
 		).rejects.toThrow("production is no longer in the library");
 	});
 
-	it("resolve to the pinned version's variables, opened secrets and missing names", async () => {
+	it("fill a check's headers with the pinned version's variables and opened secrets", async () => {
 		const stub = registry();
 		const id = await newSet(stub);
-		const created = await stub.createAgent(agent({ assetId: id, version: 1 }));
+		const echo = await stub.createMcpServer(ECHO);
+		const pinned = (version: number) => ({
+			...agent({ assetId: id, version }),
+			mcpServers: [{ assetId: echo, version: 1 }],
+		});
+		const created = await stub.createAgent(pinned(1));
 		await stub.setEnvSecret({ assetId: id, name: "DATABASE_PASSWORD", value: PASSWORD }, "Ada");
+		expect(await stub.mcpCheckTarget(echo)).toEqual({
+			name: "echo",
+			problem: "API_TOKEN has no value in the agent's environment set",
+		});
 
-		expect(await stub.resolveEnvironment(created.id)).toEqual({
-			values: { LOG_LEVEL: "info", REGION: "eu", DATABASE_PASSWORD: PASSWORD },
-			missing: ["API_TOKEN"],
+		await stub.setEnvSecret({ assetId: id, name: "API_TOKEN", value: "token" }, "Ada");
+		expect(await stub.mcpCheckTarget(echo)).toMatchObject({
+			headers: {
+				"X-Log-Level": "info",
+				"X-Region": "eu",
+				"X-Password": PASSWORD,
+				"X-Token": "token",
+			},
 		});
 
 		// Version 2 is not what the agent runs until its pin moves; its values still apply.
 		await stub.editEnvSet({
 			assetId: id,
-			variables: { LOG_LEVEL: "debug" },
-			secrets: ["API_TOKEN", "NEW_SECRET"],
+			variables: { LOG_LEVEL: "debug", REGION: "eu" },
+			secrets: ["API_TOKEN", "DATABASE_PASSWORD", "NEW_SECRET"],
 		});
-		expect((await stub.resolveEnvironment(created.id))?.values.LOG_LEVEL).toBe("info");
-		await stub.updateAgent(created.id, agent({ assetId: id, version: 2 }));
-		expect(await stub.resolveEnvironment(created.id)).toEqual({
-			values: { LOG_LEVEL: "debug" },
-			missing: ["API_TOKEN", "NEW_SECRET"],
+		expect(await stub.mcpCheckTarget(echo)).toMatchObject({
+			headers: { "X-Log-Level": "info" },
+		});
+		await stub.updateAgent(created.id, pinned(2));
+		expect(await stub.mcpCheckTarget(echo)).toMatchObject({
+			headers: { "X-Log-Level": "debug", "X-Token": "token" },
 		});
 
-		// An agent without a set, a removed agent and an unknown one.
-		const bare = await stub.createAgent(agent(null));
-		expect(await stub.resolveEnvironment(bare.id)).toEqual({ values: {}, missing: [] });
-		await stub.removeAgent(bare.id);
-		expect(await stub.resolveEnvironment(bare.id)).toBeNull();
-		expect(await stub.resolveEnvironment("nobody")).toBeNull();
+		// Without a live agent that pins it, a check has no environment.
+		await stub.removeAgent(created.id);
+		expect(await stub.mcpCheckTarget(echo)).toMatchObject({
+			problem: expect.stringContaining("have no value in the agent's environment set"),
+		});
 	});
 
 	it("treat a value that cannot be opened as missing", async () => {
 		const stub = registry();
 		const id = await newSet(stub);
-		const created = await stub.createAgent(agent({ assetId: id, version: 1 }));
+		const echo = await stub.createMcpServer(ECHO);
+		await stub.createAgent({
+			...agent({ assetId: id, version: 1 }),
+			mcpServers: [{ assetId: echo, version: 1 }],
+		});
 		await stub.setEnvSecret({ assetId: id, name: "API_TOKEN", value: "token" }, "Ada");
 		// A sealed value copied to another name does not open there.
 		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
@@ -356,9 +394,17 @@ describe("agents and environment sets", () => {
 				"UPDATE env_secrets SET name = 'DATABASE_PASSWORD' WHERE name = 'API_TOKEN'",
 			);
 		});
-		expect(await stub.resolveEnvironment(created.id)).toEqual({
-			values: { LOG_LEVEL: "info", REGION: "eu" },
-			missing: ["API_TOKEN", "DATABASE_PASSWORD"],
+		expect(await stub.mcpCheckTarget(echo)).toEqual({
+			name: "echo",
+			problem: "API_TOKEN, DATABASE_PASSWORD have no value in the agent's environment set",
 		});
+	});
+
+	it("are opened only inside the registry, never over RPC", () => {
+		// RPC reaches the class's public methods. `#openEnvironment` is none of them, and nothing
+		// takes the place of `resolveEnvironment`, which returned every value opened, unchecked.
+		const methods = Object.getOwnPropertyNames(RegistryDO.prototype);
+		expect(methods).toContain("mcpCheckTarget");
+		expect(methods.filter((method) => /environment/i.test(method))).toEqual([]);
 	});
 });
