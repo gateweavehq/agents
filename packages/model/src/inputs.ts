@@ -12,6 +12,7 @@ import {
 	REPOSITORY_PROVIDERS,
 	REPOSITORY_RUNTIMES,
 	RUN_STATUSES,
+	SETUP_RUNTIMES,
 	TEAM_EDGE_KINDS,
 	TEAM_MEMBER_KINDS,
 } from "./vocabulary";
@@ -267,12 +268,12 @@ export const libraryEditInput = z.object({
 });
 export type LibraryEditInput = z.input<typeof libraryEditInput>;
 export const setupInput = projectInput.extend({
-	/** The coding agents it configures, kept in the order of `REPOSITORY_RUNTIMES`. */
+	/** The coding agents it configures, kept in the order of `SETUP_RUNTIMES`. */
 	runtimes: z
-		.array(z.enum(REPOSITORY_RUNTIMES))
+		.array(z.enum(SETUP_RUNTIMES))
 		.min(1, "Choose at least one coding agent")
-		.max(REPOSITORY_RUNTIMES.length)
-		.transform((chosen) => REPOSITORY_RUNTIMES.filter((runtime) => chosen.includes(runtime))),
+		.max(SETUP_RUNTIMES.length)
+		.transform((chosen) => SETUP_RUNTIMES.filter((runtime) => chosen.includes(runtime))),
 });
 export type SetupInput = z.input<typeof setupInput>;
 

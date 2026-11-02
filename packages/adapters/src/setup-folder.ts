@@ -3,7 +3,7 @@
  * its assets. Ready-made setups ship this way, so contributors propose one as a folder, and the
  * CLI reads one from disk. Pure, so both read it the same way.
  */
-import { type RepositoryRuntime, setupManifest } from "@gateweave/agents-model";
+import { type SetupRuntime, setupManifest } from "@gateweave/agents-model";
 import { basename, compare } from "./util";
 import type { AssetToWrite } from "./write";
 
@@ -13,7 +13,7 @@ const MAX_ASSET_FILES = 500;
 export interface SetupFolder {
 	name: string;
 	description: string | null;
-	runtimes: RepositoryRuntime[];
+	runtimes: SetupRuntime[];
 	assets: AssetToWrite[];
 }
 

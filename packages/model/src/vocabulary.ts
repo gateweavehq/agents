@@ -1,6 +1,20 @@
 /** Coding agents that are configured by files in a repository, which a scan can find. */
-export const REPOSITORY_RUNTIMES = ["claude-code", "codex", "gemini-cli", "cursor"] as const;
+export const REPOSITORY_RUNTIMES = [
+	"claude-code",
+	"codex",
+	"gemini-cli",
+	"cursor",
+	"copilot",
+	"devin",
+] as const;
 export type RepositoryRuntime = (typeof REPOSITORY_RUNTIMES)[number];
+
+/**
+ * The coding agents a setup can write files for (`packages/adapters/src/write.ts`). The scanner
+ * reads more of them than setups write: GitHub Copilot's and Devin's are read only, for now.
+ */
+export const SETUP_RUNTIMES = ["claude-code", "codex", "gemini-cli", "cursor"] as const;
+export type SetupRuntime = (typeof SETUP_RUNTIMES)[number];
 
 /**
  * Where an agent runs: a coding agent configured in a repository, or `gateweave`, an agent
@@ -14,6 +28,9 @@ export const RUNTIME_NAMES: Record<AgentRuntime, string> = {
 	codex: "Codex",
 	"gemini-cli": "Gemini CLI",
 	cursor: "Cursor",
+	copilot: "GitHub Copilot",
+	// Cognition's Devin Desktop, which Windsurf became; it still reads Windsurf's rule files.
+	devin: "Devin",
 	gateweave: "Gateweave",
 };
 

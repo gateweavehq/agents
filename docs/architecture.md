@@ -81,9 +81,15 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
 TypeScript with no I/O, so it runs in the Worker. The scanner lists the repository's tree, asks
 `wantsFile` which paths it needs, downloads those, and calls `detect`.
 
-- **One adapter per coding agent** (Claude Code, Codex, Gemini CLI, Cursor), each knowing only its
-  own files, so a repository with just `AGENTS.md` has a Codex agent and nothing else. The
-  vendor's documentation is linked at the top of each adapter.
+- **One adapter per coding agent** (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot and
+  Devin), each knowing only its own files, so a repository with just `AGENTS.md` has a Codex agent
+  and nothing else. The vendor's documentation is linked at the top of each adapter.
+- **Scanned, and not yet written** (AGT-69). GitHub Copilot (`.github/copilot-instructions.md`,
+  `.github/instructions`, prompt files, custom agents and chat modes, `.vscode/mcp.json`,
+  `.github/skills`) and Devin (`.devin/rules`, `.devin/global_rules.md`, `.devin/config.json`, and
+  Windsurf's rule files, which Devin Desktop took over from Windsurf) are in
+  `REPOSITORY_RUNTIMES`, so scans find them. Setups target only `SETUP_RUNTIMES`, the four agents
+  the writers know, until writing their formats lands.
 - **Shared files are shared assets.** `detect` merges what the adapters find by asset key, so
   `AGENTS.md` or a `.agents/skills` folder is one asset that several agents read.
 - **Secrets stay in the adapters.** Settings and MCP configuration are stored as canonical JSON

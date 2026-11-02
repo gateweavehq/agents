@@ -23,12 +23,12 @@ import {
 	projectInput,
 	type Repository,
 	type RepositoryDetail,
-	type RepositoryRuntime,
 	type RunnableAgent,
 	type RunUsage,
 	type Setup,
 	type SetupDetail,
 	type SetupEntry,
+	type SetupRuntime,
 	setupInput,
 	setupPins,
 	type Team,
@@ -443,7 +443,7 @@ export interface ReadyMadeSummary {
 	slug: string;
 	name: string;
 	description: string | null;
-	runtimes: RepositoryRuntime[];
+	runtimes: SetupRuntime[];
 	assets: { kind: AssetKind; name: string }[];
 }
 
