@@ -8,6 +8,22 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.6.2] - 2026-11-02
+
+A small fix to run traces, and a safer test dependency. Updating a self-hosted copy needs no
+migration and no new setting.
+
+### Fixed
+
+- In a run of an agent whose engine is OpenCode, a tool call that a subagent's requests ran
+  during, such as `task`, shows under the model request that called it, not under the subagent's
+  last request. (#114)
+
+### Security
+
+- undici, which only local development and tests use through Miniflare, is updated to 7.30.1 for
+  its advisories. Deployed Workers never included it. (#112)
+
 ## [0.6.1] - 2026-11-02
 
 A security follow-up to v0.6.0: secrets stored before it are tied to their servers' address too,
