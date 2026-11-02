@@ -1599,6 +1599,18 @@ export class RegistryDO extends DurableObject {
 		await this.#scheduleAlarm();
 	}
 
+	/**
+	 * Every conversation of the workspace's, nested ones too, for the app to delete with it: each is
+	 * a Durable Object of its own, with its messages, traces and sandbox.
+	 */
+	conversationIds(): string[] {
+		return this.#db
+			.select({ id: schema.conversations.id })
+			.from(schema.conversations)
+			.all()
+			.map((row) => row.id);
+	}
+
 	/** Deletes everything, when the workspace is deleted. */
 	async destroy(): Promise<void> {
 		await this.ctx.storage.deleteAll();

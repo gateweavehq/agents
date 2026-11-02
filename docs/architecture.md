@@ -48,6 +48,15 @@ not synced to the browser yet (see "Decisions" in the spec).
   in the app and assets in the library (phases 2 and 3). Runs have a table of their own (see
   "Runs"), and teams will too.
 
+- **Deleting a workspace** (AGT-76). An owner deletes it in Settings > Workspace, after typing
+  its name; Better Auth's organization plugin lets only an owner, and deletes its D1 rows
+  (members, invitations, and its GitHub installation link, by cascade). Its
+  `afterDeleteOrganization` hook then deletes what it held elsewhere
+  (`apps/web/src/server/workspace-deletion.ts`): each conversation the registry knows, nested ones
+  too, with its messages, traces and sandbox, ten at a time, then the registry's storage with its
+  sealed keys and secrets. A conversation that fails is logged and the rest go on; nothing is
+  reachable either way, since no member is left. The GitHub App installation stays on GitHub
+  until someone uninstalls it there.
 ## GitHub
 
 A workspace reads its repositories through a GitHub App ([github-app.md](github-app.md) sets one
@@ -1223,8 +1232,7 @@ workspace.
 Pages refresh themselves while a scan of what they show is waiting or running.
 
 **Settings** has the workspace's members and invitations, its GitHub connection, where its run
-traces go (Telemetry) and its model
-provider keys.
+traces go (Telemetry), its model provider keys, and, for owners, deleting the workspace.
 
 ## What comes next
 

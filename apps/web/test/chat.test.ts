@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
 import { ask } from "./chat-socket";
@@ -130,4 +130,41 @@ it("says why an agent cannot answer when the workspace has no key for its provid
 	expect(html).toContain("Add one in Settings");
 	// The agent list says so before a conversation starts, too.
 	expect(await page("/chat-atelier/chat", owner.headers.cookie)).toContain("no Anthropic key yet");
+});
+
+it("deletes a workspace's conversations with it, and lets only an owner delete it", async () => {
+	const { owner, workspaceId, path, conversation } = await conversationWith("chat-doomed");
+	const cookie = owner.headers.cookie;
+	const { socket } = await agents.connect(`${origin}${path}`, { cookie, origin });
+	if (!socket) throw new Error("No WebSocket");
+	await ask(socket, "Remember this sentence");
+	socket.close();
+	const stored = await agents.conversation(workspaceId, conversation.id);
+	expect(await stored.transcript()).toContain("Remember this sentence");
+
+	// An admin cannot delete it.
+	const admin = await signUp(agents, origin, "admin-doomed");
+	await agents.db
+		.prepare(
+			"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, 'admin', ?)",
+		)
+		.bind(crypto.randomUUID(), workspaceId, admin.userId, Date.now())
+		.run();
+	const deleteAs = (headers: Record<string, string>) =>
+		agents.fetch(`${origin}/api/auth/organization/delete`, {
+			method: "POST",
+			headers,
+			body: JSON.stringify({ organizationId: workspaceId }),
+		});
+	expect((await deleteAs(admin.headers)).status).not.toBe(200);
+	expect(await stored.transcript()).toContain("Remember this sentence");
+
+	// The owner can, and the conversation's messages go with it.
+	expect((await deleteAs(owner.headers)).status).toBe(200);
+	await vi.waitFor(async () => {
+		const after = await agents.conversation(workspaceId, conversation.id);
+		expect(await after.transcript()).toBe("[]");
+	});
+	expect(await (await agents.registry(workspaceId)).conversationIds()).toEqual([]);
+	expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
 });
