@@ -147,6 +147,26 @@ export function claudeCodeArguments(options: {
 }
 
 /**
+ * The variables that make every model Claude Code would choose the agent's: its small fast model,
+ * each of the aliases a subagent or setting names (`haiku`, `sonnet`, `opus`, `fable`), and its
+ * subagents', and no fallback to another model when one is overloaded. The sandbox's requests may
+ * call only the agent's model (`checkModelRequest` in `./outbound.ts`), so any other would be
+ * refused. Their names are those the 2.1.308 binary reads, checked 2026-11-02.
+ */
+export function claudeCodeModelEnv(model: string): Record<string, string> {
+	return {
+		ANTHROPIC_SMALL_FAST_MODEL: model,
+		ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+		ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+		ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+		ANTHROPIC_DEFAULT_FABLE_MODEL: model,
+		CLAUDE_CODE_SUBAGENT_MODEL: model,
+		CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL: model,
+		CLAUDE_CODE_NO_MODEL_FALLBACK: "1",
+	};
+}
+
+/**
  * How the sandbox runs a turn of Claude Code: in the session `session`, resumed when the sandbox
  * still has its transcript, with the message on its input.
  */
@@ -157,7 +177,7 @@ export function claudeCodeCommand(job: EngineJob, session: string, resume: boole
 			"claude",
 			...claudeCodeArguments({ model: job.model, system: job.system, session, resume, tools }),
 		],
-		env: CLAUDE_CODE_ENV,
+		env: { ...CLAUDE_CODE_ENV, ...claudeCodeModelEnv(job.model) },
 		input: enginePrompt(job, resume),
 		log: CLAUDE_CODE_LOG,
 	};

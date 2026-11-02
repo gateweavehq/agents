@@ -722,8 +722,12 @@ export class RegistryDO extends DurableObject {
 		const { agent, position } = plan;
 		const prepared = await this.#prepareTurn(conversation, agent, position, true);
 		if ("status" in prepared) return prepared;
-		const runId = this.#write(() =>
-			beginRun(
+		// The limits decide again as the run begins: other turns may have begun while this one
+		// awaited.
+		return this.#write(() => {
+			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
+			if (over) return over;
+			const runId = beginRun(
 				this.#db,
 				{
 					agent,
@@ -733,9 +737,9 @@ export class RegistryDO extends DurableObject {
 					sandbox: prepared.sandbox,
 				},
 				Date.now(),
-			),
-		);
-		return { ...prepared, runId };
+			);
+			return { ...prepared, runId };
+		});
 	}
 
 	/**
@@ -769,6 +773,12 @@ export class RegistryDO extends DurableObject {
 			// A retry may have taken the delivery over while the key was opened.
 			if (!deliveryOf(this.#db, conversation)) {
 				return refused("This delivery has had its run already");
+			}
+			// And other turns may have taken the sandboxes, or the day's minutes.
+			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
+			if (over) {
+				settleDelivery(this.#db, conversation, { error: over.message });
+				return over;
 			}
 			const now = Date.now();
 			noteTurn(this.#db, conversation, message, now);
@@ -825,6 +835,8 @@ export class RegistryDO extends DurableObject {
 			if (now.agent.agentId !== plan.agent.agentId) {
 				return refused("The team changed as this turn began");
 			}
+			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
+			if (over) return over;
 			const at = Date.now();
 			const started = startNestedConversation(
 				this.#db,
@@ -893,21 +905,11 @@ export class RegistryDO extends DurableObject {
 				`${SANDBOX_NOT_INVITED}, so ${agent.name} cannot answer. Whoever runs this server can invite this workspace.`,
 			);
 		}
-		if (sandbox && sandboxesInUse(this.#db, conversation, Date.now()) >= MAX_WORKSPACE_SANDBOXES) {
-			return refused(
-				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
-			);
+		if (sandbox) {
+			const over = this.#sandboxLimitRefusal(conversation, agent);
+			if (over) return over;
 		}
 		const limits = sandboxLimits(this.env as SandboxSettings);
-		if (
-			sandbox &&
-			limits.dailyMinutes !== null &&
-			this.sandboxSecondsToday() >= limits.dailyMinutes * 60
-		) {
-			return refused(
-				`${SANDBOX_DAY_USED}, ${limits.dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
-			);
-		}
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
 		const repository = sandbox ? agentRepository(this.#db, agent.agentId) : null;
 		if (repository && "problem" in repository) {
@@ -944,6 +946,27 @@ export class RegistryDO extends DurableObject {
 		if ("status" in opened) return opened;
 		const mcpServers = servers.map((server) => turnServer(server, environment));
 		return { agent, key: opened.key, mcpServers, edges, sandbox, repository };
+	}
+
+	/**
+	 * Why a turn of `agent` in `conversation` may not have a sandbox now, or null when it may: the
+	 * workspace's sandboxes are all in use, or its minutes for the day are. Synchronous, so it can
+	 * decide again in the `#write` that begins the run: a turn awaits as it is prepared, and others
+	 * may begin meanwhile (AGT-63).
+	 */
+	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): ProviderRefusal | null {
+		if (sandboxesInUse(this.#db, conversation, Date.now()) >= MAX_WORKSPACE_SANDBOXES) {
+			return refused(
+				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
+			);
+		}
+		const { dailyMinutes } = sandboxLimits(this.env as SandboxSettings);
+		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
+			return refused(
+				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
+			);
+		}
+		return null;
 	}
 
 	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */

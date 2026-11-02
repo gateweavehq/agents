@@ -89,6 +89,8 @@ export interface EngineExit {
 export interface RunningEngine {
 	engine: SandboxEngine;
 	provider: ModelProvider;
+	/** The agent's model: the only one the turn's requests may call (`checkModelRequest`). */
+	model: string;
 	access: EngineAccess;
 }
 

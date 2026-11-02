@@ -4,7 +4,12 @@ import type { McpServerInput } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
-import { CLAUDE_CODE_PLACEHOLDER_KEY, claudeCodeArguments } from "../src/claude-code";
+import {
+	CLAUDE_CODE_ENV,
+	CLAUDE_CODE_PLACEHOLDER_KEY,
+	claudeCodeArguments,
+	claudeCodeCommand,
+} from "../src/claude-code";
 import { ENGINE_TOOLS_URL, toolsRequest } from "../src/engine-tools";
 import { linesOf } from "../src/engines";
 import { anthropicRequest } from "../src/models";
@@ -630,6 +635,37 @@ describe("Claude Code's command", () => {
 		expect(argv).toContain("--strict-mcp-config");
 		expect(argv).not.toContain("--mcp-config");
 		expect(argv[argv.indexOf("--allowedTools") + 1]).not.toContain("mcp__");
+	});
+
+	it("makes every model it would choose the agent's, since the sandbox calls no other", () => {
+		const job = {
+			engine: "claude-code" as const,
+			prompt: "List the files",
+			history: null,
+			system: "",
+			provider: "anthropic" as const,
+			model: "claude-sonnet-5-5",
+			cwd: "/workspace",
+			access: {
+				key: KEY,
+				metadata: { workspace: "w", agent: "a", conversation: "c" },
+				tools: null,
+				meter: { conversation: "c", token: "t" },
+			},
+		};
+		const { argv, env } = claudeCodeCommand(job, "s", false);
+		expect(argv[argv.indexOf("--model") + 1]).toBe("claude-sonnet-5-5");
+		expect(env).toMatchObject(CLAUDE_CODE_ENV);
+		expect(env).toMatchObject({
+			ANTHROPIC_SMALL_FAST_MODEL: "claude-sonnet-5-5",
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5-5",
+			ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+			ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-5-5",
+			CLAUDE_CODE_SUBAGENT_MODEL: "claude-sonnet-5-5",
+			CLAUDE_CODE_NO_MODEL_FALLBACK: "1",
+		});
+		// The key is still the placeholder.
+		expect(env.ANTHROPIC_API_KEY).toBe(CLAUDE_CODE_PLACEHOLDER_KEY);
 	});
 
 	it("signs no commit or pull request as Claude Code's, whatever the repository's settings say", () => {

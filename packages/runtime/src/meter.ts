@@ -99,6 +99,30 @@ export async function meterModelRequest(
 }
 
 /**
+ * Records a request for the model that the Worker refused before it went out (`./outbound.ts`):
+ * a span that failed, with the reason, as a request the provider refused is one.
+ */
+export async function recordRefusal(
+	meter: EngineMeter,
+	token: string,
+	reason: string,
+	waitUntil: (promise: Promise<unknown>) => void,
+): Promise<void> {
+	const step = await meter.engineRequestStarted(token).catch((error: unknown) => {
+		console.error("A sandbox's refused model request was not metered", failureForLogs(error));
+		return null;
+	});
+	if (step === null) return;
+	waitUntil(
+		meter
+			.engineRequestEnded(token, step, failedRequest(reason, null))
+			.catch((error: unknown) =>
+				console.error("A sandbox's refused model request was not recorded", failureForLogs(error)),
+			),
+	);
+}
+
+/**
  * The response as the CLI gets it, the same bytes as they come, with `ended` called once with
  * what its answer reported: when the body ends, when the CLI stops reading it, or at once for an
  * answer that is an error.
