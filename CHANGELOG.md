@@ -8,6 +8,21 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.10.0] - 2026-11-02
+
+MCP servers that sign in with OAuth connect with a button instead of an API key. Updating a
+self-hosted copy applies a migration in each workspace's registry, which runs on its own, and
+needs no new setting.
+
+### Added
+
+- On the MCP page, an owner or admin can connect a remote server through its own OAuth sign-in,
+  as the MCP authorization spec describes: the app finds the server's authorization server,
+  registers itself as a client, and signs in with PKCE. Agents that pin the server then use the
+  connection, and act on the server as the person who connected it, which the page says. The
+  tokens are encrypted, never shown, and refreshed when the server stops taking them. A
+  connection is only used at the URL it was made for, and "Disconnect" forgets it. (#129)
+
 ## [0.9.0] - 2026-11-02
 
 Owners can delete a workspace, and a new workspace shows how to get going. Updating a
