@@ -31,6 +31,7 @@ import m0029 from "./0029_square_trish_tilby.sql";
 import m0030 from "./0030_conscious_titania.sql";
 import m0031 from "./0031_gorgeous_redwing.sql";
 import m0032 from "./0032_mature_madame_masque.sql";
+import m0033 from "./0033_sticky_ozymandias.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -69,5 +70,6 @@ export default {
 		m0030,
 		m0031,
 		m0032,
+		m0033,
 	},
 };

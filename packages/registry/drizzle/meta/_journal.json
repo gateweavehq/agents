@@ -232,6 +232,13 @@
       "when": 1793619286480,
       "tag": "0032_mature_madame_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1793620140265,
+      "tag": "0033_sticky_ozymandias",
+      "breakpoints": true
     }
   ]
 }

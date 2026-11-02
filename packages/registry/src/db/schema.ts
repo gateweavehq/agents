@@ -493,6 +493,8 @@ export const conversations = sqliteTable(
 		 * `<workspace id>:<issue id>` (`issueOfEvent`): later events about it continue it.
 		 */
 		issue: text("issue"),
+		/** The run this conversation replays from one of its steps (AGT-73); null for any other. */
+		replayOf: text("replay_of"),
 	},
 	(table) => [
 		index("conversations_started_by_idx").on(table.startedBy, table.updatedAt),
@@ -543,6 +545,8 @@ export const runs = sqliteTable(
 		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
 		/** The pull request the run opened or pushed to from its sandbox. */
 		pullRequest: text("pull_request", { mode: "json" }).$type<RunPullRequest>(),
+		/** The run this one replays from one of its steps; null for any other. */
+		replayOf: text("replay_of"),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),
@@ -550,6 +554,7 @@ export const runs = sqliteTable(
 		index("runs_conversation_idx").on(table.conversationId),
 		index("runs_parent_idx").on(table.parentRunId),
 		index("runs_root_idx").on(table.rootRunId),
+		index("runs_replay_idx").on(table.replayOf),
 	],
 );
 

@@ -859,6 +859,19 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
   left out. The provider's bill and AI Gateway's logs stay the record.
 - **Runs outlive their conversations.** Deleting a conversation clears the run's link to it in
   the same write, so the workspace's usage stays counted.
+- **A run can be replayed from a model request** (AGT-73), to see whether a change to the agent's
+  instructions or model fixes a run that went wrong. Each turn remembers the person's message it
+  answered (`run_messages` in the conversation, `packages/runtime/src/replay.ts`). Replaying step
+  `n` reads the run's conversation up to that message, with the first `n` steps of the answer
+  (their tool calls and results; a step starts at each `step-start` part), and a new conversation
+  of the caller's (`startReplay`, `conversations.replay_of`) takes it as its history: its first
+  run is the replay (`runs.replay_of`), with the agent, or its team, as it is now. Only whoever
+  started a run may replay it, since that copies their conversation's words into a new one; owners
+  and admins may also replay a trigger's run, whose words they read on the run already. A run of
+  an engine in the sandbox is refused, since its session lives in the CLI, and so is a run a
+  team's edge started (replay the run at the top), one still going, and one from before runs
+  remembered their message. The run's page offers "Replay from here" on each model request, links
+  a replay to the run it replays, and lists a run's replays.
 - **The workspace can get the traces** over OpenTelemetry (AGT-72). Settings > Telemetry keeps an
   OTLP/HTTP endpoint and its headers, sealed together in the registry's `telemetry` row
   (`packages/registry/src/telemetry.ts`); pages see the headers' names and how the last export

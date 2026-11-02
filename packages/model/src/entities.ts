@@ -582,6 +582,8 @@ export interface Run {
 	triggerName: string | null;
 	/** The pull request the run opened or pushed to from its sandbox; null when it made none. */
 	pullRequest: RunPullRequest | null;
+	/** The run this one replays from one of its steps; null for any other. */
+	replayOf: string | null;
 }
 
 /** A pull request on GitHub that a run opened or pushed to. */

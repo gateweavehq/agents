@@ -167,3 +167,76 @@ describe("runs", () => {
 		});
 	});
 });
+
+describe("replays", () => {
+	const ended = { ...finished, steps: 3 };
+
+	it("start a conversation whose first run links back to the run it replays", async () => {
+		const { stub, agent, conversation, runId } = await turn();
+		await stub.finishRun(runId, ended);
+
+		const replay = await stub.replayRun(runId, 1, ADA, false);
+		if ("status" in replay) throw new Error(replay.message);
+		expect(replay.conversationId).not.toBe(conversation);
+		const first = await stub.beginTurn(replay.conversationId, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		expect(await stub.getRun(first.runId)).toMatchObject({
+			agentId: agent.id,
+			startedBy: ADA,
+			replayOf: runId,
+		});
+		// Only the first run of the replay is one: the conversation goes on as any other.
+		await stub.finishRun(first.runId, finished);
+		const next = await stub.beginTurn(replay.conversationId, "And then?");
+		if ("status" in next) throw new Error(next.message);
+		expect((await stub.getRun(next.runId))?.replayOf).toBeNull();
+
+		expect((await stub.listReplays(runId)).map((run) => run.id)).toEqual([first.runId]);
+		expect((await stub.getRun(runId))?.replayOf).toBeNull();
+	});
+
+	it("are only for whoever started the run, a step it had, once it ended", async () => {
+		const { stub, runId } = await turn();
+		const refusal = (outcome: object) => ("message" in outcome ? outcome.message : null);
+		expect(refusal(await stub.replayRun(runId, 0, ADA, false))).toBe(
+			"Wait for the run to end before replaying it",
+		);
+		await stub.finishRun(runId, ended);
+		expect(refusal(await stub.replayRun(runId, 0, GRACE, false))).toContain(
+			"Only whoever started a run can replay it",
+		);
+		// An admin reads a person's run, not their conversation's words: no replay either.
+		expect(refusal(await stub.replayRun(runId, 0, GRACE, true))).toContain(
+			"Only whoever started a run can replay it",
+		);
+		expect(refusal(await stub.replayRun(runId, 3, ADA, false))).toBe("The run has no such step");
+		expect(refusal(await stub.replayRun("missing", 0, ADA, false))).toContain("Only whoever");
+		expect(await stub.replayRun(runId, 2, ADA, false)).toHaveProperty("conversationId");
+	});
+
+	it("are refused for an agent whose engine runs in the sandbox", async () => {
+		const { stub, agent, runId } = await turn();
+		await stub.finishRun(runId, ended);
+		await runInDurableObject(stub, (instance: RegistryDO) => {
+			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
+			settings.SANDBOX = {};
+			try {
+				instance.updateAgent(agent.id, {
+					name: "Reviewer",
+					description: null,
+					provider: "anthropic",
+					model: "claude-sonnet-5-5",
+					instructions: null,
+					sandbox: true,
+					engine: "claude-code",
+				});
+			} finally {
+				delete settings.SANDBOX;
+			}
+		});
+		expect(await stub.replayRun(runId, 0, ADA, false)).toMatchObject({
+			status: "refused",
+			message: "Reviewer runs in the sandbox's claude-code, whose runs cannot be replayed yet",
+		});
+	});
+});
