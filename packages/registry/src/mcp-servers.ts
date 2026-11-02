@@ -285,10 +285,13 @@ export function turnServers(
 		);
 		const changed: string[] = [];
 		const elsewhere: string[] = [];
+		const closed: string[] = [];
 		for (const name of secrets) {
 			const send = sends.get(name);
 			if (!send || send.sealed !== opened.opened.get(name)) changed.push(name);
 			else if (send.sentTo !== null && send.sentTo !== origin) elsewhere.push(name);
+			// Stored before ties, and the pass that ties those failed (AGT-66): nowhere.
+			else if (send.sentTo === null && send.contested?.length === 0) closed.push(name);
 			// Stored before ties, and named at several origins then (AGT-65): one of those alone.
 			else if (send.sentTo === null && send.contested && !send.contested.includes(origin)) {
 				elsewhere.push(name);
@@ -296,6 +299,13 @@ export function turnServers(
 		}
 		if (changed.length > 0) {
 			return { name: turn.name, problem: `${changed.join(", ")} changed as this began; try again` };
+		}
+		if (closed.length > 0) {
+			const one = closed.length === 1;
+			return {
+				name: turn.name,
+				problem: `${closed.join(", ")} ${one ? "was" : "were"} stored before values were tied to one server address and could not be tied, so ${one ? "it is" : "they are"} not sent to any. An owner or admin can enter ${one ? "it" : "them"} again in the agent's environment set to send ${one ? "it" : "them"} to ${origin}.`,
+			};
 		}
 		if (elsewhere.length > 0) {
 			const one = elsewhere.length === 1;

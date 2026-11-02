@@ -450,7 +450,8 @@ export interface EnvSecret {
 	/**
 	 * The origins of the MCP servers that named a value stored before values were tied to one
 	 * origin, when they disagreed: it is sent only to one of these, the first a check or a turn
-	 * uses, and then only there. Null when that is not so, or once it is tied or entered again.
+	 * uses, and then only there. Empty when tying those values failed: it is sent nowhere until it
+	 * is entered again. Null when neither is so, or once it is tied or entered again.
 	 */
 	contested: string[] | null;
 }

@@ -291,7 +291,10 @@ export function pinnedEnvironment(
 export interface SecretSend {
 	sealed: string;
 	sentTo: string | null;
-	/** The only origins an unbound value may be tied to, when `bindUnsentSecrets` left it so. */
+	/**
+	 * The only origins an unbound value may be tied to, when `bindUnsentSecrets` left it so. Empty
+	 * when that pass failed (`closeUnsentSecrets`): then it goes nowhere until it is entered again.
+	 */
 	contested: string[] | null;
 }
 
@@ -303,6 +306,15 @@ export function contestSecret(db: Db, assetId: string, name: string, origins: st
 			and(eq(envSecrets.assetId, assetId), eq(envSecrets.name, name), isNull(envSecrets.sentTo)),
 		)
 		.run();
+}
+
+/**
+ * Closes every stored secret sent nowhere yet, in every set, with an empty `contested` list, for
+ * when `bindUnsentSecrets` failed (AGT-66). Left open, each would be tied to the first origin that
+ * uses it, which is the hole that pass closes. Entering a value again opens it, as a new value.
+ */
+export function closeUnsentSecrets(db: Db): void {
+	db.update(envSecrets).set({ contested: [] }).where(isNull(envSecrets.sentTo)).run();
 }
 
 /** Each stored secret of a set, by name. */

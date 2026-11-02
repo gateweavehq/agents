@@ -724,6 +724,7 @@ describe("secrets in MCP servers' headers", () => {
 		stub = await restart(stub);
 		expect(await sentTo(stub)).toBeNull();
 		expect(await passes(stub)).toEqual([{ name: BIND_UNSENT_SECRETS, failure: null }]);
+		expect(await stub.secretTiesFailedAt()).toBeNull();
 	});
 
 	it("stored before they were tied, leave the registry working when the pass fails", async () => {
@@ -750,5 +751,55 @@ describe("secrets in MCP servers' headers", () => {
 		stub = await restart(stub);
 		expect(await passes(stub)).toEqual([failed]);
 		expect(await stub.listProjects()).toEqual([]);
+	});
+
+	it("stored before they were tied, go nowhere when the pass fails, until entered again", async () => {
+		let stub = registry();
+		const { acme, set } = await pinnedAcme(stub);
+		await beforeTies(stub);
+		// Only the version the agent pins is unreadable, so the pass throws, and a later one,
+		// which a check sends to, can still be read.
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec(
+				"UPDATE asset_versions SET files = 'not json' WHERE asset_id = ? AND version = 1",
+				acme,
+			);
+		});
+		const before = Date.now();
+		stub = await restart(stub);
+		expect(await passes(stub)).toEqual([
+			{ name: BIND_UNSENT_SECRETS, failure: expect.any(String) },
+		]);
+
+		// The value was closed with the failure, and the page's RPC says so, to show admins.
+		expect(await contested(stub)).toEqual([]);
+		expect(await stub.secretTiesFailedAt()).toBeGreaterThanOrEqual(before);
+		expect(JSON.stringify(await stub.listEnvSets())).not.toContain(TOKEN);
+
+		// No origin gets it: not the one its servers named, nor any other.
+		for (const url of ["https://mcp.acme.dev/v2", ELSEWHERE]) {
+			await moveAcme(stub, acme, url);
+			const refused = await stub.mcpCheckTarget(acme);
+			expect(refused).toEqual({
+				name: "acme",
+				problem: expect.stringContaining(
+					`ACME_TOKEN was stored before values were tied to one server address and could not be tied, so it is not sent to any. An owner or admin can enter it again in the agent's environment set to send it to ${new URL(url).origin}.`,
+				),
+			});
+			expect(JSON.stringify(refused)).not.toContain(TOKEN);
+			expect(await sentTo(stub)).toBeNull();
+		}
+
+		// Entering it again opens it, and it is tied to the first origin it is sent to, as any.
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "new-token" }, "Grace");
+		expect(await contested(stub)).toBeNull();
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			headers: { Authorization: "Bearer new-token" },
+		});
+		expect(await sentTo(stub)).toBe("https://mcp.elsewhere.example");
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v3");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+		});
 	});
 });

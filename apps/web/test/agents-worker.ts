@@ -119,6 +119,7 @@ export interface RegistryStub {
 	createEnvSet(input: EnvSetInput): Promise<string>;
 	editEnvSet(input: EnvSetEditInput): Promise<number>;
 	listEnvSets(): Promise<EnvSetEntry[]>;
+	secretTiesFailedAt(): Promise<number | null>;
 	setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal>;
 	startConversation(agentId: string, startedBy: string): Promise<Conversation | null>;
 	startTeamConversation(teamId: string, startedBy: string): Promise<Conversation | null>;
