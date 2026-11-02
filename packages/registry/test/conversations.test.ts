@@ -391,6 +391,28 @@ describe("turns with a sandbox", () => {
 			expect(await instance.beginTurn(last, "Build it")).toMatchObject({ sandbox: true });
 		});
 	});
+
+	it("start no more than the workspace's sandboxes when turns begin at once", async () => {
+		const stub = registry();
+		const { agent, id: first } = await builderConversation(stub, true);
+		const ids = [first];
+		for (let n = 0; n < MAX_WORKSPACE_SANDBOXES + 2; n++) {
+			ids.push((await stub.startConversation(agent.id, ADA))?.id ?? "");
+		}
+		const begun = await withSandboxes(stub, (instance) =>
+			// Each checks the limit before it awaits the key, while no other has its run yet.
+			Promise.all(ids.map((id) => instance.beginTurn(id, "Build it"))),
+		);
+		const started = begun.filter((turn) => !("status" in turn));
+		expect(started).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+		expect(begun.filter((turn) => "status" in turn)).toEqual(
+			Array(ids.length - MAX_WORKSPACE_SANDBOXES).fill({
+				status: "refused",
+				message: `The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so Builder cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
+			}),
+		);
+		expect(await stub.listRuns()).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+	});
 });
 
 describe("sandbox time", () => {

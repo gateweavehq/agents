@@ -465,6 +465,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
   sandbox, unless the agent's engine runs only in one, as every engine but Gateweave's loop does.
+  A turn awaits as it is prepared (the key, the environment set, the meter), and others may begin
+  meanwhile, so this limit and the daily one below decide again in the write that begins the run
+  (`#sandboxLimitRefusal`), with the same refusal (AGT-63).
 - **Sandbox time and its limits** (AGT-45). The runs say how much sandbox time a workspace uses
   (`sandboxSeconds` in `packages/registry/src/runs.ts`):
   - Each conversation's sandbox counts from a run with it until 15 minutes after the last.
