@@ -859,6 +859,21 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
   left out. The provider's bill and AI Gateway's logs stay the record.
 - **Runs outlive their conversations.** Deleting a conversation clears the run's link to it in
   the same write, so the workspace's usage stays counted.
+- **The workspace can get the traces** over OpenTelemetry (AGT-72). Settings > Telemetry keeps an
+  OTLP/HTTP endpoint and its headers, sealed together in the registry's `telemetry` row
+  (`packages/registry/src/telemetry.ts`); pages see the headers' names and how the last export
+  went. When a run ends, `#report` puts it in the conversation's `otel_outbox` and sends it at
+  once (`packages/runtime/src/telemetry-export.ts`): the registry opens the headers for that send
+  (`telemetryTarget`), the run's spans become OTLP JSON (`otlp.ts`) and are posted to the
+  endpoint's `/v1/traces`, without following redirects. The run is an `invoke_agent` span, its
+  model requests `chat` spans with GenAI's `gen_ai.*` attributes for model, tokens and cache
+  reads plus `gateweave.cost_usd`, the tools each request called `execute_tool` spans under it,
+  and its MCP connections and edges spans of their own. The trace id is the run at the top's id,
+  and a nested run's span hangs under the edge span that started it, so a team's turn is one
+  trace. No message text and no tool input or output is sent. A send that fails for the network,
+  a 429 or a 5xx is tried again from the outbox (an Agents SDK schedule), up to five times, 30
+  seconds then four times longer each time; a refused key or another 4xx is not. Each try's
+  outcome is recorded against the settings it used, and exporting never fails a run.
 - **The deployment gets a copy.** When a deployment binds a Workers Analytics Engine dataset as
   `USAGE`, `finishRun` writes one event for each run it closes (`packages/registry/src/usage.ts`),
   indexed by workspace, with the run's agent, model, tokens, cost and sandbox time. Writing it
@@ -1189,7 +1204,8 @@ workspace.
 
 Pages refresh themselves while a scan of what they show is waiting or running.
 
-**Settings** has the workspace's members and invitations, its GitHub connection and its model
+**Settings** has the workspace's members and invitations, its GitHub connection, where its run
+traces go (Telemetry) and its model
 provider keys.
 
 ## What comes next

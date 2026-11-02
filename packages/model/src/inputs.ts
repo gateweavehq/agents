@@ -627,6 +627,48 @@ export const mcpServerEditInput = mcpServerInput
 	.extend({ assetId: z.string().min(1).max(64) });
 export type McpServerEditInput = z.input<typeof mcpServerEditInput>;
 
+/**
+ * Where the workspace's run traces go over OpenTelemetry: an OTLP/HTTP endpoint, such as
+ * `https://api.honeycomb.io`, to which `/v1/traces` is added unless it ends with it, and the
+ * headers it takes, such as an API key. The headers are sealed when stored, and pages see only
+ * their names.
+ */
+export const telemetryInput = z.object({
+	endpoint: mcpServerUrl,
+	headers: z
+		.array(
+			z.object({
+				name: z
+					.string()
+					.trim()
+					.min(1)
+					.max(100)
+					.regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "A header's name has no spaces or symbols"),
+				value: z
+					.string()
+					.trim()
+					.min(1, "Enter the header's value")
+					.max(4000, "That value is too long")
+					.regex(/^[\x20-\x7e]+$/, "A header's value is plain text"),
+			}),
+		)
+		.max(10)
+		.refine(
+			(headers) =>
+				new Set(headers.map((header) => header.name.toLowerCase())).size === headers.length,
+			"A header is set twice",
+		)
+		.default([]),
+});
+export type TelemetryInput = z.input<typeof telemetryInput>;
+
+/** How exporting a run's trace went, as the runtime reports it. */
+export const telemetryExportResult = z.discriminatedUnion("ok", [
+	z.object({ ok: z.literal(true) }),
+	z.object({ ok: z.literal(false), error: z.string().min(1).max(500) }),
+]);
+export type TelemetryExportResult = z.input<typeof telemetryExportResult>;
+
 /** The one file of an environment set, as the library stores it. */
 export const ENV_FILE = "environment.json";
 

@@ -92,6 +92,10 @@ import {
 	type TeamEntry,
 	type TeamGraphInput,
 	type TeamInput,
+	type TelemetryExportResult,
+	type TelemetryInput,
+	type TelemetrySettings,
+	type TelemetryTarget,
 	type TotaledRun,
 	TRACK_KEY_VARIABLE,
 	TRIGGER_LIMITS,
@@ -110,6 +114,8 @@ import {
 	type TurnVia,
 	teamGraphInput,
 	teamInput,
+	telemetryExportResult,
+	telemetryInput,
 	trackTriagePlan,
 	trackWorkPlan,
 	triggerInput,
@@ -250,6 +256,15 @@ import {
 	turnEdges,
 	updateTeam,
 } from "./teams";
+import {
+	getTelemetry,
+	recordTelemetryExport,
+	removeTelemetry,
+	sealedTelemetry,
+	setTelemetry,
+	TELEMETRY_PLACE,
+	tracesUrl,
+} from "./telemetry";
 import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
 import { setUpTrackWork, type TrackWorkMade } from "./track-work";
 import {
@@ -1292,6 +1307,73 @@ export class RegistryDO extends DurableObject {
 
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the
 	// pages see a hint, and only the runtime opens them.
+
+	// Where the workspace's run traces go over OpenTelemetry.
+
+	/** The settings as pages show them: the headers' names, never their values. */
+	getTelemetry(): TelemetrySettings | null {
+		return getTelemetry(this.#db);
+	}
+
+	/** Saves where traces go, with the headers sealed, in place of the earlier settings. */
+	async setTelemetry(
+		input: TelemetryInput,
+		setBy: string,
+	): Promise<TelemetrySettings | ProviderRefusal> {
+		const { endpoint, headers } = telemetryInput.parse(input);
+		const by = z.string().trim().min(1).max(200).parse(setBy);
+		let sealedHeaders: string | null = null;
+		if (headers.length > 0) {
+			const sealer = await this.#sealerOf();
+			if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
+			const values = Object.fromEntries(headers.map((header) => [header.name, header.value]));
+			sealedHeaders = await sealer.seal(TELEMETRY_PLACE, JSON.stringify(values));
+		}
+		const headerNames = headers.map((header) => header.name);
+		return this.#write(() =>
+			setTelemetry(this.#db, { endpoint, headerNames, sealedHeaders, setBy: by }, Date.now()),
+		);
+	}
+
+	removeTelemetry(): boolean {
+		return this.#write(() => removeTelemetry(this.#db));
+	}
+
+	/**
+	 * Where to send a run's trace, with the headers opened, for the runtime alone, like `beginTurn`'s
+	 * key: no server function may return it to a browser. Null when export is off, or the headers
+	 * cannot be opened, which is recorded as the last export's failure.
+	 */
+	async telemetryTarget(): Promise<TelemetryTarget | null> {
+		const stored = sealedTelemetry(this.#db);
+		if (!stored) return null;
+		const url = tracesUrl(stored.endpoint);
+		if (stored.sealedHeaders === null) return { url, headers: {}, setAt: stored.setAt };
+		const sealer = await this.#sealerOf();
+		try {
+			if ("unavailable" in sealer) throw new Error(sealer.unavailable);
+			const opened = JSON.parse(await sealer.open(TELEMETRY_PLACE, stored.sealedHeaders));
+			const headers = z.record(z.string(), z.string()).parse(opened);
+			return { url, headers, setAt: stored.setAt };
+		} catch {
+			this.#write(() =>
+				recordTelemetryExport(
+					this.#db,
+					stored.setAt,
+					{ ok: false, error: "The headers could not be opened; enter them again" },
+					Date.now(),
+				),
+			);
+			return null;
+		}
+	}
+
+	/** Keeps how exporting a trace went, for the settings page. */
+	recordTelemetryExport(setAt: number, result: TelemetryExportResult): boolean {
+		const version = z.number().int().nonnegative().parse(setAt);
+		const data = telemetryExportResult.parse(result);
+		return this.#write(() => recordTelemetryExport(this.#db, version, data, Date.now()));
+	}
 
 	listProviderKeys(): ProviderKey[] {
 		return listProviderKeys(this.#db);

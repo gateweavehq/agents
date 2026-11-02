@@ -225,6 +225,13 @@
       "when": 1793583813587,
       "tag": "0031_gorgeous_redwing",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1793619286480,
+      "tag": "0032_mature_madame_masque",
+      "breakpoints": true
     }
   ]
 }

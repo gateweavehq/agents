@@ -621,6 +621,22 @@ export const triggerDeliveries = sqliteTable(
 	],
 );
 
+/**
+ * Where the workspace's run traces go over OpenTelemetry: one row, or none when export is off. The
+ * headers, which hold an API key, are sealed together as JSON (see `secrets.ts`).
+ */
+export const telemetry = sqliteTable("telemetry", {
+	id: integer("id").primaryKey(),
+	endpoint: text("endpoint").notNull(),
+	headerNames: text("header_names", { mode: "json" }).$type<string[]>().notNull(),
+	sealedHeaders: text("sealed_headers"),
+	setBy: text("set_by").notNull(),
+	setAt: integer("set_at").notNull(),
+	lastExportAt: integer("last_export_at"),
+	lastExportOk: integer("last_export_ok", { mode: "boolean" }),
+	lastExportError: text("last_export_error"),
+});
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
