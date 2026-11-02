@@ -155,6 +155,7 @@ import {
 } from "./definitions";
 import {
 	checkEnvSecretName,
+	closeUnsentSecrets,
 	createEnvSet,
 	editEnvSet,
 	listEnvSets,
@@ -176,7 +177,7 @@ import {
 	recordMcpCheck,
 	turnServers,
 } from "./mcp-servers";
-import { runPassOnce } from "./passes";
+import { passFailedAt, runPassOnce } from "./passes";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	keyPlace,
@@ -313,12 +314,16 @@ export class RegistryDO extends DurableObject {
 		void ctx.blockConcurrencyWhile(async () => {
 			await migrate(this.#db, migrations);
 			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
-			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`).
+			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`). This
+			// one's failure closes the values it would have tied, which go nowhere until they are
+			// entered again, rather than to the first origin that asks (AGT-66).
 			runPassOnce(
 				this.#db,
 				(fn) => this.#write(fn),
 				BIND_UNSENT_SECRETS,
 				() => bindUnsentSecrets(this.#db),
+				Date.now(),
+				() => closeUnsentSecrets(this.#db),
 			);
 			// A migration may queue scans, as 0008 does.
 			await this.#scheduleAlarm();
@@ -561,6 +566,14 @@ export class RegistryDO extends DurableObject {
 
 	listEnvSets(): EnvSetEntry[] {
 		return listEnvSets(this.#db);
+	}
+
+	/**
+	 * When tying the values stored before ties failed, closing them (AGT-66), or null. For owners
+	 * and admins, who enter those values again; why it failed is in the log, not here.
+	 */
+	secretTiesFailedAt(): number | null {
+		return passFailedAt(this.#db, BIND_UNSENT_SECRETS);
 	}
 
 	/** Creates a set. Returns its id. */

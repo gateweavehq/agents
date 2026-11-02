@@ -423,7 +423,12 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   them, the first a check or a turn uses, and the Environment page lists them on it until it is
   tied or entered again. One-time passes like this one run through `runPassOnce`
   (`packages/registry/src/passes.ts`), recorded in `registry_passes`: one that throws is rolled
-  back, logged and recorded as failed with why, and the registry wakes all the same.
+  back, logged and recorded as failed with why, and the registry wakes all the same. When
+  `bindUnsentSecrets` fails, the write that records it also closes every value still unbound
+  with an empty `contested` list (AGT-66): `turnServers` sends it to no origin, rather than tying
+  it to the first that asks, until someone enters it again. The Environment page tells owners and
+  admins when that happened (`secretTiesFailedAt`), never why or any value, and marks each value
+  to enter again.
 
 ## Sandboxes
 
