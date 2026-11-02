@@ -464,7 +464,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
 - **No internet, but packages.** The container starts with `enableInternet: false`, and all of its
   HTTP and HTTPS goes to `SandboxOutbound`, a `WorkerEntrypoint` of the app's Worker, through the
   container's own certificate authority. `decideOutbound` (`packages/runtime/src/outbound.ts`)
-  lets GET and HEAD to package registries through (npm, PyPI, crates.io, Go's module proxy) and
+  lets through GET and HEAD to package registries (npm, PyPI, crates.io, Go's module proxy),
+  git's fetches of the conversation's repository on github.com and the push `push` makes, an
+  engine's requests to its model's provider while it runs a turn, and the engine tools' host, and
   answers everything else with a 403 that says why, which the command prints. A redirect goes
   back to the command, so each address it leads to is decided on too. The sandbox holds no secret
   of the workspace's: the key, the environment set and MCP headers stay in the Worker.
