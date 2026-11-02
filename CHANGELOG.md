@@ -8,6 +8,29 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.8.0] - 2026-11-02
+
+Setups write GitHub Copilot and Devin files, and a server can offer Workers AI to the workspaces it
+invites, within a daily limit for each. Updating a self-hosted copy needs no migration; the
+Workers AI limits are optional settings (see below).
+
+### Added
+
+- Setups can target GitHub Copilot and Devin. Copilot gets `AGENTS.md`, its own path-specific
+  instructions in `.github/instructions`, the shared `.agents/skills` and `.vscode/mcp.json`.
+  Devin gets `AGENTS.md`; its MCP servers live in a file it keeps out of Git and its docs name no
+  folder for skills, so a setup says those are not written for it. (#122)
+- `WORKERS_AI_WORKSPACES` limits Workers AI to the workspaces a server invites (`sandbox` invites
+  those `SANDBOX_WORKSPACES` invites), and `WORKERS_AI_DAILY_DOLLARS` limits what each may spend
+  on it in a day (UTC), at its list prices. A turn past either is refused, saying why, and
+  Settings > Models shows the day's spend. Gateweave Cloud invites its sandbox workspaces, up to
+  $20 a day each, once its Workers AI token is set. (#123)
+
+### Changed
+
+- Settings > Models says Workers AI is offered to "this workspace" rather than "every
+  workspace", since a server may invite only some. (#123)
+
 ## [0.7.0] - 2026-11-02
 
 Two more coding agents in scans, MCP servers that run as a local command, run traces in your own
