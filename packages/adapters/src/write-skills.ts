@@ -6,10 +6,14 @@
  * - https://geminicli.com/docs/cli/skills/ (workspace skills in `.gemini/skills` or its alias
  *   `.agents/skills`)
  * - https://cursor.com/docs/skills (`.cursor/skills`, `.agents/skills`, `.claude/skills`)
+ * - https://docs.github.com/en/copilot/reference/customization-cheat-sheet (checked 2026-11-02:
+ *   GitHub Copilot reads `.github/skills`, `.claude/skills` and `.agents/skills`)
  *
  * A skill is a folder, the same for every agent. Claude Code gets `.claude/skills`; Codex, Gemini
- * CLI and Cursor all read `.agents/skills`, so that one copy serves them (Cursor would read
+ * CLI, Cursor and GitHub Copilot all read `.agents/skills`, so that one copy serves them (Cursor would read
  * `.claude/skills` too, but a second copy for it alone would only drift).
+ *
+ * Devin's docs name no folder for skills, so a setup writes none for it, and says so.
  *
  * The folder is named after the `name` in SKILL.md's front matter, which the Agent Skills format
  * (https://agentskills.io/specification) requires to match it. The asset's own name is only the
@@ -34,10 +38,19 @@ export function writeSkills(
 ): void {
 	const roots: string[] = [];
 	if (targets.has("claude-code")) roots.push(CLAUDE_ROOT);
-	if (targets.has("codex") || targets.has("gemini-cli") || targets.has("cursor")) {
+	if (
+		["codex", "gemini-cli", "cursor", "copilot"].some((runtime) =>
+			targets.has(runtime as RepositoryRuntime),
+		)
+	) {
 		roots.push(SHARED_ROOT);
 	}
 	const written = new Map<string, string>();
+	if (targets.has("devin")) {
+		for (const asset of assets) {
+			output.problem(asset.name, "Devin: its docs name no folder for skills, so none is written");
+		}
+	}
 
 	for (const asset of assets) {
 		const files = readable(asset, output);

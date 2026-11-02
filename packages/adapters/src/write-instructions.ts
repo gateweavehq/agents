@@ -8,11 +8,15 @@
  *   is not read unless `context.fileName` lists it)
  * - https://cursor.com/docs/context/rules (`.cursor/rules/**.mdc`; `AGENTS.md` in the project
  *   root and subdirectories)
+ * - https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
+ *   (checked 2026-11-02: GitHub Copilot reads `AGENTS.md` anywhere, the nearest winning, and
+ *   `.github/instructions/**.instructions.md` with `applyTo`)
+ * - https://docs.devin.ai/cli/extensibility/rules (checked 2026-11-02: Devin reads `AGENTS.md`)
  *
  * Instruction assets are named by the path they were read from, so that is where they go back:
  * `packages/api/AGENTS.md` stays in `packages/api`. Per folder, the text of every asset not
  * named `CLAUDE.md` or `GEMINI.md` is shared; it is combined in name order into `AGENTS.md`,
- * which Codex and Cursor read. `CLAUDE.md` and `GEMINI.md` assets are that agent's own addition.
+ * which Codex, Cursor, GitHub Copilot and Devin read. `CLAUDE.md` and `GEMINI.md` assets are that agent's own addition.
  *
  * `CLAUDE.md` and `GEMINI.md` import `AGENTS.md` instead of repeating it when another agent
  * reads it too (Codex or Cursor, or Claude Code and Gemini CLI together). One copy cannot drift
@@ -20,9 +24,9 @@
  * directly needs a recent one. When nothing else reads `AGENTS.md`, writing it only to import it
  * would be a file for nobody, so the text goes straight into the agent's own file.
  *
- * Cursor rules (instructions with an `alwaysApply` field, as the Cursor reader stores them) and
- * `.claude/rules` files only mean something to their own agent, so other runtimes ignore them
- * without a problem.
+ * Cursor rules (instructions with an `alwaysApply` field, as the Cursor reader stores them),
+ * Copilot's path-specific instructions (a `.instructions.md` file) and `.claude/rules` files only
+ * mean something to their own agent, so other runtimes ignore them without a problem.
  */
 import type { RepositoryRuntime } from "@gateweave/agents-model";
 import { basename, compare, dirname } from "./util";
@@ -57,6 +61,14 @@ export function writeInstructions(
 			if (!targets.has("cursor")) continue;
 			if (isSafePath(path)) output.add(path, text, asset.name);
 			else output.problem(asset.name, "The rule's name is not a usable path");
+			continue;
+		}
+		if (isCopilotInstructions(asset)) {
+			// The reader names them by their path inside `.github/instructions`, without the suffix.
+			const path = `.github/instructions/${asset.name}.instructions.md`;
+			if (!targets.has("copilot")) continue;
+			if (isSafePath(path)) output.add(path, text, asset.name);
+			else output.problem(asset.name, "The instructions' name is not a usable path");
 			continue;
 		}
 		if (CLAUDE_RULE.test(asset.name)) {
@@ -101,6 +113,12 @@ function isCursorRule(asset: AssetToWrite): boolean {
 	return typeof asset.metadata.alwaysApply === "boolean";
 }
 
+/** Copilot's reader keeps a path-specific instructions file under its own file name. */
+function isCopilotInstructions(asset: AssetToWrite): boolean {
+	const [file] = asset.files;
+	return asset.files.length === 1 && file !== undefined && file.path.endsWith(".instructions.md");
+}
+
 function placeOf(name: string): { folder: string; scope: keyof Folder } | null {
 	const file = basename(name);
 	let folder = KNOWN_FILES.has(file) ? dirname(name) : "";
@@ -121,7 +139,9 @@ function writeFolder(
 	const shared = join(parts.shared);
 	// A conflict in a folder is reported against the folder's AGENTS.md.
 	const owner = at("AGENTS.md");
-	const readsAgents = targets.has("codex") || targets.has("cursor");
+	const readsAgents = ["codex", "cursor", "copilot", "devin"].some((runtime) =>
+		targets.has(runtime as RepositoryRuntime),
+	);
 	const both = targets.has("claude-code") && targets.has("gemini-cli");
 	const agentsFile = shared !== "" && (readsAgents || both);
 

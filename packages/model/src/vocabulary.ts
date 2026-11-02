@@ -10,10 +10,18 @@ export const REPOSITORY_RUNTIMES = [
 export type RepositoryRuntime = (typeof REPOSITORY_RUNTIMES)[number];
 
 /**
- * The coding agents a setup can write files for (`packages/adapters/src/write.ts`). The scanner
- * reads more of them than setups write: GitHub Copilot's and Devin's are read only, for now.
+ * The coding agents a setup can write files for (`packages/adapters/src/write.ts`), in the order
+ * they are written. Devin gets instructions only: it keeps MCP servers in a local file, and its
+ * docs name no folder for skills.
  */
-export const SETUP_RUNTIMES = ["claude-code", "codex", "gemini-cli", "cursor"] as const;
+export const SETUP_RUNTIMES = [
+	"claude-code",
+	"codex",
+	"gemini-cli",
+	"cursor",
+	"copilot",
+	"devin",
+] as const;
 export type SetupRuntime = (typeof SETUP_RUNTIMES)[number];
 
 /**

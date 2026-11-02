@@ -84,12 +84,17 @@ TypeScript with no I/O, so it runs in the Worker. The scanner lists the reposito
 - **One adapter per coding agent** (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot and
   Devin), each knowing only its own files, so a repository with just `AGENTS.md` has a Codex agent
   and nothing else. The vendor's documentation is linked at the top of each adapter.
-- **Scanned, and not yet written** (AGT-69). GitHub Copilot (`.github/copilot-instructions.md`,
-  `.github/instructions`, prompt files, custom agents and chat modes, `.vscode/mcp.json`,
-  `.github/skills`) and Devin (`.devin/rules`, `.devin/global_rules.md`, `.devin/config.json`, and
-  Windsurf's rule files, which Devin Desktop took over from Windsurf) are in
-  `REPOSITORY_RUNTIMES`, so scans find them. Setups target only `SETUP_RUNTIMES`, the four agents
-  the writers know, until writing their formats lands.
+- **GitHub Copilot and Devin** are scanned (AGT-69) and written (AGT-74).
+  - **Copilot** reads `.github/copilot-instructions.md`, `.github/instructions`, prompt files,
+    custom agents and chat modes, `.vscode/mcp.json` and `.github/skills`. A setup gives it
+    `AGENTS.md`, which it reads anywhere, its own path-specific instructions back in
+    `.github/instructions`, the shared `.agents/skills`, and `.vscode/mcp.json` (servers under
+    `servers`, variables as `${env:NAME}`).
+  - **Devin** reads `.devin/rules`, `.devin/global_rules.md`, `.devin/config.json`, and Windsurf's
+    rule files, which Devin Desktop took over from Windsurf. A setup gives it `AGENTS.md` only.
+    Its MCP servers live in a file its docs keep out of Git, and its docs name no folder for
+    skills, so a setup reports both as not written for it. A scan lists Devin once the repository
+    has a file of Devin's own.
 - **Shared files are shared assets.** `detect` merges what the adapters find by asset key, so
   `AGENTS.md` or a `.agents/skills` folder is one asset that several agents read.
 - **Secrets stay in the adapters.** Settings and MCP configuration are stored as canonical JSON
