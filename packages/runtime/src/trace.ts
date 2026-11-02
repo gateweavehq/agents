@@ -211,10 +211,30 @@ export class RunRecorder {
 		this.serverFailed(this.serverConnecting(server, now), problem, now);
 	}
 
-	/** Starts a call to a tool, in the model request under way. Returns the span's id. */
+	/** Starts a call to a tool, in the model request it came from. Returns the span's id. */
 	toolStarted(server: string, tool: string, inputBytes: number, now = Date.now()): string {
 		const attributes: ToolAttributes = { server, tool, inputBytes, outputBytes: null, error: null };
-		return this.#insert("tool", this.#step, attributes, now);
+		return this.#insert("tool", this.#stepAt(now), attributes, now);
+	}
+
+	/**
+	 * The model request a tool that started at `at` belongs to: the latest that had started by
+	 * then. An engine can report a call late, once it has its result, as OpenCode does, by which
+	 * time a subagent's requests may have started newer steps.
+	 */
+	#stepAt(at: number): number {
+		const [latest] = this.#sql<{ step: number }>`
+			SELECT step FROM trace_spans
+			WHERE run_id = ${this.runId} AND kind = 'model' AND started_at <= ${at}
+			ORDER BY started_at DESC, step DESC LIMIT 1`;
+		if (latest) return latest.step;
+		// A start set back past every request, as when its time is only an estimate: the first
+		// request after it.
+		const [next] = this.#sql<{ step: number }>`
+			SELECT step FROM trace_spans
+			WHERE run_id = ${this.runId} AND kind = 'model'
+			ORDER BY started_at, step LIMIT 1`;
+		return next?.step ?? this.#step;
 	}
 
 	toolEnded(

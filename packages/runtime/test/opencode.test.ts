@@ -203,7 +203,14 @@ describe("an agent whose engine is OpenCode", () => {
 				// The subagent's session asks the model twice; only the task's result is printed.
 				anthropicAnswer({ output: 7, stop: "tool_use" }),
 				anthropicAnswer({ output: 9 }),
-				tool("toolu_task", "task", { prompt: "Find the tests" }, { output: "They are in test/." }),
+				// Printed once it ends, a while after the request that called it.
+				tool(
+					"toolu_task",
+					"task",
+					{ prompt: "Find the tests" },
+					{ output: "They are in test/." },
+					60_000,
+				),
 				finish("tool-calls", { input: 10, output: 20 }),
 				start,
 				anthropicAnswer({ output: 4 }),
@@ -218,6 +225,9 @@ describe("an agent whose engine is OpenCode", () => {
 		expect(turn).toMatchObject({ text: "They are in test/.", error: null });
 		const [run] = await registry.listRuns();
 		expect(run).toMatchObject({ status: "succeeded", steps: 4, outputTokens: 20 + 7 + 9 + 4 });
+		// The task belongs to the request that called it, not to its subagent's last one.
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([{ tool: "task", step: 0 }]);
 	});
 
 	it("shows a tool that failed as failed, with OpenCode's words", async () => {
