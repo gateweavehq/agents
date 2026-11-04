@@ -8,6 +8,17 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.12.1] - 2026-11-04
+
+Better Auth 1.7.16, a security release, so anyone running a copy should update. Updating a self-hosted
+copy needs no migration and no new setting.
+
+### Security
+
+- **Better Auth 1.7.16.** Email verification and email-change links worked for an account other than the
+  one they were issued to. Generic OAuth profiles are now bound to the ID token's subject, which signing
+  in through an OpenID Connect provider rests on, and organization roles no longer take whitespace. (#138)
+
 ## [0.12.0] - 2026-11-04
 
 People can sign in through any OpenID Connect provider, such as Gateweave ID, and three security
