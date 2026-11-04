@@ -10,12 +10,15 @@ import type { Database } from "../db";
 import { schema } from "../db";
 import type { Mailer } from "../email/mailer";
 import { invitationEmail, passwordResetEmail, verificationEmail } from "../email/templates";
+import { type OidcProvider, oidcDatabaseHooks, oidcSignIn } from "./oidc-sign-in";
 
 export interface AuthConfig {
 	db: Database;
 	secret: string;
 	baseURL?: string | undefined;
 	github?: { clientId: string; clientSecret: string } | undefined;
+	/** An OpenID Connect provider to offer on the sign-in page. */
+	oidc?: OidcProvider | undefined;
 	/** Sends email. Without it, password reset is off and invitations are links to share. */
 	mailer?: Mailer | undefined;
 	/** Keeps work such as sending email going after the response, like `ctx.waitUntil`. */
@@ -34,6 +37,7 @@ export interface AuthConfig {
  */
 export function createAuth(config: AuthConfig) {
 	const { mailer } = config;
+	const oidcHooks = oidcDatabaseHooks();
 
 	return betterAuth({
 		secret: config.secret,
@@ -77,6 +81,16 @@ export function createAuth(config: AuthConfig) {
 			}),
 		},
 		socialProviders: config.github ? { github: config.github } : {},
+		session: {
+			additionalFields: {
+				/** The provider's session this one came from, which its logout tokens name. */
+				oidcSid: { type: "string", required: false, input: false, returned: false, index: true },
+			},
+		},
+		databaseHooks: {
+			account: oidcHooks.account,
+			session: { create: oidcHooks.session.create },
+		},
 		disabledPaths: [
 			// Returns every pending invitation to any member, ids included (see the hook below).
 			// The app does not use it.
@@ -171,6 +185,7 @@ export function createAuth(config: AuthConfig) {
 					},
 				},
 			}),
+			...(config.oidc ? oidcSignIn(config.db, config.oidc) : []),
 			// Must stay last: forwards Set-Cookie headers from server-side auth calls.
 			tanstackStartCookies(),
 		],

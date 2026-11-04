@@ -12,12 +12,49 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   membership before doing anything.
 - **Better Auth** owns accounts, sessions, workspaces (its organizations), members, roles and
   invitations, stored in **D1**. There is one Better Auth instance per isolate, built on first
-  use, because workerd forbids I/O in global scope.
+  use, because workerd forbids I/O in global scope. It can also sign people in through an OpenID
+  Connect provider: see "Signing in through a provider" below.
 - **Rate limits** on sign-in, password reset, invitations and email are counted in a
   `RateLimiter` Durable Object per client address or recipient, so they hold across isolates and
   locations. Everything else is limited in memory per isolate.
 - **Email** goes through Cloudflare Email Service when `EMAIL_FROM` is set: password reset,
   verification and invitations. Without it, invitations are links to share.
+
+### Signing in through a provider
+
+With `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` set, Agents is a client of an OpenID
+Connect provider, through Better Auth's `generic-oauth` plugin
+(`apps/web/src/server/auth/oidc-sign-in.ts`). What comes out of it is an account row and an
+ordinary session, so nothing past the sign-in page knows the difference. It is how Gateweave Cloud
+signs people in with Gateweave ID, and how a self-hoster uses their own provider: one path,
+differing only by configuration. Track has the same code, and the same reasons.
+
+- **Discovery waits until someone needs it.** The plugin's `init` waits for the provider's discovery
+  document with no time limit, and every request to a new isolate waits for `init`, so a slow
+  provider would stop password sign-in and every session check. Agents replaces `init` so that each
+  isolate starts as the plugin does after a failed discovery, which it retries, within 10 seconds,
+  for a request that names the provider. That sets a field of the plugin's that is not public, so an
+  upgrade that moves it fails the tests rather than the deployment. The cost is one wait for the
+  first person to use the button in each isolate.
+- **Linking is never assumed.** The provider is not in `trustedProviders`, so an existing account
+  links only when the provider says the address is verified and Agents' account has verified it too.
+  Anything but a JSON `true` in `email_verified` counts as unverified, since some providers send text.
+- **Agents keeps no tokens.** It signs people in and never acts for them at the provider, so the
+  account hook clears them all, and the ID token too, as soon as it has served its purpose. The
+  client authenticates with `client_secret_basic`, which every provider has to take.
+- **The provider can end sessions.** `POST /api/auth/backchannel-logout/oidc` takes a logout token,
+  checked against the provider's keys: issuer, audience, at most 5 minutes old, the logout event and
+  no nonce, which together keep an ID token from passing as one. A session row keeps the `sid` of
+  the ID token it came from (`session.oidc_sid`, never sent to the browser), and a token naming a
+  `sid` ends just those sessions, and only if they belong to the `sub` it may also name. A token
+  naming only a `sub` ends everything of that person's, which is the safe side of a provider that
+  cannot say which.
+- **A chat already open outlives its session,** with any way of ending one and not only this:
+  `apps/web/src/server/chat.ts` checks the session when the socket opens, and Agents has nothing
+  like Track's list of ended sessions that would close it.
+- **Signing out of Agents stays in Agents.** The provider's session is left alone, as other apps
+  signed in through it would expect, and `disableProviderLogout` keeps the plugin from sending
+  anyone there.
 
 ## The registry
 

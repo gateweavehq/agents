@@ -160,8 +160,9 @@ runtime is designed alongside it, so the data model fits both.
   webhooks), so optimistic local writes buy little in phase 1, and extracting Track's sync engine
   now would churn Track right after its launch. When Agents needs realtime (chat and runs in phase
   3), the engine is extracted from the Track monorepo as `@gateweave/sync` and published to npm.
-- **Single sign-on** across products comes with Gateweave ID, which replaces each product's own
-  accounts in Gateweave Cloud. Until then each product has its own sign-in.
+- **Single sign-on** across products comes with Gateweave ID, which Agents can sign people in
+  through as it can any OpenID Connect provider (see `docs/self-hosting.md`). Passwords keep working
+  beside it.
 - **Local port.** 4720, following the Gateweave 47xx convention (site 4700, Track 4710).
 - **Registry data model** (AGT-3, 2026-10-28). Content is addressed by Git blob ids, so files
   shared across repositories and versions are stored once, binary files can be named by id
