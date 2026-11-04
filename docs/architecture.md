@@ -40,8 +40,9 @@ differing only by configuration. Track has the same code, and the same reasons.
   links only when the provider says the address is verified and Agents' account has verified it too.
   Anything but a JSON `true` in `email_verified` counts as unverified, since some providers send text.
 - **Agents keeps no tokens.** It signs people in and never acts for them at the provider, so the
-  account hook clears them all, and the ID token too, as soon as it has served its purpose. The
-  client authenticates with `client_secret_basic`, which every provider has to take.
+  account hook clears them all, and the ID token too, as soon as it has served its purpose. The same
+  goes for signing in with GitHub: the GitHub integration makes an exchange of its own. The client
+  authenticates with `client_secret_basic`, which every provider has to take.
 - **The provider can end sessions.** `POST /api/auth/backchannel-logout/oidc` takes a logout token,
   checked against the provider's keys: issuer, audience, at most 5 minutes old, the logout event and
   no nonce, which together keep an ID token from passing as one. A session row keeps the `sid` of
