@@ -2,7 +2,7 @@ import type { Account, GenericEndpointContext, Session } from "better-auth";
 import { createAuthEndpoint, NO_STORE_HEADERS } from "better-auth/api";
 import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import { and, eq } from "drizzle-orm";
-import { decodeJwt, jwtVerify } from "jose";
+import { decodeJwt, errors, jwtVerify } from "jose";
 import { z } from "zod";
 import type { Database } from "../db";
 import { schema } from "../db";
@@ -93,16 +93,21 @@ function backchannelLogout(db: Database) {
 					for (const [name, value] of Object.entries(NO_STORE_HEADERS)) {
 						ctx.setHeader(name, value);
 					}
-					const answer = (status: 200 | 400 | 404) => {
+					const answer = (status: 200 | 400 | 404 | 503) => {
 						ctx.setStatus(status);
-						return status === 200 ? {} : { error: "invalid_request" };
+						if (status === 200) return {};
+						return { error: status === 503 ? "temporarily_unavailable" : "invalid_request" };
 					};
 					if (ctx.params.id !== OIDC_PROVIDER) return answer(404);
 
+					const token = ctx.body.logout_token;
+					if (!token) return answer(400);
+
+					// Discovery has not worked yet, which says nothing about the token. A provider tries a
+					// 503 again and takes a 400 as final, and someone stays signed in if it gives up.
 					const provider = ctx.context.socialProviders.find(({ id }) => id === OIDC_PROVIDER);
 					const keys = provider?.idToken;
-					const token = ctx.body.logout_token;
-					if (!keys || !("jwks" in keys) || !token) return answer(400);
+					if (!keys || !("jwks" in keys)) return answer(503);
 
 					let claims: LogoutClaims;
 					try {
@@ -117,7 +122,11 @@ function backchannelLogout(db: Database) {
 						if (!isLogoutType(protectedHeader.typ)) return answer(400);
 						claims = logoutClaims.parse(payload);
 					} catch (error) {
-						// The reason only, never the token. It may also be that the keys could not be fetched.
+						// The reason only, never the token.
+						if (keysOutOfReach(error)) {
+							console.warn("auth: could not check a logout token:", errorName(error));
+							return answer(503);
+						}
 						console.warn("auth: refused a logout token:", errorName(error));
 						return answer(400);
 					}
@@ -183,6 +192,22 @@ function isLogoutType(typ: string | undefined) {
 	if (!typ) return true;
 	const type = typ.toLowerCase();
 	return type === "logout+jwt" || type === "application/logout+jwt";
+}
+
+/**
+ * Whether a token could not be checked for want of the provider's keys, which says nothing about the
+ * token. A failed fetch throws its own error through `jose`, and an answer it cannot use a plain
+ * `JOSEError`. Every other `JOSEError` is about the token.
+ */
+function keysOutOfReach(error: unknown) {
+	if (error instanceof errors.JOSEError) {
+		return (
+			error.code === errors.JOSEError.code ||
+			error instanceof errors.JWKSTimeout ||
+			error instanceof errors.JWKSInvalid
+		);
+	}
+	return !(error instanceof z.ZodError);
 }
 
 function errorName(error: unknown) {

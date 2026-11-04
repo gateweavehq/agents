@@ -49,7 +49,9 @@ differing only by configuration. Track has the same code, and the same reasons.
   the ID token it came from (`session.oidc_sid`, never sent to the browser), and a token naming a
   `sid` ends just those sessions, and only if they belong to the `sub` it may also name. A token
   naming only a `sub` ends everything of that person's, which is the safe side of a provider that
-  cannot say which.
+  cannot say which. Once a token has arrived it is seen through with `waitUntil`, even if the
+  provider stops waiting. Keys that cannot be fetched at that moment get a 503 and end nothing: it
+  says nothing about the token, and a provider tries a 503 again where it takes a 400 as final.
 - **A chat already open outlives its session,** with any way of ending one and not only this:
   `apps/web/src/server/chat.ts` checks the session when the socket opens, and Agents has nothing
   like Track's list of ended sessions that would close it.

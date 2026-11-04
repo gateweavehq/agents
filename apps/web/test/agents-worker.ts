@@ -160,6 +160,24 @@ export interface RegistryStub {
 /** The address Agents sends from in tests. */
 export const EMAIL_FROM = { name: "Gateweave Agents", email: "agents@agents.test" };
 
+/**
+ * A caller that gives up: it passes a request to the last isolate through a service binding and aborts
+ * after a moment, which cancels the request there as a client going away does in production. A client
+ * hanging up on Miniflare does not.
+ */
+const IMPATIENT = `
+export default {
+	async fetch(request, env) {
+		const target = new Request(new URL(request.url).searchParams.get("to"), request);
+		try {
+			return await env.TARGET.fetch(target, { signal: AbortSignal.timeout(300) });
+		} catch {
+			return new Response("Stopped waiting", { status: 504 });
+		}
+	},
+};
+`;
+
 // Stands in for Cloudflare Email Service behind the EMAIL binding: `send` keeps each message,
 // and a fetch lists them.
 const OUTBOX = `
@@ -285,6 +303,14 @@ export async function startAgents(
 					},
 				})),
 				{
+					name: "impatient",
+					modules: true,
+					script: IMPATIENT,
+					routes: ["impatient.test/*"],
+					compatibilityDate: config.compatibility_date,
+					serviceBindings: { TARGET: names[names.length - 1] as string },
+				},
+				{
 					name: "outbox",
 					modules: true,
 					script: OUTBOX,
@@ -340,6 +366,13 @@ export async function startAgents(
 		/** A `fetch` that reaches the Worker directly. Redirects are returned, not followed. */
 		fetch: (input: string | URL | Request, init?: RequestInit) => fetchIn(0, input, init),
 		fetchIn,
+		/** Sends a request to the last isolate from a caller that stops waiting after a moment. */
+		fetchAndStopWaiting: (url: string, init: RequestInit) =>
+			mf.dispatchFetch(`http://impatient.test/?to=${encodeURIComponent(url)}`, {
+				method: init.method,
+				headers: [...new Headers(init.headers)],
+				body: init.body as string,
+			}),
 		/**
 		 * Opens a WebSocket to the Worker. Its status is 101 and `socket` is open, accepted, when
 		 * the Worker took the upgrade.

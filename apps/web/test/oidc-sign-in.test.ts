@@ -483,6 +483,148 @@ describe("a provider that is not answering", () => {
 	});
 });
 
+describe("a provider that stops waiting for the answer to a logout", () => {
+	it("still ends the session", async () => {
+		const provider = await standInProvider();
+		let slowKeys = false;
+		const host = new URL(OIDC.issuer).host;
+		const agents = await startAgents(origin, {
+			isolates: 2,
+			settings: OIDC_VARS,
+			hosts: {
+				[host]: async (request: Request) => {
+					const url = new URL(request.url);
+					if (slowKeys && url.pathname === "/jwks") {
+						await new Promise((resolve) => setTimeout(resolve, 1500));
+					}
+					return (
+						(await provider.outbound(request, url)) ??
+						new Response("Not the provider", { status: 502 })
+					);
+				},
+			},
+		});
+		try {
+			const person = { sub: "sub-impatient", email: "impatient@oidc.test", sid: "sid-impatient" };
+			const { cookie } = await signIn(agents, provider, person);
+			const token = await provider.logoutToken({ sub: person.sub, sid: person.sid });
+
+			// The other isolate has never seen a sign-in, so it has the provider's keys to fetch.
+			slowKeys = true;
+			const answer = await agents.fetchAndStopWaiting(
+				`${origin}/api/auth/backchannel-logout/oidc`,
+				{
+					method: "POST",
+					headers: {
+						"content-type": "application/x-www-form-urlencoded",
+						"cf-connecting-ip": newClient(),
+					},
+					body: new URLSearchParams({ logout_token: token }).toString(),
+				},
+			);
+			expect(answer.status).toBe(504);
+
+			await expect
+				.poll(() => isSignedIn(agents, cookie), { timeout: 10_000, interval: 250 })
+				.toBe(false);
+		} finally {
+			await agents.dispose();
+		}
+	});
+});
+
+describe("a logout that cannot be checked for now", () => {
+	// To the isolate that has never seen a sign-in, so it has the provider's keys to fetch.
+	const deliver = (agents: Agents, token: string) =>
+		agents.fetchIn(1, `${origin}/api/auth/backchannel-logout/oidc`, {
+			method: "POST",
+			headers: {
+				"content-type": "application/x-www-form-urlencoded",
+				"cf-connecting-ip": newClient(),
+			},
+			body: new URLSearchParams({ logout_token: token }).toString(),
+		});
+
+	const failing = () => new Response("Down", { status: 500 });
+	const cases: [string, string, () => Response | Promise<Response>][] = [
+		["the keys answer with an error", "/jwks", failing],
+		["the keys make no sense", "/jwks", () => Response.json({})],
+		["the keys do not answer", "/jwks", () => new Promise<Response>(() => {})],
+		["discovery has not worked", "/.well-known/openid-configuration", failing],
+	];
+
+	it("asks for another try when fetching the keys fails, and ends nothing", async () => {
+		const provider = await standInProvider();
+		let nowhere = false;
+		const host = new URL(OIDC.issuer).host;
+		const agents = await startAgents(origin, {
+			isolates: 2,
+			settings: OIDC_VARS,
+			hosts: {
+				[host]: async (request: Request) => {
+					const url = new URL(request.url);
+					const answer =
+						(await provider.outbound(request, url)) ??
+						new Response("Not the provider", { status: 502 });
+					if (!nowhere || !url.pathname.startsWith("/.well-known/")) return answer;
+					// A fetch that rejects, as one does when the network fails. A stand-in cannot do that by
+					// throwing, which Miniflare turns into a 500, but no Worker can fetch this address.
+					const document = (await answer.json()) as object;
+					return Response.json({ ...document, jwks_uri: "ftp://provider.test/jwks" });
+				},
+			},
+		});
+		try {
+			const person = { sub: "sub-nowhere", email: "nowhere@oidc.test", sid: "sid-nowhere" };
+			const { cookie } = await signIn(agents, provider, person);
+			const token = await provider.logoutToken({ sub: person.sub, sid: person.sid });
+
+			nowhere = true;
+			expect((await deliver(agents, token)).status).toBe(503);
+			expect(await isSignedIn(agents, cookie)).toBe(true);
+		} finally {
+			await agents.dispose();
+		}
+	});
+
+	it.each(cases)("asks for another try when %s, and ends nothing", async (_name, path, down) => {
+		const provider = await standInProvider();
+		let isDown = false;
+		const host = new URL(OIDC.issuer).host;
+		const agents = await startAgents(origin, {
+			isolates: 2,
+			settings: OIDC_VARS,
+			hosts: {
+				[host]: async (request: Request) => {
+					const url = new URL(request.url);
+					if (isDown && url.pathname === path) return down();
+					return (
+						(await provider.outbound(request, url)) ??
+						new Response("Not the provider", { status: 502 })
+					);
+				},
+			},
+		});
+		try {
+			const person = { sub: "sub-unchecked", email: "unchecked@oidc.test", sid: "sid-unchecked" };
+			const { cookie } = await signIn(agents, provider, person);
+			const token = await provider.logoutToken({ sub: person.sub, sid: person.sid });
+
+			isDown = true;
+			const answer = await deliver(agents, token);
+			expect(answer.status).toBe(503);
+			expect(await answer.json()).toEqual({ error: "temporarily_unavailable" });
+			expect(await isSignedIn(agents, cookie)).toBe(true);
+
+			isDown = false;
+			expect((await deliver(agents, token)).status).toBe(200);
+			expect(await isSignedIn(agents, cookie)).toBe(false);
+		} finally {
+			await agents.dispose();
+		}
+	});
+});
+
 describe("signing out at the provider", () => {
 	let agents: Agents;
 	let provider: Provider;
