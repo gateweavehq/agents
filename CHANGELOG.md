@@ -8,6 +8,39 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.12.0] - 2026-11-04
+
+People can sign in through any OpenID Connect provider, such as Gateweave ID, and three security
+fixes, so anyone running a copy should update. Updating a self-hosted copy applies two D1 migrations,
+one of which deletes the GitHub tokens earlier versions stored, and needs no new setting unless you
+want the new sign-in.
+
+### Added
+
+- Set `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`, and the sign-in page gets a button for
+  that provider, named by `OIDC_PROVIDER_NAME`. Without them nothing changes. An existing account links
+  only when the provider says the address is verified and Agents has verified it too, none of the
+  provider's tokens are kept, and a provider that is down costs only its own button. The provider can
+  end sessions through back-channel logout, and signing out of Agents leaves someone signed in to
+  their provider. A chat already open outlives its session, because the chat socket checks the
+  session only when it opens. See "Sign in through an OpenID Connect provider" in
+  `docs/self-hosting.md`. (#134)
+
+### Security
+
+- Every signed-in page carried the session's token in its HTML, where a saved page or anything that
+  keeps a copy of the document would have it too. The cookie is `HttpOnly` to keep it from there, and
+  no page reads it, so pages no longer get it. Better Auth's `/get-session` still answers a script
+  with it, so this keeps the token out of documents, not out of reach of a script already running in
+  the page. (#135)
+- Signing in with GitHub stored GitHub's access token, unencrypted, in `account`. Nothing read it:
+  the GitHub integration makes an exchange of its own. Agents now keeps none of them, and a migration
+  deletes the ones already stored. (#136)
+- The sign-in, sign-up and reset pages work only through their script. Pressed before it had run, on a
+  slow connection for example, the browser sent the form itself as a GET, so the password landed in
+  the address bar, the browser's history and any log of requests. Their buttons now stay disabled
+  until the script has run. (#133)
+
 ## [0.11.0] - 2026-11-02
 
 Workspaces can read GitLab repositories, from gitlab.com or a self-managed GitLab. Updating a
