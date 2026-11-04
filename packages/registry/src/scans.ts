@@ -76,6 +76,7 @@ function syncEach(
 					installationId,
 					owner,
 					name,
+					webUrl: input.webUrl ?? null,
 					defaultBranch,
 					private: isPrivate,
 					removedAt: null,

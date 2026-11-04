@@ -64,10 +64,16 @@ interface FakeInstallation {
 	repositories: FakeRepository[];
 }
 
+/** A person's membership of an organization, as `/user/memberships/orgs/{org}` reports it. */
+export interface FakeMembership {
+	role: "admin" | "member" | "billing_manager";
+	state?: "active" | "pending";
+}
+
 /**
  * Stands in for github.com and api.github.com behind the Worker's outbound requests. It checks
  * what GitHub checks: the app's JWT against its public key, installation tokens, the OAuth
- * client, PKCE and which installations each person can reach.
+ * client, PKCE, which installations each person can see and whose accounts they control.
  */
 export class FakeGitHub {
 	readonly appId = "4242";
@@ -76,8 +82,15 @@ export class FakeGitHub {
 	readonly clientSecret = randomBytes(16).toString("hex");
 	readonly webhookSecret = randomBytes(16).toString("hex");
 	readonly installations = new Map<string, FakeInstallation>();
-	/** The installations each GitHub login can reach. */
+	/**
+	 * The installations `/user/installations` lists for each GitHub login. GitHub lists one for
+	 * any explicit permission on any of its repositories, read access included.
+	 */
 	readonly people = new Map<string, Set<string>>();
+	/** Organization memberships, by organization login, then by person's login. */
+	readonly memberships = new Map<string, Map<string, FakeMembership>>();
+	/** GitHub's id for each account login, given out on first use. */
+	readonly #accountIds = new Map<string, number>();
 
 	readonly #keys = generateKeyPairSync("rsa", {
 		modulusLength: 2048,
@@ -134,6 +147,23 @@ export class FakeGitHub {
 		return callback.href;
 	}
 
+	/** Makes `login` a member of the organization `org`, active unless `state` says otherwise. */
+	join(org: string, login: string, role: FakeMembership["role"], state?: FakeMembership["state"]) {
+		const members = this.memberships.get(org) ?? new Map<string, FakeMembership>();
+		members.set(login, { role, state });
+		this.memberships.set(org, members);
+	}
+
+	/** GitHub's numeric id for a user or organization login. */
+	accountId(login: string): number {
+		let id = this.#accountIds.get(login);
+		if (id === undefined) {
+			id = 9000 + this.#accountIds.size;
+			this.#accountIds.set(login, id);
+		}
+		return id;
+	}
+
 	/** The signature header GitHub would send with this body. */
 	sign(body: string): string {
 		return `sha256=${createHmac("sha256", this.webhookSecret).update(body).digest("hex")}`;
@@ -150,7 +180,9 @@ export class FakeGitHub {
 			const [, id = "", tokens] = installationPath;
 			const installation = this.installations.get(id);
 			if (!installation) return Response.json({ message: "Not Found" }, { status: 404 });
-			if (!tokens) return Response.json({ id: Number(id), account: installation.account });
+			if (!tokens) {
+				return Response.json({ id: Number(id), account: this.#account(installation) });
+			}
 			if (request.method !== "POST") return new Response(null, { status: 405 });
 			const token = `ghs_${randomBytes(12).toString("hex")}`;
 			this.#tokens.set(token, id);
@@ -204,6 +236,21 @@ export class FakeGitHub {
 				);
 			}
 			return this.#write(repository, request.method, resource, request);
+		}
+
+		const membership = url.pathname.match(/^\/user\/memberships\/orgs\/([^/]+)$/);
+		if (url.host === "api.github.com" && request.method === "GET" && membership) {
+			const login = this.#person(bearer);
+			if (!login) return Response.json({ message: "Bad credentials" }, { status: 401 });
+			const org = decodeURIComponent(membership[1] ?? "");
+			const found = this.memberships.get(org)?.get(login);
+			if (!found) return Response.json({ message: "Not Found" }, { status: 404 });
+			return Response.json({
+				state: found.state ?? "active",
+				role: found.role,
+				organization: { login: org, id: this.accountId(org) },
+				user: { login, id: this.accountId(login) },
+			});
 		}
 
 		switch (route) {
@@ -262,15 +309,20 @@ export class FakeGitHub {
 				}
 				return Response.json({ access_token: `ghu_${grant.login}`, token_type: "bearer" });
 			}
+			case "GET api.github.com/user": {
+				const login = this.#person(bearer);
+				if (!login) return Response.json({ message: "Bad credentials" }, { status: 401 });
+				return Response.json({ login, id: this.accountId(login), type: "User" });
+			}
 			case "GET api.github.com/user/installations": {
-				const reachable = this.people.get(bearer.replace(/^ghu_/, ""));
-				if (!bearer.startsWith("ghu_") || !reachable) {
-					return Response.json({ message: "Bad credentials" }, { status: 401 });
-				}
-				return Response.json({
-					total_count: reachable.size,
-					installations: [...reachable].map((id) => ({ id: Number(id) })),
+				const login = this.#person(bearer);
+				const reachable = login === undefined ? undefined : this.people.get(login);
+				if (!reachable) return Response.json({ message: "Bad credentials" }, { status: 401 });
+				const installations = [...reachable].flatMap((id) => {
+					const installation = this.installations.get(id);
+					return installation ? [{ id: Number(id), account: this.#account(installation) }] : [];
 				});
+				return Response.json({ total_count: installations.length, installations });
 			}
 			default:
 				return Response.json({ message: `No fake for ${route}` }, { status: 404 });
@@ -422,6 +474,16 @@ export class FakeGitHub {
 	#objectId(kind: string): string {
 		this.#objects += 1;
 		return createHash("sha1").update(`${kind}\0${this.#objects}`).digest("hex");
+	}
+
+	/** The login behind a user access token. */
+	#person(token: string): string | undefined {
+		return token.startsWith("ghu_") ? token.slice("ghu_".length) : undefined;
+	}
+
+	#account(installation: FakeInstallation) {
+		const { login, type } = installation.account;
+		return { login, id: this.accountId(login), type };
 	}
 
 	/** The repository, if the installation behind this token reaches it. */

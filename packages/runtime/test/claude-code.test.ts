@@ -1,23 +1,22 @@
-import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createMCPClient } from "@ai-sdk/mcp";
 import type { McpServerInput } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ConversationAgent, conversationName } from "../src";
+import { conversationName } from "../src";
 import {
+	CLAUDE_CODE_ENV,
 	CLAUDE_CODE_PLACEHOLDER_KEY,
-	ClaudeCodeTurn,
 	claudeCodeArguments,
+	claudeCodeCommand,
 } from "../src/claude-code";
 import { ENGINE_TOOLS_URL, toolsRequest } from "../src/engine-tools";
 import { linesOf } from "../src/engines";
 import { anthropicRequest } from "../src/models";
 import { decideOutbound } from "../src/outbound";
-import { createTraceTables, RunRecorder, readTrace, type Sql } from "../src/trace";
 import { FakeMcpServer } from "./fake-mcp";
 import type { FakeSandbox } from "./fake-sandbox";
-import { ask, connect, fakeModel, KEY } from "./support";
+import { anthropicAnswer, ask, connect, fakeModel, KEY } from "./support";
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -117,52 +116,6 @@ function assistant(
 	});
 }
 
-/** One of the API's streaming events, as Claude Code passes it on with partial messages. */
-function streamEvent(
-	event: object,
-	extra: { parent_tool_use_id?: string; ttft_ms?: number } = {},
-): string {
-	return JSON.stringify({
-		type: "stream_event",
-		event,
-		parent_tool_use_id: extra.parent_tool_use_id ?? null,
-		...(extra.ttft_ms === undefined ? {} : { ttft_ms: extra.ttft_ms }),
-		uuid: crypto.randomUUID(),
-		session_id: "session",
-	});
-}
-
-/** A request's start: its id and its usage so far, which counts one token of output. */
-function messageStart(id: string, extra: { parent_tool_use_id?: string; ttft_ms?: number } = {}) {
-	const message = {
-		id,
-		type: "message",
-		role: "assistant",
-		model: "claude-sonnet-5-5",
-		content: [],
-		stop_reason: null,
-		usage: { input_tokens: 10, output_tokens: 1 },
-	};
-	return streamEvent({ type: "message_start", message }, extra);
-}
-
-/** A request's end, with its final usage and no word of which request it is. */
-function messageDelta(outputTokens: number, extra: { parent_tool_use_id?: string } = {}) {
-	return streamEvent(
-		{
-			type: "message_delta",
-			delta: { stop_reason: "end_turn", stop_sequence: null },
-			usage: { output_tokens: outputTokens },
-		},
-		extra,
-	);
-}
-
-/** The end of a request's stream, after its last block. */
-function messageStop(extra: { parent_tool_use_id?: string } = {}) {
-	return streamEvent({ type: "message_stop" }, extra);
-}
-
 function toolResult(toolUseId: string, content: string, isError = false): string {
 	return JSON.stringify({
 		type: "user",
@@ -197,9 +150,13 @@ const INIT = JSON.stringify({
 	tools: ["Bash", "Read"],
 });
 
-/** A turn that lists the files with Bash, then answers: two model requests. */
+/**
+ * A turn that lists the files with Bash, then answers: two model requests, whose answers report
+ * their usage as they leave the sandbox.
+ */
 const LISTING = [
 	INIT,
+	anthropicAnswer({ input: 100, output: 20, cacheRead: 1000, stop: "tool_use" }),
 	assistant(
 		"msg_1",
 		{ type: "text", text: "Let me look. " },
@@ -211,6 +168,7 @@ const LISTING = [
 		{ input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 1000 },
 	),
 	toolResult("toolu_1", "a.txt\nb.txt"),
+	anthropicAnswer({ input: 50, output: 10, cacheRead: 1100 }),
 	assistant(
 		"msg_2",
 		{ type: "text", text: "There are two files." },
@@ -310,15 +268,18 @@ describe("an agent whose engine is Claude Code", () => {
 		const usage = { input_tokens: 10, output_tokens: 1 };
 		await machine.scriptEngine({
 			lines: [
+				anthropicAnswer({ stop: "tool_use" }),
 				assistant(
 					"msg_1",
 					{ type: "tool_use", id: "toolu_agent", name: "Agent", input: { prompt: "look" } },
 					usage,
 				),
+				anthropicAnswer(),
 				assistant("msg_sub", { type: "text", text: "a subagent's thought" }, usage, {
 					parent_tool_use_id: "toolu_agent",
 				}),
 				toolResult("toolu_agent", "found it"),
+				anthropicAnswer(),
 				assistant("msg_2", { type: "text", text: "Done." }, usage),
 				result(),
 			],
@@ -333,28 +294,24 @@ describe("an agent whose engine is Claude Code", () => {
 		expect(run).toMatchObject({ status: "succeeded", steps: 3 });
 	});
 
-	it("counts each request's output from its end, which its blocks do not carry", async () => {
+	it("meters each request where it leaves the sandbox, a subagent's too, whatever Claude Code prints", async () => {
 		const { registry, stub, machine } = await conversation();
-		// As the API streams them: a block's usage is the request's start's, one token of output.
+		// As Claude Code prints them: a block's usage is the request's start's, one token of output.
 		const usage = { input_tokens: 10, output_tokens: 1 };
-		const sub = { parent_tool_use_id: "toolu_agent" };
 		await machine.scriptEngine({
 			lines: [
-				messageStart("msg_1", { ttft_ms: 420.4 }),
+				anthropicAnswer({ output: 60, stop: "tool_use" }),
 				assistant("msg_1", { type: "text", text: "Let me ask a helper. " }, usage),
 				assistant(
 					"msg_1",
 					{ type: "tool_use", id: "toolu_agent", name: "Agent", input: { prompt: "look" } },
 					usage,
 				),
-				messageDelta(60),
-				messageStart("msg_sub", { ...sub, ttft_ms: 300 }),
-				assistant("msg_sub", { type: "text", text: "Found it." }, usage, sub),
-				messageDelta(40, sub),
+				// The subagent's request, which Claude Code prints nothing of.
+				anthropicAnswer({ model: "claude-haiku-5-5", output: 40 }),
 				toolResult("toolu_agent", "found it"),
-				messageStart("msg_2"),
+				anthropicAnswer({ output: 15 }),
 				assistant("msg_2", { type: "text", text: "Done." }, usage),
-				messageDelta(15),
 				result(),
 			],
 		});
@@ -367,44 +324,49 @@ describe("an agent whose engine is Claude Code", () => {
 		expect(run).toMatchObject({ status: "succeeded", steps: 3, outputTokens: 60 + 40 + 15 });
 		const trace = await stub.runTrace(run?.id ?? "");
 		expect(trace.filter((span) => span.kind === "model")).toMatchObject([
-			{ step: 0, outputTokens: 60, firstTokenMs: 420 },
-			{ step: 1, outputTokens: 40, firstTokenMs: 300 },
-			{ step: 2, outputTokens: 15, firstTokenMs: null },
+			{ step: 0, status: "ok", outputTokens: 60, finishReason: "tool-calls" },
+			{ step: 1, status: "ok", model: "claude-haiku-5-5", outputTokens: 40, finishReason: "stop" },
+			{ step: 2, status: "ok", outputTokens: 15, finishReason: "stop" },
+		]);
+		// The tool call belongs to the request that asked for it.
+		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([
+			{ step: 0, tool: "Agent" },
 		]);
 	});
 
-	it("times each request from its sending to its stream's end, before its tools run", async () => {
-		const { registry, stub, agentId } = await conversation();
-		const agent = await registry.agentSnapshot(agentId);
-		if (!agent) throw new Error("The agent is missing");
+	it("waits for the last request's record when Claude Code ends its turn first", async () => {
+		const { registry, stub, machine } = await conversation();
 		const usage = { input_tokens: 10, output_tokens: 1 };
-		const spans = await runInDurableObject(stub, (instance: ConversationAgent) => {
-			const sql = instance.sql.bind(instance) as Sql;
-			createTraceTables(sql);
-			const run = new RunRecorder(sql, "run-1", agent, 9_000);
-			const turn = new ClaudeCodeTurn({ write() {} }, run, agent);
-			// Its first token came 400 ms after it was sent; Bash then runs for 2.3 s.
-			turn.take(messageStart("msg_1", { ttft_ms: 400 }), 10_000);
-			turn.take(
-				assistant("msg_1", { type: "tool_use", id: "toolu_1", name: "Bash", input: {} }, usage),
-				10_500,
-			);
-			turn.take(messageDelta(20), 10_600);
-			turn.take(messageStop(), 10_700);
-			turn.take(toolResult("toolu_1", "ok"), 13_000);
-			turn.take(messageStart("msg_2", { ttft_ms: 300 }), 13_500);
-			turn.take(assistant("msg_2", { type: "text", text: "Done." }, usage), 14_000);
-			turn.take(messageDelta(5), 14_050);
-			turn.take(messageStop(), 14_100);
-			turn.take(result(), 14_200);
-			turn.end(14_200);
-			return readTrace(sql, "run-1");
+		await machine.scriptEngine({
+			lines: [
+				{ ...anthropicAnswer({ output: 33 }), lateMs: 300 },
+				assistant("msg_1", { type: "text", text: "Done." }, usage),
+				result(),
+			],
 		});
-		expect(spans).toMatchObject([
-			{ kind: "model", step: 0, startedAt: 9_600, endedAt: 10_700, outputTokens: 20 },
-			{ kind: "tool", step: 0, startedAt: 10_500, endedAt: 13_000 },
-			{ kind: "model", step: 1, startedAt: 13_200, endedAt: 14_100, outputTokens: 5 },
-		]);
+		const socket = await connect(stub);
+		await ask(socket, "Hello");
+		socket.close();
+
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({ status: "succeeded", steps: 1, outputTokens: 33 });
+	});
+
+	it("records requests only with the turn's token, and only while the turn runs", async () => {
+		const { registry, stub, machine } = await conversation();
+		await machine.scriptEngine({ lines: LISTING });
+		const socket = await connect(stub);
+		await ask(socket, "List the files");
+		socket.close();
+
+		const token = (await machine.seen()).engine[0]?.access.meter.token ?? "";
+		expect(token).not.toBe("");
+		expect(await stub.engineRequestStarted(token)).toBeNull();
+		expect(await stub.engineRequestStarted("guess")).toBeNull();
+		const [run] = await registry.listRuns();
+		expect(
+			(await stub.runTrace(run?.id ?? "")).filter((span) => span.kind === "model"),
+		).toHaveLength(2);
 	});
 
 	it("fails the turn in the app's words when Anthropic refuses the key", async () => {
@@ -605,6 +567,7 @@ describe("an agent whose engine is Claude Code", () => {
 		await machine.scriptEngine({
 			lines: [
 				INIT,
+				anthropicAnswer({ stop: "tool_use" }),
 				assistant(
 					"msg_1",
 					{
@@ -616,6 +579,7 @@ describe("an agent whose engine is Claude Code", () => {
 					usage,
 				),
 				toolResult("toolu_search", JSON.stringify({ issues: ["TRK-1"] })),
+				anthropicAnswer(),
 				assistant("msg_2", { type: "text", text: "TRK-1 is flaky." }, usage),
 				result(),
 			],
@@ -649,10 +613,6 @@ describe("an agent whose engine is Claude Code", () => {
 describe("Claude Code's command", () => {
 	const base = { model: "claude-sonnet-5-5", system: "", session: "s", resume: false };
 
-	it("asks for the API's streaming events, the only ones with a request's final usage", () => {
-		expect(claudeCodeArguments({ ...base, tools: false })).toContain("--include-partial-messages");
-	});
-
 	it("names Gateweave's MCP server, and only it, when the turn has tools", () => {
 		const argv = claudeCodeArguments({ ...base, tools: true });
 		expect(argv).toContain("--strict-mcp-config");
@@ -675,6 +635,37 @@ describe("Claude Code's command", () => {
 		expect(argv).toContain("--strict-mcp-config");
 		expect(argv).not.toContain("--mcp-config");
 		expect(argv[argv.indexOf("--allowedTools") + 1]).not.toContain("mcp__");
+	});
+
+	it("makes every model it would choose the agent's, since the sandbox calls no other", () => {
+		const job = {
+			engine: "claude-code" as const,
+			prompt: "List the files",
+			history: null,
+			system: "",
+			provider: "anthropic" as const,
+			model: "claude-sonnet-5-5",
+			cwd: "/workspace",
+			access: {
+				key: KEY,
+				metadata: { workspace: "w", agent: "a", conversation: "c" },
+				tools: null,
+				meter: { conversation: "c", token: "t" },
+			},
+		};
+		const { argv, env } = claudeCodeCommand(job, "s", false);
+		expect(argv[argv.indexOf("--model") + 1]).toBe("claude-sonnet-5-5");
+		expect(env).toMatchObject(CLAUDE_CODE_ENV);
+		expect(env).toMatchObject({
+			ANTHROPIC_SMALL_FAST_MODEL: "claude-sonnet-5-5",
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-sonnet-5-5",
+			ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+			ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-sonnet-5-5",
+			CLAUDE_CODE_SUBAGENT_MODEL: "claude-sonnet-5-5",
+			CLAUDE_CODE_NO_MODEL_FALLBACK: "1",
+		});
+		// The key is still the placeholder.
+		expect(env.ANTHROPIC_API_KEY).toBe(CLAUDE_CODE_PLACEHOLDER_KEY);
 	});
 
 	it("signs no commit or pull request as Claude Code's, whatever the repository's settings say", () => {

@@ -1,8 +1,4 @@
-import {
-	type AssetKind,
-	REPOSITORY_RUNTIMES,
-	type RepositoryRuntime,
-} from "@gateweave/agents-model";
+import { type AssetKind, SETUP_RUNTIMES, type SetupRuntime } from "@gateweave/agents-model";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { type AssetToWrite, detect, wantsFile, writeAssets } from "../src";
@@ -51,7 +47,7 @@ function ref(name: string, prefix = ""): string {
 	return `${prefix}$\{${name}}`;
 }
 
-function write(assets: AssetToWrite[], ...runtimes: RepositoryRuntime[]) {
+function write(assets: AssetToWrite[], ...runtimes: SetupRuntime[]) {
 	return writeAssets(assets, runtimes);
 }
 
@@ -416,7 +412,8 @@ describe("MCP servers", () => {
 			server("field", { command: "x", apiKey: "<redacted>" }),
 			server("rename", { command: "x", env: { A: ref("B") } }),
 		];
-		for (const runtime of REPOSITORY_RUNTIMES) {
+		// Devin gets no MCP servers at all (below).
+		for (const runtime of SETUP_RUNTIMES.filter((each) => each !== "devin")) {
 			const result = write([...cases, github], runtime);
 			// A variable cannot be renamed on the way in Codex, which forwards by name.
 			expect(result.problems.map((problem) => problem.asset)).toEqual(
@@ -455,12 +452,83 @@ describe("MCP servers", () => {
 	});
 });
 
+describe("GitHub Copilot and Devin", () => {
+	const guide = instructions("AGENTS.md", "# Guide\n");
+	const typescript = asset(
+		"instructions",
+		"frontend/ts",
+		{ "ts.instructions.md": '---\napplyTo: "**/*.ts"\n---\nUse strict TypeScript.\n' },
+		{ metadata: { applyTo: ["**/*.ts"] } },
+	);
+	const review = asset("skill", "review", { "SKILL.md": "---\nname: review\n---\nLook.\n" });
+
+	it("gives Copilot AGENTS.md, its path-specific instructions, the shared skills and .vscode/mcp.json", () => {
+		const result = write(
+			[guide, typescript, review, server("github", STDIO), server("acme", HTTP)],
+			"copilot",
+		);
+		expect(result.problems).toEqual([]);
+		const files = fileMap(result);
+		expect(Object.keys(files)).toEqual([
+			".agents/skills/review/SKILL.md",
+			".github/instructions/frontend/ts.instructions.md",
+			".vscode/mcp.json",
+			"AGENTS.md",
+		]);
+		expect(files[".github/instructions/frontend/ts.instructions.md"]).toContain(
+			'applyTo: "**/*.ts"',
+		);
+		expect(json(result, ".vscode/mcp.json")).toEqual({
+			servers: {
+				acme: {
+					type: "http",
+					url: "https://mcp.acme.dev/mcp",
+					headers: { Authorization: ref("env:AUTHORIZATION"), "X-Team": ref("env:X_TEAM") },
+				},
+				github: { ...STDIO, type: "stdio", env: { ACME_TOKEN: ref("env:ACME_TOKEN") } },
+			},
+		});
+		// Other agents leave Copilot's own instructions alone.
+		expect(fileMap(write([typescript], "claude-code", "codex", "cursor"))).toEqual({});
+	});
+
+	it("gives Devin AGENTS.md, and says why its skills and servers are not written", () => {
+		const result = write([guide, review, server("github", STDIO)], "devin");
+		expect(fileMap(result)).toEqual({ "AGENTS.md": "# Guide\n" });
+		expect(result.problems).toEqual([
+			{
+				asset: "github",
+				message: "Devin: it keeps MCP servers in a file of its own outside Git, so none is written",
+			},
+			{ asset: "review", message: "Devin: its docs name no folder for skills, so none is written" },
+		]);
+	});
+
+	it("reads back what it wrote for Copilot", () => {
+		const written = write([guide, typescript, review, server("github", STDIO)], "copilot", "devin");
+		const found = detect(
+			repo(Object.fromEntries(written.files.map((file) => [file.path, file.content]))),
+		);
+		const copilot = found.agents.find((agent) => agent.runtime === "copilot");
+		expect(copilot?.assets).toEqual(
+			expect.arrayContaining([
+				"AGENTS.md",
+				".github/instructions/frontend/ts.instructions.md",
+				".vscode/mcp.json#github",
+			]),
+		);
+		// AGENTS.md is all Devin needs, and other agents read it too: a scan lists Devin itself
+		// once the repository has a file of Devin's own, as it does for any agent.
+		expect(found.agents.map((agent) => agent.runtime)).not.toContain("devin");
+	});
+});
+
 describe("what is not written", () => {
 	it("reports kinds that have no file", () => {
 		const unsupported = (["settings", "prompt", "script", "env-set", "plugin"] as const).map(
 			(kind) => asset(kind, `a ${kind}`, { "x.txt": "x\n" }),
 		);
-		const result = write(unsupported, ...REPOSITORY_RUNTIMES);
+		const result = write(unsupported, ...SETUP_RUNTIMES);
 		expect(result.files).toEqual([]);
 		expect(result.problems.map((problem) => problem.asset)).toEqual(
 			unsupported.map((item) => item.name).sort(),
@@ -486,26 +554,26 @@ describe("byte stability", () => {
 	];
 
 	it("gives the same bytes for the same input in any order", () => {
-		const expected = writeAssets(everything, [...REPOSITORY_RUNTIMES]);
+		const expected = writeAssets(everything, [...SETUP_RUNTIMES]);
 		expect(expected.files.length).toBeGreaterThan(5);
-		const reversed = writeAssets([...everything].reverse(), [...REPOSITORY_RUNTIMES].reverse());
+		const reversed = writeAssets([...everything].reverse(), [...SETUP_RUNTIMES].reverse());
 		expect(reversed).toEqual(expected);
 		const shuffled = [3, 0, 5, 1, 6, 2, 4].map((index) => everything[index] as AssetToWrite);
-		expect(writeAssets(shuffled, ["gemini-cli", "claude-code", "cursor", "codex"])).toEqual(
-			expected,
-		);
+		expect(
+			writeAssets(shuffled, ["devin", "gemini-cli", "copilot", "claude-code", "cursor", "codex"]),
+		).toEqual(expected);
 	});
 
 	it("ignores the order of keys in a stored server", () => {
 		const a = server("s", { command: "x", args: ["1"], env: { B: "<redacted>", A: "<redacted>" } });
 		const b = server("s", { env: { A: "<redacted>", B: "<redacted>" }, args: ["1"], command: "x" });
-		for (const runtime of REPOSITORY_RUNTIMES) {
+		for (const runtime of SETUP_RUNTIMES) {
 			expect(write([a], runtime)).toEqual(write([b], runtime));
 		}
 	});
 
 	it("sorts files by path and ends every text with one newline and no CR", () => {
-		const result = writeAssets(everything, [...REPOSITORY_RUNTIMES]);
+		const result = writeAssets(everything, [...SETUP_RUNTIMES]);
 		const paths = result.files.map((file) => file.path);
 		expect(paths).toEqual([...paths].sort());
 		for (const file of result.files) {
@@ -516,11 +584,11 @@ describe("byte stability", () => {
 	});
 
 	it("never writes a redaction placeholder", () => {
-		const result = writeAssets(everything, [...REPOSITORY_RUNTIMES]);
+		const result = writeAssets(everything, [...SETUP_RUNTIMES]);
 		for (const file of result.files) expect(file.content).not.toContain("<redacted>");
 	});
 	it("writes only files a scan reads, so drift sees every one of them", () => {
-		const result = writeAssets(everything, [...REPOSITORY_RUNTIMES]);
+		const result = writeAssets(everything, [...SETUP_RUNTIMES]);
 		for (const file of result.files) expect(wantsFile(file.path), file.path).toBe(true);
 	});
 });
@@ -575,7 +643,7 @@ describe("round trip through detect", () => {
 			.flatMap((found) => found.files.map((file) => file.content));
 	}
 
-	function reread(runtime: RepositoryRuntime) {
+	function reread(runtime: SetupRuntime) {
 		const written = writeAssets(writable(), [runtime]);
 		expect(written.problems).toEqual([]);
 		const tree = repo(Object.fromEntries(written.files.map((file) => [file.path, file.content])));
@@ -584,7 +652,8 @@ describe("round trip through detect", () => {
 
 	const original = detect(source);
 
-	for (const runtime of REPOSITORY_RUNTIMES) {
+	// Devin gets instructions alone (see "GitHub Copilot and Devin").
+	for (const runtime of SETUP_RUNTIMES.filter((each) => each !== "devin")) {
 		it(`finds the same instructions, skills and servers for ${runtime}`, () => {
 			const { found } = reread(runtime);
 			expect(contents("instructions", found.assets)).toEqual(

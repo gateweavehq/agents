@@ -8,6 +8,224 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.11.0] - 2026-11-02
+
+Workspaces can read GitLab repositories, from gitlab.com or a self-managed GitLab. Updating a
+self-hosted copy applies a migration in each workspace's registry, which runs on its own, and
+needs no new setting.
+
+### Added
+
+- Settings, GitLab connects a GitLab with an access token (`read_api` and `read_repository`),
+  which is encrypted and never shown again. Its projects become repositories, scanned for agents
+  and assets as GitHub repositories are, and a push webhook, whose secret token the page shows
+  once, rescans the default branch on every push. Applying setups and sandboxes stay with GitHub
+  repositories for now, and say so for GitLab ones. (#131)
+
+### Fixed
+
+- On a phone, the settings tabs scroll sideways; the last ones could not be reached. (#131)
+
+## [0.10.0] - 2026-11-02
+
+MCP servers that sign in with OAuth connect with a button instead of an API key. Updating a
+self-hosted copy applies a migration in each workspace's registry, which runs on its own, and
+needs no new setting.
+
+### Added
+
+- On the MCP page, an owner or admin can connect a remote server through its own OAuth sign-in,
+  as the MCP authorization spec describes: the app finds the server's authorization server,
+  registers itself as a client, and signs in with PKCE. Agents that pin the server then use the
+  connection, and act on the server as the person who connected it, which the page says. The
+  tokens are encrypted, never shown, and refreshed when the server stops taking them. A
+  connection is only used at the URL it was made for, and "Disconnect" forgets it. (#129)
+
+## [0.9.0] - 2026-11-02
+
+Owners can delete a workspace, and a new workspace shows how to get going. Updating a
+self-hosted copy needs no migration; `INVITATION_CONTACT` is an optional new setting.
+
+### Added
+
+- An owner can delete a workspace in Settings > Workspace, after typing its name. It deletes its
+  members and invitations, its registry with its keys and secrets, and every conversation with
+  its messages, traces and sandbox. The GitHub App installation stays on GitHub until someone
+  uninstalls it there. (#126)
+- `INVITATION_CONTACT`, an email address or an https URL, is where a workspace asks to be invited
+  to Workers AI or sandboxes. Settings > Models links to it when they are by invitation, with the
+  workspace's name and id in the message. (#127)
+
+### Changed
+
+- The empty Chat page tells an admin of a workspace with no model key to add one first, and
+  links to Settings > Models. (#127)
+
+### Fixed
+
+- Deleting a workspace deleted its registry but left each conversation's messages, traces and
+  sandbox behind, where nothing could reach them. (#126)
+
+## [0.8.0] - 2026-11-02
+
+Setups write GitHub Copilot and Devin files, and a server can offer Workers AI to the workspaces it
+invites, within a daily limit for each. Updating a self-hosted copy needs no migration; the
+Workers AI limits are optional settings (see below).
+
+### Added
+
+- Setups can target GitHub Copilot and Devin. Copilot gets `AGENTS.md`, its own path-specific
+  instructions in `.github/instructions`, the shared `.agents/skills` and `.vscode/mcp.json`.
+  Devin gets `AGENTS.md`; its MCP servers live in a file it keeps out of Git and its docs name no
+  folder for skills, so a setup says those are not written for it. (#122)
+- `WORKERS_AI_WORKSPACES` limits Workers AI to the workspaces a server invites (`sandbox` invites
+  those `SANDBOX_WORKSPACES` invites), and `WORKERS_AI_DAILY_DOLLARS` limits what each may spend
+  on it in a day (UTC), at its list prices. A turn past either is refused, saying why, and
+  Settings > Models shows the day's spend. Gateweave Cloud invites its sandbox workspaces, up to
+  $20 a day each, once its Workers AI token is set. (#123)
+
+### Changed
+
+- Settings > Models says Workers AI is offered to "this workspace" rather than "every
+  workspace", since a server may invite only some. (#123)
+
+## [0.7.0] - 2026-11-02
+
+Two more coding agents in scans, MCP servers that run as a local command, run traces in your own
+observability tool, replaying a run from a step, and usage across workspaces for whoever runs the
+server. Updating a self-hosted copy applies migrations in each workspace's registry, which run on
+their own, and needs no new setting; the usage events are optional (see below).
+
+### Added
+
+- Scans find GitHub Copilot (`.github/copilot-instructions.md`, path-specific instructions,
+  prompt files, custom agents, chat modes, `.vscode/mcp.json` and skills) and Devin, which
+  Windsurf became (`.devin/rules`, Windsurf's rules as legacy, global rules and
+  `.devin/config.json`). Both are read-only: setups do not write them yet. (#116)
+- An agent with a sandbox can use MCP servers that run as a local command, such as
+  `npx -y @acme/mcp`: each turn starts the command in the conversation's sandbox and talks to it
+  over its standard input and output. Its environment takes the agent's environment set's
+  variables, never a secret, since the sandbox holds none: a server that names a secret is left
+  out of the turn, saying which. (#118)
+- Settings > Telemetry sends each run's trace to an OpenTelemetry endpoint over OTLP/HTTP, such
+  as Honeycomb, Grafana or Datadog: the run, its model requests with GenAI attributes for model,
+  tokens and cost, its tool calls and its team's calls, a team's turn as one trace. No message
+  text and no tool input or output is sent; the endpoint's headers are encrypted. A failed send
+  is tried again a few times, and the page shows how the last one went. (#119)
+- On a run's page, "Replay from here" on a model request starts a new conversation with the
+  run's conversation up to that request, answered by the agent as it is now, so a change to its
+  instructions or model shows. The replay links back to the run, which lists its replays. Only
+  whoever started a run may replay it, and owners and admins a trigger's run too. Runs from
+  before this version, and runs of Claude Code, Codex and OpenCode, cannot be replayed. (#120)
+- A server can bind a Workers Analytics Engine dataset as `USAGE` to get one event per run that
+  ends, indexed by workspace, with its agent, model, tokens, cost and sandbox time, for charts
+  and billing across workspaces; `docs/self-hosting.md` has the fields and a query. Gateweave
+  Cloud binds one. (#117)
+
+## [0.6.2] - 2026-11-02
+
+A small fix to run traces, and a safer test dependency. Updating a self-hosted copy needs no
+migration and no new setting.
+
+### Fixed
+
+- In a run of an agent whose engine is OpenCode, a tool call that a subagent's requests ran
+  during, such as `task`, shows under the model request that called it, not under the subagent's
+  last request. (#114)
+
+### Security
+
+- undici, which only local development and tests use through Miniflare, is updated to 7.30.1 for
+  its advisories. Deployed Workers never included it. (#112)
+
+## [0.6.1] - 2026-11-02
+
+A security follow-up to v0.6.0: secrets stored before it are tied to their servers' address too,
+and stay closed if that fails. Updating a self-hosted copy applies a migration in each
+workspace's registry, which runs on its own, and needs no new setting. (#108, #110)
+
+### Security
+
+- A secret stored before v0.6.0 had no address yet, so until it was first used, an admin could
+  point a server that names it at their own host and check it there. Each workspace now ties
+  those secrets once, as it first starts after the update, to the address of the servers that
+  use them. A secret whose servers sit at more than one address is marked as contested on the
+  Environment page and goes only to one of those addresses until someone enters it again. (#108)
+- If that one-time pass fails in a workspace, its secrets that have no address yet are refused
+  to every address until someone enters them again, and the workspace's owners and admins see
+  when it failed. A copy self-hosted from `main` between #108 and #110 whose pass had already
+  failed is not closed after the fact: enter those secrets again. (#110)
+- The registry no longer has a call that hands out opened secret values; they leave it only for
+  a check or a turn, after the address check. (#108)
+
+## [0.6.0] - 2026-11-02
+
+Sandboxes are held tighter: what an agent's model requests may ask of the provider is checked
+before the workspace's key goes on, and the limits on sandboxes hold when turns begin together.
+MCP servers' header secrets are tied to the address they were first sent to. Agents also has
+its own icon. Updating a self-hosted copy applies a migration in each workspace's registry, which
+runs on its own, and needs no new setting. (#104, #105, #107)
+
+### Security
+
+- A model request from a sandbox is read before the workspace's key is added. It must be plain
+  JSON of at most 16 MB, name the agent's own model, and use only tools the engine runs itself:
+  no provider-run tools such as MCP connectors, web search or code execution, no images or files
+  fetched by URL, and nothing that reads what the provider stored (OpenAI's previous responses,
+  item references and files, Google's cached content) or costs more (priority tiers, faster or
+  regional inference). Headers are an allowlist. A refused request answers 403 and shows in the
+  run's trace with the reason. Claude Code's turns set each of its model variables to the agent's
+  model, so it no longer reaches for Haiku or another fallback. (#105, #107)
+- A secret named in an MCP server's headers is sent only to the origin it was first sent to.
+  Anyone who may edit a library MCP server could point it at another host, while its secrets were
+  often entered by someone else; a server at another origin is now left out of checks and turns,
+  saying which secret was entered for another address, until someone enters the value again.
+  Secrets stored before the update are tied to the origin of their next send. (#107)
+- The limit on a workspace's sandboxes and its daily sandbox minutes are checked again inside
+  the write that starts a run, so turns that begin together can no longer go past them. (#105)
+
+### Added
+
+- Agents has its own icon, a team of three agents, linked, on the dark tile of the new Gateweave
+  mark, and an Apple touch icon for the home screen. (#104)
+
+## [0.5.1] - 2026-11-01
+
+A security fix: only someone who controls a GitHub account can connect its installation of the
+GitHub App to a workspace. Updating a self-hosted copy needs no migration and no new setting, but
+its GitHub App needs one more permission.
+
+### Security
+
+- Connecting a GitHub App installation now needs control of the account it is installed on: an
+  active admin of the organization, or the owner of the personal account. Before, any person
+  GitHub lists the installation for could connect it, and GitHub lists it for anyone with read
+  access to one of its repositories. Add the **Organization › Members: Read** permission to the
+  app, and have each organization accept it; until then, connecting an organization is refused.
+  Installations already connected stay connected. (#100)
+
+## [0.5.0] - 2026-11-01
+
+An agent's model requests from its sandbox are now counted as they leave it, so the Runs page
+shows every request Claude Code, Codex and OpenCode make, those of their subagents too, and each
+run shows the sandbox time it took and what that is estimated to cost. Updating a self-hosted copy
+needs no migration and no new setting.
+
+### Added
+
+- Each run with a sandbox shows the sandbox time it accounts for: from its start until its
+  conversation's next turn, or until the sandbox's 15 idle minutes after it ended, so the runs
+  add up to what the daily limit counts. Runs and a run's page show what it is estimated to cost
+  at the machine's list price, apart from the models' cost. (#97)
+
+### Changed
+
+- The model requests of an agent whose engine is Claude Code, Codex or OpenCode are metered where
+  they leave the sandbox, with the usage each answer reports, instead of from what the CLI prints.
+  A Codex turn now shows one span per request rather than one for the whole turn, and requests
+  that were refused, failed or cut off are in the trace with what they used. (#96)
+- OpenCode's `task` tool is on again: its subagents' requests are counted like any other. (#96)
+
 ## [0.4.1] - 2026-11-01
 
 A trigger limited to one Track member's issues shows that member by name. Updating a self-hosted

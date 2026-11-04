@@ -10,6 +10,12 @@
  *   HTTP, `url` is SSE) and https://geminicli.com/docs/tools/mcp-server/
  * - https://cursor.com/docs/context/mcp (`.cursor/mcp.json`; `${env:NAME}` resolves in `command`,
  *   `args`, `env`, `url` and `headers`; no `cwd`)
+ * - https://code.visualstudio.com/docs/copilot/reference/mcp-configuration (checked 2026-11-02:
+ *   GitHub Copilot in VS Code reads `.vscode/mcp.json`, whose servers are under `servers`, with a
+ *   `type` of `stdio`, `http` or `sse`; `${env:NAME}` resolves in it, as in VS Code's settings)
+ *
+ * Devin keeps its MCP servers in `.devin/mcp_config.local.json`, which its docs say to keep out
+ * of Git, so a setup writes none for it.
  *
  * The registry stores a server in the format it was read from, with every value under `env` and
  * `headers` replaced by `<redacted>` and anything else that looked like a credential too. The
@@ -74,10 +80,13 @@ function fail(message: string): never {
 
 /** How the runtime reaches a stored MCP server. */
 export type McpConnection =
-	| { transport: "stdio"; command: string }
+	| { transport: "stdio"; command: string; args: string[]; env: McpHeader[] }
 	| { transport: "http" | "sse"; url: string; headers: McpHeader[] };
 
-/** A request header: text, or a variable whose value goes after `prefix`. */
+/**
+ * A request header, or a variable of a local command's environment: text, or a variable whose
+ * value goes after `prefix`.
+ */
 export interface McpHeader {
 	name: string;
 	value: string | { variable: string; prefix: string };
@@ -99,18 +108,30 @@ export function readMcpConnection(
 		throw error;
 	}
 	const { transport } = server;
+	const named = (values: Map<string, Value>) =>
+		[...values]
+			.sort(([a], [b]) => compare(a, b))
+			.map(
+				([name, value]): McpHeader => ({
+					name,
+					value: typeof value === "string" ? value : { variable: value.ref, prefix: value.prefix },
+				}),
+			);
 	if (transport.kind === "stdio") {
-		return { ok: true, connection: { transport: "stdio", command: transport.command } };
+		return {
+			ok: true,
+			connection: {
+				transport: "stdio",
+				command: transport.command,
+				args: transport.args ?? [],
+				env: named(server.env),
+			},
+		};
 	}
-	const headers = [...server.headers]
-		.sort(([a], [b]) => compare(a, b))
-		.map(
-			([name, value]): McpHeader => ({
-				name,
-				value: typeof value === "string" ? value : { variable: value.ref, prefix: value.prefix },
-			}),
-		);
-	return { ok: true, connection: { transport: transport.kind, url: transport.url, headers } };
+	return {
+		ok: true,
+		connection: { transport: transport.kind, url: transport.url, headers: named(server.headers) },
+	};
 }
 
 export function writeMcpServers(
@@ -142,7 +163,15 @@ export function writeMcpServers(
 
 	for (const runtime of targets) {
 		const emit = EMITTERS[runtime];
-		if (!emit) continue;
+		if (!emit) {
+			for (const name of servers.keys()) {
+				output.problem(
+					name,
+					`${RUNTIME_NAMES[runtime]}: it keeps MCP servers in a file of its own outside Git, so none is written`,
+				);
+			}
+			continue;
+		}
 		const written: Record<string, unknown> = {};
 		for (const [name, { server }] of servers) {
 			try {
@@ -307,15 +336,19 @@ function templates(
 	);
 }
 
-/** Claude Code and Cursor share the `mcpServers` file shape and differ in template and `type`. */
+/**
+ * Claude Code, Cursor and VS Code share the server shape and differ in where the servers sit,
+ * the template and `type`: Claude Code writes it as it was read, Cursor never, VS Code always.
+ */
 function jsonEmitter(
 	path: string,
 	reference: (name: string) => string,
-	options: { typed: boolean },
+	options: { typed: boolean | "always"; key?: string },
 ): Emitter {
+	const key = options.key ?? "mcpServers";
 	return {
 		path,
-		file: (servers) => canonicalJson({ mcpServers: servers }),
+		file: (servers) => canonicalJson({ [key]: servers }),
 		server(server) {
 			const entry: Record<string, unknown> = server.dialect === "json" ? { ...server.extras } : {};
 			const { transport } = server;
@@ -327,7 +360,7 @@ function jsonEmitter(
 					if (server.dialect !== "json") fail("The format has no working directory (cwd)");
 					entry.cwd = server.cwd;
 				}
-				if (transport.typed && options.typed) entry.type = "stdio";
+				if (options.typed === "always" || (transport.typed && options.typed)) entry.type = "stdio";
 			} else {
 				entry.url = transport.url;
 				if (options.typed) entry.type = transport.kind;
@@ -400,6 +433,10 @@ const codex: Emitter = {
 const EMITTERS: Partial<Record<RepositoryRuntime, Emitter>> = {
 	"claude-code": jsonEmitter(".mcp.json", (name) => `\${${name}}`, { typed: true }),
 	cursor: jsonEmitter(".cursor/mcp.json", (name) => `\${env:${name}}`, { typed: false }),
+	copilot: jsonEmitter(".vscode/mcp.json", (name) => `\${env:${name}}`, {
+		typed: "always",
+		key: "servers",
+	}),
 	"gemini-cli": gemini,
 	codex,
 };

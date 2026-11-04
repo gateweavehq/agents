@@ -16,6 +16,8 @@ const RUNTIME_DOTS: Record<AgentRuntime, string> = {
 	codex: "bg-emerald-500",
 	"gemini-cli": "bg-sky-500",
 	cursor: "bg-violet-500",
+	copilot: "bg-indigo-500",
+	devin: "bg-teal-500",
 	gateweave: "bg-zinc-500",
 };
 
@@ -90,13 +92,22 @@ export function ScanStatus({ repository }: { repository: Repository }) {
 	);
 }
 
-/** The repository's page on its host. */
-export function repositoryUrl({ owner, name }: Pick<Repository, "owner" | "name">) {
-	return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+/** The repository's page on its host: GitHub, or the GitLab it is on. */
+export function repositoryUrl({
+	owner,
+	name,
+	webUrl,
+}: Pick<Repository, "owner" | "name"> & { webUrl?: string | null }) {
+	return webUrl ?? `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+}
+
+/** A commit, on the repository's host. */
+export function commitUrl(repository: Repository, commit: string) {
+	return `${repositoryUrl(repository)}${repository.provider === "gitlab" ? "/-" : ""}/commit/${commit}`;
 }
 
 /** A file at a commit, on the repository's host. */
 export function fileUrl(repository: Repository, commit: string, path: string) {
 	const segments = path.split("/").map(encodeURIComponent).join("/");
-	return `${repositoryUrl(repository)}/blob/${commit}/${segments}`;
+	return `${repositoryUrl(repository)}${repository.provider === "gitlab" ? "/-" : ""}/blob/${commit}/${segments}`;
 }

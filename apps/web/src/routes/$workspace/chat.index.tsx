@@ -25,20 +25,32 @@ function NewChat() {
 	const teams = data?.teams ?? [];
 
 	if (agents.length === 0) {
+		// An agent needs a model before it can answer: a key of the workspace's, or Workers AI.
+		const needsKey = admin && data?.hasModels === false;
 		return (
 			<Notice
 				title="No agent to talk to yet"
 				action={
-					<Button asChild size="sm" variant="outline">
-						<Link to="/$workspace/agents" params={{ workspace: slug }}>
-							Go to Agents
-						</Link>
-					</Button>
+					needsKey ? (
+						<Button asChild size="sm" variant="outline">
+							<Link to="/$workspace/settings/models" params={{ workspace: slug }}>
+								Add a model key
+							</Link>
+						</Button>
+					) : (
+						<Button asChild size="sm" variant="outline">
+							<Link to="/$workspace/agents" params={{ workspace: slug }}>
+								Go to Agents
+							</Link>
+						</Button>
+					)
 				}
 			>
-				{admin
-					? "Define an agent run by Gateweave on the Agents page, and chat with it here."
-					: "An owner or admin defines agents run by Gateweave on the Agents page."}
+				{needsKey
+					? "Agents answer with the workspace's own model key. Add one for Anthropic, OpenAI or Google in Settings, then define an agent on the Agents page and chat with it here."
+					: admin
+						? "Define an agent run by Gateweave on the Agents page, and chat with it here."
+						: "An owner or admin defines agents run by Gateweave on the Agents page."}
 			</Notice>
 		);
 	}

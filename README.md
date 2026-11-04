@@ -1,4 +1,8 @@
-# Gateweave Agents
+<p align="center">
+  <img src=".github/logo.svg" width="96" height="96" alt="">
+</p>
+
+<h1 align="center">Gateweave Agents</h1>
 
 See which agents work where, keep their prompts, skills, plugins, scripts and MCP servers in one
 place, apply them to any repository in a click, and run your own teams of agents on Cloudflare.
@@ -7,9 +11,9 @@ Gateweave Agents is part of [Gateweave](https://gateweave.com), the family of op
 tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gateweavehq/track).
 
 > **Status: early development.** Accounts, workspaces, members and invitations work. Workspaces
-> connect to GitHub, and the agents configured in each repository (Claude Code, Codex, Gemini
-> CLI, Cursor) and what they read are found and kept up to date on every push, and can be browsed
-> by project, by repository, by agent and by asset. A workspace library keeps versions of the
+> connect to GitHub or GitLab (gitlab.com or self-managed), and the agents configured in each repository (Claude Code, Codex, Gemini
+> CLI, Cursor, GitHub Copilot, Devin) and what they read are found and kept up to date on every
+> push, and can be browsed by project, by repository, by agent and by asset. A workspace library keeps versions of the
 > assets worth sharing and shows which repositories carry each one and which are behind, and
 > setups pin them for a set of coding agents, preview the files they write, apply them to a
 > repository by pull request and show where a repository has drifted from them since. Ready-made
@@ -20,10 +24,11 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
 > the library, an environment set and MCP servers. Agents work in teams, delegating to, asking
 > and reporting to each other along the edges of a graph. Members chat with an agent or a team,
 > and every answer is a run with its trace and estimated cost, the runs a team's agents led to
-> nested inside it. Triggers start an agent's runs from another service's signed webhooks or on a
+> nested inside it; a run can be replayed from any model request with the agent as it is now, and
+> its trace sent to the workspace's own OpenTelemetry endpoint. Triggers start an agent's runs from another service's signed webhooks or on a
 > schedule, if wanted only for issues with a label or a given assignee, and can keep one
-> conversation per issue. An agent with a sandbox works in a checkout of its repository and
-> proposes its work as a pull request. Ready-made agents
+> conversation per issue. An agent with a sandbox works in a checkout of its repository, runs
+> MCP servers that are local commands there, and proposes its work as a pull request. Ready-made agents
 > [triage Gateweave Track issues](docs/track-triage.md) and
 > [work on the ones assigned to them](docs/track-work.md), from a comment on the issue to a pull
 > request, and go on in the same conversation and pull request when someone comments on the issue,
@@ -49,7 +54,9 @@ pnpm dev         # http://localhost:4720
 
 Sign up with any email and password, then create a workspace. To enable "Sign in with GitHub",
 uncomment and fill in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.dev.vars`. To connect
-workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes.
+workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes. GitLab
+needs nothing on the server: an owner or admin connects it in Settings > GitLab with an access
+token, which the server keeps encrypted, so `SECRETS_KEY` must be set.
 
 Workspaces keep their model provider keys and environment secrets encrypted with the server's
 `SECRETS_KEY`, which `pnpm dev:setup` generates for local development. On a deployed Worker, set
@@ -62,11 +69,13 @@ caching and rate limits, set `AI_GATEWAY_URL` to
 `https://gateway.ai.cloudflare.com/v1/<account id>/<gateway>`, and `AI_GATEWAY_TOKEN` if the
 gateway is authenticated.
 
-To offer [Workers AI](https://developers.cloudflare.com/workers-ai/) models to every workspace,
+To offer [Workers AI](https://developers.cloudflare.com/workers-ai/) models to workspaces,
 with no key of their own, set the secret `WORKERS_AI_TOKEN` (a Cloudflare API token with the
 Workers AI permission) and `CLOUDFLARE_ACCOUNT_ID`, or leave the account out and it is taken from
 `AI_GATEWAY_URL`. Your Cloudflare account pays for those runs, so leave both out unless you mean
-that. Set the token with `pnpm wrangler secret put WORKERS_AI_TOKEN`.
+that. Set the token with `pnpm wrangler secret put WORKERS_AI_TOKEN`. `WORKERS_AI_WORKSPACES`
+offers it only to the workspaces you list, and `WORKERS_AI_DAILY_DOLLARS` limits what each may
+spend on it in a day; see [docs/self-hosting.md](docs/self-hosting.md).
 
 To let agents have a sandbox, a Linux machine per conversation where they run commands and edit
 files, add the `SANDBOX` binding and the `containers` entry that the `staging` environment in

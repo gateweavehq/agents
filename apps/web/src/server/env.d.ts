@@ -46,6 +46,13 @@ declare namespace Cloudflare {
 		 */
 		CLOUDFLARE_ACCOUNT_ID?: string;
 		/**
+		 * The ids of the workspaces that may use Workers AI, separated by commas or spaces. Every
+		 * workspace may when unset; `sandbox` invites those SANDBOX_WORKSPACES invites.
+		 */
+		WORKERS_AI_WORKSPACES?: string;
+		/** US dollars each workspace may spend on Workers AI in a day (UTC). No limit when unset. */
+		WORKERS_AI_DAILY_DOLLARS?: string;
+		/**
 		 * The ids of the workspaces that may use sandboxes, separated by commas or spaces, when the
 		 * deployment binds SANDBOX. Every workspace may when unset; Gateweave Cloud invites them.
 		 */
@@ -62,5 +69,10 @@ declare namespace Cloudflare {
 		 * (EMAIL_FROM). Keep it a secret, so the address stays out of the repository.
 		 */
 		SANDBOX_ALERT_EMAIL?: string;
+		/**
+		 * Where a workspace asks for an invitation to Workers AI or sandboxes, when the server offers
+		 * them by invitation: an email address or an https URL. Settings > Models links to it.
+		 */
+		INVITATION_CONTACT?: string;
 	}
 }

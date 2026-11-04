@@ -211,6 +211,48 @@
       "when": 1793547534967,
       "tag": "0029_square_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1793579837040,
+      "tag": "0030_conscious_titania",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1793583813587,
+      "tag": "0031_gorgeous_redwing",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1793619286480,
+      "tag": "0032_mature_madame_masque",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1793620140265,
+      "tag": "0033_sticky_ozymandias",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1793626935273,
+      "tag": "0034_square_rafael_vega",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1793638467557,
+      "tag": "0035_jazzy_banshee",
+      "breakpoints": true
     }
   ]
 }

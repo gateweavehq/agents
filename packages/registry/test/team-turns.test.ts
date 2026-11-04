@@ -351,6 +351,9 @@ describe("a team's runs", () => {
 			outputTokens: 300,
 			cost: 2_500,
 			unpriced: 1,
+			// None of the team's agents has a sandbox.
+			sandboxSeconds: 0,
+			sandboxCost: 0,
 		});
 		// A nested run's total is its own and those under it.
 		expect((await stub.getRun(coderTurn.runId))?.total).toMatchObject({ runs: 2, running: 1 });

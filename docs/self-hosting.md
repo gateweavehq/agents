@@ -90,23 +90,26 @@ pnpm wrangler secret put BETTER_AUTH_URL
 
 Keep tokens, keys and email addresses as secrets. The limits can be plain variables.
 
-| Name                     | What it does                                                                                                     |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET`     | Signs sessions. Required.                                                                                        |
-| `BETTER_AUTH_URL`        | The address people use, such as `https://agents.example.com`. Inferred from each request when unset.             |
-| `SECRETS_KEY`            | Encrypts model provider keys and environment secrets (32 random bytes, base64). Model keys are off without it.   |
-| `GITHUB_CLIENT_ID`       | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                     |
-| `GITHUB_CLIENT_SECRET`   | The client secret of the same GitHub OAuth app.                                                                  |
-| `GITHUB_APP_*`           | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md). |
-| `EMAIL_FROM`             | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                   |
-| `AI_GATEWAY_URL`         | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.   |
-| `AI_GATEWAY_TOKEN`       | The gateway's token, when it is authenticated.                                                                   |
-| `WORKERS_AI_TOKEN`       | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.       |
-| `CLOUDFLARE_ACCOUNT_ID`  | The account that pays for Workers AI. Taken from `AI_GATEWAY_URL` when unset.                                    |
-| `SANDBOX_WORKSPACES`     | The ids of the workspaces that may use sandboxes, separated by commas. Every workspace when unset.               |
-| `SANDBOX_DAILY_MINUTES`  | Minutes of sandbox time each workspace may use in a day (UTC).                                                   |
-| `SANDBOX_MONTHLY_BUDGET` | US dollars the server may spend on sandboxes in a month (UTC).                                                   |
-| `SANDBOX_ALERT_EMAIL`    | Who hears when sandboxes have spent 80% and then all of the monthly budget. Needs email.                         |
+| Name                       | What it does                                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BETTER_AUTH_SECRET`       | Signs sessions. Required.                                                                                                                                          |
+| `BETTER_AUTH_URL`          | The address people use, such as `https://agents.example.com`. Inferred from each request when unset.                                                               |
+| `SECRETS_KEY`              | Encrypts model provider keys and environment secrets (32 random bytes, base64). Model keys are off without it.                                                     |
+| `GITHUB_CLIENT_ID`         | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                       |
+| `GITHUB_CLIENT_SECRET`     | The client secret of the same GitHub OAuth app.                                                                                                                    |
+| `GITHUB_APP_*`             | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md).                                                   |
+| `EMAIL_FROM`               | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                                                                     |
+| `AI_GATEWAY_URL`           | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                     |
+| `AI_GATEWAY_TOKEN`         | The gateway's token, when it is authenticated.                                                                                                                     |
+| `WORKERS_AI_TOKEN`         | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.                                                         |
+| `CLOUDFLARE_ACCOUNT_ID`    | The account that pays for Workers AI. Taken from `AI_GATEWAY_URL` when unset.                                                                                      |
+| `WORKERS_AI_WORKSPACES`    | The ids of the workspaces that may use Workers AI, separated by commas; `sandbox` for those `SANDBOX_WORKSPACES` invites. Every workspace when unset.              |
+| `WORKERS_AI_DAILY_DOLLARS` | US dollars each workspace may spend on Workers AI in a day (UTC), at its list prices.                                                                              |
+| `SANDBOX_WORKSPACES`       | The ids of the workspaces that may use sandboxes, separated by commas. Every workspace when unset.                                                                 |
+| `SANDBOX_DAILY_MINUTES`    | Minutes of sandbox time each workspace may use in a day (UTC).                                                                                                     |
+| `SANDBOX_MONTHLY_BUDGET`   | US dollars the server may spend on sandboxes in a month (UTC).                                                                                                     |
+| `SANDBOX_ALERT_EMAIL`      | Who hears when sandboxes have spent 80% and then all of the monthly budget. Needs email.                                                                           |
+| `INVITATION_CONTACT`       | Where a workspace asks for an invitation to Workers AI or sandboxes: an email address or an https URL. Settings > Models links to it. Keep an address as a secret. |
 
 ### Your own domain
 
@@ -141,6 +144,56 @@ after its conversation's last turn. To keep the bill in hand:
 - `SANDBOX_MONTHLY_BUDGET` limits the server's spending per month. Agents prices sandbox time at
   the most it can cost, so Cloudflare's bill stays under the budget. Set `SANDBOX_ALERT_EMAIL` to
   hear at 80% and at 100%.
+
+### Usage across workspaces
+
+Each workspace sees its own runs on its Usage and Runs pages. To see every workspace's usage
+together, for charts or billing, bind a
+[Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/) dataset
+as `USAGE` in `wrangler.jsonc`:
+
+```jsonc
+"analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "gateweave_agents_usage" }]
+```
+
+The dataset is created on the first write. From then on, each run that closes writes one event,
+indexed by its workspace's id. Without the binding, nothing is written. The fields are in this
+order (`packages/registry/src/usage.ts`):
+
+| Field       | What it holds                                                                    |
+| ----------- | -------------------------------------------------------------------------------- |
+| `index1`    | The workspace's id                                                               |
+| `blob1`–`8` | Run id, agent id, agent name, provider, model, status, trigger id, top run's id  |
+| `double1`   | Input tokens (cached ones included)                                              |
+| `double2`   | Output tokens                                                                    |
+| `double3`   | Cached input tokens                                                              |
+| `double4`   | Estimated model cost in US dollars, 0 when unpriced                              |
+| `double5`   | 1 when the run has a cost estimate, 0 when a model it used has no prices         |
+| `double6`   | Model requests                                                                   |
+| `double7`   | Seconds the turn took                                                            |
+| `double8`   | Sandbox seconds, with the 15 idle minutes after the turn (an upper bound summed) |
+| `double9`   | Their estimated cost in US dollars                                               |
+
+Query them with the [SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/)
+and an API token with Account Analytics Read. Analytics Engine samples heavy traffic, so weigh each
+event by `_sample_interval`. This month's usage by workspace:
+
+```sql
+SELECT
+  index1 AS workspace,
+  SUM(_sample_interval) AS runs,
+  SUM(_sample_interval * double1) AS input_tokens,
+  SUM(_sample_interval * double2) AS output_tokens,
+  SUM(_sample_interval * double4) AS model_dollars,
+  SUM(_sample_interval * double9) AS sandbox_dollars
+FROM gateweave_agents_usage
+WHERE timestamp >= toStartOfMonth(NOW())
+GROUP BY workspace
+ORDER BY model_dollars DESC
+```
+
+The events are a copy, kept for Analytics Engine's retention (three months). The registry's runs
+stay the record each workspace sees.
 
 ## Updating
 

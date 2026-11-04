@@ -302,6 +302,11 @@ function McpServerState({ server }: { server: AgentMcpServer }) {
 			)}
 			{"problem" in connection ? (
 				<p className="text-destructive">{connection.problem}</p>
+			) : connection.transport === "stdio" ? (
+				<p className="truncate">
+					Local command, in the sandbox ·{" "}
+					<span className="font-mono">{[connection.command, ...connection.args].join(" ")}</span>
+				</p>
 			) : (
 				<p className="truncate">
 					{connection.transport === "sse" ? "SSE" : "Streamable HTTP"} ·{" "}
@@ -310,7 +315,11 @@ function McpServerState({ server }: { server: AgentMcpServer }) {
 			)}
 			{variables.length > 0 && (
 				<p>
-					Its headers use <Names names={variables.map((variable) => variable.name)} />.
+					Its{" "}
+					{"transport" in connection && connection.transport === "stdio"
+						? "environment"
+						: "headers"}{" "}
+					use <Names names={variables.map((variable) => variable.name)} />.
 					{missing.length > 0 && (
 						<>
 							{" "}

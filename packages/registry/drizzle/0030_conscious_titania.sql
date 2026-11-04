@@ -1,0 +1,1 @@
+ALTER TABLE `env_secrets` ADD `sent_to` text;

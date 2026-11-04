@@ -21,6 +21,9 @@ import {
 	envSecretInput,
 	envSetEditInput,
 	envSetInput,
+	type GitLabConnection,
+	type GitLabConnectionInput,
+	gitlabConnectionInput,
 	isKeyedProvider,
 	KEYED_PROVIDERS,
 	type KeyedProvider,
@@ -54,10 +57,10 @@ import {
 	projectPatch,
 	providerKeyInput,
 	providerMissing,
+	REPOSITORY_PROVIDERS,
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
-	type ResolvedEnvironment,
 	type Run,
 	type RunCursor,
 	type RunFinish,
@@ -93,6 +96,10 @@ import {
 	type TeamEntry,
 	type TeamGraphInput,
 	type TeamInput,
+	type TelemetryExportResult,
+	type TelemetryInput,
+	type TelemetrySettings,
+	type TelemetryTarget,
 	type TotaledRun,
 	TRACK_KEY_VARIABLE,
 	TRIGGER_LIMITS,
@@ -111,6 +118,8 @@ import {
 	type TurnVia,
 	teamGraphInput,
 	teamInput,
+	telemetryExportResult,
+	telemetryInput,
 	trackTriagePlan,
 	trackWorkPlan,
 	triggerInput,
@@ -118,9 +127,13 @@ import {
 	triggerPatch,
 	triggerSecret,
 	turnVia,
+	WORKERS_AI_DAY_USED,
+	WORKERS_AI_NOT_INVITED,
 	type WorkersAiSettings,
 	type WrittenAssetInput,
+	workersAiDailyLimit,
 	workersAiOffered,
+	workersAiOfferTo,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
@@ -144,6 +157,7 @@ import {
 	removeConversation,
 	startConversation,
 	startNestedConversation,
+	startReplay,
 	startTeamConversation,
 } from "./conversations";
 import * as schema from "./db/schema";
@@ -156,6 +170,7 @@ import {
 } from "./definitions";
 import {
 	checkEnvSecretName,
+	closeUnsentSecrets,
 	createEnvSet,
 	editEnvSet,
 	listEnvSets,
@@ -164,16 +179,51 @@ import {
 	secretPlace,
 	storeEnvSecret,
 } from "./environment";
+import {
+	type GitLabAccess,
+	GitLabError,
+	gitlabBranchHead,
+	gitlabProjects,
+	gitlabTexts,
+	gitlabTree,
+	gitlabUser,
+} from "./gitlab/client";
+import {
+	connectionCount,
+	connectionRow,
+	forgetConnection,
+	gitlabExternalId,
+	gitlabPlace,
+	listConnections,
+	MAX_GITLAB_CONNECTIONS,
+	projectInputs,
+	recordDelivery,
+	recordSync,
+} from "./gitlab/connections";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import {
+	beginOAuth,
+	forgetOAuth,
+	markConnected,
+	oauthPlace,
+	oauthRow,
+	saveOAuth,
+	takeState,
+} from "./mcp-oauth";
+import {
 	agentServers,
+	BIND_UNSENT_SECRETS,
+	bindUnsentSecrets,
 	createMcpServer,
 	editMcpServer,
 	listMcpServers,
 	mcpCheckPlan,
+	type OpenedEnvironment,
 	recordMcpCheck,
-	turnServer,
+	remoteLibraryServer,
+	turnServers,
 } from "./mcp-servers";
+import { passFailedAt, runPassOnce } from "./passes";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
 	keyPlace,
@@ -207,8 +257,11 @@ import {
 	expireRuns,
 	finishRun,
 	getRun,
+	hasRuns,
 	listNestedRuns,
+	listReplays,
 	listRuns,
+	providerCost,
 	recordRunPullRequest,
 	runHadSandbox,
 	runUsage,
@@ -222,7 +275,7 @@ import {
 	utcDay,
 	utcMonth,
 } from "./sandbox-meter";
-import { scanRepository } from "./scanner";
+import { type RepositorySource, scanRepository } from "./scanner";
 import {
 	applyScan,
 	reconcileInstallation,
@@ -246,6 +299,15 @@ import {
 	turnEdges,
 	updateTeam,
 } from "./teams";
+import {
+	getTelemetry,
+	recordTelemetryExport,
+	removeTelemetry,
+	sealedTelemetry,
+	setTelemetry,
+	TELEMETRY_PLACE,
+	tracesUrl,
+} from "./telemetry";
 import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
 import { setUpTrackWork, type TrackWorkMade } from "./track-work";
 import {
@@ -267,6 +329,7 @@ import {
 	updateTrigger,
 	verifyDelivery,
 } from "./triggers";
+import { type UsageSettings, usagePoint, writeUsage } from "./usage";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
@@ -309,6 +372,18 @@ export class RegistryDO extends DurableObject {
 		this.#db = drizzle(ctx.storage, { schema });
 		void ctx.blockConcurrencyWhile(async () => {
 			await migrate(this.#db, migrations);
+			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
+			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`). This
+			// one's failure closes the values it would have tied, which go nowhere until they are
+			// entered again, rather than to the first origin that asks (AGT-66).
+			runPassOnce(
+				this.#db,
+				(fn) => this.#write(fn),
+				BIND_UNSENT_SECRETS,
+				() => bindUnsentSecrets(this.#db),
+				Date.now(),
+				() => closeUnsentSecrets(this.#db),
+			);
 			// A migration may queue scans, as 0008 does.
 			await this.#scheduleAlarm();
 		});
@@ -546,10 +621,18 @@ export class RegistryDO extends DurableObject {
 	}
 
 	// Environment sets, which owners and admins manage. Secret values go in and never come out:
-	// the pages see which names have one, and only `resolveEnvironment` opens them.
+	// the pages see which names have one, and only `#openEnvironment` opens them.
 
 	listEnvSets(): EnvSetEntry[] {
 		return listEnvSets(this.#db);
+	}
+
+	/**
+	 * When tying the values stored before ties failed, closing them (AGT-66), or null. For owners
+	 * and admins, who enter those values again; why it failed is in the log, not here.
+	 */
+	secretTiesFailedAt(): number | null {
+		return passFailedAt(this.#db, BIND_UNSENT_SECRETS);
 	}
 
 	/** Creates a set. Returns its id. */
@@ -592,8 +675,111 @@ export class RegistryDO extends DurableObject {
 	async mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null> {
 		const plan = mcpCheckPlan(this.#db, id.parse(assetId));
 		if (!plan) return null;
-		const environment = plan.agentId ? await this.resolveEnvironment(plan.agentId) : null;
-		return turnServer({ name: plan.name, reading: plan.reading, tools: null }, environment);
+		const environment = plan.agentId ? await this.#openEnvironment(plan.agentId) : null;
+		const server = { assetId: plan.assetId, name: plan.name, reading: plan.reading, tools: null };
+		// A check has no sandbox, so it cannot start a local command.
+		const [target] = this.#write(() => turnServers(this.#db, [server], environment, false));
+		return target ?? null;
+	}
+
+	// MCP servers connected through OAuth (AGT-78, `./mcp-oauth.ts`). These are for the app's
+	// server functions and its OAuth provider alone; none returns a secret to a page.
+
+	/**
+	 * Starts connecting a library server through OAuth, for `by`: a fresh, single-use state, bound
+	 * to them. Refused for a server that is not a remote one in the library.
+	 */
+	mcpOAuthBegin(
+		assetId: string,
+		by: string,
+	): { state: string; serverUrl: string } | ProviderRefusal {
+		const asset = id.parse(assetId);
+		const member = id.parse(by);
+		return this.#write(() => {
+			const server = remoteLibraryServer(this.#db, asset);
+			if ("problem" in server) return refused(server.problem);
+			const state = randomToken();
+			beginOAuth(
+				this.#db,
+				{ assetId: asset, serverUrl: server.url, by: member },
+				state,
+				Date.now(),
+			);
+			return { state, serverUrl: server.url };
+		});
+	}
+
+	/** Uses up the flow's state as the server sends it back: true when it is good, for `by`. */
+	mcpOAuthTakeState(assetId: string, state: string, by: string): boolean {
+		const asset = id.parse(assetId);
+		const given = z.string().min(1).max(200).parse(state);
+		const member = id.parse(by);
+		return this.#write(() => takeState(this.#db, asset, given, member, Date.now()));
+	}
+
+	/**
+	 * What the OAuth client kept for a server, opened, for the app's provider in this request's
+	 * memory: like `beginTurn`'s key, never for a page. Null when there is nothing.
+	 */
+	async mcpOAuthOpen(assetId: string): Promise<McpOAuthOpened | null> {
+		const asset = id.parse(assetId);
+		const row = oauthRow(this.#db, asset);
+		if (!row) return null;
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return null;
+		const open = async (part: "client" | "verifier" | "tokens", sealed: string | null) => {
+			if (sealed === null) return null;
+			try {
+				return JSON.parse(await sealer.open(oauthPlace(asset, part), sealed)) as unknown;
+			} catch {
+				return null;
+			}
+		};
+		return {
+			serverUrl: row.serverUrl,
+			authorizationServer: row.authorizationServer,
+			client: await open("client", row.sealedClient),
+			verifier: (await open("verifier", row.sealedVerifier)) as string | null,
+			tokens: await open("tokens", row.sealedTokens),
+		};
+	}
+
+	/** Keeps, sealed, what the OAuth client saves for a server; null clears a part. */
+	async mcpOAuthSave(assetId: string, parts: McpOAuthParts): Promise<boolean> {
+		const asset = id.parse(assetId);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return false;
+		const seal = async (part: "client" | "verifier" | "tokens", value: unknown) =>
+			value === undefined
+				? undefined
+				: value === null
+					? null
+					: await sealer.seal(oauthPlace(asset, part), JSON.stringify(value));
+		const sealed = {
+			sealedClient: await seal("client", parts.client),
+			sealedVerifier: await seal("verifier", parts.verifier),
+			sealedTokens: await seal("tokens", parts.tokens),
+			...(parts.authorizationServer === undefined
+				? {}
+				: { authorizationServer: parts.authorizationServer }),
+		};
+		const defined = Object.fromEntries(
+			Object.entries(sealed).filter(([, value]) => value !== undefined),
+		);
+		return this.#write(() => saveOAuth(this.#db, asset, defined));
+	}
+
+	/** Marks a server connected by `by`, once the flow kept its first tokens. */
+	mcpOAuthConnected(assetId: string, by: string): void {
+		const asset = id.parse(assetId);
+		const member = id.parse(by);
+		this.#write(() => markConnected(this.#db, asset, member, Date.now()));
+	}
+
+	/** Forgets a server's OAuth connection. False when it had none. */
+	mcpOAuthDisconnect(assetId: string): boolean {
+		const asset = id.parse(assetId);
+		return this.#write(() => forgetOAuth(this.#db, asset));
 	}
 
 	/** Keeps how checking a server went as its last check. Null when it is not in the library. */
@@ -614,7 +800,7 @@ export class RegistryDO extends DurableObject {
 		const sealed = await sealer.seal(secretPlace(assetId, name), value);
 		const now = Date.now();
 		this.#write(() => storeEnvSecret(this.#db, { assetId, name, sealed, setBy: by }, now));
-		return { name, state: "set", setBy: by, setAt: now };
+		return { name, state: "set", setBy: by, setAt: now, contested: null };
 	}
 
 	/** Removes a stored value, even one for a name the set no longer declares. */
@@ -625,15 +811,18 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * The environment an agent runs with, secrets opened: for the runtime only. No server function
-	 * or page may return this. A value that cannot be opened, because the server's `SECRETS_KEY`
-	 * changed, counts as missing: it has to be set again. Null when there is no such live agent.
+	 * The environment an agent runs with, secrets opened, and which sealed value each secret was
+	 * opened from. Private: only `turnServers`, which sends each secret to the origin it is tied to
+	 * alone, may hand a value on, in `beginTurn` and `mcpCheckTarget`. A value that cannot be
+	 * opened, because the server's `SECRETS_KEY` changed, counts as missing: it has to be set
+	 * again. Null when there is no such live agent.
 	 */
-	async resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null> {
-		const pinned = pinnedEnvironment(this.#db, id.parse(agentId));
+	async #openEnvironment(agentId: string): Promise<OpenedEnvironment | null> {
+		const pinned = pinnedEnvironment(this.#db, agentId);
 		if (!pinned) return null;
 		const values = { ...pinned.variables };
 		const missing: string[] = [];
+		const opened = new Map<string, string>();
 		const stored = pinned.secrets.filter((secret) => secret.sealed !== null);
 		const sealer = stored.length > 0 ? await this.#sealerOf() : null;
 		for (const { name, sealed } of pinned.secrets) {
@@ -643,11 +832,12 @@ export class RegistryDO extends DurableObject {
 			}
 			try {
 				values[name] = await sealer.open(secretPlace(pinned.assetId, name), sealed);
+				opened.set(name, sealed);
 			} catch {
 				missing.push(name);
 			}
 		}
-		return { values, missing };
+		return { environment: { values, missing }, assetId: pinned.assetId, opened };
 	}
 
 	// Conversations with agents run by Gateweave. Each is private to the member who started it,
@@ -722,8 +912,14 @@ export class RegistryDO extends DurableObject {
 		const { agent, position } = plan;
 		const prepared = await this.#prepareTurn(conversation, agent, position, true);
 		if ("status" in prepared) return prepared;
-		const runId = this.#write(() =>
-			beginRun(
+		// The limits decide again as the run begins: other turns may have begun while this one
+		// awaited.
+		return this.#write(() => {
+			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
+			if (over) return over;
+			const replayOf =
+				parties.replayOf !== null && !hasRuns(this.#db, conversation) ? parties.replayOf : null;
+			const runId = beginRun(
 				this.#db,
 				{
 					agent,
@@ -731,11 +927,12 @@ export class RegistryDO extends DurableObject {
 					startedBy: parties.startedBy,
 					teamPath: position?.path ?? null,
 					sandbox: prepared.sandbox,
+					replayOf,
 				},
 				Date.now(),
-			),
-		);
-		return { ...prepared, runId };
+			);
+			return { ...prepared, runId };
+		});
 	}
 
 	/**
@@ -769,6 +966,12 @@ export class RegistryDO extends DurableObject {
 			// A retry may have taken the delivery over while the key was opened.
 			if (!deliveryOf(this.#db, conversation)) {
 				return refused("This delivery has had its run already");
+			}
+			// And other turns may have taken the sandboxes, or the day's minutes.
+			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
+			if (over) {
+				settleDelivery(this.#db, conversation, { error: over.message });
+				return over;
 			}
 			const now = Date.now();
 			noteTurn(this.#db, conversation, message, now);
@@ -825,6 +1028,8 @@ export class RegistryDO extends DurableObject {
 			if (now.agent.agentId !== plan.agent.agentId) {
 				return refused("The team changed as this turn began");
 			}
+			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
+			if (over) return over;
 			const at = Date.now();
 			const started = startNestedConversation(
 				this.#db,
@@ -875,6 +1080,18 @@ export class RegistryDO extends DurableObject {
 			return refused(
 				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
 			);
+		} else {
+			const settings = this.env as WorkersAiSettings;
+			// Each registry is named for its workspace (`registryFor` in the app).
+			if (workersAiOfferTo(settings, this.ctx.id.name ?? "") !== "offered") {
+				return refused(`${WORKERS_AI_NOT_INVITED}, so ${agent.name} cannot answer.`);
+			}
+			const limit = workersAiDailyLimit(settings);
+			if (limit !== null && this.workersAiSpentToday() >= limit) {
+				return refused(
+					`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
+				);
+			}
 		}
 		// An ask has no tools, so it needs no sandbox either, but an engine such as Claude Code runs
 		// only in one.
@@ -893,21 +1110,11 @@ export class RegistryDO extends DurableObject {
 				`${SANDBOX_NOT_INVITED}, so ${agent.name} cannot answer. Whoever runs this server can invite this workspace.`,
 			);
 		}
-		if (sandbox && sandboxesInUse(this.#db, conversation, Date.now()) >= MAX_WORKSPACE_SANDBOXES) {
-			return refused(
-				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
-			);
+		if (sandbox) {
+			const over = this.#sandboxLimitRefusal(conversation, agent);
+			if (over) return over;
 		}
 		const limits = sandboxLimits(this.env as SandboxSettings);
-		if (
-			sandbox &&
-			limits.dailyMinutes !== null &&
-			this.sandboxSecondsToday() >= limits.dailyMinutes * 60
-		) {
-			return refused(
-				`${SANDBOX_DAY_USED}, ${limits.dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
-			);
-		}
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
 		const repository = sandbox ? agentRepository(this.#db, agent.agentId) : null;
 		if (repository && "problem" in repository) {
@@ -939,11 +1146,32 @@ export class RegistryDO extends DurableObject {
 			// Workers AI has no key of the workspace's: the runtime uses the deployment's token, which
 			// never passes through here.
 			isKeyedProvider(provider) ? this.#openKey(provider) : { key: null },
-			servers.length > 0 ? this.resolveEnvironment(agent.agentId) : null,
+			servers.length > 0 ? this.#openEnvironment(agent.agentId) : null,
 		]);
 		if ("status" in opened) return opened;
-		const mcpServers = servers.map((server) => turnServer(server, environment));
+		const mcpServers = this.#write(() => turnServers(this.#db, servers, environment, sandbox));
 		return { agent, key: opened.key, mcpServers, edges, sandbox, repository };
+	}
+
+	/**
+	 * Why a turn of `agent` in `conversation` may not have a sandbox now, or null when it may: the
+	 * workspace's sandboxes are all in use, or its minutes for the day are. Synchronous, so it can
+	 * decide again in the `#write` that begins the run: a turn awaits as it is prepared, and others
+	 * may begin meanwhile (AGT-63).
+	 */
+	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): ProviderRefusal | null {
+		if (sandboxesInUse(this.#db, conversation, Date.now()) >= MAX_WORKSPACE_SANDBOXES) {
+			return refused(
+				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
+			);
+		}
+		const { dailyMinutes } = sandboxLimits(this.env as SandboxSettings);
+		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
+			return refused(
+				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
+			);
+		}
+		return null;
 	}
 
 	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */
@@ -951,6 +1179,11 @@ export class RegistryDO extends DurableObject {
 		const run = id.parse(runId);
 		const data = runFinish.parse(finish);
 		const closed = this.#write(() => finishRun(this.#db, run, data));
+		if (closed) {
+			const done = getRun(this.#db, run);
+			// Each registry is named for its workspace (`registryFor` in the app).
+			if (done) this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done));
+		}
 		const { monthlyBudget } = sandboxLimits(this.env as SandboxSettings);
 		if (closed && monthlyBudget !== null && runHadSandbox(this.#db, run)) {
 			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
@@ -961,6 +1194,15 @@ export class RegistryDO extends DurableObject {
 			);
 		}
 		return closed;
+	}
+
+	/**
+	 * US dollars the workspace's runs spent on Workers AI today (UTC), at its list prices, for the
+	 * deployment's daily limit. The deployment pays for them.
+	 */
+	workersAiSpentToday(): number {
+		const today = utcDay(Date.now());
+		return providerCost(this.#db, "workers-ai", today.start, today.end) / 1_000_000;
 	}
 
 	/** Seconds of sandbox time the workspace's conversations use today (UTC), for its limit. */
@@ -997,6 +1239,53 @@ export class RegistryDO extends DurableObject {
 		const run = id.parse(runId);
 		this.#write(() => expireRuns(this.#db, Date.now()));
 		return getRun(this.#db, run);
+	}
+
+	/**
+	 * Starts a conversation that replays a run from its model request `step` (AGT-73), for the runtime
+	 * to fill with the run's conversation up to there and answer with the agent as it is now. Only
+	 * whoever started a run may replay it, since that copies their conversation's words, and an owner
+	 * or admin (`admin`) a trigger's run, whose words they read on the run already. A run of an engine
+	 * in the sandbox is refused: its session lives in the CLI.
+	 */
+	replayRun(
+		runId: string,
+		step: number,
+		member: string,
+		admin: boolean,
+	): { conversationId: string } | ProviderRefusal {
+		const run = getRun(this.#db, id.parse(runId));
+		const at = z.number().int().nonnegative().parse(step);
+		const by = id.parse(member);
+		if (!run || (run.startedBy !== by && !(admin === true && run.triggerId !== null))) {
+			return refused("Only whoever started a run can replay it, and owners and admins a trigger's");
+		}
+		if (run.parentRunId !== null) {
+			return refused("This run was a turn a team's edge asked for: replay the run at the top");
+		}
+		if (run.conversationId === null) {
+			return refused("Its conversation was deleted, so there is nothing to replay");
+		}
+		if (run.status === "running") return refused("Wait for the run to end before replaying it");
+		if (at >= Math.max(run.steps, 1)) return refused("The run has no such step");
+		const agent = getAgent(this.#db, run.agentId);
+		if (!agent?.definition) return refused(`${run.agentName} was removed, so it cannot answer`);
+		if (agent.definition.engine !== "gateweave") {
+			return refused(
+				`${agent.agent.name} runs in the sandbox's ${agent.definition.engine}, whose runs cannot be replayed yet`,
+			);
+		}
+		const { conversationId } = run;
+		const started = this.#write(() =>
+			startReplay(this.#db, { id: run.id, agentId: run.agentId, conversationId }, by, Date.now()),
+		);
+		if (!started) return refused(`${run.agentName} was removed, so it cannot answer`);
+		return { conversationId: started.id };
+	}
+
+	/** The runs that replay a run, oldest first. */
+	listReplays(runId: string): TotaledRun[] {
+		return listReplays(this.#db, id.parse(runId));
 	}
 
 	/** The runs one run called over its team's edges, in the order it called them. */
@@ -1233,6 +1522,73 @@ export class RegistryDO extends DurableObject {
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the
 	// pages see a hint, and only the runtime opens them.
 
+	// Where the workspace's run traces go over OpenTelemetry.
+
+	/** The settings as pages show them: the headers' names, never their values. */
+	getTelemetry(): TelemetrySettings | null {
+		return getTelemetry(this.#db);
+	}
+
+	/** Saves where traces go, with the headers sealed, in place of the earlier settings. */
+	async setTelemetry(
+		input: TelemetryInput,
+		setBy: string,
+	): Promise<TelemetrySettings | ProviderRefusal> {
+		const { endpoint, headers } = telemetryInput.parse(input);
+		const by = z.string().trim().min(1).max(200).parse(setBy);
+		let sealedHeaders: string | null = null;
+		if (headers.length > 0) {
+			const sealer = await this.#sealerOf();
+			if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
+			const values = Object.fromEntries(headers.map((header) => [header.name, header.value]));
+			sealedHeaders = await sealer.seal(TELEMETRY_PLACE, JSON.stringify(values));
+		}
+		const headerNames = headers.map((header) => header.name);
+		return this.#write(() =>
+			setTelemetry(this.#db, { endpoint, headerNames, sealedHeaders, setBy: by }, Date.now()),
+		);
+	}
+
+	removeTelemetry(): boolean {
+		return this.#write(() => removeTelemetry(this.#db));
+	}
+
+	/**
+	 * Where to send a run's trace, with the headers opened, for the runtime alone, like `beginTurn`'s
+	 * key: no server function may return it to a browser. Null when export is off, or the headers
+	 * cannot be opened, which is recorded as the last export's failure.
+	 */
+	async telemetryTarget(): Promise<TelemetryTarget | null> {
+		const stored = sealedTelemetry(this.#db);
+		if (!stored) return null;
+		const url = tracesUrl(stored.endpoint);
+		if (stored.sealedHeaders === null) return { url, headers: {}, setAt: stored.setAt };
+		const sealer = await this.#sealerOf();
+		try {
+			if ("unavailable" in sealer) throw new Error(sealer.unavailable);
+			const opened = JSON.parse(await sealer.open(TELEMETRY_PLACE, stored.sealedHeaders));
+			const headers = z.record(z.string(), z.string()).parse(opened);
+			return { url, headers, setAt: stored.setAt };
+		} catch {
+			this.#write(() =>
+				recordTelemetryExport(
+					this.#db,
+					stored.setAt,
+					{ ok: false, error: "The headers could not be opened; enter them again" },
+					Date.now(),
+				),
+			);
+			return null;
+		}
+	}
+
+	/** Keeps how exporting a trace went, for the settings page. */
+	recordTelemetryExport(setAt: number, result: TelemetryExportResult): boolean {
+		const version = z.number().int().nonnegative().parse(setAt);
+		const data = telemetryExportResult.parse(result);
+		return this.#write(() => recordTelemetryExport(this.#db, version, data, Date.now()));
+	}
+
 	listProviderKeys(): ProviderKey[] {
 		return listProviderKeys(this.#db);
 	}
@@ -1311,6 +1667,201 @@ export class RegistryDO extends DurableObject {
 		this.#write(() => removeInstallation(this.#db, installation, Date.now()));
 	}
 
+	// GitLab connections (AGT-79): a token an owner or admin pastes, kept sealed.
+
+	gitlabConnections(): GitLabConnection[] {
+		return listConnections(this.#db);
+	}
+
+	/**
+	 * Connects a GitLab: the token is tried, and its projects become repositories, queued for a
+	 * scan. Returns the secret token for the push webhook, which is shown this once.
+	 */
+	async gitlabConnect(
+		input: GitLabConnectionInput,
+		by: string,
+	): Promise<{ connection: GitLabConnection; webhookSecret: string } | ProviderRefusal> {
+		const { baseUrl, token } = gitlabConnectionInput.parse(input);
+		const creator = z.string().trim().min(1).max(200).parse(by);
+		if (connectionCount(this.#db) >= MAX_GITLAB_CONNECTIONS) {
+			return refused(`A workspace connects at most ${MAX_GITLAB_CONNECTIONS} GitLabs`);
+		}
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const access: GitLabAccess = { baseUrl, token };
+		let account: string;
+		let projects: Awaited<ReturnType<typeof gitlabProjects>>["projects"];
+		try {
+			account = await gitlabUser(access);
+			projects = (await gitlabProjects(access)).projects;
+		} catch (error) {
+			return refused(gitlabMessage(error));
+		}
+		const connectionId = crypto.randomUUID();
+		const webhookSecret = randomSecret();
+		const sealedToken = await sealer.seal(gitlabPlace(connectionId, "token"), token);
+		const sealedWebhookSecret = await sealer.seal(
+			gitlabPlace(connectionId, "webhook"),
+			webhookSecret,
+		);
+		const now = Date.now();
+		this.#write(() => {
+			this.#db
+				.insert(schema.gitlabConnections)
+				.values({
+					id: connectionId,
+					baseUrl,
+					account: account.slice(0, 255),
+					sealedToken,
+					tokenHint: token.slice(-4),
+					sealedWebhookSecret,
+					createdBy: creator,
+					createdAt: now,
+					syncedAt: now,
+				})
+				.run();
+			reconcileInstallation(
+				this.#db,
+				connectionId,
+				projectInputs(connectionId, baseUrl, projects),
+				now,
+			);
+		});
+		await this.#scheduleAlarm();
+		const connection = listConnections(this.#db).find((found) => found.id === connectionId);
+		if (!connection) return refused("The connection was not kept");
+		return { connection, webhookSecret };
+	}
+
+	/** Lists the connection's projects again: new ones are scanned, gone ones removed. */
+	async gitlabSync(connectionId: string): Promise<GitLabConnection | ProviderRefusal> {
+		const connection = id.parse(connectionId);
+		const opened = await this.#gitlabAccess(connection);
+		if ("status" in opened) return opened;
+		const now = Date.now();
+		try {
+			const { projects } = await gitlabProjects(opened);
+			this.#write(() => {
+				reconcileInstallation(
+					this.#db,
+					connection,
+					projectInputs(connection, opened.baseUrl, projects),
+					now,
+				);
+				recordSync(this.#db, connection, { at: now, error: null });
+			});
+		} catch (error) {
+			const message = gitlabMessage(error);
+			this.#write(() => recordSync(this.#db, connection, { at: now, error: message }));
+			return refused(message);
+		}
+		await this.#scheduleAlarm();
+		return (
+			listConnections(this.#db).find((found) => found.id === connection) ??
+			refused("That GitLab is not connected")
+		);
+	}
+
+	/** A new secret token for the push webhook, shown this once; the old one stops working. */
+	async gitlabNewWebhookSecret(connectionId: string): Promise<string | ProviderRefusal> {
+		const connection = id.parse(connectionId);
+		if (!connectionRow(this.#db, connection)) return refused("That GitLab is not connected");
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const secret = randomSecret();
+		const sealed = await sealer.seal(gitlabPlace(connection, "webhook"), secret);
+		this.#write(() =>
+			this.#db
+				.update(schema.gitlabConnections)
+				.set({ sealedWebhookSecret: sealed })
+				.where(eq(schema.gitlabConnections.id, connection))
+				.run(),
+		);
+		return secret;
+	}
+
+	/** Forgets the token. Its repositories are removed; what scans found stays for their return. */
+	gitlabDisconnect(connectionId: string): boolean {
+		const connection = id.parse(connectionId);
+		return this.#write(() => {
+			removeInstallation(this.#db, connection, Date.now());
+			return forgetConnection(this.#db, connection);
+		});
+	}
+
+	/**
+	 * A delivery from GitLab's push webhook. The secret token must match before anything is read;
+	 * a push to a project's default branch then queues its scan. "unknown" and "unauthorized"
+	 * answer the same to the sender.
+	 */
+	async gitlabDelivery(
+		connectionId: string,
+		secretToken: string,
+		event: unknown,
+	): Promise<"unknown" | "unauthorized" | "ignored" | "queued"> {
+		const connection = z.string().min(1).max(100).safeParse(connectionId);
+		const row = connection.success ? connectionRow(this.#db, connection.data) : null;
+		if (!row) return "unknown";
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return "unauthorized";
+		let expected: string;
+		try {
+			expected = await sealer.open(gitlabPlace(row.id, "webhook"), row.sealedWebhookSecret);
+		} catch {
+			return "unauthorized";
+		}
+		if (!(await sameSecret(expected, String(secretToken)))) return "unauthorized";
+		this.#write(() => recordDelivery(this.#db, row.id, Date.now()));
+		const push = gitlabPush.safeParse(event);
+		if (!push.success) return "ignored";
+		const { ref, after, project } = push.data;
+		// Only the default branch is scanned. A push that deletes the branch has nothing to read.
+		if (ref !== `refs/heads/${project.default_branch}` || /^0+$/.test(after)) return "ignored";
+		const queued = await this.requestScanOf(
+			"gitlab",
+			gitlabExternalId(row.baseUrl, String(project.id)),
+		);
+		return queued ? "queued" : "ignored";
+	}
+
+	/** The connection's address and opened token, for this request's memory only. */
+	async #gitlabAccess(connectionId: string): Promise<GitLabAccess | ProviderRefusal> {
+		const row = connectionRow(this.#db, connectionId);
+		if (!row) return refused("That GitLab is not connected");
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		try {
+			const token = await sealer.open(gitlabPlace(row.id, "token"), row.sealedToken);
+			return { baseUrl: row.baseUrl, token };
+		} catch {
+			return refused("The GitLab token can no longer be opened; connect the GitLab again");
+		}
+	}
+
+	/** Where a scan reads a GitLab repository from, or why it cannot. */
+	async #gitlabSource(
+		repository: schema.RepositoryRow,
+	): Promise<RepositorySource | { unavailable: string }> {
+		if (repository.installationId === null) {
+			return { unavailable: "No GitLab connection reaches this repository" };
+		}
+		const access = await this.#gitlabAccess(repository.installationId);
+		if ("status" in access) return { unavailable: access.message };
+		const projectId = repository.externalId.slice(repository.externalId.lastIndexOf(":") + 1);
+		const wrap = async <T>(read: () => Promise<T>) => {
+			try {
+				return await read();
+			} catch (error) {
+				throw new Error(gitlabMessage(error));
+			}
+		};
+		return {
+			head: () => wrap(() => gitlabBranchHead(access, projectId, repository.defaultBranch)),
+			files: (tree) => wrap(() => gitlabTree(access, projectId, tree)),
+			texts: (blobIds) => wrap(() => gitlabTexts(access, projectId, blobIds)),
+		};
+	}
+
 	/**
 	 * Queues a scan of each repository. A forced one reads the repository even if nothing was
 	 * pushed since the last scan. Returns how many are live and queued.
@@ -1378,6 +1929,18 @@ export class RegistryDO extends DurableObject {
 		await this.#scheduleAlarm();
 	}
 
+	/**
+	 * Every conversation of the workspace's, nested ones too, for the app to delete with it: each is
+	 * a Durable Object of its own, with its messages, traces and sandbox.
+	 */
+	conversationIds(): string[] {
+		return this.#db
+			.select({ id: schema.conversations.id })
+			.from(schema.conversations)
+			.all()
+			.map((row) => row.id);
+	}
+
 	/** Deletes everything, when the workspace is deleted. */
 	async destroy(): Promise<void> {
 		await this.ctx.storage.deleteAll();
@@ -1399,7 +1962,10 @@ export class RegistryDO extends DurableObject {
 			this.#write(() => finishScan(this.#db, request));
 			return;
 		}
-		const source = sourceFor(this.env as SourceEnv, repository);
+		const source =
+			repository.provider === "gitlab"
+				? await this.#gitlabSource(repository)
+				: sourceFor(this.env as SourceEnv, repository);
 		if ("unavailable" in source) {
 			// Trying again changes nothing until the server is set up differently.
 			this.#write(() => {
@@ -1434,7 +2000,7 @@ export class RegistryDO extends DurableObject {
 			.from(schema.repositories)
 			.where(
 				and(
-					eq(schema.repositories.provider, z.enum(["github"]).parse(provider)),
+					eq(schema.repositories.provider, z.enum(REPOSITORY_PROVIDERS).parse(provider)),
 					eq(schema.repositories.externalId, z.string().min(1).max(100).parse(externalId)),
 					isNull(schema.repositories.removedAt),
 				),
@@ -1503,6 +2069,14 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
+	 * Copies a closed run's usage to the deployment's Analytics Engine dataset, when it binds one
+	 * as `USAGE`. A test's registry overrides it to read what was written.
+	 */
+	protected recordUsage(point: AnalyticsEngineDataPoint): void {
+		writeUsage((this.env as UsageSettings).USAGE, point);
+	}
+
+	/**
 	 * Reports the workspace's sandbox time this month to the deployment's meter, and reads what the
 	 * deployment has spent. Null when there is no meter.
 	 */
@@ -1564,4 +2138,68 @@ export class RegistryDO extends DurableObject {
 
 function refused(message: string): ProviderRefusal {
 	return { status: "refused", message };
+}
+
+/** The part of GitLab's push event a scan needs. */
+const gitlabPush = z.object({
+	object_kind: z.literal("push"),
+	ref: z.string(),
+	after: z.string(),
+	project: z.object({ id: z.number(), default_branch: z.string() }),
+});
+
+/** GitLab's own words where they help a person, and a plain failure otherwise. */
+function gitlabMessage(error: unknown): string {
+	if (error instanceof GitLabError) return error.message;
+	console.error("registry: GitLab answered unexpectedly", error);
+	return "GitLab answered with something the registry could not read";
+}
+
+/** A webhook's secret token: 32 random bytes, base64url. */
+function randomSecret(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(32));
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+}
+
+/**
+ * Compares two secrets in constant time, whatever their lengths: WebCrypto's HMAC `verify`
+ * compares the given secret's MAC with the expected one's under a key made for this call.
+ */
+async function sameSecret(expected: string, given: string): Promise<boolean> {
+	const encoder = new TextEncoder();
+	const key = (await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, [
+		"sign",
+		"verify",
+	])) as CryptoKey;
+	const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(expected));
+	return crypto.subtle.verify("HMAC", key, mac, encoder.encode(given));
+}
+
+/** What the OAuth client kept for a server, opened for the app's provider. */
+export interface McpOAuthOpened {
+	serverUrl: string;
+	authorizationServer: Record<string, unknown> | null;
+	client: unknown;
+	verifier: string | null;
+	tokens: unknown;
+}
+
+/** What the OAuth client saves; a part left out stays, and null clears it. */
+export interface McpOAuthParts {
+	client?: unknown;
+	verifier?: string | null;
+	tokens?: unknown;
+	authorizationServer?: Record<string, unknown> | null;
+}
+
+/** 32 random bytes in base64url, for an OAuth state. */
+function randomToken(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(32));
+	return btoa(String.fromCharCode(...bytes))
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
 }

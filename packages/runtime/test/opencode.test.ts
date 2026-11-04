@@ -1,21 +1,18 @@
-import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ConversationAgent, conversationName } from "../src";
+import { conversationName } from "../src";
 import type { EngineJob } from "../src/engines";
 import { googleRequest } from "../src/models";
 import {
 	OPENCODE_INSTRUCTIONS,
 	OPENCODE_PLACEHOLDER_KEY,
-	OpenCodeTurn,
 	openCodeConfig,
 	openCodeSettings,
 } from "../src/opencode";
 import { decideOutbound } from "../src/outbound";
-import { createTraceTables, RunRecorder, readTrace, type Sql } from "../src/trace";
 import type { FakeSandbox } from "./fake-sandbox";
-import { ask, connect, type Turn } from "./support";
+import { anthropicAnswer, ask, connect, type Turn } from "./support";
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -75,7 +72,7 @@ function event(type: string, part: object = {}): string {
 	return JSON.stringify({ type, timestamp: 1, sessionID: "ses_1", part });
 }
 
-/** A step's usage, as OpenCode reports it: the cached input and the reasoning apart. */
+/** A step's end, with its usage as OpenCode reports it, which the trace takes from the answer. */
 function finish(
 	reason: string,
 	tokens: { input: number; output: number; reasoning?: number; read?: number; write?: number },
@@ -126,10 +123,18 @@ function tool(
 /** A turn that lists the files, then answers: two requests to the model. */
 const LISTING = [
 	start,
+	anthropicAnswer({
+		input: 1_000,
+		output: 50,
+		cacheRead: 3_000,
+		cacheWrite: 500,
+		stop: "tool_use",
+	}),
 	text("Let me look. "),
 	tool("toolu_1", "bash", { command: "ls", description: "List" }, { output: "a.txt\nb.txt\n" }),
 	finish("tool-calls", { input: 1_000, output: 40, reasoning: 10, read: 3_000, write: 500 }),
 	start,
+	anthropicAnswer({ input: 200, output: 30, cacheRead: 4_000 }),
 	text("There are two files."),
 	finish("stop", { input: 200, output: 30, read: 4_000 }),
 ];
@@ -187,34 +192,42 @@ describe("an agent whose engine is OpenCode", () => {
 		expect(tools).toMatchObject([
 			{ step: 0, status: "ok", server: "opencode", tool: "bash", error: null },
 		]);
-		// The model had answered once the tool began, which OpenCode says only once it ends.
 	});
 
-	it("ends a request's span when its last tool began, by how long OpenCode says the tools took", async () => {
-		const { registry, stub, agentId } = await conversation();
-		const agent = await registry.agentSnapshot(agentId);
-		if (!agent) throw new Error("The agent is missing");
-		const spans = await runInDurableObject(stub, (instance: ConversationAgent) => {
-			const sql = instance.sql.bind(instance) as Sql;
-			createTraceTables(sql);
-			const run = new RunRecorder(sql, "run-1", agent, 10_000);
-			const turn = new OpenCodeTurn({ write() {} }, run, agent);
-			turn.take(start, 10_000);
-			// A read began at 11,000, while the answer went on to call the tests, which began at 12,000
-			// when it ended; OpenCode prints each once it is done.
-			turn.take(tool("toolu_1", "read", { filePath: "a.ts" }, { output: "a" }, 500), 11_500);
-			turn.take(tool("toolu_2", "bash", { command: "npm test" }, { output: "ok" }, 3_000), 15_000);
-			turn.take(finish("tool-calls", { input: 10, output: 2 }), 15_100);
-			turn.take(start, 15_200);
-			turn.take(finish("stop", { input: 20, output: 4 }), 16_000);
-			return readTrace(sql, "run-1");
+	it("meters the requests of the subagents its task tool starts, which OpenCode prints nothing of", async () => {
+		const { registry, stub, machine } = await conversation();
+		await machine.scriptEngine({
+			lines: [
+				start,
+				anthropicAnswer({ output: 20, stop: "tool_use" }),
+				// The subagent's session asks the model twice; only the task's result is printed.
+				anthropicAnswer({ output: 7, stop: "tool_use" }),
+				anthropicAnswer({ output: 9 }),
+				// Printed once it ends, a while after the request that called it.
+				tool(
+					"toolu_task",
+					"task",
+					{ prompt: "Find the tests" },
+					{ output: "They are in test/." },
+					60_000,
+				),
+				finish("tool-calls", { input: 10, output: 20 }),
+				start,
+				anthropicAnswer({ output: 4 }),
+				text("They are in test/."),
+				finish("stop", { input: 10, output: 4 }),
+			],
 		});
-		expect(spans).toMatchObject([
-			{ kind: "model", step: 0, startedAt: 10_000, endedAt: 12_000 },
-			{ kind: "tool", step: 0, startedAt: 11_000, endedAt: 11_500 },
-			{ kind: "tool", step: 0, startedAt: 12_000, endedAt: 15_000 },
-			{ kind: "model", step: 1, startedAt: 15_200, endedAt: 16_000 },
-		]);
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Where are the tests?");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "They are in test/.", error: null });
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({ status: "succeeded", steps: 4, outputTokens: 20 + 7 + 9 + 4 });
+		// The task belongs to the request that called it, not to its subagent's last one.
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([{ tool: "task", step: 0 }]);
 	});
 
 	it("shows a tool that failed as failed, with OpenCode's words", async () => {
@@ -337,6 +350,19 @@ describe("an agent whose engine is OpenCode", () => {
 		await machine.scriptEngine({
 			lines: [
 				start,
+				{
+					answer: {
+						body: [
+							{
+								type: "message_start",
+								message: { model: "claude-sonnet-5-5", usage: { input_tokens: 10 } },
+							},
+							{ type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+						]
+							.map((data) => `data: ${JSON.stringify(data)}\n\n`)
+							.join(""),
+					},
+				},
 				errorEvent({
 					name: "UnknownError",
 					data: { message: "socket closed by sk-ant-abc****xyz" },
@@ -351,9 +377,15 @@ describe("an agent whose engine is OpenCode", () => {
 		expect(turn.error).toBe(words);
 		const [run] = await registry.listRuns();
 		const trace = await stub.runTrace(run?.id ?? "");
+		// The request is in the trace as its answer reported it: it used its input, then failed.
 		expect(trace.filter((span) => span.kind === "model")).toMatchObject([
-			{ status: "error", error: words },
+			{
+				status: "error",
+				inputTokens: 10,
+				error: "Anthropic's answer failed: overloaded_error",
+			},
 		]);
+		expect(JSON.stringify(trace)).not.toContain("sk-ant-abc");
 	});
 
 	it("fails the turn when OpenCode stops before its request finishes", async () => {
@@ -403,7 +435,12 @@ describe("OpenCode's settings", () => {
 		provider: "anthropic",
 		model: "claude-sonnet-5-5",
 		cwd: "/workspace",
-		access: { key: KEY, metadata: { workspace: "w", agent: "a", conversation: "c" }, tools: null },
+		access: {
+			key: KEY,
+			metadata: { workspace: "w", agent: "a", conversation: "c" },
+			tools: null,
+			meter: { conversation: "c", token: "t" },
+		},
 	};
 	const config = (settings: Record<string, string>) =>
 		JSON.parse(settings.OPENCODE_CONFIG_CONTENT ?? "{}");
@@ -471,14 +508,15 @@ describe("OpenCode's settings", () => {
 		expect(JSON.stringify(settings)).not.toContain(GOOGLE_KEY);
 	});
 
-	it("keeps out what would leave the sandbox, and the tools whose requests the trace would miss", () => {
+	it("keeps out what would leave the sandbox, and leaves subagents' tasks on, whose requests are metered", () => {
 		const settings = openCodeSettings(job);
 		expect(config(settings)).toMatchObject({
 			autoupdate: false,
 			share: "disabled",
 			snapshot: false,
-			tools: { task: false, webfetch: false },
+			tools: { webfetch: false },
 		});
+		expect(config(settings).tools).not.toHaveProperty("task");
 		expect(settings).toMatchObject({
 			OPENCODE_DISABLE_AUTOUPDATE: "1",
 			OPENCODE_DISABLE_MODELS_FETCH: "1",

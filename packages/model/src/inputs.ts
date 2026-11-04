@@ -12,6 +12,7 @@ import {
 	REPOSITORY_PROVIDERS,
 	REPOSITORY_RUNTIMES,
 	RUN_STATUSES,
+	SETUP_RUNTIMES,
 	TEAM_EDGE_KINDS,
 	TEAM_MEMBER_KINDS,
 } from "./vocabulary";
@@ -54,14 +55,20 @@ export const repositoryInput = z.object({
 	provider: z.enum(REPOSITORY_PROVIDERS),
 	/** The provider's own id, which survives renames and transfers. */
 	externalId: z.string().min(1).max(100),
-	/** The GitHub App installation that reaches it, which the registry scans it through. */
+	/** What reaches it, which the registry scans it through: a GitHub App installation or a GitLab connection. */
 	installationId: z.string().min(1).max(100),
-	owner: z.string().min(1).max(100),
-	name: z.string().min(1).max(100),
+	owner: z.string().min(1).max(255),
+	name: z.string().min(1).max(255),
+	/** Its page, for a GitLab, which may be self-managed. */
+	webUrl: z
+		.url({ protocol: /^https$/ })
+		.max(1000)
+		.nullable()
+		.default(null),
 	defaultBranch: z.string().min(1).max(255),
 	private: z.boolean(),
 });
-export type RepositoryInput = z.infer<typeof repositoryInput>;
+export type RepositoryInput = z.input<typeof repositoryInput>;
 
 /** Longest file text a scan may carry. Agent configuration is far smaller. */
 export const MAX_FILE_LENGTH = 1_000_000;
@@ -267,12 +274,12 @@ export const libraryEditInput = z.object({
 });
 export type LibraryEditInput = z.input<typeof libraryEditInput>;
 export const setupInput = projectInput.extend({
-	/** The coding agents it configures, kept in the order of `REPOSITORY_RUNTIMES`. */
+	/** The coding agents it configures, kept in the order of `SETUP_RUNTIMES`. */
 	runtimes: z
-		.array(z.enum(REPOSITORY_RUNTIMES))
+		.array(z.enum(SETUP_RUNTIMES))
 		.min(1, "Choose at least one coding agent")
-		.max(REPOSITORY_RUNTIMES.length)
-		.transform((chosen) => REPOSITORY_RUNTIMES.filter((runtime) => chosen.includes(runtime))),
+		.max(SETUP_RUNTIMES.length)
+		.transform((chosen) => SETUP_RUNTIMES.filter((runtime) => chosen.includes(runtime))),
 });
 export type SetupInput = z.input<typeof setupInput>;
 
@@ -468,6 +475,36 @@ export const providerKeyInput = z.object({
 });
 export type ProviderKeyInput = z.input<typeof providerKeyInput>;
 
+/**
+ * Connecting a GitLab, gitlab.com or a self-managed one, with an access token an owner or admin
+ * pastes: a project, group or personal token that can read the API and the repositories.
+ */
+export const gitlabConnectionInput = z.object({
+	baseUrl: z
+		.string()
+		.trim()
+		.max(500)
+		.pipe(
+			z.url({
+				protocol: /^https$/,
+				normalize: true,
+				error: "Enter the GitLab's address, starting with https://, such as https://gitlab.com",
+			}),
+		)
+		.refine(
+			(url) => !/^https:\/\/[^/]*@/i.test(url) && !/[?#]/.test(url),
+			"Enter only the GitLab's address, without a token or a query",
+		)
+		.transform((url) => url.replace(/\/+$/, "")),
+	token: z
+		.string()
+		.trim()
+		.min(8, "That is too short to be a token")
+		.max(500, "That is too long to be a token")
+		.regex(/^[\x21-\x7e]+$/, "A token has no spaces or special characters"),
+});
+export type GitLabConnectionInput = z.input<typeof gitlabConnectionInput>;
+
 /** Most tools, and the longest name and description, a check of an MCP server keeps. */
 export const MCP_CHECK_LIMITS = { tools: 200, name: 200, description: 500 };
 
@@ -625,6 +662,48 @@ export const mcpServerEditInput = mcpServerInput
 	.omit({ name: true })
 	.extend({ assetId: z.string().min(1).max(64) });
 export type McpServerEditInput = z.input<typeof mcpServerEditInput>;
+
+/**
+ * Where the workspace's run traces go over OpenTelemetry: an OTLP/HTTP endpoint, such as
+ * `https://api.honeycomb.io`, to which `/v1/traces` is added unless it ends with it, and the
+ * headers it takes, such as an API key. The headers are sealed when stored, and pages see only
+ * their names.
+ */
+export const telemetryInput = z.object({
+	endpoint: mcpServerUrl,
+	headers: z
+		.array(
+			z.object({
+				name: z
+					.string()
+					.trim()
+					.min(1)
+					.max(100)
+					.regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "A header's name has no spaces or symbols"),
+				value: z
+					.string()
+					.trim()
+					.min(1, "Enter the header's value")
+					.max(4000, "That value is too long")
+					.regex(/^[\x20-\x7e]+$/, "A header's value is plain text"),
+			}),
+		)
+		.max(10)
+		.refine(
+			(headers) =>
+				new Set(headers.map((header) => header.name.toLowerCase())).size === headers.length,
+			"A header is set twice",
+		)
+		.default([]),
+});
+export type TelemetryInput = z.input<typeof telemetryInput>;
+
+/** How exporting a run's trace went, as the runtime reports it. */
+export const telemetryExportResult = z.discriminatedUnion("ok", [
+	z.object({ ok: z.literal(true) }),
+	z.object({ ok: z.literal(false), error: z.string().min(1).max(500) }),
+]);
+export type TelemetryExportResult = z.input<typeof telemetryExportResult>;
 
 /** The one file of an environment set, as the library stores it. */
 export const ENV_FILE = "environment.json";

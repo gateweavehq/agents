@@ -15,10 +15,10 @@ import {
 	type Metadata,
 	MODEL_PROVIDERS,
 	REPOSITORY_PROVIDERS,
-	type RepositoryRuntime,
 	RUN_STATUSES,
 	type RunPullRequest,
 	type ScanProblem,
+	type SetupRuntime,
 	TEAM_EDGE_KINDS,
 	TEAM_MEMBER_KINDS,
 	TRIGGER_DELIVERY_STATUSES,
@@ -55,10 +55,12 @@ export const repositories = sqliteTable(
 		id: text("id").primaryKey(),
 		provider: text("provider", { enum: REPOSITORY_PROVIDERS }).notNull(),
 		externalId: text("external_id").notNull(),
-		/** The GitHub App installation that reaches it. */
+		/** What reaches it: a GitHub App installation, or a GitLab connection's id. */
 		installationId: text("installation_id"),
 		owner: text("owner").notNull(),
 		name: text("name").notNull(),
+		/** Its page on a GitLab, which may be self-managed. Null on GitHub. */
+		webUrl: text("web_url"),
 		defaultBranch: text("default_branch").notNull(),
 		private: integer("private", { mode: "boolean" }).notNull(),
 		scannedCommit: text("scanned_commit"),
@@ -325,7 +327,7 @@ export const setups = sqliteTable("setups", {
 	id: text("id").primaryKey(),
 	name: text("name").notNull(),
 	description: text("description"),
-	runtimes: text("runtimes", { mode: "json" }).$type<RepositoryRuntime[]>().notNull(),
+	runtimes: text("runtimes", { mode: "json" }).$type<SetupRuntime[]>().notNull(),
 	createdAt: integer("created_at").notNull(),
 	updatedAt: integer("updated_at").notNull(),
 });
@@ -434,9 +436,31 @@ export const envSecrets = sqliteTable(
 		sealed: text("sealed").notNull(),
 		setBy: text("set_by").notNull(),
 		setAt: integer("set_at").notNull(),
+		/**
+		 * The origin of the MCP server this value was first sent to in a header, and the only one it
+		 * is sent to after (AGT-64). Null until then; entering the value again clears it.
+		 */
+		sentTo: text("sent_to"),
+		/**
+		 * The origins of the servers that named this value when the registry first tied stored values
+		 * to one origin (AGT-65), when they disagreed, so it was left unbound for an admin to look at.
+		 * Null otherwise; cleared when the value is tied or entered again.
+		 */
+		contested: text("contested", { mode: "json" }).$type<string[]>(),
 	},
 	(table) => [primaryKey({ columns: [table.assetId, table.name] })],
 );
+
+/**
+ * One-time passes over a workspace's own data that a SQL migration cannot express, by name, with
+ * when each ran and whether it failed, so each runs once (see `passes.ts`).
+ */
+export const registryPasses = sqliteTable("registry_passes", {
+	name: text("name").primaryKey(),
+	ranAt: integer("ran_at").notNull(),
+	/** Why it failed, when it did. A failed pass is not tried again; its work stays undone. */
+	failure: text("failure"),
+});
 
 /**
  * Conversations with agents run by Gateweave, each private to the member who started it. The
@@ -471,6 +495,8 @@ export const conversations = sqliteTable(
 		 * `<workspace id>:<issue id>` (`issueOfEvent`): later events about it continue it.
 		 */
 		issue: text("issue"),
+		/** The run this conversation replays from one of its steps (AGT-73); null for any other. */
+		replayOf: text("replay_of"),
 	},
 	(table) => [
 		index("conversations_started_by_idx").on(table.startedBy, table.updatedAt),
@@ -521,6 +547,8 @@ export const runs = sqliteTable(
 		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
 		/** The pull request the run opened or pushed to from its sandbox. */
 		pullRequest: text("pull_request", { mode: "json" }).$type<RunPullRequest>(),
+		/** The run this one replays from one of its steps; null for any other. */
+		replayOf: text("replay_of"),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),
@@ -528,6 +556,7 @@ export const runs = sqliteTable(
 		index("runs_conversation_idx").on(table.conversationId),
 		index("runs_parent_idx").on(table.parentRunId),
 		index("runs_root_idx").on(table.rootRunId),
+		index("runs_replay_idx").on(table.replayOf),
 	],
 );
 
@@ -599,8 +628,68 @@ export const triggerDeliveries = sqliteTable(
 	],
 );
 
+/**
+ * Where the workspace's run traces go over OpenTelemetry: one row, or none when export is off. The
+ * headers, which hold an API key, are sealed together as JSON (see `secrets.ts`).
+ */
+export const telemetry = sqliteTable("telemetry", {
+	id: integer("id").primaryKey(),
+	endpoint: text("endpoint").notNull(),
+	headerNames: text("header_names", { mode: "json" }).$type<string[]>().notNull(),
+	sealedHeaders: text("sealed_headers"),
+	setBy: text("set_by").notNull(),
+	setAt: integer("set_at").notNull(),
+	lastExportAt: integer("last_export_at"),
+	lastExportOk: integer("last_export_ok", { mode: "boolean" }),
+	lastExportError: text("last_export_error"),
+});
+
+/**
+ * A library MCP server connected for the workspace through OAuth (AGT-78): what `@ai-sdk/mcp`'s
+ * OAuth client keeps between the steps of the flow and between turns. The client registration,
+ * the PKCE verifier and the tokens are sealed (see `secrets.ts`). The connection is for the URL
+ * the server had when it was made, and is not sent anywhere else.
+ */
+export const mcpOAuth = sqliteTable("mcp_oauth", {
+	assetId: text("asset_id").primaryKey(),
+	serverUrl: text("server_url").notNull(),
+	/** The authorization server, as discovered: not a secret. */
+	authorizationServer: text("authorization_server", { mode: "json" }).$type<
+		Record<string, unknown>
+	>(),
+	sealedClient: text("sealed_client"),
+	sealedVerifier: text("sealed_verifier"),
+	sealedTokens: text("sealed_tokens"),
+	/** The flow under way: its state, who started it and until when it may finish. */
+	state: text("state"),
+	stateBy: text("state_by"),
+	stateExpiresAt: integer("state_expires_at"),
+	connectedBy: text("connected_by"),
+	connectedAt: integer("connected_at"),
+});
+
+/**
+ * A GitLab reached with an access token (AGT-79). The token and the webhook's secret token are
+ * sealed (`secrets.ts`); the token is opened only to read the repositories, and the secret only to
+ * check a delivery.
+ */
+export const gitlabConnections = sqliteTable("gitlab_connections", {
+	id: text("id").primaryKey(),
+	baseUrl: text("base_url").notNull(),
+	account: text("account").notNull(),
+	sealedToken: text("sealed_token").notNull(),
+	tokenHint: text("token_hint").notNull(),
+	sealedWebhookSecret: text("sealed_webhook_secret").notNull(),
+	createdBy: text("created_by").notNull(),
+	createdAt: integer("created_at").notNull(),
+	syncedAt: integer("synced_at"),
+	syncError: text("sync_error"),
+	lastDeliveryAt: integer("last_delivery_at"),
+});
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
+export type GitLabConnectionRow = typeof gitlabConnections.$inferSelect;
 export type RepositoryFileRow = typeof repositoryFiles.$inferSelect;
 export type AgentRow = typeof agents.$inferSelect;
 export type AgentDefinitionRow = typeof agentDefinitions.$inferSelect;

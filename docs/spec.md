@@ -38,19 +38,19 @@ with a hosted version in Gateweave Cloud.
 
 ## Concepts
 
-| Concept    | What it is                                                                                                      |
-| ---------- | --------------------------------------------------------------------------------------------------------------- |
-| Workspace  | The team, shared with every Gateweave product: one account, members and roles                                   |
-| Project    | A product or initiative; groups repositories                                                                    |
-| Repository | A GitHub repository (others later), with the agent configuration found in it                                    |
-| Agent      | A configured agent: its runtime, model, instructions, tools, permissions and environment                        |
-| Runtime    | Where an agent runs: an external coding agent (Claude Code, Codex, Gemini CLI, Cursor) or the Gateweave runtime |
-| Asset      | A versioned item in the library: prompt, skill, plugin, script, MCP server or environment set                   |
-| Setup      | A bundle of assets for one or more agents that can be applied to repositories                                   |
-| Team       | A graph of agents with roles (lead, member, reviewer) and allowed communication; teams nest                     |
-| Run        | One execution of an agent or team: messages, delegations, tool calls, tokens, cost and result                   |
-| Trigger    | A signed webhook URL that starts a run of an agent or team for each event another service sends                 |
-| Connection | An integration: the GitHub app, model providers, MCP servers                                                    |
+| Concept    | What it is                                                                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace  | The team, shared with every Gateweave product: one account, members and roles                                                          |
+| Project    | A product or initiative; groups repositories                                                                                           |
+| Repository | A GitHub repository (others later), with the agent configuration found in it                                                           |
+| Agent      | A configured agent: its runtime, model, instructions, tools, permissions and environment                                               |
+| Runtime    | Where an agent runs: an external coding agent (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot, Devin) or the Gateweave runtime |
+| Asset      | A versioned item in the library: prompt, skill, plugin, script, MCP server or environment set                                          |
+| Setup      | A bundle of assets for one or more agents that can be applied to repositories                                                          |
+| Team       | A graph of agents with roles (lead, member, reviewer) and allowed communication; teams nest                                            |
+| Run        | One execution of an agent or team: messages, delegations, tool calls, tokens, cost and result                                          |
+| Trigger    | A signed webhook URL that starts a run of an agent or team for each event another service sends                                        |
+| Connection | An integration: the GitHub app, model providers, MCP servers                                                                           |
 
 Assets are versioned, and agents and setups pin versions, so a change to a shared skill is a
 reviewable update rather than a silent one.
@@ -97,6 +97,10 @@ The registry reads and writes each agent's own files, so teams keep using the to
 - **Codex** and other agents that read `AGENTS.md`.
 - **Gemini CLI:** `GEMINI.md` and its settings.
 - **Cursor:** `.cursor/rules`.
+- **GitHub Copilot:** `.github/copilot-instructions.md`, `.github/instructions`, prompt files,
+  custom agents and `.vscode/mcp.json`.
+- **Devin**, which Windsurf became: `.devin/rules` and Windsurf's `.windsurf/rules` and
+  `.windsurfrules`; setups write it `AGENTS.md`.
 
 Each format is a small adapter with tests, so adding an agent does not touch the core. Formats
 change often; each adapter tracks the vendor's current documentation.
@@ -211,8 +215,8 @@ runtime is designed alongside it, so the data model fits both.
   shape, so the same asset is a setup's MCP server for coding agents and an agent's tools in
   Gateweave, versioned and pinned like the rest. Its headers only name variables of the agent's
   environment set: the file holds no secret, so it can be shown, diffed and written into
-  repositories, and a token is stored once, sealed. Only remote servers for now: a local command
-  needs a sandbox to run in.
+  repositories, and a token is stored once, sealed. A local command runs only in an agent's
+  sandbox, with its environment set's variables and none of its secrets (AGT-71, 2026-11-02).
 - **A client per turn** (AGT-31, 2026-10-28). The runtime connects to an agent's MCP servers with
   `@ai-sdk/mcp` for each turn and closes them when it ends, rather than through the Agents SDK's
   `addMcpServer`, which saves a connection's options, headers included, in the Durable Object's
@@ -243,3 +247,10 @@ runtime is designed alongside it, so the data model fits both.
   nothing to keep in step: a copy made by hand, a pull request from a setup and an edit in the
   repository all show correctly after the next scan. Two library assets that share a version both
   claim the repository assets that carry it, and the asset page lists both.
+- **No Docker cloud sandboxes for Gateweave Cloud** (AGT-55, 2026-11-02). Docker's cloud
+  sandboxes could run commands, files and engines as the runtime's sandbox ports ask, though not
+  the credentials our egress proxy adds on the way out, but Docker's terms license them for a
+  customer's internal use and bar offering them to third parties or in competition, and the API
+  is experimental. Gateweave Cloud keeps its own containers. A backend for self-hosters who bring
+  their own Docker token may follow once the API is generally available, on the conditions in
+  [docker-sandboxes.md](docker-sandboxes.md).

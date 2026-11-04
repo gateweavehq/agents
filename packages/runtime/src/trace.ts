@@ -20,6 +20,7 @@ import {
 	type ToolSpan,
 } from "@gateweave/agents-model";
 import type { StepResult, ToolSet } from "ai";
+import type { MeteredRequest } from "./meter";
 
 type SqlValue = string | number | boolean | null;
 
@@ -89,6 +90,8 @@ export class RunRecorder {
 	readonly runId: string;
 	/** The model request under way, which the tools it calls belong to. */
 	#step = 0;
+	/** The step the next metered request takes. */
+	#metered = 0;
 	#finished = false;
 
 	constructor(sql: Sql, runId: string, agent: AgentSnapshot, now = Date.now()) {
@@ -165,6 +168,30 @@ export class RunRecorder {
 		this.#endStep(step, "error", { error }, now);
 	}
 
+	/**
+	 * A request for the model that left the sandbox (`./meter.ts`). Each gets the next step, and
+	 * the tools the engine calls after it belong to it. Returns the step.
+	 */
+	meteredStarted(now = Date.now()): number {
+		const step = this.#metered++;
+		this.stepStarted(step, now);
+		return step;
+	}
+
+	/** The end of a request `meteredStarted` began, with what its answer reported. */
+	meteredEnded(step: number, request: MeteredRequest, now = Date.now()): void {
+		const ended: EndedRequest = {
+			model: request.model ?? this.#agent.model,
+			tokens: request.tokens,
+			finishReason: request.finishReason,
+			firstTokenMs: request.firstTokenMs,
+			gatewayLogId: request.gatewayLogId,
+		};
+		this.requestEnded(step, ended, now);
+		// A failed request keeps what it used, which costs money too, and says why it failed.
+		if (request.error !== null) this.#endStep(step, "error", { error: request.error }, now);
+	}
+
 	/** Starts connecting to an MCP server. Returns the span's id. */
 	serverConnecting(server: string, now = Date.now()): string {
 		const attributes: ConnectAttributes = { server, tools: null, error: null };
@@ -184,10 +211,30 @@ export class RunRecorder {
 		this.serverFailed(this.serverConnecting(server, now), problem, now);
 	}
 
-	/** Starts a call to a tool, in the model request under way. Returns the span's id. */
+	/** Starts a call to a tool, in the model request it came from. Returns the span's id. */
 	toolStarted(server: string, tool: string, inputBytes: number, now = Date.now()): string {
 		const attributes: ToolAttributes = { server, tool, inputBytes, outputBytes: null, error: null };
-		return this.#insert("tool", this.#step, attributes, now);
+		return this.#insert("tool", this.#stepAt(now), attributes, now);
+	}
+
+	/**
+	 * The model request a tool that started at `at` belongs to: the latest that had started by
+	 * then. An engine can report a call late, once it has its result, as OpenCode does, by which
+	 * time a subagent's requests may have started newer steps.
+	 */
+	#stepAt(at: number): number {
+		const [latest] = this.#sql<{ step: number }>`
+			SELECT step FROM trace_spans
+			WHERE run_id = ${this.runId} AND kind = 'model' AND started_at <= ${at}
+			ORDER BY started_at DESC, step DESC LIMIT 1`;
+		if (latest) return latest.step;
+		// A start set back past every request, as when its time is only an estimate: the first
+		// request after it.
+		const [next] = this.#sql<{ step: number }>`
+			SELECT step FROM trace_spans
+			WHERE run_id = ${this.runId} AND kind = 'model'
+			ORDER BY started_at, step LIMIT 1`;
+		return next?.step ?? this.#step;
 	}
 
 	toolEnded(

@@ -1,6 +1,28 @@
 /** Coding agents that are configured by files in a repository, which a scan can find. */
-export const REPOSITORY_RUNTIMES = ["claude-code", "codex", "gemini-cli", "cursor"] as const;
+export const REPOSITORY_RUNTIMES = [
+	"claude-code",
+	"codex",
+	"gemini-cli",
+	"cursor",
+	"copilot",
+	"devin",
+] as const;
 export type RepositoryRuntime = (typeof REPOSITORY_RUNTIMES)[number];
+
+/**
+ * The coding agents a setup can write files for (`packages/adapters/src/write.ts`), in the order
+ * they are written. Devin gets instructions only: it keeps MCP servers in a local file, and its
+ * docs name no folder for skills.
+ */
+export const SETUP_RUNTIMES = [
+	"claude-code",
+	"codex",
+	"gemini-cli",
+	"cursor",
+	"copilot",
+	"devin",
+] as const;
+export type SetupRuntime = (typeof SETUP_RUNTIMES)[number];
 
 /**
  * Where an agent runs: a coding agent configured in a repository, or `gateweave`, an agent
@@ -14,6 +36,9 @@ export const RUNTIME_NAMES: Record<AgentRuntime, string> = {
 	codex: "Codex",
 	"gemini-cli": "Gemini CLI",
 	cursor: "Cursor",
+	copilot: "GitHub Copilot",
+	// Cognition's Devin Desktop, which Windsurf became; it still reads Windsurf's rule files.
+	devin: "Devin",
 	gateweave: "Gateweave",
 };
 
@@ -72,8 +97,8 @@ export const ASSET_KIND_NAMES: Record<AssetKind, string> = {
 	"env-set": "Environment set",
 };
 
-/** Where repositories are hosted. GitHub first; the spec leaves room for others. */
-export const REPOSITORY_PROVIDERS = ["github"] as const;
+/** Where repositories are hosted: GitHub, and GitLab (gitlab.com or a self-managed one). */
+export const REPOSITORY_PROVIDERS = ["github", "gitlab"] as const;
 export type RepositoryProvider = (typeof REPOSITORY_PROVIDERS)[number];
 
 /** Where the pull request that applies a setup stands. */

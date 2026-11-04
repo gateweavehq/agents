@@ -48,6 +48,15 @@ not synced to the browser yet (see "Decisions" in the spec).
   in the app and assets in the library (phases 2 and 3). Runs have a table of their own (see
   "Runs"), and teams will too.
 
+- **Deleting a workspace** (AGT-76). An owner deletes it in Settings > Workspace, after typing
+  its name; Better Auth's organization plugin lets only an owner, and deletes its D1 rows
+  (members, invitations, and its GitHub installation link, by cascade). Its
+  `afterDeleteOrganization` hook then deletes what it held elsewhere
+  (`apps/web/src/server/workspace-deletion.ts`): each conversation the registry knows, nested ones
+  too, with its messages, traces and sandbox, ten at a time, then the registry's storage with its
+  sealed keys and secrets. A conversation that fails is logged and the rest go on; nothing is
+  reachable either way, since no member is left. The GitHub App installation stays on GitHub
+  until someone uninstalls it there.
 ## GitHub
 
 A workspace reads its repositories through a GitHub App ([github-app.md](github-app.md) sets one
@@ -58,8 +67,14 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
 - **Linking.** A `github_installation` row in D1 links an installation to one workspace. An
   admin links it through install, setup and callback (`apps/web/src/server/github/flow.ts`).
   The installation id that GitHub's setup redirect carries is not trusted: the link is made only
-  after a user token shows that this person can reach the installation on GitHub. The token is
-  not kept.
+  after a user token shows that this person controls the installation's account on GitHub
+  (`controlsInstallation` in `packages/github/src/app.ts`). For a personal account, that is the
+  account's own user (`GET /user`); for an organization, an active admin of it
+  (`GET /user/memberships/orgs/{org}`, which needs the app's "Members: read" organization
+  permission). Being able to see the installation is not enough: `GET /user/installations`
+  lists it for anyone with access to one of its repositories, read-only collaborators included.
+  Everyone else gets the same refusal as for an installation they cannot see. The token is not
+  kept.
 - **Writing.** Commits, branches and pull requests through the REST API
   (`packages/github/src/writes.ts`), for applying setups.
 - **Staying in step.** Linking, and webhooks for installation and repository changes, list the
@@ -69,15 +84,57 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
   verified with the app's secret; deliveries for installations no workspace linked are
   acknowledged and dropped.
 
+## GitLab
+
+A workspace can also read the projects of a GitLab, gitlab.com or a self-managed one (AGT-79).
+GitLab has no app to install, so an owner or admin connects it on Settings > GitLab with an
+access token: a project, group or personal token with `read_api` and `read_repository` and at
+least the Reporter role. The client is `packages/registry/src/gitlab/client.ts`; the connections
+are `gitlab_connections` rows in the registry (`gitlab/connections.ts`).
+
+- **The token is a secret of the workspace.** The registry tries it (`GET /user`), seals it with
+  `secrets.ts` and opens it only to read repositories. The page shows its last four characters.
+  Requests send it in `PRIVATE-TOKEN` to the connection's own address only, with redirects
+  refused, so it cannot be led elsewhere; the address must be https.
+- **Projects are repositories.** The projects the token's user is a member of with Reporter
+  access, not archived or empty, become repositories with `provider: "gitlab"`, the connection's
+  id as their `installationId` and their page as `webUrl`, made from the connection's address so
+  a link only ever leads to that GitLab, reconciled as an installation's are. GitLab numbers projects per instance, so a repository's `externalId` is the host and the
+  project's id (`gitlab.example.com:42`). Listing them again is a button on the page.
+- **Scans read what GitHub's do.** The branch's head, the commit's tree (keyset pages of 100, at
+  most 20,000 entries) and raw blobs, a few at a time. The tree gives Git's blob ids, so files and
+  assets hash the same as on GitHub. It gives no sizes: a blob too large or binary is found when
+  it is read.
+- **A push webhook rescans.** The page shows the webhook's URL
+  (`/api/gitlab/webhooks/:workspaceId/:connectionId`) and, once, its secret token, which the
+  registry keeps sealed. GitLab sends it in `X-Gitlab-Token`. The gateway
+  (`apps/web/src/server/gitlab.ts`) turns away unknown workspaces, and the registry compares the
+  token in constant time before reading the event; a mismatch gets the same 404 as a missing
+  connection. A push to the default branch queues a scan.
+- **Not yet.** Setups are applied by pull request, and sandboxes check out through the GitHub
+  App, so both offer GitHub repositories only and say so for GitLab ones. Merge requests come
+  next.
+
 ## Format adapters
 
 `packages/adapters` turns a repository's files into the agents and assets of a scan. It is pure
 TypeScript with no I/O, so it runs in the Worker. The scanner lists the repository's tree, asks
 `wantsFile` which paths it needs, downloads those, and calls `detect`.
 
-- **One adapter per coding agent** (Claude Code, Codex, Gemini CLI, Cursor), each knowing only its
-  own files, so a repository with just `AGENTS.md` has a Codex agent and nothing else. The
-  vendor's documentation is linked at the top of each adapter.
+- **One adapter per coding agent** (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot and
+  Devin), each knowing only its own files, so a repository with just `AGENTS.md` has a Codex agent
+  and nothing else. The vendor's documentation is linked at the top of each adapter.
+- **GitHub Copilot and Devin** are scanned (AGT-69) and written (AGT-74).
+  - **Copilot** reads `.github/copilot-instructions.md`, `.github/instructions`, prompt files,
+    custom agents and chat modes, `.vscode/mcp.json` and `.github/skills`. A setup gives it
+    `AGENTS.md`, which it reads anywhere, its own path-specific instructions back in
+    `.github/instructions`, the shared `.agents/skills`, and `.vscode/mcp.json` (servers under
+    `servers`, variables as `${env:NAME}`).
+  - **Devin** reads `.devin/rules`, `.devin/global_rules.md`, `.devin/config.json`, and Windsurf's
+    rule files, which Devin Desktop took over from Windsurf. A setup gives it `AGENTS.md` only.
+    Its MCP servers live in a file its docs keep out of Git, and its docs name no folder for
+    skills, so a setup reports both as not written for it. A scan lists Devin once the repository
+    has a file of Devin's own.
 - **Shared files are shared assets.** `detect` merges what the adapters find by asset key, so
   `AGENTS.md` or a `.agents/skills` folder is one asset that several agents read.
 - **Secrets stay in the adapters.** Settings and MCP configuration are stored as canonical JSON
@@ -338,16 +395,19 @@ admins manage them on the Environment page (`packages/registry/src/environment.t
 - **An agent picks one set**, pinned to a version like its instructions (`agent_definitions`,
   and `agent_assets` for the asset's page). A new version changes nothing until the pin moves.
   `agentSnapshot` does not carry it.
-- **The runtime opens it.** `resolveEnvironment(agentId)` returns the pinned version's variables
-  and the opened secrets, with the names that have no value (or whose value no longer opens)
-  as `missing`. No page or server function calls it; the others only see `set` or `missing`.
+- **The runtime opens it.** The registry's private `#openEnvironment(agentId)` opens the pinned
+  version's variables and secrets, with the names that have no value (or whose value no longer
+  opens) as `missing`. No RPC returns what it opens: values leave the registry only in an MCP
+  server's headers, through `turnServers`, for `beginTurn` and `mcpCheckTarget`. Pages and
+  server functions only see `set` or `missing`.
 - **Without `SECRETS_KEY`** the page says so and values cannot be set; sets with only variables
   work as they are.
 
 ## MCP servers
 
-An agent run by Gateweave gets its tools from remote MCP servers in the library
-(`packages/registry/src/mcp-servers.ts`).
+An agent run by Gateweave gets its tools from MCP servers in the library
+(`packages/registry/src/mcp-servers.ts`): remote ones, and, for an agent with a sandbox, ones that
+run as a local command.
 
 - **A server is a library asset** of kind `mcp-server` with one file, `.mcp.json`, holding one
   server in the shape Claude Code reads: `{ "headers": {…}, "type": "http" | "sse", "url": "…" }`,
@@ -362,9 +422,10 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   (`readMcpConnection` in `packages/adapters`).
 - **An agent pins up to ten servers**, each to a version like its instructions
   (`agent_mcp_servers`, and `agent_assets` for the asset's page). Pinning refuses a server the
-  runtime could not reach: one that runs as a local command, or whose URL breaks the rules above.
-  The agent's page shows each server's transport and URL, or why it cannot be reached, and the
-  variables its headers use, each marked set or missing in the agent's environment set.
+  runtime could not reach: one whose URL breaks the rules above, or one that runs as a local
+  command, for an agent without a sandbox. The agent's page shows each server's transport and URL,
+  or its command, or why it cannot be reached, and the variables its headers (or its command's
+  environment) use, each marked set or missing in the agent's environment set.
 - **A pin can limit the agent to some of the server's tools** (`tools` on the pin, a JSON list of
   the server's own tool names; null is all of them). An agent that reads text nobody vetted, such
   as issue bodies, should hold only the tools its job needs, so a prompt hidden in that text
@@ -397,8 +458,59 @@ An agent run by Gateweave gets its tools from remote MCP servers in the library
   keeps the result with `recordMcpCheck` in `mcp_checks`: when, which version, whether it worked,
   the tools with their descriptions (cut to a sensible size), and the error in our words. The
   headers live in that request's memory and never reach the browser; the check keeps no header
-  value and nothing the server said but its tools' names and descriptions. Servers that run as a
-  local command are listed as unavailable and cannot be checked until cloud runners (AGT-9).
+  value and nothing the server said but its tools' names and descriptions. A server that runs as
+  a local command has no Check button: it starts only in an agent's sandbox (below).
+- **A local command starts in the agent's sandbox** (AGT-71). A server stored with a `command`
+  (`npx -y @acme/mcp`, `uvx …`), as scans find them in `.mcp.json` and the other formats, keeps
+  its arguments and its `env`, whose values name variables of the agent's environment set as
+  headers do (a scan keeps no `env` value). `beginTurn` fills them in only for a turn with a
+  sandbox, and never with a secret: the sandbox holds none, so that nothing a command there runs
+  can leak one. A server whose environment names a secret is left out of the turn, saying which,
+  and a turn without a sandbox leaves every local server out. The runtime asks the conversation's
+  sandbox to start the command (`startMcpServer` in `packages/runtime/src/sandbox.ts`) in
+  `/workspace`, under `timeout`, with its own messages in a log; the two streams of its standard
+  input and output cross from the sandbox to the conversation over RPC, and
+  `SandboxStdioTransport` (`packages/runtime/src/local-servers.ts`) speaks MCP's stdio framing,
+  one JSON-RPC message per line, over them for `@ai-sdk/mcp`. A local server has 90 seconds to
+  start and list its tools, since the sandbox may start and `npx` download first. Its downloads
+  go out as any command's do, to package registries only. Closing the turn's connections ends its
+  input, and the command is stopped ten seconds later if it has not exited.
+- **A server can be connected through OAuth** (AGT-78), as the MCP authorization spec
+  describes, instead of naming a key in a header. An owner or admin presses Connect on the MCP
+  page (`/api/mcp-oauth/connect`, `apps/web/src/server/mcp-oauth.ts`). The registry makes a
+  single-use state, bound to them and valid for ten minutes (`packages/registry/src/mcp-oauth.ts`),
+  and `@ai-sdk/mcp`'s `auth()` discovers the server's authorization server, registers the app as
+  a public client, and sends them to sign in with PKCE. On `/api/mcp-oauth/callback` the state
+  names the workspace and server; the registry takes it once, for the same person, while they are
+  still an admin, and the code is traded for tokens. The client registration, the verifier and
+  the tokens are sealed in `mcp_oauth`; pages see only who connected it and when. A turn or a
+  check marks the server `oauth` (`turnServers`), and the runtime's `RegistryOAuthProvider`
+  (`packages/runtime/src/mcp-oauth.ts`) gives `@ai-sdk/mcp` the token, which it refreshes when
+  the server refuses it, keeping the new one sealed. The connection is for the URL the server had
+  when it was made: after the server moves it is not sent, and the page asks to connect again.
+  Agents that pin the server act on it as the person who connected it, and the page says so.
+- **A secret goes to one origin** (AGT-64, `turnServers` in `packages/registry/src/mcp-servers.ts`).
+  Anyone who may edit a server may change its URL, and the secrets its headers name were often
+  entered by someone else. So `env_secrets.sent_to` keeps the origin a value was first sent to,
+  by a check or a turn, and from then on a server at any other origin is left out, saying which
+  secret was entered for another address. Entering the value again clears it; Track triage ties
+  its key to Track's origin as it stores it. Tying the value rather than watching servers' URLs
+  covers a new server that names an existing secret, and versions an agent pins, alike. The ties
+  are read and made in the write that ends `beginTurn` or `mcpCheckTarget`, and a value entered
+  again while the environment was being opened is not sent: that server waits for the next turn.
+  Values stored before then were tied once, as each registry first woke after the deploy
+  (AGT-65, `bindUnsentSecrets`): each to the origin of the servers that could send it, the
+  version each live agent pins and the current version a check sends to. One named at different
+  origins stays unbound with those origins (`env_secrets.contested`): it is sent only to one of
+  them, the first a check or a turn uses, and the Environment page lists them on it until it is
+  tied or entered again. One-time passes like this one run through `runPassOnce`
+  (`packages/registry/src/passes.ts`), recorded in `registry_passes`: one that throws is rolled
+  back, logged and recorded as failed with why, and the registry wakes all the same. When
+  `bindUnsentSecrets` fails, the write that records it also closes every value still unbound
+  with an empty `contested` list (AGT-66): `turnServers` sends it to no origin, rather than tying
+  it to the first that asks, until someone enters it again. The Environment page tells owners and
+  admins when that happened (`secretTiesFailedAt`), never why or any value, and marks each value
+  to enter again.
 
 ## Sandboxes
 
@@ -434,7 +546,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
 - **No internet, but packages.** The container starts with `enableInternet: false`, and all of its
   HTTP and HTTPS goes to `SandboxOutbound`, a `WorkerEntrypoint` of the app's Worker, through the
   container's own certificate authority. `decideOutbound` (`packages/runtime/src/outbound.ts`)
-  lets GET and HEAD to package registries through (npm, PyPI, crates.io, Go's module proxy) and
+  lets through GET and HEAD to package registries (npm, PyPI, crates.io, Go's module proxy),
+  git's fetches of the conversation's repository on github.com and the push `push` makes, an
+  engine's requests to its model's provider while it runs a turn, and the engine tools' host, and
   answers everything else with a 403 that says why, which the command prints. A redirect goes
   back to the command, so each address it leads to is decided on too. The sandbox holds no secret
   of the workspace's: the key, the environment set and MCP headers stay in the Worker.
@@ -459,6 +573,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   (`MAX_WORKSPACE_SANDBOXES`): a conversation holds one from a run marked `sandbox` until 15
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
   sandbox, unless the agent's engine runs only in one, as every engine but Gateweave's loop does.
+  A turn awaits as it is prepared (the key, the environment set, the meter), and others may begin
+  meanwhile, so this limit and the daily one below decide again in the write that begins the run
+  (`#sandboxLimitRefusal`), with the same refusal (AGT-63).
 - **Sandbox time and its limits** (AGT-45). The runs say how much sandbox time a workspace uses
   (`sandboxSeconds` in `packages/registry/src/runs.ts`):
   - Each conversation's sandbox counts from a run with it until 15 minutes after the last.
@@ -539,13 +656,8 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   here, and OpenCode adds none at all.
   - **Its events are the turn.** The conversation reads the CLI's events as they come
     (`ClaudeCodeTurn`): the main conversation's text goes to the chat, and its tool calls as
-    `claude-code__<tool>`, their results clipped to 4,000 characters. Each model request becomes a
-    model span, with its tokens and cost from Anthropic's usage, cached input counted in the input.
-    An `assistant` event carries only the usage of the request's start, so the CLI also passes on the
-    API's streaming events (`--include-partial-messages`), whose `message_delta` has the request's
-    final output tokens, and whose `message_start` says how long the first token took. A request's
-    span runs from when it was sent, that long before its `message_start`, to its `message_stop`,
-    before its tools run. Each tool call
+    `claude-code__<tool>`, their results clipped to 4,000 characters. Its model requests are
+    metered where they leave the sandbox (below), so its events give no model spans. Each tool call
     becomes a tool span under the server name `claude-code`, a subagent's too. A
     result that is an error fails the turn, in the same words as Gateweave's loop uses. A message
     the CLI writes itself (its model is `<synthetic>`, as for a refused key) is meant for a terminal:
@@ -596,13 +708,6 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     included, and `SandboxOutbound` puts the workspace's key on it (`openaiRequest`), through AI
     Gateway when the deployment names one. Update checks, analytics, feedback and web search are
     off. Codex trusts the sandbox's certificate through `SSL_CERT_FILE`.
-  - **One span for the turn.** Codex's events name no model request, so the turn is one model
-    span: `turn.completed` carries the thread's usage so far, and the conversation keeps it
-    (`ctx.storage.kv`) to count the next turn of the same thread from it; OpenAI counts cached
-    input in the input already. The span is priced at the standard rates, since no one request's
-    size is known (`requestCost`'s `summed`). A turn that fails reports no usage, so its tokens
-    count with the next turn that completes. Metering each request where it leaves the sandbox
-    will replace this (AGT-49).
   - **Its items are the chat.** An `agent_message` is text; a command (`codex__shell`), a patch
     (`codex__apply_patch`) and another MCP server's call are tool calls with spans under the
     server name `codex`; a call of Gateweave's `gateweave` server shows under its own name and
@@ -654,15 +759,10 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     repository's `AGENTS.md` in its system prompt, and the server reads them at each message. A
     new session gets the title `Gateweave`, which spares the request to a small model OpenCode makes
     for one otherwise.
-  - **One span per request.** Each of its steps is one model request, and the step's finish has
-    that request's usage, so each becomes a model span priced on its own, with no summing. OpenCode
-    counts the cached input and the reasoning apart; the trace counts them in the input and the
-    output. It prints a tool call only once it has its result, so the tool span starts back by how
-    long the call took, and the request's span ends where its last tool began, which keeps the
-    sandbox's clock out of the trace: each tool starts as soon as its call has come, while the
-    answer goes on, so the last one starts about when the answer ends. Its `task` tool is off: a subagent's session prints nothing,
-    so its requests would be missing from the trace. So is `webfetch`, since the sandbox reaches no
-    website.
+  - **Its tools.** It prints a tool call only once it has its result, so the tool span starts
+    back by how long the call took, which keeps the sandbox's clock out of the trace. Its `task`
+    tool is on: a subagent's session prints nothing, but its requests are metered like the others
+    (below). `webfetch` is off, since the sandbox reaches no website.
   - **The key never enters the sandbox,** as with the others: `decideOutbound` opens the API of the
     agent's provider to the running turn, `POST /v1/messages` to `api.anthropic.com`,
     `POST /v1/responses` to `api.openai.com`, or, for Google, `POST
@@ -681,6 +781,68 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     under `lite`'s limits (256 MiB, 1/16 vCPU) ran out of memory before its first answer; under
     `basic`'s (1 GiB, 1/4 vCPU) a turn took about half a minute and used 415 MiB at most. The
     sandbox starts as `standard-1`, so keep it at `basic` or above. Claude Code fits in `lite`.
+- **What a model request may carry** (AGT-62, `checkModelRequest` and `forwardedHeaders` in
+  `packages/runtime/src/outbound.ts`, `sendModelRequest` in `packages/runtime/src/model-requests.ts`).
+  A request for the model is the one way out whose contents the sandbox chooses, and it leaves
+  with the workspace's key. The providers run tools of their own for a request (MCP connectors,
+  web search and fetch, code execution, file search), which would send what it holds wherever it
+  says. So before the key goes on, the Worker reads the body, unencoded, and refuses with a 403
+  one that is not a JSON object or that:
+  - names a model other than the agent's (`model`, or Google's path);
+  - for Anthropic, has `mcp_servers` or `container`, or a tool with a `type` other than `custom`
+    (Claude Code's and OpenCode's tools have none), or `inference_geo` or a `speed` other than
+    `standard`, which cost more;
+  - for OpenAI, has a tool other than `function`, `custom` (Codex's `apply_patch`), a `namespace`
+    of those (Codex's MCP tools) or `tool_search`, which looks only through the request's own
+    deferred tools; or `web_search_options`, or a stored `prompt`, whose tools the request does
+    not show; or reads what the workspace's organization stored (`previous_response_id`,
+    `conversation`, a `file_id`, an `item_reference` input item, typed or not), which Codex and
+    OpenCode never do, as they store nothing; or a
+    `service_tier` other than `auto` or `default`;
+  - for Google, has a tool other than `functionDeclarations`, `cachedContent` (which brings its
+    own instructions and tools), or a `fileData` part with a URI anywhere in the body;
+  - has the provider fetch an image, document or file by URL (`data:` URLs are fine).
+
+  What goes out is the checked JSON, written out again, so the provider reads what was checked.
+  A body is at most 16 MB (413 otherwise), under Anthropic's own 32 MB: checking holds its text
+  and its parsed value at once, about four times its size, in an isolate of 128 MB that serves
+  other requests too. The body is decoded as it streams, so no chunk is kept, and each form of it
+  is let go as the next is made.
+  Its headers are `content-type`, `accept`, `user-agent`, and for Anthropic `anthropic-version`
+  and the betas in `ANTHROPIC_BETAS`: those Claude Code 2.1.308 and OpenCode 1.19.5 send that
+  change how the model answers, thinks or caches. Betas of other APIs (files, batches, MCP
+  servers, environments), of server tools (web search, the advisor) and those that let Anthropic
+  answer with another model or price (server-side fallback, fast mode) are dropped, as is every
+  other header: a CLI's telemetry and session ids, `OpenAI-Organization`, and `OpenAI-Beta`,
+  which Codex sends only on the WebSocket it does not use here. A refusal is a failed model span
+  in the run's trace with the reason, like a request the provider refused.
+  - Claude Code would use other models for small tasks and subagents (Haiku, by its aliases), and
+    fall back to another when one is overloaded. Its turn runs with each of those set to the
+    agent's model (`claudeCodeModelEnv`), and `CLAUDE_CODE_NO_MODEL_FALLBACK`. OpenCode's
+    `small_model` is the agent's already, and Codex calls only its `--model`.
+  - No engine needs a server tool here. Claude Code's `WebSearch` would send Anthropic's
+    `web_search` tool, but it is not among the turn's allowed tools, and its `WebFetch` fetches
+    from the sandbox, which reaches no website. Codex's web search is off. Both would be refused.
+- **Model requests are metered where they leave the sandbox** (AGT-49,
+  `packages/runtime/src/meter.ts`). A CLI's events leave out what it does not print: OpenCode's
+  subagents, Claude Code's in part, and Codex's requests one by one, of which it prints only the
+  thread's total. `SandboxOutbound` sees every request for the model, since it adds the key, so the
+  trace takes its model spans from there and the engines' events give only the chat and the tool
+  spans.
+  - A request that goes out first asks the conversation for a step (`engineRequestStarted`), with
+    the turn's token, which the engine's later tool calls belong to. Anthropic's `count_tokens`,
+    which no model answers, is not metered.
+  - The answer streams on to the CLI as it comes. A copy of each chunk is read on the side: the
+    usage at Anthropic's `message_start` and `message_delta`, in OpenAI's `response.completed`, in
+    Google's last chunk, or in an answer that is not a stream. Only the usage, the model, how the
+    answer ended, its first bytes' time and AI Gateway's log id are kept, never a body.
+  - When the answer ends, or the CLI stops reading it, the Worker reports it
+    (`engineRequestEnded`, under `waitUntil`), and the span is priced at the model's list price. A
+    refused request (a status that is not 2xx), one that failed as it streamed, and one cut off
+    are spans that failed, with what they had used. The conversation checks the report against a
+    schema and records nothing without the turn's token, or once the turn has ended.
+  - A turn's CLI can end a moment before its last request is reported, so the turn waits up to
+    five seconds for the requests still open before it closes the run.
 
 ## Chat
 
@@ -756,6 +918,40 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
   left out. The provider's bill and AI Gateway's logs stay the record.
 - **Runs outlive their conversations.** Deleting a conversation clears the run's link to it in
   the same write, so the workspace's usage stays counted.
+- **A run can be replayed from a model request** (AGT-73), to see whether a change to the agent's
+  instructions or model fixes a run that went wrong. Each turn remembers the person's message it
+  answered (`run_messages` in the conversation, `packages/runtime/src/replay.ts`). Replaying step
+  `n` reads the run's conversation up to that message, with the first `n` steps of the answer
+  (their tool calls and results; a step starts at each `step-start` part), and a new conversation
+  of the caller's (`startReplay`, `conversations.replay_of`) takes it as its history: its first
+  run is the replay (`runs.replay_of`), with the agent, or its team, as it is now. Only whoever
+  started a run may replay it, since that copies their conversation's words into a new one; owners
+  and admins may also replay a trigger's run, whose words they read on the run already. A run of
+  an engine in the sandbox is refused, since its session lives in the CLI, and so is a run a
+  team's edge started (replay the run at the top), one still going, and one from before runs
+  remembered their message. The run's page offers "Replay from here" on each model request, links
+  a replay to the run it replays, and lists a run's replays.
+- **The workspace can get the traces** over OpenTelemetry (AGT-72). Settings > Telemetry keeps an
+  OTLP/HTTP endpoint and its headers, sealed together in the registry's `telemetry` row
+  (`packages/registry/src/telemetry.ts`); pages see the headers' names and how the last export
+  went. When a run ends, `#report` puts it in the conversation's `otel_outbox` and sends it at
+  once (`packages/runtime/src/telemetry-export.ts`): the registry opens the headers for that send
+  (`telemetryTarget`), the run's spans become OTLP JSON (`otlp.ts`) and are posted to the
+  endpoint's `/v1/traces`, without following redirects. The run is an `invoke_agent` span, its
+  model requests `chat` spans with GenAI's `gen_ai.*` attributes for model, tokens and cache
+  reads plus `gateweave.cost_usd`, the tools each request called `execute_tool` spans under it,
+  and its MCP connections and edges spans of their own. The trace id is the run at the top's id,
+  and a nested run's span hangs under the edge span that started it, so a team's turn is one
+  trace. No message text and no tool input or output is sent. A send that fails for the network,
+  a 429 or a 5xx is tried again from the outbox (an Agents SDK schedule), up to five times, 30
+  seconds then four times longer each time; a refused key or another 4xx is not. Each try's
+  outcome is recorded against the settings it used, and exporting never fails a run.
+- **The deployment gets a copy.** When a deployment binds a Workers Analytics Engine dataset as
+  `USAGE`, `finishRun` writes one event for each run it closes (`packages/registry/src/usage.ts`),
+  indexed by workspace, with the run's agent, model, tokens, cost and sandbox time. Writing it
+  never fails the run, and without the binding nothing is written. It lets whoever runs the
+  server see usage across workspaces, for charts and billing, without asking each registry;
+  docs/self-hosting.md has the fields and a query.
 
 ## Teams
 
@@ -1057,10 +1253,10 @@ workspace.
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace
   and remove values.
-- **MCP** lists the library's MCP servers: transport and URL (or why an agent cannot reach it, with
-  local commands marked unavailable until cloud runners), the variables its headers need, the
-  agents that pin it with their versions, and its last check with the tools it listed. Members see
-  all of it; owners and admins get a Check button per remote server.
+- **MCP** lists the library's MCP servers: transport and URL, or the command a local one runs (or
+  why an agent cannot reach it), the variables its headers or environment need, the agents that
+  pin it with their versions, and its last check with the tools it listed. Members see all of it;
+  owners and admins get a Check button per remote server.
 - **Library** lists the library's assets by kind, with how many repository assets carry one of
   their versions and how many of those are behind. Owners and admins write instructions, prompts
   and skills there, and add MCP servers.
@@ -1080,19 +1276,21 @@ workspace.
 
 Pages refresh themselves while a scan of what they show is waiting or running.
 
-**Settings** has the workspace's members and invitations, its GitHub connection and its model
-provider keys.
+**Settings** has the workspace's members and invitations, its GitHub connection, where its run
+traces go (Telemetry), its model provider keys, and, for owners, deleting the workspace.
 
 ## What comes next
 
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
   [Track triage](#track-triage) and [Track issue work](#track-issue-work).
-- **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). It stays off in
-  Cloud's production until Cloud meters its runs per workspace, since the deployment pays for
-  them.
-- **After cloud runners** (phase 5, AGT-9, done): model requests metered where they leave the
-  sandbox (AGT-49), and container cost on Runs (AGT-53). Sandboxes will also run the MCP servers
-  that are local commands.
+- **Workers AI on Gateweave Cloud** (AGT-36 shipped it for self-hosted servers). Cloud can turn it
+  on with its token now: AGT-75 limits it to the workspaces the deployment invites
+  (`WORKERS_AI_WORKSPACES`, which Cloud sets to `sandbox`, its sandbox invitations) and to
+  `WORKERS_AI_DAILY_DOLLARS` a day each ($20 on Cloud), counted from the workspace's runs at
+  Workers AI's list prices. `#prepareTurn` refuses a turn past either, and Settings > Models shows
+  the day's spend.
+- **After cloud runners** (phase 5, AGT-9, done): container cost on Runs (AGT-53).
+- **GitLab, step two** (AGT-79): applying setups as merge requests, and sandboxes on GitLab.
 
 ## Deploys
 

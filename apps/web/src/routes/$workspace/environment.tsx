@@ -68,6 +68,19 @@ function EnvironmentPage() {
 					work as they are.
 				</p>
 			)}
+			{data.tiesFailedAt !== null && (
+				// The one-time pass that ties values stored before ties failed (AGT-66). Owners and
+				// admins only; the server says when, never why, and never a value.
+				<p
+					role="status"
+					className="rounded-lg border border-amber-500/40 p-3 text-sm text-amber-600 dark:text-amber-500"
+				>
+					Secret values stored before values were tied to one server address could not be tied{" "}
+					<span title={formatDateTime(data.tiesFailedAt)}>{formatRelative(data.tiesFailedAt)}</span>
+					, so they are sent to no server. Enter each value marked below again before agents can use
+					it.
+				</p>
+			)}
 			{creating && (
 				<EnvSetDialog
 					onSave={async (set) => {
@@ -182,6 +195,7 @@ function EnvSetCard({
 								set={set}
 								name={secret.name}
 								stored={secret.state === "set" ? secret : null}
+								contested={secret.contested}
 								configured={configured}
 								admin={admin}
 							/>
@@ -245,11 +259,13 @@ function SecretRow({
 	stored,
 	configured,
 	admin,
+	contested = null,
 	orphan = false,
 }: {
 	set: EnvSetEntry;
 	name: string;
 	stored: { setBy: string | null; setAt: number | null } | null;
+	contested?: string[] | null;
 	configured: boolean;
 	admin: boolean;
 	orphan?: boolean;
@@ -268,6 +284,22 @@ function SecretRow({
 					<p className="text-xs text-muted-foreground">
 						Set by {stored.setBy}{" "}
 						<span title={formatDateTime(stored.setAt)}>{formatRelative(stored.setAt)}</span>
+					</p>
+				)}
+				{contested?.length === 0 && (
+					// Stored before values were tied to one origin, and tying them failed (AGT-66).
+					<p className="text-xs text-amber-600 dark:text-amber-500">
+						Stored before values were tied to one server address, and it could not be tied to one.
+						Enter this value again before agents can use it.
+					</p>
+				)}
+				{contested && contested.length > 0 && (
+					// Stored before values were tied to one origin, and named at several (AGT-65).
+					<p className="text-xs text-amber-600 dark:text-amber-500">
+						Stored before values were tied to one server address, and named by servers at{" "}
+						<span className="break-all">{contested.join(", ")}</span>. It is sent only to one of
+						these, the first an agent or a check uses, and then only there. Enter it again to send
+						it anywhere else.
 					</p>
 				)}
 			</div>

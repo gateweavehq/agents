@@ -101,6 +101,8 @@ export const getRun = createServerFn({ method: "GET" })
 			nested: RunEntry[];
 			conversation: string | null;
 			transcript: string | null;
+			replayable: boolean;
+			replays: RunEntry[];
 		} | null> => {
 			const viewer = await viewerOf(data.slug);
 			if (!viewer) return null;
@@ -110,12 +112,13 @@ export const getRun = createServerFn({ method: "GET" })
 			const conversation =
 				conversationId === null ? null : await conversationOf(viewer.workspaceId, conversationId);
 			const triggered = run.triggerId !== null && run.parentRunId === null;
-			const [names, trace, nested, transcript] = await Promise.all([
+			const [names, trace, nested, transcript, replays] = await Promise.all([
 				viewer.names(),
 				conversation?.runTrace(run.id) ?? null,
 				// Only a team's turns call others.
 				run.teamPath === null ? [] : viewer.registry.listNestedRuns(run.id),
 				triggered ? (conversation?.transcript() ?? null) : null,
+				viewer.registry.listReplays(run.id),
 			]);
 			return {
 				run: named(run, names),
@@ -124,9 +127,64 @@ export const getRun = createServerFn({ method: "GET" })
 				conversation:
 					run.startedBy === viewer.userId && run.parentRunId === null ? conversationId : null,
 				transcript,
+				// The registry decides again; this only says whether to offer it.
+				replayable:
+					conversation !== null &&
+					run.parentRunId === null &&
+					run.status !== "running" &&
+					(run.startedBy === viewer.userId || (viewer.everyone && triggered)),
+				replays: replays
+					.filter((each) => viewer.everyone || each.startedBy === viewer.userId)
+					.map((each) => named(each, names)),
 			};
 		},
 	);
+
+/**
+ * Replays a run from its model request `step` (AGT-73): a new conversation of the caller's gets
+ * the run's conversation up to that request, and the agent, as it is now, answers from there.
+ * The registry decides who may: whoever started the run, and owners and admins a trigger's run.
+ * Returns the new run, whose page links back to this one.
+ */
+export const replayRun = createServerFn({ method: "POST" })
+	.validator(
+		z.object({
+			slug: z.string().min(1),
+			runId: z.string().min(1).max(64),
+			step: z.number().int().nonnegative().max(1000),
+		}),
+	)
+	.handler(async ({ data }): Promise<{ runId: string }> => {
+		const viewer = await viewerOf(data.slug);
+		if (!viewer) throw new Error("Workspace not found");
+		const run = await viewer.registry.getRun(data.runId);
+		if (!run || (!viewer.everyone && run.startedBy !== viewer.userId)) {
+			throw new Error("Run not found");
+		}
+		if (run.conversationId === null) {
+			throw new Error("Its conversation was deleted, so there is nothing to replay");
+		}
+		// Read the words first: a run from before replays kept its message makes no conversation.
+		const original = await conversationOf(viewer.workspaceId, run.conversationId);
+		const history = await original.replaySource(run.id, data.step);
+		if (history === null) {
+			throw new Error(
+				"This run began before runs could be replayed, so its messages are not known",
+			);
+		}
+		const started = await viewer.registry.replayRun(
+			run.id,
+			data.step,
+			viewer.userId,
+			viewer.everyone,
+		);
+		if ("status" in started) throw new Error(started.message);
+		const replay = await conversationOf(viewer.workspaceId, started.conversationId);
+		const outcome = await replay.replayTurn(history);
+		if (outcome.runId === null)
+			throw new Error("error" in outcome ? outcome.error : "It did not start");
+		return { runId: outcome.runId };
+	});
 
 async function conversationOf(workspaceId: string, conversationId: string) {
 	const [{ env }, { getAgentByName }, { conversationName }] = await Promise.all([

@@ -37,6 +37,7 @@ import {
 	workersAiBaseUrl,
 } from "@gateweave/agents-model";
 import { APICallError, type LanguageModel, RetryError } from "ai";
+import { forwardedHeaders } from "./outbound";
 
 /** How a deployment reaches AI Gateway, from its settings. */
 export interface GatewaySettings {
@@ -130,8 +131,9 @@ export function languageModel(
 
 /**
  * A request Claude Code sent to Anthropic from a sandbox (`./claude-code.ts`), as it leaves the
- * Worker: with the workspace's key in place of the placeholder the sandbox holds, and through AI
- * Gateway when the deployment names one, as Gateweave's own requests go.
+ * Worker: with the workspace's key in place of the placeholder the sandbox holds, only the headers
+ * `forwardedHeaders` keeps, and through AI Gateway when the deployment names one, as Gateweave's
+ * own requests go. Its body was checked first (`sendModelRequest`).
  */
 export function anthropicRequest(
 	request: Request,
@@ -140,8 +142,7 @@ export function anthropicRequest(
 	metadata: GatewayMetadata,
 ): Request {
 	const url = new URL(request.url);
-	const headers = new Headers(request.headers);
-	headers.delete("authorization");
+	const headers = forwardedHeaders("anthropic", request.headers);
 	headers.set("x-api-key", key);
 	const parts = gatewayOf(settings);
 	if (parts) {
@@ -167,7 +168,7 @@ export function openaiRequest(
 	metadata: GatewayMetadata,
 ): Request {
 	const url = new URL(request.url);
-	const headers = new Headers(request.headers);
+	const headers = forwardedHeaders("openai", request.headers);
 	headers.set("authorization", `Bearer ${key}`);
 	const parts = gatewayOf(settings);
 	if (parts) {
@@ -198,8 +199,7 @@ export function googleRequest(
 	metadata: GatewayMetadata,
 ): Request {
 	const url = new URL(request.url);
-	const headers = new Headers(request.headers);
-	headers.delete("authorization");
+	const headers = forwardedHeaders("google", request.headers);
 	headers.set("x-goog-api-key", key);
 	const parts = gatewayOf(settings);
 	if (parts) {

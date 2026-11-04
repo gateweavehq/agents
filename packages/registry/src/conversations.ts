@@ -85,6 +85,31 @@ export function startTeamConversation(
 }
 
 /**
+ * A conversation that replays a run from one of its steps (AGT-73): with the run's agent, or its
+ * team when the run was a team's turn and the team is still there, for the member who replays it.
+ * Its first run links back to the run it replays. Null when the agent or team is gone.
+ */
+export function startReplay(
+	db: Db,
+	run: { id: string; agentId: string; conversationId: string },
+	startedBy: string,
+	now: number,
+): Conversation | null {
+	const original = db
+		.select({ teamId: conversations.teamId })
+		.from(conversations)
+		.where(eq(conversations.id, run.conversationId))
+		.get();
+	const started =
+		original?.teamId != null
+			? startTeamConversation(db, original.teamId, startedBy, now)
+			: startConversation(db, run.agentId, startedBy, now);
+	if (!started) return null;
+	db.update(conversations).set({ replayOf: run.id }).where(eq(conversations.id, started.id)).run();
+	return started;
+}
+
+/**
  * The conversation a nested turn runs in, made as the turn begins, with the id the runtime chose
  * for it. False when that id is taken, since each nested turn has a conversation of its own.
  */
@@ -154,6 +179,7 @@ export function conversationParties(
 	teamId: string | null;
 	rootId: string | null;
 	triggerId: string | null;
+	replayOf: string | null;
 } | null {
 	return (
 		db
@@ -163,6 +189,7 @@ export function conversationParties(
 				teamId: conversations.teamId,
 				rootId: conversations.rootId,
 				triggerId: conversations.triggerId,
+				replayOf: conversations.replayOf,
 			})
 			.from(conversations)
 			.where(eq(conversations.id, id))
@@ -228,6 +255,7 @@ function newRow(
 		rootId: null,
 		triggerId: null,
 		issue: null,
+		replayOf: null,
 		...parties,
 		createdAt: now,
 		updatedAt: now,

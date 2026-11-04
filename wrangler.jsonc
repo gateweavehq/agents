@@ -41,9 +41,10 @@
 	// Email through Cloudflare Email Service. Nothing is sent until EMAIL_FROM names a sender on a
 	// domain onboarded to Email Sending; without it, Agents runs with email off.
 	"send_email": [{ "name": "EMAIL" }],
-	// Optional: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, the six
+	// Optional: a USAGE Analytics Engine dataset (see docs/self-hosting.md), and GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, the six
 	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, AI_GATEWAY_URL with AI_GATEWAY_TOKEN,
-	// WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID, and the SANDBOX_*
+	// WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID and the WORKERS_AI_*
+	// limits, and the SANDBOX_*
 	// limits (see apps/web/src/server/env.d.ts).
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
 	// The top level is what self-hosters deploy. Gateweave Cloud deploys the environments below:
@@ -71,8 +72,16 @@
 			},
 			// Cloud's sandboxes are for the workspaces it invites (SANDBOX_WORKSPACES), within these
 			// limits. Both secrets are required, so a deploy fails rather than offer sandboxes to every
-			// workspace or spend the budget with nobody told.
-			"vars": { "SANDBOX_DAILY_MINUTES": "120", "SANDBOX_MONTHLY_BUDGET": "100" },
+			// workspace or spend the budget with nobody told. Workers AI, once WORKERS_AI_TOKEN is set,
+			// is for the same workspaces, up to $20 each a day.
+			"vars": {
+				"SANDBOX_DAILY_MINUTES": "120",
+				"SANDBOX_MONTHLY_BUDGET": "100",
+				"WORKERS_AI_WORKSPACES": "sandbox",
+				"WORKERS_AI_DAILY_DOLLARS": "20"
+			},
+			// One usage event per run, for charting usage across workspaces (docs/self-hosting.md).
+			"analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "gateweave_agents_usage" }],
 			"containers": [
 				{
 					"class_name": "RunnerSandbox",
@@ -106,6 +115,9 @@
 			// Staging's sandboxes are open to every workspace, within these limits. Its operator hears
 			// of the budget at SANDBOX_ALERT_EMAIL, a secret.
 			"vars": { "SANDBOX_DAILY_MINUTES": "180", "SANDBOX_MONTHLY_BUDGET": "20" },
+			"analytics_engine_datasets": [
+				{ "binding": "USAGE", "dataset": "gateweave_agents_usage_staging" }
+			],
 			// Sandboxes: one container per conversation that uses one, built from sandbox/Dockerfile.
 			// Its size is set where it starts, and each workspace has at most three at once
 			// (MAX_WORKSPACE_SANDBOXES in packages/model).

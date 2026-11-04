@@ -24,7 +24,7 @@ export interface SourceFile {
 	symlink: boolean;
 }
 
-/** Where a scan reads one repository from. GitHub is the only one so far. */
+/** Where a scan reads one repository from: GitHub, or a GitLab connection. */
 export interface RepositorySource {
 	/** The commit the default branch points to, and its tree. */
 	head(): Promise<{ commit: string; tree: string }>;

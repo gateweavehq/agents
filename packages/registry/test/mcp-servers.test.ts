@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import type { AgentDefinitionInput, McpServerInput } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
+import { BIND_UNSENT_SECRETS } from "../src/mcp-servers";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -321,7 +322,7 @@ describe("MCP servers", () => {
 		});
 		await inside(stub, (instance) => {
 			expect(() => instance.createAgent(reviewer([{ assetId: local, version: 1 }]))).toThrow(
-				"local: It runs as a local command, which agents run by Gateweave cannot start yet",
+				"local runs as a local command, which starts in the agent's sandbox: turn the sandbox on",
 			);
 			expect(() => instance.createAgent(reviewer([{ assetId: plain, version: 1 }]))).toThrow(
 				"plain: The URL must start with https://",
@@ -331,6 +332,77 @@ describe("MCP servers", () => {
 			);
 		});
 		expect(await stub.listAgents()).toEqual([]);
+	});
+
+	it("that run as a local command start in the agent's sandbox, with no secret", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const local = await scannedServer(stub, "local", {
+			command: "npx",
+			args: ["-y", "@acme/mcp"],
+			env: { ACME_REGION: "${ACME_REGION}" },
+		});
+		const leaky = await scannedServer(stub, "leaky", {
+			command: "uvx",
+			args: ["acme-mcp"],
+			env: { ACME_REGION: "eu", ACME_TOKEN: "${ACME_TOKEN}" },
+		});
+		const set = await stub.createEnvSet({
+			name: "prod",
+			variables: { ACME_REGION: "eu-west" },
+			secrets: ["ACME_TOKEN"],
+		});
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "acme-secret" }, "Ada");
+		const agent = await stub.createAgent({
+			...reviewer([
+				{ assetId: local, version: 1 },
+				{ assetId: leaky, version: 1 },
+			]),
+			environment: { assetId: set, version: 1 },
+			sandbox: true,
+		});
+		const conversation = (await stub.startConversation(agent.id, "user-ada"))?.id ?? "";
+		const turn = await runInDurableObject(stub, async (instance: RegistryDO) => {
+			// `env` is protected; a sandbox is offered only where the deployment binds one.
+			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
+			settings.SANDBOX = {};
+			try {
+				return await instance.beginTurn(conversation, "Hello");
+			} finally {
+				delete settings.SANDBOX;
+			}
+		});
+		if ("status" in turn) throw new Error(turn.message);
+		expect(turn.mcpServers).toEqual([
+			{
+				name: "leaky",
+				problem:
+					"ACME_TOKEN is a secret of the agent's environment set, and secrets never go into the sandbox, where it runs. Make it a variable if it is not secret.",
+			},
+			{
+				name: "local",
+				transport: "stdio",
+				command: "npx",
+				args: ["-y", "@acme/mcp"],
+				env: { ACME_REGION: "eu-west" },
+				tools: null,
+			},
+		]);
+		expect(JSON.stringify(turn.mcpServers)).not.toContain("acme-secret");
+
+		// A check has no sandbox to start it in.
+		expect(await stub.mcpCheckTarget(local)).toEqual({
+			name: "local",
+			problem: "It runs as a local command, which starts in the sandbox of an agent that has one",
+		});
+		// The agent's page shows the command and which variables the set has.
+		expect((await stub.getAgent(agent.id))?.definition?.mcpServers).toMatchObject([
+			{
+				connection: { transport: "stdio", command: "uvx", args: ["acme-mcp"] },
+				variables: [{ name: "ACME_TOKEN", state: "set" }],
+			},
+			{ connection: { transport: "stdio", command: "npx" } },
+		]);
 	});
 
 	it("are checked with the environment set of an agent that pins them", async () => {
@@ -431,7 +503,7 @@ describe("MCP servers", () => {
 			check: null,
 		});
 		expect(before[1]).toMatchObject({
-			connection: { problem: expect.stringContaining("local command") },
+			connection: { transport: "stdio", command: "npx", args: ["-y", "@acme/mcp"] },
 			variables: [],
 			agents: [],
 		});
@@ -464,5 +536,341 @@ describe("MCP servers", () => {
 		await stub.removeFromLibrary(acme);
 		expect((await stub.listMcpServers()).map((entry) => entry.asset.name)).toEqual(["local"]);
 		expect(await stub.recordMcpCheck(acme, { ok: true, tools: [] })).toBeNull();
+	});
+});
+
+describe("secrets in MCP servers' headers", () => {
+	const TOKEN = "acme-token-entered-by-an-owner";
+	const ELSEWHERE = "https://mcp.elsewhere.example/mcp";
+
+	/** ACME, an environment set with its token, and an agent that pins version 1 of it. */
+	async function pinnedAcme(stub: ReturnType<typeof registry>) {
+		const acme = await stub.createMcpServer(ACME);
+		const set = await stub.createEnvSet({
+			name: "prod",
+			variables: { ACME_TEAM: "platform" },
+			secrets: ["ACME_TOKEN"],
+		});
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: TOKEN }, "Ada");
+		const input = (mcpServers: AgentDefinitionInput["mcpServers"]) => ({
+			...reviewer(mcpServers),
+			environment: { assetId: set, version: 1 },
+		});
+		const agent = await stub.createAgent(input([{ assetId: acme, version: 1 }]));
+		return { acme, set, agent, input };
+	}
+
+	const moveAcme = (stub: ReturnType<typeof registry>, assetId: string, url: string) =>
+		stub.editMcpServer({ assetId, transport: "http", url, headers: ACME.headers });
+
+	it("go to a check only at the origin they were first sent to, until entered again", async () => {
+		const stub = registry();
+		const { acme, set } = await pinnedAcme(stub);
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			headers: { Authorization: `Bearer ${TOKEN}` },
+		});
+		// Another path at the same origin is the same server.
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v2");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			url: "https://mcp.acme.dev/v2",
+			headers: { Authorization: `Bearer ${TOKEN}` },
+		});
+
+		// Another origin is not: the token stays home, and the check says why.
+		await moveAcme(stub, acme, ELSEWHERE);
+		const moved = await stub.mcpCheckTarget(acme);
+		expect(moved).toEqual({
+			name: "acme",
+			problem:
+				"ACME_TOKEN was entered for another server address, so it is not sent to https://mcp.elsewhere.example. An owner or admin can enter it again in the agent's environment set to send it there.",
+		});
+		expect(JSON.stringify(moved)).not.toContain(TOKEN);
+
+		// Entered again, the new value goes there, and then only there.
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "new-token" }, "Grace");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			url: ELSEWHERE,
+			headers: { Authorization: "Bearer new-token", "X-Team": "platform" },
+		});
+		await moveAcme(stub, acme, ACME.url);
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+		});
+	});
+
+	it("go to a turn's servers only at the origin they were first sent to", async () => {
+		const stub = registry();
+		const { acme, agent, input } = await pinnedAcme(stub);
+		// A server at another origin that names the same secret, and one that names a variable.
+		const mirror = await stub.createMcpServer({
+			name: "mirror",
+			transport: "http",
+			url: ELSEWHERE,
+			headers: [{ name: "Authorization", value: "Bearer ${ACME_TOKEN}" }],
+		});
+		const team = await stub.createMcpServer({
+			name: "team",
+			transport: "http",
+			url: "https://team.elsewhere.example/mcp",
+			headers: [{ name: "X-Team", value: "${ACME_TEAM}" }],
+		});
+		await stub.updateAgent(
+			agent.id,
+			input([
+				{ assetId: acme, version: 1 },
+				{ assetId: mirror, version: 1 },
+				{ assetId: team, version: 1 },
+			]),
+		);
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const conversation = (await stub.startConversation(agent.id, "user-ada"))?.id ?? "";
+		const servers = async () => {
+			const turn = await stub.beginTurn(conversation, "Hello");
+			if ("status" in turn) throw new Error(turn.message);
+			return turn.mcpServers;
+		};
+
+		const first = await servers();
+		expect(first).toEqual([
+			expect.objectContaining({ name: "acme", headers: expect.any(Object) }),
+			{
+				name: "mirror",
+				problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+			},
+			expect.objectContaining({ name: "team", headers: { "X-Team": "platform" } }),
+		]);
+		expect(JSON.stringify(first[1])).not.toContain(TOKEN);
+		expect(await servers()).toEqual(first);
+
+		// Moving the server itself and pinning that version sends nothing either.
+		await moveAcme(stub, acme, "https://acme.elsewhere.example/mcp");
+		await stub.updateAgent(agent.id, input([{ assetId: acme, version: 2 }]));
+		const moved = await servers();
+		expect(moved).toEqual([
+			{
+				name: "acme",
+				problem: expect.stringContaining("not sent to https://acme.elsewhere.example"),
+			},
+		]);
+		expect(JSON.stringify(moved)).not.toContain(TOKEN);
+	});
+
+	type Stub = ReturnType<typeof registry>;
+
+	/** Makes the workspace look as it did when the deploy that ties values came: none tied yet. */
+	const beforeTies = (stub: Stub) =>
+		runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec("UPDATE env_secrets SET sent_to = NULL, contested = NULL");
+			state.storage.sql.exec("DELETE FROM registry_passes");
+		});
+
+	/**
+	 * Starts the registry afresh, as a deploy does: its constructor migrates and runs its passes.
+	 * Returns a stub of the new instance.
+	 */
+	async function restart(stub: Stub): Promise<Stub> {
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => state.abort("restart")).catch(
+			() => {},
+		);
+		const fresh = env.REGISTRY.get(stub.id);
+		await fresh.listProjects();
+		return fresh;
+	}
+
+	const sentTo = (stub: Stub) =>
+		runInDurableObject(
+			stub,
+			(_instance: RegistryDO, state) =>
+				state.storage.sql.exec<{ sent_to: string | null }>("SELECT sent_to FROM env_secrets").one()
+					.sent_to,
+		);
+
+	const passes = (stub: Stub) =>
+		runInDurableObject(stub, (_instance: RegistryDO, state) =>
+			state.storage.sql
+				.exec<{ name: string; failure: string | null }>("SELECT name, failure FROM registry_passes")
+				.toArray(),
+		);
+
+	const contested = async (stub: Stub) =>
+		(await stub.listEnvSets())[0]?.secrets.find((secret) => secret.name === "ACME_TOKEN")
+			?.contested;
+
+	/** ACME pinned at version 1, with version 2, which a check sends to, somewhere else; untied. */
+	async function contestedAcme() {
+		const stub = registry();
+		const pinned = await pinnedAcme(stub);
+		await moveAcme(stub, pinned.acme, ELSEWHERE);
+		await beforeTies(stub);
+		return { ...pinned, stub: await restart(stub) };
+	}
+
+	it("stored before they were tied, are tied as the registry wakes to the one origin naming them", async () => {
+		let stub = registry();
+		const { acme } = await pinnedAcme(stub);
+		// A newer version at the same origin, which a check would send to, and a server no agent
+		// pins at another origin, which nothing sends to.
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v2");
+		await stub.createMcpServer({
+			name: "stray",
+			transport: "http",
+			url: ELSEWHERE,
+			headers: [{ name: "Authorization", value: "Bearer ${ACME_TOKEN}" }],
+		});
+		await beforeTies(stub);
+
+		stub = await restart(stub);
+		expect(await sentTo(stub)).toBe("https://mcp.acme.dev");
+		expect(await contested(stub)).toBeNull();
+
+		// So pointing the server at another host and checking it does not tie the token there.
+		await moveAcme(stub, acme, ELSEWHERE);
+		const moved = await stub.mcpCheckTarget(acme);
+		expect(moved).toEqual({
+			name: "acme",
+			problem: expect.stringContaining(
+				"ACME_TOKEN was entered for another server address, so it is not sent to https://mcp.elsewhere.example",
+			),
+		});
+		expect(JSON.stringify(moved)).not.toContain(TOKEN);
+	});
+
+	it("stored before they were tied, stay unbound and are flagged when their servers disagree", async () => {
+		const { stub, set } = await contestedAcme();
+		expect(await sentTo(stub)).toBeNull();
+		expect(await contested(stub)).toEqual([
+			"https://mcp.acme.dev",
+			"https://mcp.elsewhere.example",
+		]);
+		expect(JSON.stringify(await stub.listEnvSets())).not.toContain(TOKEN);
+
+		// Entering the value again is a new value, sent nowhere yet, so the flag goes.
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "new-token" }, "Grace");
+		expect(await contested(stub)).toBeNull();
+	});
+
+	it("flagged as contested, go only to one of the origins that named them", async () => {
+		const { stub, acme } = await contestedAcme();
+
+		// A third origin is refused, as an origin a value is tied to would refuse it.
+		await moveAcme(stub, acme, "https://mcp.third.example/mcp");
+		const third = await stub.mcpCheckTarget(acme);
+		expect(third).toEqual({
+			name: "acme",
+			problem: expect.stringContaining(
+				"ACME_TOKEN was entered for another server address, so it is not sent to https://mcp.third.example. An owner or admin can enter it again",
+			),
+		});
+		expect(JSON.stringify(third)).not.toContain(TOKEN);
+		expect(await sentTo(stub)).toBeNull();
+
+		// One that named it is sent the value, which is tied there and no longer flagged.
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v3");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			headers: { Authorization: `Bearer ${TOKEN}` },
+		});
+		expect(await sentTo(stub)).toBe("https://mcp.acme.dev");
+		expect(await contested(stub)).toBeNull();
+		await moveAcme(stub, acme, ELSEWHERE);
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+		});
+	});
+
+	it("stored before they were tied, are tied by a pass that runs once", async () => {
+		let stub = registry();
+		await pinnedAcme(stub);
+		// The registry ran the pass as it first woke, before it held any value.
+		expect(await passes(stub)).toEqual([{ name: BIND_UNSENT_SECRETS, failure: null }]);
+		expect(await sentTo(stub)).toBeNull();
+
+		await beforeTies(stub);
+		stub = await restart(stub);
+		expect(await sentTo(stub)).toBe("https://mcp.acme.dev");
+
+		// Waking again ties nothing more.
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec("UPDATE env_secrets SET sent_to = NULL");
+		});
+		stub = await restart(stub);
+		expect(await sentTo(stub)).toBeNull();
+		expect(await passes(stub)).toEqual([{ name: BIND_UNSENT_SECRETS, failure: null }]);
+		expect(await stub.secretTiesFailedAt()).toBeNull();
+	});
+
+	it("stored before they were tied, leave the registry working when the pass fails", async () => {
+		let stub = registry();
+		const { acme } = await pinnedAcme(stub);
+		await beforeTies(stub);
+		// A server version the pass cannot read makes it throw.
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec(
+				"UPDATE asset_versions SET files = 'not json' WHERE asset_id = ?",
+				acme,
+			);
+		});
+
+		stub = await restart(stub);
+		// The wake went on: the registry answers, and the pass is recorded as failed, with why.
+		expect(await stub.listProjects()).toEqual([]);
+		expect((await stub.listEnvSets()).map((entry) => entry.asset.name)).toEqual(["prod"]);
+		const [failed] = await passes(stub);
+		expect(failed).toMatchObject({ name: BIND_UNSENT_SECRETS, failure: expect.any(String) });
+		expect(failed?.failure).not.toBe("");
+		// Its write rolled back whole, and it is not tried again on the next wake.
+		expect(await sentTo(stub)).toBeNull();
+		stub = await restart(stub);
+		expect(await passes(stub)).toEqual([failed]);
+		expect(await stub.listProjects()).toEqual([]);
+	});
+
+	it("stored before they were tied, go nowhere when the pass fails, until entered again", async () => {
+		let stub = registry();
+		const { acme, set } = await pinnedAcme(stub);
+		await beforeTies(stub);
+		// Only the version the agent pins is unreadable, so the pass throws, and a later one,
+		// which a check sends to, can still be read.
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec(
+				"UPDATE asset_versions SET files = 'not json' WHERE asset_id = ? AND version = 1",
+				acme,
+			);
+		});
+		const before = Date.now();
+		stub = await restart(stub);
+		expect(await passes(stub)).toEqual([
+			{ name: BIND_UNSENT_SECRETS, failure: expect.any(String) },
+		]);
+
+		// The value was closed with the failure, and the page's RPC says so, to show admins.
+		expect(await contested(stub)).toEqual([]);
+		expect(await stub.secretTiesFailedAt()).toBeGreaterThanOrEqual(before);
+		expect(JSON.stringify(await stub.listEnvSets())).not.toContain(TOKEN);
+
+		// No origin gets it: not the one its servers named, nor any other.
+		for (const url of ["https://mcp.acme.dev/v2", ELSEWHERE]) {
+			await moveAcme(stub, acme, url);
+			const refused = await stub.mcpCheckTarget(acme);
+			expect(refused).toEqual({
+				name: "acme",
+				problem: expect.stringContaining(
+					`ACME_TOKEN was stored before values were tied to one server address and could not be tied, so it is not sent to any. An owner or admin can enter it again in the agent's environment set to send it to ${new URL(url).origin}.`,
+				),
+			});
+			expect(JSON.stringify(refused)).not.toContain(TOKEN);
+			expect(await sentTo(stub)).toBeNull();
+		}
+
+		// Entering it again opens it, and it is tied to the first origin it is sent to, as any.
+		await stub.setEnvSecret({ assetId: set, name: "ACME_TOKEN", value: "new-token" }, "Grace");
+		expect(await contested(stub)).toBeNull();
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			headers: { Authorization: "Bearer new-token" },
+		});
+		expect(await sentTo(stub)).toBe("https://mcp.elsewhere.example");
+		await moveAcme(stub, acme, "https://mcp.acme.dev/v3");
+		expect(await stub.mcpCheckTarget(acme)).toMatchObject({
+			problem: expect.stringContaining("ACME_TOKEN was entered for another server address"),
+		});
 	});
 });

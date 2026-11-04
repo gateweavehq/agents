@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: "${VAR}" references are what is under test
 import { env } from "cloudflare:workers";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,15 +23,20 @@ const SITE = {
 	private: true,
 };
 
-/** A conversation with an agent that has a sandbox, or not, and a repository in it, or not. */
+/**
+ * A conversation with an agent that has a sandbox, or not, a repository in it, or not, and the
+ * local MCP servers `localServers` names, each a command with its environment.
+ */
 async function conversation({
 	sandbox,
 	repository = false,
 	installationId = SITE.installationId,
+	localServers = {},
 }: {
 	sandbox: boolean;
 	repository?: boolean;
 	installationId?: string;
+	localServers?: Record<string, object>;
 }) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
@@ -38,6 +44,18 @@ async function conversation({
 	const [repositoryId = null] = repository
 		? await registry.syncRepositories([{ ...SITE, installationId }])
 		: [];
+	const mcpServers = await libraryServers(registry, localServers);
+	const environment =
+		mcpServers.length > 0
+			? {
+					assetId: await registry.createEnvSet({
+						name: "prod",
+						variables: { GREETING: "Ahoy" },
+						secrets: [],
+					}),
+					version: 1,
+				}
+			: null;
 	const agent = await registry.createAgent({
 		name: "Builder",
 		description: null,
@@ -46,6 +64,8 @@ async function conversation({
 		instructions: { assetId: await rules(registry), version: 1 },
 		sandbox,
 		repositoryId,
+		mcpServers,
+		environment,
 	});
 	const conversationId = (await registry.startConversation(agent.id, "user-ada"))?.id ?? "";
 	const name = conversationName(workspaceId, conversationId);
@@ -98,6 +118,41 @@ function pullRequestGitHub(
 	};
 }
 
+/** Local MCP servers in the library, as a scan of a repository's `.mcp.json` stores them. */
+async function libraryServers(
+	registry: ReturnType<typeof env.REGISTRY.getByName>,
+	servers: Record<string, object>,
+) {
+	const names = Object.keys(servers);
+	if (names.length === 0) return [];
+	const [repository = ""] = await registry.syncRepositories([
+		{ ...SITE, externalId: "8", name: "tools" },
+	]);
+	await registry.applyScan(repository, {
+		commit: "a".repeat(40),
+		scannedAt: 1_000,
+		agents: [],
+		assets: names.map((name) => ({
+			kind: "mcp-server" as const,
+			key: `.mcp.json#${name}`,
+			name,
+			description: null,
+			path: ".mcp.json",
+			files: [{ path: ".mcp.json", content: `${JSON.stringify(servers[name])}\n` }],
+			metadata: {},
+		})),
+		problems: [],
+		files: [],
+	});
+	const found = (await registry.getRepository(repository))?.assets ?? [];
+	const pins = [];
+	for (const asset of found) {
+		const assetId = await registry.addToLibrary(asset.id, { name: asset.name });
+		pins.push({ assetId, version: 1, tools: null });
+	}
+	return pins;
+}
+
 /** Instructions of the agent's, which the model reads before anything about a repository. */
 function rules(registry: ReturnType<typeof env.REGISTRY.getByName>) {
 	return registry.createLibraryAsset({ kind: "instructions", name: "rules", text: "Be brief.\n" });
@@ -143,6 +198,62 @@ describe("a conversation with a sandbox", () => {
 		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([
 			{ step: 0, status: "ok", server: "sandbox", tool: "write_file", error: null },
 			{ step: 1, status: "ok", server: "sandbox", tool: "run_command", error: null },
+		]);
+		expect(JSON.stringify(trace)).not.toContain(SECRET_TEXT);
+	});
+
+	it("starts the agent's local MCP servers in it, with its variables, and stops them after", async () => {
+		const requests = fakeModel((call) =>
+			call === 0
+				? anthropicToolCall("echo__echo", { text: SECRET_TEXT })
+				: anthropicStream("It echoed."),
+		);
+		const { registry, stub, machine } = await conversation({
+			sandbox: true,
+			localServers: {
+				echo: { command: "npx", args: ["-y", "@acme/echo-mcp"], env: { GREETING: "${GREETING}" } },
+				broken: { command: "missing" },
+			},
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Echo it");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "It echoed.", error: null });
+		const names = ((requests[0]?.body.tools ?? []) as { name: string }[]).map((tool) => tool.name);
+		expect(names).toContain("echo__echo");
+		expect(names.some((name) => name.startsWith("broken__"))).toBe(false);
+		// It answered with the variable from the agent's environment set.
+		expect(JSON.stringify(requests[1]?.body.messages)).toContain(`Ahoy: ${SECRET_TEXT}`);
+
+		const { mcpServers } = await machine.seen();
+		expect(mcpServers).toEqual(
+			expect.arrayContaining([
+				{
+					command: { command: "npx", args: ["-y", "@acme/echo-mcp"], env: { GREETING: "Ahoy" } },
+					heard: expect.arrayContaining(["initialize", "tools/list", "tools/call"]),
+					// The turn closed it, so it exited.
+					exited: true,
+				},
+				{ command: { command: "missing", args: [], env: {} }, heard: [], exited: true },
+			]),
+		);
+
+		const [run] = await registry.listRuns();
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "connect")).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ server: "echo", status: "ok", tools: 1 }),
+				expect.objectContaining({
+					server: "broken",
+					status: "error",
+					error:
+						"Its command did not start, or ended before it answered. Check the command and its arguments",
+				}),
+			]),
+		);
+		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([
+			{ status: "ok", server: "echo", tool: "echo", error: null },
 		]);
 		expect(JSON.stringify(trace)).not.toContain(SECRET_TEXT);
 	});
@@ -323,6 +434,7 @@ describe("a conversation without a sandbox", () => {
 			engine: [],
 			stops: 0,
 			destroyed: false,
+			mcpServers: [],
 		});
 	});
 });

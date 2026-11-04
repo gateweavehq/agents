@@ -15,8 +15,8 @@
 import {
 	type AssetKind,
 	type Metadata,
-	REPOSITORY_RUNTIMES,
-	type RepositoryRuntime,
+	SETUP_RUNTIMES,
+	type SetupRuntime,
 } from "@gateweave/agents-model";
 import { canonicalJson } from "./redaction";
 import { compare } from "./util";
@@ -66,10 +66,10 @@ const UNSUPPORTED: Partial<Record<AssetKind, string>> = {
 
 export function writeAssets(
 	assets: readonly AssetToWrite[],
-	runtimes: readonly RepositoryRuntime[],
+	runtimes: readonly SetupRuntime[],
 ): WriteResult {
 	// Repository order, whatever order the caller used and however often it repeated one.
-	const targets = new Set(REPOSITORY_RUNTIMES.filter((runtime) => runtimes.includes(runtime)));
+	const targets = new Set(SETUP_RUNTIMES.filter((runtime) => runtimes.includes(runtime)));
 	const output = new Output();
 	if (targets.size === 0) return output.result();
 

@@ -49,14 +49,17 @@ async function memberOf(slug: string) {
 }
 
 /** The agents run by Gateweave, with the providers the workspace has keys for, or the server offers. */
-async function chatAgents(registry: NonNullable<Awaited<ReturnType<typeof memberOf>>>["registry"]) {
+async function chatAgents(
+	registry: NonNullable<Awaited<ReturnType<typeof memberOf>>>["registry"],
+	workspaceId: string,
+) {
 	const [agents, keys, { offersWorkersAi }] = await Promise.all([
 		registry.listRunnableAgents(),
 		registry.listProviderKeys(),
 		import("#/server/workers-ai"),
 	]);
 	const usable = new Set<ModelProvider>(keys.map((key) => key.provider));
-	if (offersWorkersAi()) usable.add("workers-ai");
+	if (offersWorkersAi(workspaceId)) usable.add("workers-ai");
 	return agents.map(
 		({ id, name, description, provider, model }): ChatAgent => ({
 			id,
@@ -81,17 +84,22 @@ export const getChats = createServerFn({ method: "GET" })
 			conversations: Conversation[];
 			agents: ChatAgent[];
 			teams: ChatTeam[];
+			/** Whether any model can answer here: the workspace has a key, or the server offers Workers AI. */
+			hasModels: boolean;
 		} | null> => {
 			const member = await memberOf(slug);
 			if (!member) return null;
-			const [conversations, agents, teams] = await Promise.all([
+			const [conversations, agents, teams, keys, { offersWorkersAi }] = await Promise.all([
 				member.registry.listConversations(member.userId),
-				chatAgents(member.registry),
+				chatAgents(member.registry, member.workspaceId),
 				member.registry.listTeams(),
+				member.registry.listProviderKeys(),
+				import("#/server/workers-ai"),
 			]);
 			return {
 				conversations,
 				agents,
+				hasModels: keys.length > 0 || offersWorkersAi(member.workspaceId),
 				teams: teams.map(
 					({ team, lead, members }): ChatTeam => ({
 						id: team.id,
@@ -129,7 +137,7 @@ export const getChat = createServerFn({ method: "GET" })
 			);
 			if (!conversation) return null;
 			const [agents, team] = await Promise.all([
-				chatAgents(member.registry),
+				chatAgents(member.registry, member.workspaceId),
 				conversation.teamId === null ? null : member.registry.getTeam(conversation.teamId),
 			]);
 			const answers = conversation.teamId === null ? conversation.agentId : team?.team.leadAgentId;

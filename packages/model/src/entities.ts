@@ -10,8 +10,8 @@ import type {
 	KeyedProvider,
 	ModelProvider,
 	RepositoryProvider,
-	RepositoryRuntime,
 	RunStatus,
+	SetupRuntime,
 	TeamEdgeKind,
 } from "./vocabulary";
 
@@ -29,9 +29,13 @@ export interface Repository {
 	id: string;
 	provider: RepositoryProvider;
 	externalId: string;
+	/** What reaches it: a GitHub App installation, or a GitLab connection. */
 	installationId: string | null;
+	/** On GitHub, the account; on GitLab, the project's namespace, such as `group/subgroup`. */
 	owner: string;
 	name: string;
+	/** Its page on a GitLab, which may be self-managed. Null on GitHub, whose address is known. */
+	webUrl: string | null;
 	defaultBranch: string;
 	private: boolean;
 	projectIds: string[];
@@ -49,6 +53,28 @@ export interface Repository {
 	problems: ScanProblem[];
 	createdAt: number;
 	updatedAt: number;
+}
+
+/**
+ * A GitLab the workspace reaches with an access token. The token never leaves the registry:
+ * `tokenHint` is its last four characters.
+ */
+export interface GitLabConnection {
+	id: string;
+	/** Such as `https://gitlab.com`, or a self-managed GitLab's address. */
+	baseUrl: string;
+	/** Who the token acts as, such as a project's bot user. */
+	account: string;
+	tokenHint: string;
+	/** The live repositories it reaches. */
+	repositories: number;
+	createdBy: string;
+	createdAt: number;
+	/** When its projects were last listed, and why that failed if it did. */
+	syncedAt: number | null;
+	syncError: string | null;
+	/** When GitLab last sent a push that the secret token let in. */
+	lastDeliveryAt: number | null;
 }
 
 export interface Agent {
@@ -167,7 +193,7 @@ export interface Setup {
 	id: string;
 	name: string;
 	description: string | null;
-	runtimes: RepositoryRuntime[];
+	runtimes: SetupRuntime[];
 	createdAt: number;
 	updatedAt: number;
 }
@@ -339,11 +365,23 @@ export interface AgentDefinition {
 	engine: AgentEngine;
 }
 
+/**
+ * How an agent reaches an MCP server: at a URL, or as a local command its sandbox starts. Or why
+ * it cannot.
+ */
+export type McpServerConnection =
+	| { transport: "http" | "sse"; url: string }
+	| { transport: "stdio"; command: string; args: string[] }
+	| { problem: string };
+
 /** An MCP server an agent run by Gateweave uses. */
 export interface AgentMcpServer extends PinnedAsset {
 	/** Where the agent reaches it, or why it cannot. */
-	connection: { transport: "http" | "sse"; url: string } | { problem: string };
-	/** The variables its headers name, each with whether the agent's environment set has it. */
+	connection: McpServerConnection;
+	/**
+	 * The variables its headers, or its command's environment, name, each with whether the agent's
+	 * environment set has it.
+	 */
 	variables: { name: string; state: "set" | "missing" }[];
 	/** The tools the agent may use, by the server's names; null is all of them. */
 	tools: string[] | null;
@@ -447,6 +485,13 @@ export interface EnvSecret {
 	/** Who stored the value, and when; null while it is missing. */
 	setBy: string | null;
 	setAt: number | null;
+	/**
+	 * The origins of the MCP servers that named a value stored before values were tied to one
+	 * origin, when they disagreed: it is sent only to one of these, the first a check or a turn
+	 * uses, and then only there. Empty when tying those values failed: it is sent nowhere until it
+	 * is entered again. Null when neither is so, or once it is tied or entered again.
+	 */
+	contested: string[] | null;
 }
 
 /** A value stored for a name the set's current version no longer declares as a secret. */
@@ -533,6 +578,12 @@ export interface Run {
 	cachedInputTokens: number;
 	/** Estimated cost in millionths of a dollar; null when a model it used has no prices. */
 	cost: number | null;
+	/**
+	 * The sandbox time the run accounts for, in seconds; null for a run without a sandbox. Its
+	 * conversation's sandbox runs from the turn until the next one, or until `SANDBOX_IDLE_MINUTES`
+	 * after it ends, so each second of it belongs to one run (`sandboxRunSeconds`).
+	 */
+	sandboxSeconds: number | null;
 	startedAt: number;
 	endedAt: number | null;
 	/**
@@ -557,6 +608,8 @@ export interface Run {
 	triggerName: string | null;
 	/** The pull request the run opened or pushed to from its sandbox; null when it made none. */
 	pullRequest: RunPullRequest | null;
+	/** The run this one replays from one of its steps; null for any other. */
+	replayOf: string | null;
 }
 
 /** A pull request on GitHub that a run opened or pushed to. */
@@ -585,6 +638,10 @@ export interface RunUsage {
 export interface RunTotal extends RunUsage {
 	/** Runs among them still going. */
 	running: number;
+	/** Their sandbox time, in seconds. */
+	sandboxSeconds: number;
+	/** That time's estimated cost, in millionths of a dollar (`sandboxCost`), apart from `cost`. */
+	sandboxCost: number;
 }
 
 /** A run, with its total: for one outside a team, what it used by itself. */
@@ -685,6 +742,21 @@ export type TurnMcpServer =
 			headers: Record<string, string>;
 			/** The tools the agent may use, by the server's names; null is all of them. */
 			tools: string[] | null;
+			/**
+			 * The library server whose OAuth connection the turn signs in with (AGT-78), through
+			 * the registry, which keeps and refreshes its token; absent when it has none.
+			 */
+			oauth?: string;
+	  }
+	| {
+			name: string;
+			/** A local command, started in the conversation's sandbox for the turn. */
+			transport: "stdio";
+			command: string;
+			args: string[];
+			/** Its environment, from the agent's environment set: variables only, never a secret. */
+			env: Record<string, string>;
+			tools: string[] | null;
 	  }
 	| { name: string; problem: string };
 
@@ -711,10 +783,37 @@ export interface McpServerEntry {
 	/** `asset.version` is the current version. */
 	asset: Asset;
 	/** Where an agent reaches it, or why it cannot. */
-	connection: { transport: "http" | "sse"; url: string } | { problem: string };
-	/** The variables its headers name, sorted. */
+	connection: McpServerConnection;
+	/** The variables its headers, or its command's environment, name, sorted. */
 	variables: string[];
 	/** The live agents run by Gateweave that pin it, and the version each pins. */
 	agents: { id: string; name: string; version: number }[];
 	check: McpCheck | null;
+	/**
+	 * The workspace's OAuth connection to it (AGT-78): who made it and when, and whether it is for
+	 * the URL the server has now, so turns send it. Null when it has none.
+	 */
+	oauth: { connectedBy: string; connectedAt: number; current: boolean } | null;
+}
+
+/**
+ * Where the workspace's run traces go over OpenTelemetry, as pages show it: the endpoint, the
+ * names of the headers sent with it (never their values), and how the last export went.
+ */
+export interface TelemetrySettings {
+	endpoint: string;
+	headers: string[];
+	setBy: string;
+	setAt: number;
+	/** The last export of a run's trace: when, and why it failed; null before the first. */
+	lastExport: { at: number; ok: boolean; error: string | null } | null;
+}
+
+/** Where to send a trace, with the headers opened: for the runtime alone, like a model key. */
+export interface TelemetryTarget {
+	/** The full URL traces are posted to, ending in `/v1/traces`. */
+	url: string;
+	headers: Record<string, string>;
+	/** Which settings these are, for reporting how the export went (`recordTelemetryExport`). */
+	setAt: number;
 }

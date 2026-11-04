@@ -6,8 +6,10 @@
  * 2. GitHub sends them to /api/github/setup with the installation's id. Anyone can call that URL
  *    with any id, so the id is not trusted yet: the admin is sent on to authorize the app.
  * 3. GitHub sends them to /api/github/callback with a code. The app trades it for a user token,
- *    checks that the installation is among the ones this person can reach, and only then links
- *    it to the workspace and lists its repositories. The token is not kept.
+ *    checks that this person controls the installation's account (it is their personal account,
+ *    or they are an admin of its organization), and only then links it to the workspace and
+ *    lists its repositories. Seeing the installation is not enough: GitHub lists it for anyone
+ *    with access to one of its repositories. The token is not kept.
  *
  * Webhooks then report installs, uninstalls and changes to the repositories the app reaches;
  * pushes, which queue a scan of the repository when they reach its default branch; and pull
@@ -16,9 +18,10 @@
 import { env } from "cloudflare:workers";
 import {
 	authorizeUrl,
+	controlsInstallation,
 	exchangeCode,
 	pkcePair,
-	userInstallationIds,
+	userInstallations,
 	verifyWebhook,
 	type WebhookPayload,
 	webhookPayload,
@@ -143,7 +146,10 @@ export async function finishVerify(request: Request): Promise<Response> {
 			redirectUri: callbackUrl(request),
 			verifier,
 		});
-		if (!(await userInstallationIds(token)).has(state.installationId)) return finish("denied");
+		// GitHub lists every installation the person can see any repository of, so being listed is
+		// not enough: only the account's owner, or an admin of its organization, may link it.
+		const listed = (await userInstallations(token)).find(({ id }) => id === state.installationId);
+		if (!listed || !(await controlsInstallation(token, listed))) return finish("denied");
 		const installation = await config.app.installation(state.installationId);
 		// state.userId is the signed-in user, checked above.
 		if ((await linkInstallation(state.workspaceId, installation, state.userId)) === "taken") {

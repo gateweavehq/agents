@@ -223,6 +223,7 @@ const JOB: EngineJob = {
 		key: "sk-ant-secret",
 		metadata: { workspace: "w", agent: "a", conversation: "c" },
 		tools: null,
+		meter: { conversation: "c", token: "t" },
 	},
 };
 

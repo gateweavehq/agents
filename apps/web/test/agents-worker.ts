@@ -14,6 +14,8 @@ import type {
 	EnvSetEditInput,
 	EnvSetEntry,
 	EnvSetInput,
+	GitLabConnection,
+	GitLabConnectionInput,
 	LibraryEditInput,
 	LibraryTarget,
 	McpCheck,
@@ -31,7 +33,6 @@ import type {
 	Repository,
 	RepositoryDetail,
 	RepositoryInput,
-	ResolvedEnvironment,
 	RunCursor,
 	RunFinish,
 	RunUsage,
@@ -111,21 +112,28 @@ export interface RegistryStub {
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
 	listProviderKeys(): Promise<ProviderKey[]>;
+	gitlabConnect(
+		input: GitLabConnectionInput,
+		by: string,
+	): Promise<{ connection: GitLabConnection; webhookSecret: string } | ProviderRefusal>;
+	gitlabConnections(): Promise<GitLabConnection[]>;
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
 	createMcpServer(input: McpServerInput): Promise<string>;
 	editMcpServer(input: McpServerEditInput): Promise<number>;
 	listMcpServers(): Promise<McpServerEntry[]>;
 	mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null>;
+	mcpOAuthOpen(assetId: string): Promise<{ serverUrl: string; tokens: unknown } | null>;
 	recordMcpCheck(assetId: string, result: McpCheckResult): Promise<McpCheck | null>;
 	createEnvSet(input: EnvSetInput): Promise<string>;
 	editEnvSet(input: EnvSetEditInput): Promise<number>;
 	listEnvSets(): Promise<EnvSetEntry[]>;
+	secretTiesFailedAt(): Promise<number | null>;
 	setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal>;
-	resolveEnvironment(agentId: string): Promise<ResolvedEnvironment | null>;
 	startConversation(agentId: string, startedBy: string): Promise<Conversation | null>;
 	startTeamConversation(teamId: string, startedBy: string): Promise<Conversation | null>;
 	getConversation(conversationId: string, startedBy: string): Promise<Conversation | null>;
 	removeConversation(conversationId: string, startedBy: string): Promise<string[]>;
+	conversationIds(): Promise<string[]>;
 	beginTurn(conversationId: string, text: string): Promise<{ runId: string } | ProviderRefusal>;
 	finishRun(runId: string, finish: RunFinish): Promise<boolean>;
 	listRuns(options?: { startedBy?: string; before?: RunCursor }): Promise<TotaledRun[]>;
@@ -357,6 +365,14 @@ export async function startAgents(
 				getByName(name: string): RegistryStub;
 			};
 			return namespace.getByName(workspaceId);
+		},
+		/** A conversation's Durable Object, to check what it holds. */
+		async conversation(workspaceId: string, conversationId: string) {
+			const namespace = (await mf.getDurableObjectNamespace("CONVERSATIONS")) as unknown as {
+				getByName(name: string): { transcript(): Promise<string> };
+			};
+			// `conversationName` in packages/runtime.
+			return namespace.getByName(`${workspaceId}:${conversationId}`);
 		},
 		dispose: () => mf.dispose(),
 	};

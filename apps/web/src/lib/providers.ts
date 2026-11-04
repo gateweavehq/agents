@@ -11,9 +11,12 @@ import {
 	type SandboxOffer,
 	sandboxLimits,
 	sandboxOfferTo,
+	type WorkersAiOffer,
+	workersAiDailyLimit,
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { invitationLink } from "#/lib/invitation";
 
 // Workers AI has no key to check or remove.
 const provider = z.enum(KEYED_PROVIDERS);
@@ -34,6 +37,12 @@ export interface SandboxTime {
 	limit: number | null;
 }
 
+/** What the workspace spent on Workers AI today (UTC), in US dollars, and the server's daily limit. */
+export interface WorkersAiSpend {
+	dollars: number;
+	limit: number | null;
+}
+
 /**
  * The keys, whether this server can keep keys at all (it needs `SECRETS_KEY`), whether it offers
  * Workers AI, which has no key: the deployment pays for it, and whether it runs sandboxes for the
@@ -47,23 +56,40 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 		}): Promise<{
 			configured: boolean;
 			keys: ProviderKey[];
+			/** Whether this workspace may use Workers AI now. */
 			workersAi: boolean;
+			workersAiOffer: WorkersAiOffer;
+			workersAiSpend: WorkersAiSpend | null;
+			/**
+			 * Where to ask for an invitation to what the server offers by invitation: a link, or
+			 * null when it names nowhere (`INVITATION_CONTACT`).
+			 */
+			invitation: string | null;
 			sandbox: SandboxOffer;
 			sandboxTime: SandboxTime | null;
 		} | null> => {
 			const found = await memberOf(slug, false);
 			if (!found) return null;
 			const { env } = await import("cloudflare:workers");
-			const { offersWorkersAi } = await import("#/server/workers-ai");
-			const sandbox = sandboxOfferTo(env, found.member.membership.workspaceId);
-			const [keys, seconds] = await Promise.all([
+			const { workersAiOffer } = await import("#/server/workers-ai");
+			const { workspaceId } = found.member.membership;
+			const sandbox = sandboxOfferTo(env, workspaceId);
+			const offer = workersAiOffer(workspaceId);
+			const [keys, seconds, dollars] = await Promise.all([
 				found.registry.listProviderKeys(),
 				sandbox === "offered" ? found.registry.sandboxSecondsToday() : null,
+				offer === "offered" ? found.registry.workersAiSpentToday() : null,
 			]);
 			return {
 				configured: Boolean(env.SECRETS_KEY),
 				keys,
-				workersAi: offersWorkersAi(),
+				workersAi: offer === "offered",
+				workersAiOffer: offer,
+				workersAiSpend: dollars === null ? null : { dollars, limit: workersAiDailyLimit(env) },
+				invitation: invitationLink(env.INVITATION_CONTACT, {
+					id: workspaceId,
+					name: found.member.membership.workspaceName,
+				}),
 				sandbox,
 				sandboxTime:
 					seconds === null
@@ -83,7 +109,7 @@ export const getWorkersAiModels = createServerFn({ method: "GET" })
 		const found = await memberOf(slug, false);
 		if (!found) return null;
 		const { offersWorkersAi, workersAiModels } = await import("#/server/workers-ai");
-		if (!offersWorkersAi()) return null;
+		if (!offersWorkersAi(found.member.membership.workspaceId)) return null;
 		return workersAiModels().catch((failure: unknown) =>
 			failure instanceof Error ? failure.message : "Something went wrong",
 		);

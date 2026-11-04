@@ -1,8 +1,8 @@
 /**
  * Claude Code as an agent's engine (`./engines.ts`): Anthropic's Claude Code CLI, run in the
  * conversation's sandbox in place of Gateweave's own loop. It reads the repository's CLAUDE.md,
- * skills and settings as it would on a laptop. Each model request becomes a model span, and each
- * of its tool calls a tool span. One conversation is one Claude Code session, whose id the sandbox
+ * skills and settings as it would on a laptop. Its model requests are metered where they leave the
+ * sandbox (`./meter.ts`), one span each, and each of its tool calls is a tool span. One conversation is one Claude Code session, whose id the sandbox
  * chooses.
  *
  * Gateweave's tools reach it as the MCP server `gateweave` (`./engine-tools.ts`), whose tools it
@@ -24,9 +24,6 @@
  *   Claude Code 2.1.308 and a fake Anthropic API: with it, the instructions the CLI sends the model
  *   no longer ask for the Co-Authored-By trailer or the "Generated with Claude Code" line
  * - the events' shapes: `SDKMessage` in `sdk.d.ts` of @anthropic-ai/claude-agent-sdk 0.3.312
- * - which usage each event carries: Claude Code 2.1.308 against a fake Anthropic API. An
- *   `assistant` event has the usage of the request's start, a `stream_event` with `message_delta`
- *   its final usage (`--include-partial-messages`), and `result` the turn's totals
  */
 import { type AgentSnapshot, MODEL_PROVIDER_NAMES } from "@gateweave/agents-model";
 import { z } from "zod";
@@ -130,8 +127,6 @@ export function claudeCodeArguments(options: {
 		"--output-format",
 		"stream-json",
 		"--verbose",
-		// The only events with a request's final usage: an `assistant` event has its start's.
-		"--include-partial-messages",
 		"--model",
 		options.model,
 		"--permission-mode",
@@ -152,6 +147,26 @@ export function claudeCodeArguments(options: {
 }
 
 /**
+ * The variables that make every model Claude Code would choose the agent's: its small fast model,
+ * each of the aliases a subagent or setting names (`haiku`, `sonnet`, `opus`, `fable`), and its
+ * subagents', and no fallback to another model when one is overloaded. The sandbox's requests may
+ * call only the agent's model (`checkModelRequest` in `./outbound.ts`), so any other would be
+ * refused. Their names are those the 2.1.308 binary reads, checked 2026-11-02.
+ */
+export function claudeCodeModelEnv(model: string): Record<string, string> {
+	return {
+		ANTHROPIC_SMALL_FAST_MODEL: model,
+		ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+		ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+		ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+		ANTHROPIC_DEFAULT_FABLE_MODEL: model,
+		CLAUDE_CODE_SUBAGENT_MODEL: model,
+		CLAUDE_CODE_WORKFLOW_SUBAGENT_MODEL: model,
+		CLAUDE_CODE_NO_MODEL_FALLBACK: "1",
+	};
+}
+
+/**
  * How the sandbox runs a turn of Claude Code: in the session `session`, resumed when the sandbox
  * still has its transcript, with the message on its input.
  */
@@ -162,7 +177,7 @@ export function claudeCodeCommand(job: EngineJob, session: string, resume: boole
 			"claude",
 			...claudeCodeArguments({ model: job.model, system: job.system, session, resume, tools }),
 		],
-		env: CLAUDE_CODE_ENV,
+		env: { ...CLAUDE_CODE_ENV, ...claudeCodeModelEnv(job.model) },
 		input: enginePrompt(job, resume),
 		log: CLAUDE_CODE_LOG,
 	};
@@ -180,15 +195,6 @@ const SYNTHETIC_MODEL = "<synthetic>";
 /** The longest part of Claude Code's own words a failure it has no name for quotes. */
 const FAILURE_DETAIL_LIMIT = 300;
 
-const usageSchema = z.object({
-	input_tokens: z.number().optional(),
-	output_tokens: z.number().optional(),
-	cache_creation_input_tokens: z.number().nullish(),
-	cache_read_input_tokens: z.number().nullish(),
-});
-
-type Usage = z.infer<typeof usageSchema>;
-
 const assistantEvent = z.object({
 	type: z.literal("assistant"),
 	parent_tool_use_id: z.string().nullish(),
@@ -197,7 +203,6 @@ const assistantEvent = z.object({
 		id: z.string(),
 		model: z.string().optional(),
 		content: z.array(z.unknown()),
-		usage: usageSchema.nullish(),
 	}),
 });
 
@@ -205,22 +210,6 @@ const userEvent = z.object({
 	type: z.literal("user"),
 	parent_tool_use_id: z.string().nullish(),
 	message: z.object({ content: z.union([z.string(), z.array(z.unknown())]) }),
-});
-
-/**
- * One of the API's own streaming events, as `--include-partial-messages` passes them on. Two
- * matter: a request's start, with its id and how long its first token took, and its final usage,
- * which names no request and comes after its blocks. The blocks the `assistant` events carry whole.
- */
-const streamEvent = z.object({
-	type: z.literal("stream_event"),
-	parent_tool_use_id: z.string().nullish(),
-	ttft_ms: z.number().optional(),
-	event: z.object({
-		type: z.string(),
-		message: z.object({ id: z.string() }).optional(),
-		usage: usageSchema.nullish(),
-	}),
 });
 
 const resultEvent = z.object({
@@ -246,18 +235,6 @@ const toolResultBlock = z.object({
 	content: z.unknown(),
 });
 
-/** A model request of the turn, which Claude Code sends block by block, with the usage so far. */
-interface Request {
-	step: number;
-	/** The tool call of a subagent it belongs to; null in the main conversation. */
-	parent: string | null;
-	model: string;
-	usage: Usage;
-	toolCalls: boolean;
-	startedAt: number;
-	firstTokenMs: number | null;
-}
-
 /**
  * A tool call under way: its span, and whether the chat shows it. A call of Gateweave's own tools
  * has no span here: the conversation records it as it runs the tool, as in Gateweave's loop.
@@ -270,31 +247,22 @@ interface ToolCall {
 
 /**
  * Follows one turn of Claude Code, an event at a time. The main conversation's text and tool calls
- * go to the chat, a subagent's only to the trace, which records every model request and tool call.
+ * go to the chat, a subagent's only to the trace, which records every tool call.
  */
 export class ClaudeCodeTurn implements EngineTurn {
 	readonly #sink: ChunkSink;
 	readonly #run: RunRecorder;
 	readonly #agent: AgentSnapshot;
-	readonly #requests = new Map<string, Request>();
+	/** The model's answers seen so far, by their message's id: each comes in several events. */
+	readonly #answers = new Set<string>();
 	readonly #tools = new Map<string, ToolCall>();
-	#steps = 0;
-	/** Whether the chat has a step open, from the main conversation's request it shows. */
+	/** Whether the chat has a step open, from the main conversation's answer it shows. */
 	#stepOpen = false;
 	#result: z.infer<typeof resultEvent> | null = null;
 	/** Why a model request failed, as Claude Code names it. */
 	#apiError: string | null = null;
 	/** What Claude Code last said itself, which a failure it has no name for quotes. */
 	#detail: string | null = null;
-	/**
-	 * The request each conversation is streaming, by its subagent's tool call ("" for the main
-	 * one), with how long its first token took and when it was sent. A conversation's requests come
-	 * one at a time.
-	 */
-	readonly #streaming = new Map<
-		string,
-		{ id: string; firstTokenMs: number | null; startedAt: number }
-	>();
 
 	constructor(sink: ChunkSink, run: RunRecorder, agent: AgentSnapshot) {
 		this.#sink = sink;
@@ -310,13 +278,6 @@ export class ClaudeCodeTurn implements EngineTurn {
 		} catch {
 			return;
 		}
-		// Most lines are streaming events, a block's text a piece at a time: their type says so first.
-		const type = typeof event === "object" && event !== null && "type" in event ? event.type : null;
-		if (type === "stream_event") {
-			const stream = streamEvent.safeParse(event);
-			if (stream.success) this.#stream(stream.data, now);
-			return;
-		}
 		const assistant = assistantEvent.safeParse(event);
 		if (assistant.success) {
 			this.#assistant(assistant.data, now);
@@ -328,15 +289,11 @@ export class ClaudeCodeTurn implements EngineTurn {
 			return;
 		}
 		const result = resultEvent.safeParse(event);
-		if (result.success) {
-			this.#result = result.data;
-			this.#endRequests(null, now);
-		}
+		if (result.success) this.#result = result.data;
 	}
 
 	/** Ends what is still open and says how the turn went. */
-	end(now = Date.now()): EngineOutcome {
-		this.#endRequests(undefined, now);
+	end(): EngineOutcome {
 		this.#closeStep();
 		const result = this.#result;
 		if (!result) return UNFINISHED;
@@ -349,29 +306,6 @@ export class ClaudeCodeTurn implements EngineTurn {
 			return failed(describeApiError(this.#agent, this.#apiError, this.#detail));
 		}
 		return { status: "succeeded" };
-	}
-
-	#stream(
-		{ parent_tool_use_id: parent, ttft_ms: firstToken, event }: z.infer<typeof streamEvent>,
-		now: number,
-	): void {
-		const conversation = parent ?? "";
-		if (event.type === "message_start" && event.message) {
-			const firstTokenMs = firstToken === undefined ? null : Math.round(firstToken);
-			// The request went out before its first token, by as long as Claude Code says that took.
-			const startedAt = now - (firstTokenMs ?? 0);
-			this.#streaming.set(conversation, { id: event.message.id, firstTokenMs, startedAt });
-			return;
-		}
-		const id = this.#streaming.get(conversation)?.id;
-		const request = id === undefined ? undefined : this.#requests.get(id);
-		if (id === undefined || !request) return;
-		if (event.type === "message_delta" && event.usage) {
-			request.usage = latestUsage(request.usage, event.usage);
-		} else if (event.type === "message_stop") {
-			// The answer is whole, before its tools run.
-			this.#endRequest(id, request, now);
-		}
 	}
 
 	#assistant(event: z.infer<typeof assistantEvent>, now: number): void {
@@ -387,30 +321,14 @@ export class ClaudeCodeTurn implements EngineTurn {
 			this.#detail = text.join("\n").trim() || this.#detail;
 			return;
 		}
-		let request = this.#requests.get(message.id);
-		if (!request) {
-			// A new request means the one before it in the same conversation has answered.
-			this.#endRequests(parent, now);
-			const streaming = this.#streaming.get(parent ?? "");
-			const streamed = streaming?.id === message.id ? streaming : null;
-			request = {
-				step: this.#steps++,
-				parent,
-				model: message.model ?? this.#agent.model,
-				usage: {},
-				toolCalls: false,
-				startedAt: streamed?.startedAt ?? now,
-				firstTokenMs: streamed?.firstTokenMs ?? null,
-			};
-			this.#requests.set(message.id, request);
-			this.#run.stepStarted(request.step, request.startedAt);
+		if (!this.#answers.has(message.id)) {
+			this.#answers.add(message.id);
 			if (parent === null) {
 				this.#closeStep();
 				this.#sink.write({ type: "start-step" });
 				this.#stepOpen = true;
 			}
 		}
-		if (message.usage) request.usage = latestUsage(request.usage, message.usage);
 		for (const content of message.content) {
 			const text = textBlock.safeParse(content);
 			if (text.success && parent === null && text.data.text !== "") {
@@ -422,7 +340,6 @@ export class ClaudeCodeTurn implements EngineTurn {
 			}
 			const call = toolUseBlock.safeParse(content);
 			if (!call.success || this.#tools.has(call.data.id)) continue;
-			request.toolCalls = true;
 			const { name } = call.data;
 			const gateweave = name.startsWith(CLAUDE_CODE_TOOL_PREFIX);
 			const span = gateweave
@@ -479,64 +396,11 @@ export class ClaudeCodeTurn implements EngineTurn {
 		}
 	}
 
-	/**
-	 * Ends the requests still open, whose stream did not say when they ended: those of the
-	 * conversation `parent` names (null is the main one), or all of them when it is undefined.
-	 */
-	#endRequests(parent: string | null | undefined, now: number): void {
-		for (const [id, request] of this.#requests) {
-			if (parent !== undefined && request.parent !== parent) continue;
-			this.#endRequest(id, request, now);
-		}
-	}
-
-	#endRequest(id: string, request: Request, now: number): void {
-		this.#requests.delete(id);
-		const { usage } = request;
-		const cacheRead = usage.cache_read_input_tokens ?? 0;
-		const cacheWrite = usage.cache_creation_input_tokens ?? 0;
-		this.#run.requestEnded(
-			request.step,
-			{
-				model: request.model,
-				// Anthropic counts cached input apart; the trace counts it in the input too.
-				tokens: {
-					input: (usage.input_tokens ?? 0) + cacheRead + cacheWrite,
-					output: usage.output_tokens ?? 0,
-					cacheRead,
-					cacheWrite,
-				},
-				finishReason: request.toolCalls ? "tool-calls" : "stop",
-				firstTokenMs: request.firstTokenMs,
-				gatewayLogId: null,
-			},
-			now,
-		);
-	}
-
 	#closeStep(): void {
 		if (!this.#stepOpen) return;
 		this.#sink.write({ type: "finish-step" });
 		this.#stepOpen = false;
 	}
-}
-
-/**
- * A request's usage as far as it is known: each count only grows while it runs, and the events
- * that carry them need not come in order.
- */
-function latestUsage(known: Usage, next: Usage): Usage {
-	const most = (a: number | null | undefined, b: number | null | undefined) =>
-		a == null ? (b ?? undefined) : b == null ? a : Math.max(a, b);
-	return {
-		input_tokens: most(known.input_tokens, next.input_tokens),
-		output_tokens: most(known.output_tokens, next.output_tokens),
-		cache_creation_input_tokens: most(
-			known.cache_creation_input_tokens,
-			next.cache_creation_input_tokens,
-		),
-		cache_read_input_tokens: most(known.cache_read_input_tokens, next.cache_read_input_tokens),
-	};
 }
 
 /** Why Claude Code's turn failed, in the same words as a turn of Gateweave's own loop. */

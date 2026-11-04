@@ -1,16 +1,34 @@
-import { MODEL_PROVIDER_NAMES, type RunSpan, type TeamEdgeKind } from "@gateweave/agents-model";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+	MODEL_PROVIDER_NAMES,
+	type RunSpan,
+	sandboxCost,
+	type TeamEdgeKind,
+} from "@gateweave/agents-model";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { UIMessage } from "ai";
-import { ChevronRight, GitPullRequestArrow, MessagesSquare, Webhook } from "lucide-react";
+import {
+	ChevronRight,
+	GitPullRequestArrow,
+	MessagesSquare,
+	RotateCcw,
+	Webhook,
+} from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Transcript } from "#/components/chat/conversation-view";
-import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
+import {
+	RunStatusBadge,
+	runDuration,
+	SandboxCost,
+	TotalCost,
+	tokensUsed,
+} from "#/components/runs/run-labels";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime } from "#/lib/dates";
 import { useRefreshWhile } from "#/lib/refresh";
-import { getRun, type RunEntry } from "#/lib/runs";
+import { getRun, type RunEntry, replayRun } from "#/lib/runs";
 import { useDocumentTitle } from "#/lib/title";
 import { formatBytes, formatCost, formatDuration, formatTokens } from "#/lib/usage";
 import { cn } from "#/lib/utils";
@@ -23,12 +41,24 @@ export const Route = createFileRoute("/$workspace/runs/$runId")({
 function RunPage() {
 	const { slug } = useWorkspace();
 	const data = Route.useLoaderData();
+	const navigate = useNavigate();
 	useDocumentTitle(data ? `Run of ${data.run.agentName}` : "Run");
 	// Runs it led to may go on after it, as a report's does.
 	useRefreshWhile(data?.run.status === "running" || (data?.run.total.running ?? 0) > 0);
 
+	async function replay(step: number) {
+		if (!data) return;
+		try {
+			const { runId } = await replayRun({ data: { slug, runId: data.run.id, step } });
+			toast.success("The replay started");
+			await navigate({ to: "/$workspace/runs/$runId", params: { workspace: slug, runId } });
+		} catch (failure) {
+			toast.error(failure instanceof Error ? failure.message : "Something went wrong");
+		}
+	}
+
 	if (!data) return <Notice title="Run not found" />;
-	const { run, trace, nested, conversation, transcript } = data;
+	const { run, trace, nested, conversation, transcript, replayable, replays } = data;
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-8 px-4 py-10 sm:px-6">
@@ -54,6 +84,20 @@ function RunPage() {
 							>
 								{run.pullRequest.repository}#{run.pullRequest.number}
 							</a>
+						</p>
+					)}
+					{run.replayOf && (
+						<p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+							<RotateCcw aria-hidden className="size-3.5 shrink-0" />
+							Replays{" "}
+							<Link
+								to="/$workspace/runs/$runId"
+								params={{ workspace: slug, runId: run.replayOf }}
+								className="underline underline-offset-4 hover:text-foreground"
+							>
+								an earlier run
+							</Link>{" "}
+							from one of its steps, with the agent as it is now
 						</p>
 					)}
 					{run.parentRunId && run.edge && (
@@ -95,12 +139,46 @@ function RunPage() {
 					<span className="text-foreground">
 						<TotalCost total={run.total} />
 					</span>
+					<SandboxCost total={run.total} />
 				</p>
 			)}
 			<section className="space-y-3">
 				<h2 className="text-sm font-medium">Trace</h2>
-				<Trace run={run} trace={trace} nested={nested} />
+				<Trace
+					run={run}
+					trace={trace}
+					nested={nested}
+					onReplay={replayable ? (step) => replay(step) : undefined}
+				/>
+				{replayable && (
+					<p className="text-xs text-muted-foreground">
+						Replay a model request to see how the agent, as it is now, answers from there: a new
+						conversation of yours gets this one up to that request.
+					</p>
+				)}
 			</section>
+			{replays.length > 0 && (
+				<section className="space-y-2">
+					<h2 className="text-sm font-medium">Replays</h2>
+					<ul className="divide-y rounded-lg border">
+						{replays.map((each) => (
+							<li key={each.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
+								<RunStatusBadge status={each.status} />
+								<Link
+									to="/$workspace/runs/$runId"
+									params={{ workspace: slug, runId: each.id }}
+									className="underline underline-offset-4"
+								>
+									{formatDateTime(each.startedAt)}
+								</Link>
+								<span className="text-muted-foreground">
+									{each.model} · {tokensUsed(each.total)}
+								</span>
+							</li>
+						))}
+					</ul>
+				</section>
+			)}
 			{transcript !== null && (
 				<TriggerTranscript transcript={transcript} run={run} nested={nested} />
 			)}
@@ -173,6 +251,21 @@ function Summary({ run }: { run: RunEntry }) {
 					formatCost(run.cost)
 				),
 		},
+		...(run.sandboxSeconds === null
+			? []
+			: [
+					{
+						label: "Sandbox",
+						value: (
+							<>
+								{formatDuration(run.sandboxSeconds * 1000)}
+								<span className="ml-1.5 text-xs font-normal text-muted-foreground">
+									{formatCost(sandboxCost(run.sandboxSeconds))}
+								</span>
+							</>
+						),
+					},
+				]),
 		{
 			label: MODEL_PROVIDER_NAMES[run.provider],
 			value: <span className="font-mono text-sm font-normal">{run.model}</span>,
@@ -224,10 +317,13 @@ function Trace({
 	run,
 	trace,
 	nested,
+	onReplay,
 }: {
 	run: RunEntry;
 	trace: RunSpan[] | null;
 	nested: RunEntry[];
+	/** Replays the run from a model request; only on a run the viewer may replay. */
+	onReplay?: (step: number) => Promise<void>;
 }) {
 	if (trace === null) {
 		return (
@@ -241,7 +337,7 @@ function Trace({
 			<p className="text-sm text-muted-foreground">The run ended before it called the model.</p>
 		);
 	}
-	return <Timeline run={run} trace={trace} nested={nested} />;
+	return <Timeline run={run} trace={trace} nested={nested} onReplay={onReplay} />;
 }
 
 /**
@@ -249,7 +345,18 @@ function Trace({
  * servers, each model request, and the tools each request called and the edges it took, under it.
  * Each edge it took shows the run it started, which opens to that run's own trace.
  */
-function Timeline({ run, trace, nested }: { run: RunEntry; trace: RunSpan[]; nested: RunEntry[] }) {
+function Timeline({
+	run,
+	trace,
+	nested,
+	onReplay,
+}: {
+	run: RunEntry;
+	trace: RunSpan[];
+	nested: RunEntry[];
+	onReplay?: (step: number) => Promise<void>;
+}) {
+	const [replaying, setReplaying] = useState<number | null>(null);
 	const end = Math.max(
 		run.endedAt ?? (run.status === "running" ? Date.now() : run.startedAt),
 		...trace.map((span) => span.endedAt ?? span.startedAt),
@@ -272,7 +379,28 @@ function Timeline({ run, trace, nested }: { run: RunEntry; trace: RunSpan[]; nes
 					>
 						<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
 							<span className="min-w-0 text-sm">{title}</span>
-							<span className="text-xs text-muted-foreground tabular-nums">{meta}</span>
+							<span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
+								{meta}
+								{onReplay && span.kind === "model" && (
+									<Button
+										size="sm"
+										variant="ghost"
+										className="h-6 px-2 text-xs"
+										disabled={replaying !== null}
+										onClick={async () => {
+											setReplaying(span.step);
+											try {
+												await onReplay(span.step);
+											} finally {
+												setReplaying(null);
+											}
+										}}
+									>
+										<RotateCcw aria-hidden />
+										{replaying === span.step ? "Replaying…" : "Replay from here"}
+									</Button>
+								)}
+							</span>
 						</div>
 						<div className="relative h-2 overflow-hidden rounded-full bg-muted">
 							<div
@@ -448,6 +576,7 @@ function NestedRun({ id, run }: { id: string; run: RunEntry | null }) {
 				</span>
 				<span className="tabular-nums">
 					<TotalCost total={run.total} />
+					<SandboxCost total={run.total} />
 				</span>
 				<span className="text-muted-foreground">{link}</span>
 			</div>

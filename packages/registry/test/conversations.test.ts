@@ -186,6 +186,84 @@ describe("turns with Workers AI", () => {
 		expect(await stub.listProviderKeys()).toEqual([]);
 	});
 
+	/** Runs `fn` on a registry whose server set these Workers AI settings. */
+	async function withSettings<T>(
+		stub: ReturnType<typeof registry>,
+		added: Record<string, string>,
+		fn: (instance: RegistryDO) => Promise<T>,
+	) {
+		return runInDurableObject(stub, async (instance: RegistryDO) => {
+			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
+			Object.assign(settings, added);
+			try {
+				return await fn(instance);
+			} finally {
+				for (const name of Object.keys(added)) delete settings[name];
+			}
+		});
+	}
+
+	it("are only for the workspaces the server invites", async () => {
+		const workspace = crypto.randomUUID();
+		const stub = env.REGISTRY.getByName(workspace);
+		const id = await workersAiConversation(stub);
+		const refused = {
+			status: "refused",
+			message:
+				"This server offers Workers AI only to the workspaces it invites, so Scout cannot answer.",
+		};
+		await withSettings(stub, { WORKERS_AI_WORKSPACES: "someone-else" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toEqual(refused);
+		});
+		await withSettings(stub, { WORKERS_AI_WORKSPACES: `other, ${workspace}` }, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toHaveProperty("runId");
+		});
+		// `sandbox` invites the sandbox's invitations, and nobody when there are none.
+		await withSettings(
+			stub,
+			{ WORKERS_AI_WORKSPACES: "sandbox", SANDBOX_WORKSPACES: workspace },
+			async (instance) => {
+				expect(await instance.beginTurn(id, "Hello")).toHaveProperty("runId");
+			},
+		);
+		await withSettings(stub, { WORKERS_AI_WORKSPACES: "sandbox" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Hello")).toEqual(refused);
+		});
+	});
+
+	it("stop for the day once the workspace spent its daily limit", async () => {
+		const stub = registry();
+		const id = await workersAiConversation(stub);
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		// $1.50 at list prices.
+		await stub.finishRun(first.runId, {
+			status: "succeeded",
+			error: null,
+			steps: 1,
+			inputTokens: 10,
+			outputTokens: 5,
+			cachedInputTokens: 0,
+			cost: 1_500_000,
+			endedAt: Date.now(),
+		});
+		expect(await stub.workersAiSpentToday()).toBeCloseTo(1.5, 6);
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "2" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Again")).toHaveProperty("runId");
+		});
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "1.5" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Again")).toEqual({
+				status: "refused",
+				message:
+					"This workspace has used its Workers AI for today, $1.5, so Scout cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.",
+			});
+		});
+		// A limit that is not a number allows nothing.
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "twenty" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Again")).toHaveProperty("status", "refused");
+		});
+	});
+
 	it("are refused up front on a server that did not turn it on", async () => {
 		const stub = registry();
 		const id = await workersAiConversation(stub);
@@ -391,6 +469,28 @@ describe("turns with a sandbox", () => {
 			expect(await instance.beginTurn(last, "Build it")).toMatchObject({ sandbox: true });
 		});
 	});
+
+	it("start no more than the workspace's sandboxes when turns begin at once", async () => {
+		const stub = registry();
+		const { agent, id: first } = await builderConversation(stub, true);
+		const ids = [first];
+		for (let n = 0; n < MAX_WORKSPACE_SANDBOXES + 2; n++) {
+			ids.push((await stub.startConversation(agent.id, ADA))?.id ?? "");
+		}
+		const begun = await withSandboxes(stub, (instance) =>
+			// Each checks the limit before it awaits the key, while no other has its run yet.
+			Promise.all(ids.map((id) => instance.beginTurn(id, "Build it"))),
+		);
+		const started = begun.filter((turn) => !("status" in turn));
+		expect(started).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+		expect(begun.filter((turn) => "status" in turn)).toEqual(
+			Array(ids.length - MAX_WORKSPACE_SANDBOXES).fill({
+				status: "refused",
+				message: `The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so Builder cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
+			}),
+		);
+		expect(await stub.listRuns()).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+	});
 });
 
 describe("sandbox time", () => {
@@ -462,6 +562,35 @@ describe("sandbox time", () => {
 		});
 		const minutes = 30 + IDLE + (IDLE - 5);
 		expect(await stub.sandboxSecondsToday()).toBe(minutes * 60);
+	});
+
+	it("gives each run the sandbox time until its conversation's next turn, adding up to the day's", async () => {
+		const stub = registry();
+		const [first = ""] = await builderConversations(stub, 1);
+		const plain = await withAgent(stub);
+		const chat = (await stub.startConversation(plain.id, ADA))?.id ?? "";
+		const at = midnight() + 60 * MINUTE;
+		const ids = await withSandboxes(stub, async (instance) => {
+			const one = await turn(instance, first);
+			const two = await turn(instance, first);
+			const none = await turn(instance, chat);
+			moveRun(instance, one, at, at + 10 * MINUTE);
+			moveRun(instance, two, at + 20 * MINUTE, at + 30 * MINUTE);
+			moveRun(instance, none, at, at + 10 * MINUTE);
+			return { one, two, none };
+		});
+		const seconds = async (id: string) => (await stub.getRun(id))?.sandboxSeconds;
+		// The first turn's sandbox ran on until the second turn took it over.
+		expect(await seconds(ids.one)).toBe(20 * 60);
+		expect(await seconds(ids.two)).toBe((10 + IDLE) * 60);
+		expect(await seconds(ids.none)).toBeNull();
+		// Each second of the sandbox belongs to one run, so the runs add up to what the limits count.
+		expect((30 + IDLE) * 60).toBe(await stub.sandboxSecondsToday());
+		const total = (await stub.getRun(ids.two))?.total;
+		expect(total).toMatchObject({
+			sandboxSeconds: (10 + IDLE) * 60,
+			sandboxCost: Math.round((10 + IDLE) * 60 * SANDBOX_SECOND_PRICE * 1_000_000),
+		});
 	});
 
 	it("are refused once the workspace has used the day's minutes", async () => {

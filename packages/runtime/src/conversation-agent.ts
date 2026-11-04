@@ -34,7 +34,6 @@ import { edgeTools } from "./edges";
 import { serveEngineTools } from "./engine-tools";
 import {
 	type ChunkSink,
-	type EngineMemory,
 	type EnginePort,
 	type EngineTurn,
 	engineNote,
@@ -43,6 +42,9 @@ import {
 	type SandboxEngine,
 	settle,
 } from "./engines";
+import type { LocalServerPort } from "./local-servers";
+import { RegistryOAuthProvider } from "./mcp-oauth";
+import { type MeteredRequest, meteredRequest } from "./meter";
 import {
 	describeFailure,
 	failureForLogs,
@@ -60,8 +62,10 @@ import {
 	type PushPort,
 	pullRequestTools,
 } from "./pull-requests";
+import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
 import { SANDBOX_ROOT, sandboxTools } from "./sandbox-tools";
-import { connectTools } from "./tools";
+import { createOutbox, queueExport, sendDue } from "./telemetry-export";
+import { connectTools, type OAuthProviders } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
 interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
@@ -75,11 +79,24 @@ interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 }
 
 /** What a conversation reaches of its sandbox over RPC. */
-interface Sandbox extends CheckoutPort, PushPort, EnginePort {
+interface Sandbox extends CheckoutPort, PushPort, EnginePort, LocalServerPort {
 	destroy(): Promise<void>;
 }
 
 const SEPARATOR = ":";
+
+/** The longest a turn of an engine waits for its last requests' ends to be recorded. */
+const METERED_WAIT_MS = 5_000;
+
+/** A request whose report did not check out: it is recorded as failed, with nothing used. */
+const UNREAD_REQUEST: MeteredRequest = {
+	model: null,
+	tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	finishReason: "error",
+	firstTokenMs: null,
+	gatewayLogId: null,
+	error: null,
+};
 
 /** The model requests one turn may make: the first, and one after each round of tool calls. */
 export const MAX_STEPS = 10;
@@ -156,14 +173,26 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	static override options = { sendIdentityOnConnect: false };
 
 	#traceTables = false;
+	/** The export of run traces under way, so two never send the same run at once. */
+	#exporting: Promise<void> | null = null;
 	/** The turn `nestedTurn` or `triggerTurn` began, which the next `onChatMessage` takes up. */
 	#begun: ConversationTurn | null = null;
 	/** Stops the nested turn under way, when the turn waiting for it stops. */
 	#stopNested: AbortController | null = null;
 	/** Why the turn under way failed, in the app's words; null while it has not. */
 	#failure: string | null = null;
-	/** The tools of the turn an engine is running, which its sandbox reaches with the token. */
-	#engineTools: { token: string; tools: ToolSet; signal: AbortSignal } | null = null;
+	/**
+	 * The turn an engine is running, which its sandbox reaches with the token: its tools, if it has
+	 * any, and its run, where its requests for the model are recorded as they leave the sandbox,
+	 * with the steps of those still under way.
+	 */
+	#engineTurnState: {
+		token: string;
+		tools: ToolSet | null;
+		signal: AbortSignal;
+		run: RunRecorder;
+		requests: Set<number>;
+	} | null = null;
 
 	override async onStart(): Promise<void> {
 		// A restart cut these runs short: they will not end on their own.
@@ -215,6 +244,40 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		return { runId: turn.runId, answer: answerOf(this.messages, turn.agent.name) };
 	}
 
+	/**
+	 * This conversation's messages up to a run's model request `step`, as JSON, for a replay of the
+	 * run in a conversation of its own (`./replay.ts`). Null when the run is not this conversation's,
+	 * or began before runs remembered their message. The app checks first that the caller may.
+	 */
+	replaySource(runId: string, step: number): string | null {
+		if (typeof runId !== "string" || !Number.isInteger(step) || step < 0) return null;
+		const messageId = runMessageOf(this.#sql, runId);
+		if (messageId === null) return null;
+		const history = replayHistory(this.messages, messageId, step);
+		return history ? JSON.stringify(history) : null;
+	}
+
+	/**
+	 * Takes the first turn of a replay: this new conversation gets `history`, the JSON of the replayed
+	 * conversation's messages up to the step (`replaySource`), and the agent answers from there. The
+	 * registry begins the run, which it links to the run replayed. Nobody waits for the answer.
+	 */
+	async replayTurn(history: string): Promise<TriggerTurnOutcome> {
+		const { conversationId, registry } = this.#parties();
+		if (this.messages.length > 0) {
+			return { runId: null, error: "This conversation has begun already" };
+		}
+		const messages = JSON.parse(history) as UIMessage[];
+		const turn = await registry.beginTurn(conversationId, lastUserText(messages));
+		if ("status" in turn) return { runId: null, error: turn.message };
+		this.#begun = turn;
+		const done = this.saveMessages(() => messages);
+		this.keepAliveWhile(() => done).catch((error: unknown) =>
+			console.error("A replay's turn failed", failureForLogs(error)),
+		);
+		return { runId: turn.runId };
+	}
+
 	/** Stops the nested turn under way. */
 	stopNestedTurn(): void {
 		this.#stopNested?.abort();
@@ -258,11 +321,51 @@ ${runPageNote(runs, turn.runId)}`
 	 * as does any once the turn has ended.
 	 */
 	async engineTools(token: string, request: Request): Promise<Response> {
-		const turn = this.#engineTools;
-		if (!turn || typeof token !== "string" || token !== turn.token) {
-			return new Response(null, { status: 404 });
-		}
+		const turn = this.#engineTurnFor(token);
+		if (!turn?.tools) return new Response(null, { status: 404 });
 		return serveEngineTools(turn.tools, request, turn.signal);
+	}
+
+	/**
+	 * A request of the engine's for the model left the sandbox (`SandboxOutbound`, `./meter.ts`):
+	 * its span starts. Returns its step, or null without the turn's token or once the turn ended.
+	 */
+	engineRequestStarted(token: string): number | null {
+		const turn = this.#engineTurnFor(token);
+		if (!turn) return null;
+		const step = turn.run.meteredStarted();
+		turn.requests.add(step);
+		return step;
+	}
+
+	/** A request `engineRequestStarted` began has ended, with what its answer reported. */
+	engineRequestEnded(token: string, step: number, request: MeteredRequest): void {
+		const turn = this.#engineTurnFor(token);
+		if (!turn?.requests.has(step)) return;
+		const checked = meteredRequest.safeParse(request);
+		turn.requests.delete(step);
+		turn.run.meteredEnded(
+			step,
+			checked.success
+				? checked.data
+				: { ...UNREAD_REQUEST, error: "What the answer reported could not be read." },
+		);
+	}
+
+	#engineTurnFor(token: string) {
+		const turn = this.#engineTurnState;
+		return turn && typeof token === "string" && token === turn.token ? turn : null;
+	}
+
+	/**
+	 * Waits, a while at most, for the turn's requests that left the sandbox to be recorded: the
+	 * engine can end its turn a moment before the Worker reports its last request's end.
+	 */
+	async #meteredRequests(requests: Set<number>): Promise<void> {
+		const until = Date.now() + METERED_WAIT_MS;
+		while (requests.size > 0 && Date.now() < until) {
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
 	}
 
 	/**
@@ -286,13 +389,20 @@ ${runPageNote(runs, turn.runId)}`
 		const turn = begun ?? (await registry.beginTurn(conversationId, lastUserText(this.messages)));
 		if ("status" in turn) return failed(turn.message);
 		const { agent, key, mcpServers, edges, repository, runId } = turn;
+		recordRunMessage(this.#sql, runId, this.messages);
 		const sandbox = turn.sandbox ? this.#sandbox() : null;
 		const branch = conversationBranch(conversationId);
 		const run = new RunRecorder(this.#sql, runId, agent);
 		if (agent.engine !== "gateweave") {
 			return this.#engineTurn(agent.engine, turn, run, options?.abortSignal);
 		}
-		const toolbox = await connectTools(mcpServers, run, options?.abortSignal);
+		const toolbox = await connectTools(
+			mcpServers,
+			run,
+			options?.abortSignal,
+			sandbox,
+			this.#oauth(registry),
+		);
 		const checkedOut = sandbox && repository ? withCheckout(sandbox, repository, branch) : null;
 		const github = repository ? this.#pullRequests(repository) : null;
 		// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with them. An
@@ -411,7 +521,7 @@ ${runPageNote(runs, turn.runId)}`
 				const checkedOut = repository ? withCheckout(sandbox, repository, branch) : null;
 				const [problem, toolbox] = await Promise.all([
 					checkedOut ? checkedOut.ready() : null,
-					connectTools(mcpServers, run, signal),
+					connectTools(mcpServers, run, signal, sandbox, this.#oauth(registry)),
 				]);
 				if (problem) {
 					await toolbox.close();
@@ -441,8 +551,15 @@ ${runPageNote(runs, turn.runId)}`
 				const offered = Object.keys(tools).length > 0;
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
-				if (offered) this.#engineTools = { token, tools, signal: calls.signal };
-				const turn = engineTurn(engine, writer, run, agent, this.ctx.storage.kv);
+				const requests = new Set<number>();
+				this.#engineTurnState = {
+					token,
+					tools: offered ? tools : null,
+					signal: calls.signal,
+					run,
+					requests,
+				};
+				const turn = engineTurn(engine, writer, run, agent);
 				const stop = () => {
 					calls.abort();
 					sandbox.stopEngine().catch(() => {});
@@ -468,6 +585,7 @@ ${runPageNote(runs, turn.runId)}`
 								conversation: conversationId,
 							},
 							tools: offered ? { conversation: this.name, token } : null,
+							meter: { conversation: this.name, token },
 						},
 					});
 					for await (const line of linesOf(events)) turn.take(line);
@@ -475,7 +593,8 @@ ${runPageNote(runs, turn.runId)}`
 					console.error(`${ENGINE_NAMES[engine]}'s turn failed`, failureForLogs(error));
 				} finally {
 					signal?.removeEventListener("abort", stop);
-					if (this.#engineTools?.token === token) this.#engineTools = null;
+					await this.#meteredRequests(requests);
+					if (this.#engineTurnState?.token === token) this.#engineTurnState = null;
 					calls.abort();
 					await toolbox.close();
 				}
@@ -618,9 +737,19 @@ ${runPageNote(runs, turn.runId)}`
 		const sql = this.sql.bind(this) as Sql;
 		if (!this.#traceTables) {
 			createTraceTables(sql);
+			createOutbox(sql);
+			createRunMessages(sql);
 			this.#traceTables = true;
 		}
 		return sql;
+	}
+
+	/**
+	 * The OAuth clients of the turn's servers connected through OAuth (AGT-78): their tokens live
+	 * in the registry, sealed, and are refreshed there.
+	 */
+	#oauth(registry: DurableObjectStub<RegistryDO>): OAuthProviders {
+		return (assetId) => new RegistryOAuthProvider(registry, assetId, {});
 	}
 
 	/** The workspace and conversation this is, from its name, and the workspace's registry. */
@@ -641,6 +770,28 @@ ${runPageNote(runs, turn.runId)}`
 		} catch (error) {
 			console.error("A run's end was not recorded", { runId, ...failureForLogs(error) });
 		}
+		queueExport(this.#sql, runId);
+		this.ctx.waitUntil(this.exportTraces());
+	}
+
+	/**
+	 * Sends the traces of the runs that ended to the workspace's OpenTelemetry endpoint, if it has
+	 * one, and wakes again when a failed one is due to be tried again (`./telemetry-export.ts`).
+	 * Never throws: the export is a copy.
+	 */
+	async exportTraces(): Promise<void> {
+		this.#exporting ??= (async () => {
+			try {
+				const { workspaceId, registry } = this.#parties();
+				const next = await sendDue(this.#sql, registry, workspaceId);
+				if (next !== null) await this.schedule(new Date(next), "exportTraces");
+			} catch (error) {
+				console.error("Run traces were not exported", failureForLogs(error));
+			} finally {
+				this.#exporting = null;
+			}
+		})();
+		return this.#exporting;
 	}
 
 	/** Only the server changes the state, and this agent keeps none. */
@@ -655,13 +806,12 @@ function engineTurn(
 	sink: ChunkSink,
 	run: RunRecorder,
 	agent: AgentSnapshot,
-	memory: EngineMemory,
 ): EngineTurn {
 	switch (engine) {
 		case "claude-code":
 			return new ClaudeCodeTurn(sink, run, agent);
 		case "codex":
-			return new CodexTurn(sink, run, agent, memory);
+			return new CodexTurn(sink, run, agent);
 		case "opencode":
 			return new OpenCodeTurn(sink, run, agent);
 	}

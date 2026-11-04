@@ -2,12 +2,21 @@
  * The tools of an agent's MCP servers, for one turn. Each turn connects anew with `@ai-sdk/mcp`
  * and closes the connections when it ends. The headers carry secrets from the agent's environment
  * set, which live only in memory for the turn; the Agents SDK's `addMcpServer` would store them in
- * the conversation's SQLite and keep the connection open.
+ * the conversation's SQLite and keep the connection open. A server that runs as a local command
+ * starts in the conversation's sandbox (`./local-servers.ts`).
  */
-import { createMCPClient, type MCPClient, MCPClientError } from "@ai-sdk/mcp";
+import {
+	createMCPClient,
+	type MCPClient,
+	MCPClientError,
+	type OAuthClientProvider,
+	UnauthorizedError,
+} from "@ai-sdk/mcp";
 import { MCP_CHECK_LIMITS, type McpCheckResult, type TurnMcpServer } from "@gateweave/agents-model";
 import type { ToolSet } from "ai";
 import { z } from "zod";
+import { LocalServerError, type LocalServerPort, SandboxStdioTransport } from "./local-servers";
+import { OAuthSignInNeeded, SIGN_IN_AGAIN } from "./mcp-oauth";
 import { failureForLogs } from "./models";
 import type { RunRecorder } from "./trace";
 
@@ -32,8 +41,12 @@ export async function connectTools(
 	servers: TurnMcpServer[],
 	run: RunRecorder,
 	signal?: AbortSignal,
+	sandbox: LocalServerPort | null = null,
+	oauth: OAuthProviders | null = null,
 ): Promise<TurnTools> {
-	const connected = await Promise.all(servers.map((server) => connect(server, run, signal)));
+	const connected = await Promise.all(
+		servers.map((server) => connect(server, run, sandbox, signal, oauth)),
+	);
 	const clients: MCPClient[] = [];
 	const tools: ToolSet = {};
 	for (const server of connected) {
@@ -55,16 +68,33 @@ export async function connectTools(
 	};
 }
 
-async function connect(server: TurnMcpServer, run: RunRecorder, signal?: AbortSignal) {
+/** Why a local command is left out of a turn the registry gave no sandbox. */
+export const NO_SANDBOX_FOR_LOCAL_SERVER =
+	"It runs as a local command, and this turn has no sandbox to start it in";
+
+/** The OAuth client of a library server connected through OAuth, by its id (AGT-78). */
+export type OAuthProviders = (assetId: string) => OAuthClientProvider;
+
+async function connect(
+	server: TurnMcpServer,
+	run: RunRecorder,
+	sandbox: LocalServerPort | null,
+	signal?: AbortSignal,
+	oauth: OAuthProviders | null = null,
+) {
 	if ("problem" in server) {
 		run.serverLeftOut(server.name, server.problem);
 		return null;
 	}
+	if (server.transport === "stdio" && !sandbox) {
+		run.serverLeftOut(server.name, NO_SANDBOX_FOR_LOCAL_SERVER);
+		return null;
+	}
 	const span = run.serverConnecting(server.name);
-	const { deadline, options } = timeLimit(signal);
+	const { deadline, options } = timeLimit(signal, server.transport === "stdio");
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
 	try {
-		opened = await openClient(server, options);
+		opened = await openClient(server, options, sandbox, oauth);
 		const { client, definitions } = opened;
 		// The allowlist names the server's own tool names; one it does not offer is just absent.
 		const allowed = server.tools && new Set(server.tools);
@@ -77,7 +107,7 @@ async function connect(server: TurnMcpServer, run: RunRecorder, signal?: AbortSi
 		return { name: server.name, client, tools };
 	} catch (error) {
 		await opened?.client.close().catch(() => {});
-		run.serverFailed(span, describeServerFailure(error, deadline));
+		run.serverFailed(span, describeServerFailure(error, deadline, server.transport === "stdio"));
 		console.error("An MCP server did not connect", {
 			server: server.name,
 			...failureForLogs(error),
@@ -92,12 +122,16 @@ async function connect(server: TurnMcpServer, run: RunRecorder, signal?: AbortSi
  * the server's tool names and descriptions, which are its own public description of itself;
  * a failure is in the app's words, and neither the headers nor what the server said are kept.
  */
-export async function checkMcpServer(server: TurnMcpServer): Promise<McpCheckResult> {
+export async function checkMcpServer(
+	server: TurnMcpServer,
+	oauth: OAuthProviders | null = null,
+): Promise<McpCheckResult> {
 	if ("problem" in server) return { ok: false, error: server.problem };
+	if (server.transport === "stdio") return { ok: false, error: NO_SANDBOX_FOR_LOCAL_SERVER };
 	const { deadline, options } = timeLimit();
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
 	try {
-		opened = await openClient(server, options);
+		opened = await openClient(server, options, null, oauth);
 		return {
 			ok: true,
 			tools: opened.definitions.tools.slice(0, MCP_CHECK_LIMITS.tools).map((tool) => ({
@@ -138,8 +172,9 @@ const trackYou = z.object({
 export async function checkTrackAgent(
 	server: TurnMcpServer,
 ): Promise<{ check: McpCheckResult; identity: TrackAgentIdentity | { problem: string } }> {
-	if ("problem" in server) {
-		return { check: { ok: false, error: server.problem }, identity: { problem: server.problem } };
+	if ("problem" in server || server.transport === "stdio") {
+		const problem = "problem" in server ? server.problem : NO_SANDBOX_FOR_LOCAL_SERVER;
+		return { check: { ok: false, error: problem }, identity: { problem } };
 	}
 	const { deadline, options } = timeLimit();
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
@@ -194,9 +229,15 @@ function shorten(text: string, length: number): string {
 	return clean.length <= length ? clean : `${clean.slice(0, length - 1)}…`;
 }
 
+/**
+ * How long a local command has to start and list its tools: the sandbox may have to start, and
+ * `npx` or `uvx` to download the server, first.
+ */
+export const LOCAL_CONNECT_TIMEOUT_MS = 90_000;
+
 /** The limit on connecting and listing tools, joined with the caller's own signal. */
-function timeLimit(signal?: AbortSignal) {
-	const deadline = AbortSignal.timeout(CONNECT_TIMEOUT_MS);
+function timeLimit(signal?: AbortSignal, local = false) {
+	const deadline = AbortSignal.timeout(local ? LOCAL_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS);
 	return { deadline, options: { signal: signal ? AbortSignal.any([signal, deadline]) : deadline } };
 }
 
@@ -205,19 +246,29 @@ function timeLimit(signal?: AbortSignal) {
  * It closes the client itself when that fails; the caller closes it otherwise.
  */
 async function openClient(
-	server: Extract<TurnMcpServer, { url: string }>,
+	server: Exclude<TurnMcpServer, { problem: string }>,
 	options: { signal: AbortSignal },
+	sandbox: LocalServerPort | null = null,
+	oauth: OAuthProviders | null = null,
 ) {
 	let client: MCPClient | undefined;
 	try {
 		client = await createMCPClient({
 			clientName: "gateweave-agents",
-			transport: {
-				type: server.transport,
-				url: server.url,
-				headers: server.headers,
-				fetch: fetchWithoutRedirects,
-			},
+			transport:
+				server.transport === "stdio"
+					? new SandboxStdioTransport(sandboxFor(sandbox), {
+							command: server.command,
+							args: server.args,
+							env: server.env,
+						})
+					: {
+							type: server.transport,
+							url: server.url,
+							headers: server.headers,
+							fetch: fetchWithoutRedirects,
+							...(server.oauth && oauth ? { authProvider: oauth(server.oauth) } : {}),
+						},
 			initializationOptions: options,
 		});
 		return { client, definitions: await client.listTools({ options }) };
@@ -225,6 +276,11 @@ async function openClient(
 		await client?.close().catch(() => {});
 		throw error;
 	}
+}
+
+function sandboxFor(sandbox: LocalServerPort | null): LocalServerPort {
+	if (!sandbox) throw new Error(NO_SANDBOX_FOR_LOCAL_SERVER);
+	return sandbox;
 }
 
 /**
@@ -292,9 +348,21 @@ function isToolError(output: unknown): boolean {
 }
 
 /** Why a server could not be reached, in the app's words: what it said is not shown. */
-export function describeServerFailure(error: unknown, deadline?: AbortSignal): string {
+export function describeServerFailure(
+	error: unknown,
+	deadline?: AbortSignal,
+	local = false,
+): string {
 	if (deadline?.aborted) {
-		return `It did not answer within ${CONNECT_TIMEOUT_MS / 1000} seconds`;
+		const ms = local ? LOCAL_CONNECT_TIMEOUT_MS : CONNECT_TIMEOUT_MS;
+		return `It did not answer within ${ms / 1000} seconds`;
+	}
+	if (error instanceof OAuthSignInNeeded || error instanceof UnauthorizedError)
+		return SIGN_IN_AGAIN;
+	if (local) {
+		return error instanceof LocalServerError
+			? error.message
+			: "Its command did not start, or ended before it answered. Check the command and its arguments";
 	}
 	const status = MCPClientError.isInstance(error) ? error.statusCode : undefined;
 	if (status === 401 || status === 403) {

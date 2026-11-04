@@ -175,8 +175,14 @@ export function listEnvSets(db: Db): EnvSetEntry[] {
 		const secrets: EnvSecret[] = declared.map((name) => {
 			const value = stored.get(name);
 			return value
-				? { name, state: "set", setBy: value.setBy, setAt: value.setAt }
-				: { name, state: "missing", setBy: null, setAt: null };
+				? {
+						name,
+						state: "set",
+						setBy: value.setBy,
+						setAt: value.setAt,
+						contested: value.sentTo === null ? value.contested : null,
+					}
+				: { name, state: "missing", setBy: null, setAt: null, contested: null };
 		});
 		const orphans: EnvOrphan[] = [...stored.values()]
 			.filter((secret) => !declared.includes(secret.name))
@@ -211,11 +217,12 @@ export function listEnvSets(db: Db): EnvSetEntry[] {
  */
 export function storeEnvSecret(
 	db: Db,
-	secret: { assetId: string; name: string; sealed: string; setBy: string },
+	secret: { assetId: string; name: string; sealed: string; setBy: string; sentTo?: string },
 	now: number,
 ): void {
 	checkEnvSecretName(db, secret.assetId, secret.name);
-	const row = { ...secret, setAt: now };
+	// A new value has been sent nowhere yet, unless the caller knows where it is for.
+	const row = { ...secret, sentTo: secret.sentTo ?? null, contested: null, setAt: now };
 	db.insert(envSecrets)
 		.values(row)
 		.onConflictDoUpdate({ target: [envSecrets.assetId, envSecrets.name], set: row })
@@ -278,4 +285,61 @@ export function pinnedEnvironment(
 			.sort(compare)
 			.map((name) => ({ name, sealed: stored.get(name) ?? null })),
 	};
+}
+
+/** A stored secret, sealed, and the origin it was first sent to (see `turnServers`). */
+export interface SecretSend {
+	sealed: string;
+	sentTo: string | null;
+	/**
+	 * The only origins an unbound value may be tied to, when `bindUnsentSecrets` left it so. Empty
+	 * when that pass failed (`closeUnsentSecrets`): then it goes nowhere until it is entered again.
+	 */
+	contested: string[] | null;
+}
+
+/** Leaves a stored secret unbound, noting the origins of the servers that name it (AGT-65). */
+export function contestSecret(db: Db, assetId: string, name: string, origins: string[]): void {
+	db.update(envSecrets)
+		.set({ contested: origins })
+		.where(
+			and(eq(envSecrets.assetId, assetId), eq(envSecrets.name, name), isNull(envSecrets.sentTo)),
+		)
+		.run();
+}
+
+/**
+ * Closes every stored secret sent nowhere yet, in every set, with an empty `contested` list, for
+ * when `bindUnsentSecrets` failed (AGT-66). Left open, each would be tied to the first origin that
+ * uses it, which is the hole that pass closes. Entering a value again opens it, as a new value.
+ */
+export function closeUnsentSecrets(db: Db): void {
+	db.update(envSecrets).set({ contested: [] }).where(isNull(envSecrets.sentTo)).run();
+}
+
+/** Each stored secret of a set, by name. */
+export function secretSends(db: Db, assetId: string): Map<string, SecretSend> {
+	return new Map(
+		db
+			.select({
+				name: envSecrets.name,
+				sealed: envSecrets.sealed,
+				sentTo: envSecrets.sentTo,
+				contested: envSecrets.contested,
+			})
+			.from(envSecrets)
+			.where(eq(envSecrets.assetId, assetId))
+			.all()
+			.map(({ name, ...send }) => [name, send] as const),
+	);
+}
+
+/** Ties a stored secret to the origin it is being sent to, if it is not tied to one yet. */
+export function bindSecret(db: Db, assetId: string, name: string, origin: string): void {
+	db.update(envSecrets)
+		.set({ sentTo: origin, contested: null })
+		.where(
+			and(eq(envSecrets.assetId, assetId), eq(envSecrets.name, name), isNull(envSecrets.sentTo)),
+		)
+		.run();
 }

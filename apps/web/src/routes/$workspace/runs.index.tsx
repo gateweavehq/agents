@@ -2,7 +2,13 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { GitPullRequestArrow } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { RunStatusBadge, runDuration, TotalCost, tokensUsed } from "#/components/runs/run-labels";
+import {
+	RunStatusBadge,
+	runDuration,
+	SandboxCost,
+	TotalCost,
+	tokensUsed,
+} from "#/components/runs/run-labels";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
@@ -74,7 +80,7 @@ function RunsPage() {
 						? "Every answer from the agents run by Gateweave in this workspace, with what it used."
 						: "The answers agents gave you, with what each one used."}{" "}
 					A team's answer counts the runs it led to. Costs are estimates from the providers' list
-					prices.
+					prices, and a sandbox's from its machine's.
 				</p>
 			</header>
 			<ul className="divide-y rounded-lg border">
@@ -115,6 +121,7 @@ function RunsPage() {
 							</span>
 							<span className="w-24 text-right text-sm tabular-nums">
 								<TotalCost total={run.total} />
+								<SandboxCost total={run.total} />
 							</span>
 						</Link>
 					</li>

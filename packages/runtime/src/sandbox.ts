@@ -39,14 +39,10 @@ import {
 	type SandboxEngine,
 	TIMED_OUT_STATUS,
 } from "./engines";
-import {
-	anthropicRequest,
-	failureForLogs,
-	type GatewaySettings,
-	googleRequest,
-	openaiRequest,
-	SettingsError,
-} from "./models";
+import type { LocalCommand, LocalServerPort } from "./local-servers";
+import type { EngineMeter } from "./meter";
+import { readAtMost, sendModelRequest } from "./model-requests";
+import { failureForLogs, type GatewaySettings } from "./models";
 import { OPENCODE_INSTRUCTIONS } from "./opencode";
 import {
 	OPENCODE_PORT,
@@ -79,6 +75,9 @@ import {
 	type SandboxPort,
 	type WriteResult,
 } from "./sandbox-tools";
+
+/** Where local MCP servers' own messages go, for whoever looks into the sandbox. */
+const MCP_SERVER_LOG = "/tmp/gateweave-mcp-servers.log";
 
 /** The largest file `readFile` opens: the model reads a bigger one with a command. */
 export const READ_BYTES = 5_000_000;
@@ -132,13 +131,6 @@ const OPENCODE_SESSION_KEY = "opencode-session";
 /** How long `OPENCODE_SERVER_SCRIPT` may take, which waits up to 10 s for an old server to stop. */
 const OPENCODE_SCRIPT_SECONDS = 60;
 
-/** How a request to each provider's API goes out, with the workspace's key. */
-const MODEL_REQUESTS: ReadonlyMap<string | undefined, typeof anthropicRequest> = new Map([
-	["anthropic", anthropicRequest],
-	["openai", openaiRequest],
-	["google", googleRequest],
-]);
-
 /** The hosts whose requests depend on the engine running a turn, if any. */
 const ENGINE_HOSTS = new Set([ANTHROPIC_API, OPENAI_API, GOOGLE_API, ENGINE_TOOLS_HOST]);
 
@@ -180,7 +172,10 @@ interface SandboxState extends DurableObjectState {
 	};
 }
 
-export class RunnerSandbox extends DurableObject implements SandboxPort, EnginePort {
+export class RunnerSandbox
+	extends DurableObject
+	implements SandboxPort, EnginePort, LocalServerPort
+{
 	readonly #container: Container | undefined;
 	readonly #outbound: Fetcher;
 	/** The container's start under way, which every call waits for. */
@@ -434,7 +429,12 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 		const container = await this.#ready();
 		if (job.engine === "opencode") return this.#startOpenCode(container, job);
 		const command = await this.#commandFor(container, job, job.engine);
-		this.#running = { engine: job.engine, provider: job.provider, access: job.access };
+		this.#running = {
+			engine: job.engine,
+			provider: job.provider,
+			model: job.model,
+			access: job.access,
+		};
 		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
 		let process: ExecProcess;
 		try {
@@ -485,6 +485,55 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 			await input.close();
 		}
 		if (!process.stdout) throw new Error("The engine's output could not be read");
+		return process.stdout as ReadableStream<Uint8Array>;
+	}
+
+	/**
+	 * Starts a local MCP server's command in the sandbox's root, with `input` as its standard input,
+	 * and returns its standard output (`./local-servers.ts`). Its own messages go to a log, so its
+	 * output holds only its messages. It stops when its input ends, as the turn closes it, and after
+	 * `ENGINE_SECONDS` at most. Its downloads go out as any command's do: package registries only.
+	 */
+	async startMcpServer(
+		server: LocalCommand,
+		input: ReadableStream<Uint8Array>,
+	): Promise<ReadableStream<Uint8Array>> {
+		const container = await this.#ready();
+		const process = await container.exec(
+			[
+				"timeout",
+				"--kill-after=10s",
+				`${ENGINE_SECONDS}s`,
+				"bash",
+				"-c",
+				`exec "$0" "$@" 2>>${MCP_SERVER_LOG}`,
+				server.command,
+				...server.args,
+			],
+			{
+				cwd: SANDBOX_ROOT,
+				// What the sandbox needs to reach the internet stays as it is.
+				env: { ...server.env, ...COMMAND_ENV },
+				stdin: "pipe",
+				stdout: "pipe",
+				stderr: "ignore",
+			},
+		);
+		const stop = () => {
+			try {
+				process.kill(SIGTERM);
+			} catch {
+				// It has exited already.
+			}
+		};
+		if (!process.stdin || !process.stdout) {
+			stop();
+			throw new Error("The command's input and output could not be opened");
+		}
+		input
+			.pipeTo(process.stdin)
+			.catch(() => {})
+			.finally(() => setTimeout(stop, STOP_GRACE_MS));
 		return process.stdout as ReadableStream<Uint8Array>;
 	}
 
@@ -549,7 +598,12 @@ export class RunnerSandbox extends DurableObject implements SandboxPort, EngineP
 	 */
 	async #startOpenCode(container: Container, job: EngineJob): Promise<ReadableStream<Uint8Array>> {
 		// Before the server is reached: reconnecting its MCP server goes out as the turn's request.
-		this.#running = { engine: job.engine, provider: job.provider, access: job.access };
+		this.#running = {
+			engine: job.engine,
+			provider: job.provider,
+			model: job.model,
+			access: job.access,
+		};
 		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
 		let turn: OpenCodeServerTurn;
 		try {
@@ -775,8 +829,10 @@ interface ToolsConversation {
  * the Worker, and the rest get a 403 whose text says why, which the command prints. A fetch of the
  * conversation's repository goes out with a token minted for that repository alone, to read it,
  * and the push `RunnerSandbox.push` makes with one that writes, once its ref updates are checked.
- * While an engine runs a turn, its requests to the model go out with the workspace's key, and
- * those to Gateweave's tools never go out: the conversation answers them, with the turn's token.
+ * While an engine runs a turn, its requests to the model go out with the workspace's key once what
+ * they ask the provider to do has been checked (`./model-requests.ts`), and the conversation
+ * records each in the run's trace with the usage its answer reports (`./meter.ts`).
+ * Those to Gateweave's tools never go out: the conversation answers them, with the turn's token.
  */
 export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundProps> {
 	override async fetch(request: Request): Promise<Response> {
@@ -793,15 +849,14 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		);
 		if (!decision.allow) return refused(decision.reason, 403);
 		const env = this.env as unknown as OutboundEnv;
-		const toModel = MODEL_REQUESTS.get(decision.credentials);
-		if (toModel && running) {
-			const { key, metadata } = running.access;
-			try {
-				return await fetch(toModel(request, key, env, metadata));
-			} catch (error) {
-				if (error instanceof SettingsError) return refused(error.message, 502);
-				throw error;
-			}
+		const toModel = decision.credentials;
+		if ((toModel === "anthropic" || toModel === "openai" || toModel === "google") && running) {
+			const conversation = env.CONVERSATIONS.getByName(running.access.meter.conversation);
+			return sendModelRequest(request, toModel, running, {
+				settings: env,
+				meter: conversation as unknown as EngineMeter,
+				waitUntil: (promise) => this.ctx.waitUntil(promise),
+			});
 		}
 		if (decision.credentials === "tools" && tools) {
 			const conversation = env.CONVERSATIONS.getByName(tools.conversation);
@@ -875,34 +930,6 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 
 function refused(reason: string, status: number): Response {
 	return new Response(`${reason}\n`, { status });
-}
-
-/** The request's body, or null when it is longer than `max` bytes. */
-async function readAtMost(request: Request, max: number): Promise<Uint8Array<ArrayBuffer> | null> {
-	const declared = Number(request.headers.get("content-length") ?? 0);
-	if (declared > max) return null;
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	if (request.body) {
-		const reader = request.body.getReader();
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			size += value.length;
-			if (size > max) {
-				await reader.cancel();
-				return null;
-			}
-			chunks.push(value);
-		}
-	}
-	const body = new Uint8Array(size);
-	let at = 0;
-	for (const chunk of chunks) {
-		body.set(chunk, at);
-		at += chunk.length;
-	}
-	return body;
 }
 
 /** A file operation's failure in words the model reads. */

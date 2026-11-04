@@ -7,7 +7,10 @@ export const Route = createFileRoute("/$workspace/settings")({
 const TABS = [
 	{ to: "/$workspace/settings/members", label: "Members" },
 	{ to: "/$workspace/settings/github", label: "GitHub" },
+	{ to: "/$workspace/settings/gitlab", label: "GitLab" },
 	{ to: "/$workspace/settings/models", label: "Models" },
+	{ to: "/$workspace/settings/telemetry", label: "Telemetry" },
+	{ to: "/$workspace/settings/workspace", label: "Workspace" },
 ] as const;
 
 function SettingsLayout() {
@@ -17,13 +20,17 @@ function SettingsLayout() {
 			<header className="sticky top-0 z-10 border-b bg-background">
 				<div className="mx-auto flex h-12 max-w-3xl items-center gap-6 px-4 sm:px-6">
 					<h1 className="text-sm font-medium">Settings</h1>
-					<nav aria-label="Settings" className="flex h-full gap-4">
+					{/* On a phone the tabs are wider than the screen, so they scroll sideways. */}
+					<nav
+						aria-label="Settings"
+						className="flex h-full min-w-0 gap-4 overflow-x-auto [scrollbar-width:none]"
+					>
 						{TABS.map((tab) => (
 							<Link
 								key={tab.to}
 								to={tab.to}
 								params={{ workspace }}
-								className="flex h-full items-center border-b-2 text-sm"
+								className="flex h-full shrink-0 items-center whitespace-nowrap border-b-2 text-sm"
 								activeProps={{ className: "border-foreground text-foreground" }}
 								inactiveProps={{
 									className: "border-transparent text-muted-foreground hover:text-foreground",

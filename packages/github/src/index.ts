@@ -1,13 +1,15 @@
 export {
 	API_URL,
 	type BotIdentity,
+	controlsInstallation,
 	GitHubApp,
 	type GitHubAppConfig,
 	GitHubError,
 	type Installation,
 	type RepositoryPermission,
 	sharedApp,
-	userInstallationIds,
+	type UserInstallation,
+	userInstallations,
 } from "./app";
 export {
 	type BranchHead,
