@@ -7,6 +7,15 @@ declare namespace Cloudflare {
 		GITHUB_CLIENT_ID?: string;
 		GITHUB_CLIENT_SECRET?: string;
 		/**
+		 * An OpenID Connect provider to sign in through: its issuer URL and this deployment's client
+		 * id and secret there. Needs all three. See docs/self-hosting.md.
+		 */
+		OIDC_ISSUER?: string;
+		OIDC_CLIENT_ID?: string;
+		OIDC_CLIENT_SECRET?: string;
+		/** What the sign-in button calls it, as in "Continue with Gateweave". */
+		OIDC_PROVIDER_NAME?: string;
+		/**
 		 * Who email comes from, such as `Gateweave Agents <agents@example.com>`. The domain must be
 		 * onboarded to Cloudflare Email Sending. Email is off when unset.
 		 */

@@ -97,6 +97,10 @@ Keep tokens, keys and email addresses as secrets. The limits can be plain variab
 | `SECRETS_KEY`              | Encrypts model provider keys and environment secrets (32 random bytes, base64). Model keys are off without it.                                                     |
 | `GITHUB_CLIENT_ID`         | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                       |
 | `GITHUB_CLIENT_SECRET`     | The client secret of the same GitHub OAuth app.                                                                                                                    |
+| `OIDC_ISSUER`              | Turns on an OpenID Connect provider, with the two below. See [below](#sign-in-through-an-openid-connect-provider).                                                 |
+| `OIDC_CLIENT_ID`           | This deployment's client ID at the provider.                                                                                                                       |
+| `OIDC_CLIENT_SECRET`       | Its client secret there.                                                                                                                                           |
+| `OIDC_PROVIDER_NAME`       | What the sign-in button calls it. Unset: "single sign-on".                                                                                                         |
 | `GITHUB_APP_*`             | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md).                                                   |
 | `EMAIL_FROM`               | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                                                                     |
 | `AI_GATEWAY_URL`           | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                     |
@@ -123,6 +127,39 @@ Agents sends email through [Cloudflare Email Service](https://developers.cloudfl
 Onboard the sender's domain once with `pnpm wrangler email sending enable example.com`, then set
 `EMAIL_FROM` to an address on it. Without email, Agents works, but invitations have to be accepted
 from a link that an admin copies, and nobody can reset a forgotten password.
+
+### Sign in through an OpenID Connect provider
+
+Any OpenID Connect provider can sign people in: Gateweave ID, Pocket ID, authentik, Keycloak, Okta
+and others. It adds a button to the sign-in page, and passwords keep working.
+
+1. Register Agents with the provider as a confidential client that uses the authorization code
+   flow and `client_secret_basic`, with the scopes `openid`, `profile` and `email`:
+   - Redirect URI: `https://agents.example.com/api/auth/callback/oidc` (your address)
+   - Back-channel logout URI, if the provider has them:
+     `https://agents.example.com/api/auth/backchannel-logout/oidc`
+2. Set `OIDC_ISSUER` to the provider's issuer, the address its
+   `/.well-known/openid-configuration` is under, then `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`.
+   `OIDC_PROVIDER_NAME` names the button, as in "Continue with Acme".
+
+Someone new gets an account. Someone whose address already has one links to it only when the
+provider says the address is verified and they have verified it in Agents too, so anyone who could
+sign up at the provider with that address cannot take over the account. Without
+[email](#email) nobody can verify an address in Agents, so existing accounts stay with their
+passwords.
+
+If the provider is down, its button says so, and everything else keeps working. People already
+signed in stay signed in, because Agents asks the provider nothing except when someone uses that
+button or the provider signs someone out. With the back-channel logout URI registered, signing out
+at the provider ends the Agents sessions it started. Signing out of Agents leaves the provider's
+session alone.
+
+If Agents and the provider are both Workers, give each a
+[Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/#worker-to-worker-communication).
+A Worker cannot reach another on its own zone through a route, and two on `workers.dev` cannot reach
+each other at all: Cloudflare answers with error 1042, and the button says it could not reach the
+provider. If they have to stay on `workers.dev`, add `global_fetch_strictly_public` to
+`compatibility_flags` in each one's `wrangler.jsonc`.
 
 ### Sandboxes
 

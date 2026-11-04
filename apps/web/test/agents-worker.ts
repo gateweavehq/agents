@@ -213,6 +213,7 @@ export async function startAgents(
 		hosts = {},
 		secrets = true,
 		settings = {},
+		isolateSettings = [],
 	}: {
 		isolates?: number;
 		github?: FakeGitHub;
@@ -220,6 +221,8 @@ export async function startAgents(
 		hosts?: Record<string, (request: Request) => Response | Promise<Response>>;
 		secrets?: boolean;
 		settings?: Record<string, string>;
+		/** Settings that only this copy has, as a deployment's old and new versions would differ. */
+		isolateSettings?: Record<string, string>[];
 	} = {},
 ) {
 	const config = JSON.parse(readFileSync(join(serverDir, "wrangler.json"), "utf8")) as BuiltConfig;
@@ -254,6 +257,7 @@ export async function startAgents(
 						EMAIL_FROM: `${EMAIL_FROM.name} <${EMAIL_FROM.email}>`,
 						...(secrets ? { SECRETS_KEY: secretsKey } : {}),
 						...settings,
+						...isolateSettings[index],
 						...github?.bindings(),
 					},
 					serviceBindings: { EMAIL: "outbox" },

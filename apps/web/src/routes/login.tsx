@@ -8,6 +8,7 @@ import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
 import { safeRedirect } from "#/lib/redirect";
 import { getAuthOptions, getSession } from "#/lib/session";
+import { signInRefusal } from "#/lib/sign-in-refusal";
 
 const loginSearch = z.object({
 	/** Where to go once signed in, such as the invitation that sent the user here. */
@@ -15,6 +16,8 @@ const loginSearch = z.object({
 	/** Prefills the email field, for example with the address an invitation was sent to. */
 	email: z.string().optional().catch(undefined),
 	mode: z.enum(["sign-in", "sign-up"]).optional().catch(undefined),
+	/** Why a sign-in through GitHub or another provider came back here. */
+	error: z.string().optional().catch(undefined),
 });
 
 export const Route = createFileRoute("/login")({
@@ -26,13 +29,66 @@ export const Route = createFileRoute("/login")({
 	component: SignInForm,
 });
 
+/** The provider's id in Better Auth. The server's constant is out of the browser's reach. */
+const OIDC_PROVIDER = "oidc";
+
+/** This page's address without why the last attempt came back, for a refusal to return to. */
+function thisPage() {
+	const query = new URLSearchParams(window.location.search);
+	query.delete("error");
+	query.delete("error_description");
+	const rest = query.toString();
+	return `/login${rest && `?${rest}`}`;
+}
+
+/** "Continue with …": sends someone to GitHub or the configured provider, and back to `next`. */
+function ProviderButton({
+	provider,
+	label,
+	next,
+	onFailure,
+}: {
+	provider: "github" | typeof OIDC_PROVIDER;
+	label: string;
+	next: string;
+	onFailure: (message: string | null) => void;
+}) {
+	const [pending, setPending] = useState(false);
+
+	async function onClick() {
+		setPending(true);
+		onFailure(null);
+		const result = await authClient.signIn.social({
+			provider,
+			callbackURL: next,
+			errorCallbackURL: thisPage(),
+		});
+		if (result.error) {
+			// Agents finds out what a provider offers only now, and cannot tell it if the provider is down.
+			onFailure(
+				result.error.code === "PROVIDER_NOT_FOUND"
+					? `We could not reach ${label}. Try again, or use your password.`
+					: (result.error.message ?? "Something went wrong"),
+			);
+		}
+		// Going back from the provider can bring this page back as it was, so it must not stay disabled.
+		setPending(false);
+	}
+
+	return (
+		<LiveButton variant="outline" className="w-full" disabled={pending} onClick={onClick}>
+			{`Continue with ${label}`}
+		</LiveButton>
+	);
+}
+
 function SignInForm() {
 	const options = Route.useLoaderData();
 	const search = Route.useSearch();
 	const next = safeRedirect(search.redirect) ?? "/";
 	const router = useRouter();
 	const [mode, setMode] = useState<"sign-in" | "sign-up">(search.mode ?? "sign-in");
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState(() => signInRefusal(search.error));
 	const [pending, setPending] = useState(false);
 
 	async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -79,15 +135,19 @@ function SignInForm() {
 					</p>
 				</div>
 
-				{options.github && (
+				{(options.oidc || options.github) && (
 					<>
-						<LiveButton
-							variant="outline"
-							className="w-full"
-							onClick={() => authClient.signIn.social({ provider: "github", callbackURL: next })}
-						>
-							Continue with GitHub
-						</LiveButton>
+						{options.oidc && (
+							<ProviderButton
+								provider={OIDC_PROVIDER}
+								label={options.oidc}
+								next={next}
+								onFailure={setError}
+							/>
+						)}
+						{options.github && (
+							<ProviderButton provider="github" label="GitHub" next={next} onFailure={setError} />
+						)}
 						<div className="flex items-center gap-3 text-xs text-muted-foreground">
 							<span className="h-px flex-1 bg-border" />
 							or

@@ -9,6 +9,15 @@ export const db = createDb(env.DB);
 
 const baseURL = env.BETTER_AUTH_URL || undefined;
 
+const oidc =
+	env.OIDC_ISSUER && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET
+		? {
+				issuer: env.OIDC_ISSUER,
+				clientId: env.OIDC_CLIENT_ID,
+				clientSecret: env.OIDC_CLIENT_SECRET,
+			}
+		: undefined;
+
 let instance: ReturnType<typeof buildAuth> | undefined;
 
 /**
@@ -30,6 +39,7 @@ function buildAuth() {
 			env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
 				? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET }
 				: undefined,
+		oidc,
 		mailer,
 		runInBackground: waitUntil,
 		rateLimitStorage: authRateLimits,
@@ -52,3 +62,6 @@ async function logFailure(work: Promise<unknown>, what: string) {
 export const githubEnabled = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
 
 export const emailEnabled = Boolean(mailer);
+
+/** What the sign-in page calls the OpenID Connect provider, if there is one. */
+export const oidcProviderName = oidc ? env.OIDC_PROVIDER_NAME || "single sign-on" : null;
