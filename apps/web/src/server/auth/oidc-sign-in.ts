@@ -200,10 +200,11 @@ const NO_TOKENS = {
 };
 
 /**
- * The database hooks sign-in through a provider needs. The account hook is the only place that sees
- * the ID token, which by then has been checked against the provider's keys and this request's
- * nonce. It takes the provider's session id from it, for the session row made next in the same
- * request, and keeps none of the tokens. That row's `oidcSid` is what a logout token names.
+ * The database hooks sign-in through a provider needs. The account hook keeps none of any provider's
+ * tokens, GitHub's included. It is also the only place that sees the ID token, which by then has been
+ * checked against the provider's keys and this request's nonce, so it takes the provider's session id
+ * from it, for the session row made next in the same request. That row's `oidcSid` is what a logout
+ * token names.
  */
 export function oidcDatabaseHooks() {
 	// By the request's context, which each endpoint call gets a copy of, so that sign-ins running at
@@ -214,9 +215,10 @@ export function oidcDatabaseHooks() {
 		account: Partial<Account>,
 		context: GenericEndpointContext | null,
 	) => {
-		if (account.providerId !== OIDC_PROVIDER) return;
-		const sessionId = account.idToken ? sessionIdIn(account.idToken) : undefined;
-		if (sessionId && context) sessionIds.set(context.context, sessionId);
+		if (account.providerId === OIDC_PROVIDER) {
+			const sessionId = account.idToken ? sessionIdIn(account.idToken) : undefined;
+			if (sessionId && context) sessionIds.set(context.context, sessionId);
+		}
 		return { data: NO_TOKENS };
 	};
 
