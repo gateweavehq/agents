@@ -8,6 +8,18 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.12.2] - 2026-11-04
+
+Signing out at a provider could leave someone signed in here. Updating a self-hosted copy needs no migration and no
+new setting.
+
+### Fixed
+
+- **A provider's logout could be lost.** If the provider stopped waiting for the answer, Workers cancelled the
+  request and the session stayed. A logout that has arrived is now seen through. When Agents cannot fetch the
+  provider's keys at that moment it answers 503 rather than 400, so that a provider can try again, and nothing ends
+  until the token has been checked. (#140)
+
 ## [0.12.1] - 2026-11-04
 
 Better Auth 1.7.16, a security release, so anyone running a copy should update. Updating a self-hosted
