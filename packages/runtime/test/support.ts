@@ -1,14 +1,25 @@
 /** What the runtime's tests share: a chat socket, and a model that answers as a provider does. */
 import { vi } from "vitest";
+import { CHAT_SESSION_HEADER, type ChatSession } from "../src/chat-session";
 import type { ScriptedAnswer } from "./fake-sandbox";
 
 // Its tail is not hexadecimal, so tests that look for it in a reply never find it in a random id.
 export const KEY = "sk-ant-api03-secret-wxyz";
 
-export async function connect(stub: {
-	fetch: (input: string, init?: RequestInit) => Promise<Response>;
-}) {
-	const response = await stub.fetch("http://conversation/", { headers: { Upgrade: "websocket" } });
+/** A session that holds for the length of a test, as the app's gateway would pass it on. */
+export const SESSION: ChatSession = {
+	id: "session-ada",
+	userId: "user-ada",
+	expiresAt: Date.now() + 3_600_000,
+};
+
+export async function connect(
+	stub: { fetch: (input: string, init?: RequestInit) => Promise<Response> },
+	session: ChatSession | null = SESSION,
+) {
+	const headers: Record<string, string> = { Upgrade: "websocket" };
+	if (session) headers[CHAT_SESSION_HEADER] = JSON.stringify(session);
+	const response = await stub.fetch("http://conversation/", { headers });
 	const socket = response.webSocket;
 	if (!socket) throw new Error(`No WebSocket: ${response.status}`);
 	socket.accept();
@@ -348,4 +359,11 @@ export function googleAnswer(usage: AnswerUsage = {}): ScriptedAnswer {
 			]),
 		},
 	};
+}
+
+/** The code a socket closes with. */
+export function closeCode(socket: WebSocket): Promise<number> {
+	return new Promise((resolve) => {
+		socket.addEventListener("close", (event) => resolve(event.code));
+	});
 }

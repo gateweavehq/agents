@@ -17,7 +17,7 @@ import {
 	type WorkersAiSettings,
 } from "@gateweave/agents-model";
 import type { ConversationTurn, RegistryDO } from "@gateweave/agents-registry";
-import { type Agent, getAgentByName } from "agents";
+import { type Agent, type Connection, type ConnectionContext, getAgentByName } from "agents";
 import {
 	convertToModelMessages,
 	createUIMessageStream,
@@ -27,6 +27,7 @@ import {
 	type ToolSet,
 	type UIMessage,
 } from "ai";
+import { type ChatSession, SESSION_ENDED, sessionOpening } from "./chat-session";
 import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
 import { ClaudeCodeTurn } from "./claude-code";
 import { CodexTurn } from "./codex";
@@ -193,6 +194,47 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		run: RunRecorder;
 		requests: Set<number>;
 	} | null = null;
+
+	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+		super(ctx, env);
+		// AIChatAgent takes chat messages in the onMessage its constructor sets, so the session is
+		// checked in front of that, for every message a socket sends.
+		const take = this.onMessage;
+		this.onMessage = async (connection, message) => {
+			if (await this.#sessionEnded(connection)) return;
+			return take(connection, message);
+		};
+	}
+
+	/**
+	 * A socket opens only through the app's gateway, which checked the session and says which it
+	 * was. The gateway is not asked again, so the socket keeps the session, to stop taking messages
+	 * once it ends rather than go on with someone's authority after they signed out.
+	 */
+	override async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
+		const session = sessionOpening(ctx.request);
+		if (!session) {
+			connection.close(SESSION_ENDED, "Session ended");
+			return;
+		}
+		connection.setState({ session });
+		return super.onConnect(connection, ctx);
+	}
+
+	/**
+	 * Whether the session a socket opened with still holds. Here, until it runs out; the app also
+	 * asks its database, where signing out, revoking it and the provider's logout delete it.
+	 */
+	protected async sessionHolds(session: ChatSession): Promise<boolean> {
+		return session.expiresAt > Date.now();
+	}
+
+	async #sessionEnded(connection: Connection): Promise<boolean> {
+		const session = (connection.state as { session?: ChatSession } | null)?.session;
+		if (session && (await this.sessionHolds(session))) return false;
+		connection.close(SESSION_ENDED, "Session ended");
+		return true;
+	}
 
 	override async onStart(): Promise<void> {
 		// A restart cut these runs short: they will not end on their own.

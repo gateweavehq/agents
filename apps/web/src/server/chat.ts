@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { conversationName } from "@gateweave/agents-runtime";
+import { CHAT_SESSION_HEADER, type ChatSession, conversationName } from "@gateweave/agents-runtime";
 import { getAgentByName } from "agents";
 import { db, getAuth } from "./auth";
 import { registryFor } from "./registry";
@@ -48,10 +48,19 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 		env.CONVERSATIONS,
 		conversationName(membership.workspaceId, conversation.id),
 	);
-	// Only what the conversation needs goes on: the cookies stay here. The query carries the
-	// client's connection id, which resuming a stream after a reconnect relies on.
+	// Only what the conversation needs goes on: the cookies stay here, and a socket takes the
+	// session's id instead, which the conversation checks before each message. The query carries
+	// the client's connection id, which resuming a stream after a reconnect relies on.
 	const target = `https://conversation/${isSocket ? "" : "get-messages"}${url.search}`;
-	return agent.fetch(target, { headers: isSocket ? { Upgrade: "websocket" } : {} });
+	if (!isSocket) return agent.fetch(target);
+	const opened: ChatSession = {
+		id: session.session.id,
+		userId: session.user.id,
+		expiresAt: new Date(session.session.expiresAt).getTime(),
+	};
+	return agent.fetch(target, {
+		headers: { Upgrade: "websocket", [CHAT_SESSION_HEADER]: JSON.stringify(opened) },
+	});
 }
 
 function error(status: number, message: string): Response {
