@@ -12,7 +12,7 @@ catalog:
   "@ai-sdk/provider": 4.0.35
   "@ai-sdk/react": 4.0.163
   "@cloudflare/ai-chat": 0.12.2
-  "@cloudflare/vitest-plugin": 1.4.11
+  "@cloudflare/vitest-plugin": 1.4.12
   "@modelcontextprotocol/server": 2.4.0
   "@types/node": 26.6.6
   agents: 0.32.0
@@ -22,7 +22,7 @@ catalog:
   typescript: 7.0.2
   vite: 8.3.5
   vitest: 5.0.5
-  wrangler: 4.156.0
+  wrangler: 4.156.1
   zod: 4.6.7
 
 allowBuilds:

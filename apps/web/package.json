@@ -53,7 +53,7 @@
 		"zod": "catalog:"
 	},
 	"devDependencies": {
-		"@cloudflare/vite-plugin": "1.66.0",
+		"@cloudflare/vite-plugin": "1.67.0",
 		"@tailwindcss/vite": "4.3.3",
 		"@tanstack/devtools-vite": "0.8.6",
 		"@tanstack/react-devtools": "0.10.14",
@@ -62,7 +62,7 @@
 		"@types/node": "catalog:",
 		"@types/react": "19.3.0",
 		"@types/react-dom": "19.3.0",
-		"@vitejs/plugin-react": "6.1.2",
+		"@vitejs/plugin-react": "6.2.1",
 		"drizzle-kit": "catalog:",
 		"miniflare": "5.20261023.0-beta",
 		"tailwindcss": "4.3.3",
