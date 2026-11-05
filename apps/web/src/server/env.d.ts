@@ -21,6 +21,13 @@ declare namespace Cloudflare {
 		 */
 		EMAIL_FROM?: string;
 		/**
+		 * The addresses of this deployment's legal pages, linked from the sign-in pages and the
+		 * workspace menu. Each is left out when unset, or when it is not an http(s) address.
+		 */
+		LEGAL_NOTICE_URL?: string;
+		PRIVACY_POLICY_URL?: string;
+		TERMS_URL?: string;
+		/**
 		 * The GitHub App that reads repositories (see docs/github-app.md). Connecting GitHub is off
 		 * unless all six are set.
 		 */

@@ -2,6 +2,7 @@ import type { JWTPayload } from "jose";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startAgents } from "./agents-worker";
 import { LOGOUT_EVENT, OIDC, OIDC_VARS, standInProvider } from "./oidc-provider";
+import { fromWorkerOn, whileJunkGoesOn } from "./workers";
 
 // Sign-in through an OpenID Connect provider (AGT-80). Agents never trusts the provider beyond what
 // it signed: an existing account links only when both sides have verified the address, and every
@@ -667,6 +668,28 @@ describe("signing out at the provider", () => {
 		expect(response.headers.get("cache-control")).toBe("no-store");
 		expect(await isSignedIn(agents, ended.cookie)).toBe(false);
 		expect(await isSignedIn(agents, kept.cookie)).toBe(true);
+	});
+
+	it("ends a session while a Worker on another zone sends junk to the same place", async () => {
+		const fromWorker = (zone: string, body: string) =>
+			agents.fetchIn(0, `${origin}/api/auth/backchannel-logout/oidc`, {
+				method: "POST",
+				headers: { "content-type": "application/x-www-form-urlencoded", ...fromWorkerOn(zone) },
+				body,
+			});
+		const person = { sub: "sub-junk", email: "junk@oidc.test" };
+		const session = await signIn(agents, provider, { ...person, sid: "sid-junk" });
+		const token = await provider.logoutToken({ sub: person.sub, sid: "sid-junk" });
+
+		const { answer, statuses } = await whileJunkGoesOn(
+			() => fromWorker("junk.example", "logout_token=junk"),
+			110,
+			() => fromWorker("provider.example", new URLSearchParams({ logout_token: token }).toString()),
+		);
+
+		expect(statuses).toContain(429);
+		expect(answer.status).toBe(200);
+		expect(await isSignedIn(agents, session.cookie)).toBe(false);
 	});
 
 	it("finds a session by its id alone, when that is all a token says", async () => {

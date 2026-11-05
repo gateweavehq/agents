@@ -8,6 +8,51 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.13.0] - 2026-11-05
+
+A deployment can now link its legal notice, privacy policy and terms. Updating a self-hosted copy needs no migration,
+and nothing changes until you set them. (#148)
+
+### Added
+
+- **Links to your legal pages.** Three optional settings, `LEGAL_NOTICE_URL`, `PRIVACY_POLICY_URL` and `TERMS_URL`, are
+  linked from the pages around signing in, the workspace list and the workspace menu. With `TERMS_URL` set, the sign-in
+  page also says that continuing means agreeing to them. Agents comes with no legal pages of its own and never links to
+  Gateweave's. (#148)
+
+### Upgrading
+
+No migration. To show links, set any of the three addresses; see `docs/self-hosting.md`.
+
+## [0.12.4] - 2026-11-05
+
+Sessions and invitations past their time now go by themselves. Updating a self-hosted copy needs no migration and no
+new setting.
+
+### Fixed
+
+- **What was past its time stayed.** Better Auth removes a session or a verification only when something looks it up, so
+  one nobody came back for stayed for good, with the address and browser it came from, and an invitation kept the address
+  it was sent to. A daily Cron Trigger now deletes them, in batches. Nothing anyone can see changes. (#146)
+
+### Upgrading
+
+Deploying creates the Cron Trigger, at 03:29 UTC, from `wrangler.jsonc`. If you keep your own copy of that file, add
+`"triggers": { "crons": ["29 3 * * *"] }`, or the rows stay. It counts toward your account's limit of Cron Triggers. The
+first run deletes everything already past its time.
+
+## [0.12.3] - 2026-11-05
+
+A Worker with nothing to do with Agents could use up the limits of every other Worker. Updating a self-hosted copy
+needs no migration and no new setting.
+
+### Fixed
+
+- **One Worker could use up what another needs.** Every Worker on Cloudflare reaches Agents from one address, so its
+  limits counted them all as one caller, and enough junk from any of them could stop a provider's logout or Track's
+  deliveries to a trigger. A Worker is now counted by its zone, which Cloudflare sets and a sender cannot change.
+  Anyone else is counted by their address as before, whatever they claim. (#144)
+
 ## [0.12.2] - 2026-11-04
 
 Signing out at a provider could leave someone signed in here. Updating a self-hosted copy needs no migration and no

@@ -4,6 +4,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { type RegistryStub, startAgents } from "./agents-worker";
 import { FakeModels } from "./fake-models";
+import { fromWorkerOn, whileJunkGoesOn } from "./workers";
 
 const origin = "https://agents.test";
 const KEY = "sk-ant-api03-correct-horse-battery";
@@ -52,7 +53,7 @@ async function workspace(slug: string, trigger: Partial<TriggerInput> = {}) {
 function post(
 	url: string,
 	secret: string,
-	{ id = crypto.randomUUID(), body = EVENT, signature = "" } = {},
+	{ id = crypto.randomUUID(), body = EVENT, signature = "", headers = {} } = {},
 ) {
 	const timestamp = String(Math.floor(Date.now() / 1000));
 	const mac = createHmac("sha256", Buffer.from(secret.slice("whsec_".length), "base64"))
@@ -65,6 +66,7 @@ function post(
 			"webhook-id": id,
 			"webhook-timestamp": timestamp,
 			"webhook-signature": signature || `v1,${mac}`,
+			...headers,
 		},
 		body,
 	});
@@ -143,6 +145,38 @@ it("turns away events that are not signed with the secret, or not for a trigger"
 	expect(await registry.listRuns()).toEqual([]);
 	const [listed] = await registry.listTriggers();
 	expect(listed?.deliveries).toEqual([]);
+});
+
+it("takes Track's deliveries while a Worker on another zone sends junk", async () => {
+	const { url, secret } = await workspace("triggers-zones");
+	const { answer, statuses } = await whileJunkGoesOn(
+		() => agents.fetch(url, { method: "POST", headers: fromWorkerOn("junk.example"), body: EVENT }),
+		120,
+		() => post(url, secret, { headers: fromWorkerOn("gateweave.com") }),
+	);
+	expect(statuses).toContain(429);
+	expect(answer.status).toBe(202);
+});
+
+it("gives nobody a way out of the limit on deliveries by saying they are a Worker", async () => {
+	const { url } = await workspace("triggers-claim");
+	const statuses = new Set<number>();
+	for (let batch = 0; batch < 15; batch++) {
+		const answers = await Promise.all(
+			Array.from({ length: 10 }, (_, sent) =>
+				agents.fetch(url, {
+					method: "POST",
+					headers: {
+						"cf-connecting-ip": "203.0.113.70",
+						"cf-worker": `zone-${batch}-${sent}.example`,
+					},
+					body: EVENT,
+				}),
+			),
+		);
+		for (const answer of answers) statuses.add(answer.status);
+	}
+	expect(statuses).toContain(429);
 });
 
 it("holds a trigger to its runs a day, telling the sender when to try again", async () => {

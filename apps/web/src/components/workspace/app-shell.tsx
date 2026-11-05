@@ -5,6 +5,7 @@ import {
 	Bot,
 	Boxes,
 	ChevronDown,
+	FileText,
 	FolderGit2,
 	KeyRound,
 	Layers,
@@ -15,7 +16,9 @@ import {
 	MessagesSquare,
 	Network,
 	Plug,
+	Scale,
 	Settings,
+	Shield,
 	UserPlus,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
@@ -30,6 +33,7 @@ import {
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import { authClient } from "#/lib/auth-client";
+import { legalEntries } from "#/lib/legal";
 import { cn } from "#/lib/utils";
 import { isAdmin, useMyRole, useWorkspace } from "./context";
 
@@ -209,8 +213,11 @@ function Sidebar() {
 	);
 }
 
+const LEGAL_ICONS = { notice: Scale, privacy: Shield, terms: FileText };
+
 function WorkspaceMenu() {
-	const { name, slug } = useWorkspace();
+	const { name, slug, legal } = useWorkspace();
+	const legalPages = legalEntries(legal);
 	const admin = isAdmin(useMyRole());
 	const navigate = useNavigate();
 
@@ -262,6 +269,18 @@ function WorkspaceMenu() {
 					</Link>
 				</DropdownMenuItem>
 				<DropdownMenuSeparator />
+				{legalPages.map(({ kind, label, href }) => {
+					const Icon = LEGAL_ICONS[kind];
+					return (
+						<DropdownMenuItem key={kind} asChild>
+							<a href={href} target="_blank" rel="noreferrer">
+								<Icon />
+								{label}
+							</a>
+						</DropdownMenuItem>
+					);
+				})}
+				{legalPages.length > 0 && <DropdownMenuSeparator />}
 				<DropdownMenuItem onSelect={() => void signOut()}>
 					<LogOut />
 					Sign out

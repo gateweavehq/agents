@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-rout
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { LegalLinks } from "#/components/legal-links";
 import { LiveButton } from "#/components/live-button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
@@ -219,6 +220,8 @@ function SignInForm() {
 						{mode === "sign-in" ? "Create an account" : "Sign in"}
 					</button>
 				</p>
+
+				<LegalLinks links={options.legal} agreeing />
 			</div>
 		</main>
 	);

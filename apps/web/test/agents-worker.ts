@@ -396,6 +396,14 @@ export async function startAgents(
 		},
 		/** The D1 database, for setting up state the app has no endpoint for. */
 		db,
+		/** Runs the Worker's Cron Trigger once, as Cloudflare would. */
+		async runScheduled() {
+			// Miniflare's Fetcher type leaves out the scheduled() workerd adds to every Worker stub.
+			const worker = (await mf.getWorker(names[0])) as unknown as {
+				scheduled(event: { cron: string; scheduledTime: Date }): Promise<unknown>;
+			};
+			await worker.scheduled({ cron: "29 3 * * *", scheduledTime: new Date() });
+		},
 		/** A workspace's registry, for the same purpose. */
 		async registry(workspaceId: string): Promise<RegistryStub> {
 			const namespace = (await mf.getDurableObjectNamespace("REGISTRY")) as unknown as {

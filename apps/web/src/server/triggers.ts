@@ -8,6 +8,7 @@ import { schema } from "./db";
 import { limitTriggerRequests } from "./rate-limit";
 import { registryFor } from "./registry";
 import { runsPage } from "./runs-page";
+import { whoSentIt } from "./workers-address";
 
 const ID = /^[\w-]{1,64}$/;
 
@@ -29,8 +30,7 @@ export async function receiveTrigger(
 	workspaceId: string,
 	triggerId: string,
 ): Promise<Response> {
-	const client = request.headers.get("cf-connecting-ip") ?? "unknown";
-	const { allowed, retryAfter } = limitTriggerRequests(client);
+	const { allowed, retryAfter } = limitTriggerRequests(whoSentIt(request));
 	if (!allowed) {
 		return reply(429, "Too many deliveries", { "Retry-After": String(retryAfter ?? 10) });
 	}

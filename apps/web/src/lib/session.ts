@@ -19,5 +19,16 @@ export const getSession = createServerFn({ method: "GET" }).handler(async () => 
 
 export const getAuthOptions = createServerFn({ method: "GET" }).handler(async () => {
 	const { emailEnabled, githubEnabled, oidcProviderName } = await import("#/server/auth");
-	return { github: githubEnabled, oidc: oidcProviderName, email: emailEnabled };
+	const { legalLinks } = await import("#/server/legal");
+	return {
+		github: githubEnabled,
+		oidc: oidcProviderName,
+		email: emailEnabled,
+		legal: legalLinks(),
+	};
+});
+
+export const getLegalLinks = createServerFn({ method: "GET" }).handler(async () => {
+	const { legalLinks } = await import("#/server/legal");
+	return legalLinks();
 });
