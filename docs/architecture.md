@@ -25,6 +25,11 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   address, which nothing here shows anyone.
 - **Email** goes through Cloudflare Email Service when `EMAIL_FROM` is set: password reset,
   verification and invitations. Without it, invitations are links to share.
+- **What is past its time** goes once a day, on a Cron Trigger every deployment inherits from
+  `wrangler.jsonc` (`apps/web/src/server/db/prune.ts`). Better Auth removes a session or a
+  verification only when something looks it up, so those nobody comes back for would otherwise
+  stay, with the address and browser a session holds, and invitations with the address they were
+  sent to. Gateweave Cloud's privacy policy states these periods, so a change here is a change to it.
 
 ### Signing in through a provider
 

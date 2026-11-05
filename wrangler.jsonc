@@ -8,6 +8,8 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": { "enabled": true },
 	"upload_source_maps": true,
+	// Once a day, deletes sessions and invitations past their time. Environments inherit this.
+	"triggers": { "crons": ["29 3 * * *"] },
 	// Accounts and the list of workspaces. The database is provisioned on first deploy.
 	"d1_databases": [
 		{
