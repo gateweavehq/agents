@@ -8,6 +8,18 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.12.3] - 2026-11-05
+
+A Worker with nothing to do with Agents could use up the limits of every other Worker. Updating a self-hosted copy
+needs no migration and no new setting.
+
+### Fixed
+
+- **One Worker could use up what another needs.** Every Worker on Cloudflare reaches Agents from one address, so its
+  limits counted them all as one caller, and enough junk from any of them could stop a provider's logout or Track's
+  deliveries to a trigger. A Worker is now counted by its zone, which Cloudflare sets and a sender cannot change.
+  Anyone else is counted by their address as before, whatever they claim. (#144)
+
 ## [0.12.2] - 2026-11-04
 
 Signing out at a provider could leave someone signed in here. Updating a self-hosted copy needs no migration and no
