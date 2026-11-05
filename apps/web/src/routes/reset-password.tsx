@@ -7,6 +7,7 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
+import { getLegalLinks } from "#/lib/session";
 import { useDocumentTitle } from "#/lib/title";
 
 // Better Auth checks the emailed link and sends the browser here with the token, or with an
@@ -20,11 +21,13 @@ export const Route = createFileRoute("/reset-password")({
 	validateSearch: resetSearch,
 	// The token is in this page's URL, so it must not travel on as a referrer.
 	head: () => ({ meta: [{ name: "referrer", content: "no-referrer" }] }),
+	loader: () => getLegalLinks(),
 	component: ResetPasswordPage,
 });
 
 function ResetPasswordPage() {
 	const { token, error: linkError } = Route.useSearch();
+	const legal = Route.useLoaderData();
 	const [expired, setExpired] = useState(false);
 	const [done, setDone] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -55,6 +58,7 @@ function ResetPasswordPage() {
 	if (done) {
 		return (
 			<AuthPage
+				legal={legal}
 				title="Password changed"
 				description="You were signed out on every device. Sign in with your new password."
 			>
@@ -68,6 +72,7 @@ function ResetPasswordPage() {
 	if (!token || linkError || expired) {
 		return (
 			<AuthPage
+				legal={legal}
 				title="This link no longer works"
 				description="A reset link works once, for one hour. Ask for a new one."
 			>
@@ -79,7 +84,7 @@ function ResetPasswordPage() {
 	}
 
 	return (
-		<AuthPage title="Choose a new password">
+		<AuthPage legal={legal} title="Choose a new password">
 			<form onSubmit={onSubmit} className="space-y-4">
 				<div className="space-y-2">
 					<Label htmlFor="password">New password</Label>

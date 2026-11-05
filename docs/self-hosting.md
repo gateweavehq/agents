@@ -103,6 +103,9 @@ Keep tokens, keys and email addresses as secrets. The limits can be plain variab
 | `OIDC_PROVIDER_NAME`       | What the sign-in button calls it. Unset: "single sign-on".                                                                                                         |
 | `GITHUB_APP_*`             | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md).                                                   |
 | `EMAIL_FROM`               | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                                                                     |
+| `LEGAL_NOTICE_URL`         | The address of your legal notice. See [below](#your-legal-pages).                                                                                                  |
+| `PRIVACY_POLICY_URL`       | The address of your privacy policy.                                                                                                                                |
+| `TERMS_URL`                | The address of your terms.                                                                                                                                         |
 | `AI_GATEWAY_URL`           | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                     |
 | `AI_GATEWAY_TOKEN`         | The gateway's token, when it is authenticated.                                                                                                                     |
 | `WORKERS_AI_TOKEN`         | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.                                                         |
@@ -120,6 +123,13 @@ Keep tokens, keys and email addresses as secrets. The limits can be plain variab
 In the dashboard, open the Worker and add a custom domain under Settings › Domains & Routes. Or
 add `"routes": [{ "pattern": "agents.example.com", "custom_domain": true }]` to `wrangler.jsonc`.
 Then set `BETTER_AUTH_URL` to that address, and use it in the GitHub apps' URLs.
+
+### Your legal pages
+
+Agents comes with no legal notice, privacy policy or terms, and never links to Gateweave's: whoever runs a
+copy decides what applies to it. Set any of the three addresses above, and it is linked from the
+sign-in pages and the workspace menu. With `TERMS_URL` set, the sign-in page also says that continuing
+means agreeing to them.
 
 ### Email
 

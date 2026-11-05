@@ -57,6 +57,12 @@ BETTER_AUTH_SECRET=
 # In local dev nothing is sent: each email is printed in the terminal and saved to a file.
 # EMAIL_FROM=
 
+# Optional: the addresses of your legal pages, linked from the sign-in pages and the workspace menu.
+# Nothing is linked when they are unset.
+# LEGAL_NOTICE_URL=
+# PRIVACY_POLICY_URL=
+# TERMS_URL=
+
 # Optional, for sandboxes (the SANDBOX binding; see the README): the ids of the workspaces that
 # may use them, separated by commas (every workspace when unset); each workspace's minutes per UTC
 # day; the server's US dollars per UTC month; and who hears at 80% and 100% of that budget.
