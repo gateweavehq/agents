@@ -6,7 +6,7 @@ import { generateText } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ConversationAgent, conversationName } from "../src";
 import { languageModel } from "../src/models";
-import { anthropicStream, ask, connect, fakeModel, KEY } from "./support";
+import { anthropicStream, ask, closeCode, connect, fakeModel, KEY, SESSION } from "./support";
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -62,6 +62,20 @@ describe("a conversation", () => {
 			"Review my change, please",
 		);
 		socket.close();
+	});
+
+	it("takes no message once its socket's session has run out, nor on a socket without one", async () => {
+		const { stub } = await conversation();
+		const requests = fakeModel(() => anthropicStream("Never sent"));
+
+		const expired = await connect(stub, { ...SESSION, expiresAt: Date.now() - 1 });
+		const closing = closeCode(expired);
+		void ask(expired, "Delete the repository").catch(() => {});
+		expect(await closing).toBe(4401);
+
+		const anonymous = await connect(stub, null);
+		expect(await closeCode(anonymous)).toBe(4401);
+		expect(requests).toHaveLength(0);
 	});
 
 	it("says why it cannot answer when the workspace has no key", async () => {

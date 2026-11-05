@@ -83,6 +83,31 @@ it("lets the member who started a conversation talk to the agent through the gat
 	expect(html).not.toContain("correct-horse");
 });
 
+it("stops taking messages on a chat left open once its session ends", async () => {
+	const { owner, path } = await conversationWith("chat-signed-out");
+	const url = `${origin}${path}`;
+	const { socket } = await agents.connect(url, { cookie: owner.headers.cookie, origin });
+	if (!socket) throw new Error("No WebSocket");
+	expect((await ask(socket, "Review my change, please")).text).toBe("Looks good.");
+
+	const signedOut = await agents.fetch(`${origin}/api/auth/sign-out`, {
+		method: "POST",
+		headers: owner.headers,
+		body: "{}",
+	});
+	expect(signedOut.status).toBe(200);
+
+	// The socket is still open, but what it sends now reaches neither the agent nor the model.
+	const sent = models.requests.length;
+	const closed = new Promise<number>((resolve) => {
+		socket.addEventListener("close", (event) => resolve(event.code));
+	});
+	void ask(socket, "Delete the repository").catch(() => {});
+	expect(await closed).toBe(4401);
+	expect(models.requests.length).toBe(sent);
+	expect((await agents.connect(url, { cookie: owner.headers.cookie, origin })).status).toBe(401);
+});
+
 it("keeps a conversation from everyone but the member who started it", async () => {
 	const { workspaceId, path, conversation, registry } = await conversationWith("chat-guild");
 	const url = `${origin}${path}`;

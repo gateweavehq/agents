@@ -4,7 +4,8 @@ import { handleChatRequest, isChatRequest } from "./server/chat";
 import { pruneExpired } from "./server/db/prune";
 
 export { SandboxMeterDO } from "@gateweave/agents-registry";
-export { ConversationAgent, RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
+export { RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
+export { ConversationAgent } from "./server/conversation";
 export { RateLimiter } from "./server/rate-limit";
 export { RegistryDO } from "./server/registry-do";
 

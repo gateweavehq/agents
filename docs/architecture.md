@@ -63,9 +63,11 @@ differing only by configuration. Track has the same code, and the same reasons.
   cannot say which. Once a token has arrived it is seen through with `waitUntil`, even if the
   provider stops waiting. Keys that cannot be fetched at that moment get a 503 and end nothing: it
   says nothing about the token, and a provider tries a 503 again where it takes a 400 as final.
-- **A chat already open outlives its session,** with any way of ending one and not only this:
-  `apps/web/src/server/chat.ts` checks the session when the socket opens, and Agents has nothing
-  like Track's list of ended sessions that would close it.
+- **A chat left open stops at its next message.** `apps/web/src/server/chat.ts` checks the session
+  when the socket opens and passes its id on; the conversation looks it up in D1 before each
+  message (`apps/web/src/server/conversation.ts`), so a socket whose session ended, by this logout
+  or any other way, is closed (4401) without its message reaching the agent. A turn already under
+  way when the session ends finishes, and an idle socket stays open until it sends.
 - **Signing out of Agents stays in Agents.** The provider's session is left alone, as other apps
   signed in through it would expect, and `disableProviderLogout` keeps the plugin from sending
   anyone there.
@@ -909,7 +911,8 @@ after a reconnect.
   `…/get-messages` first. The gateway (`apps/web/src/server/chat.ts`) takes only GET, requires
   the app's own Origin on WebSockets, checks the session, the membership in D1 and the
   conversation's owner, and passes the request on without its cookies. Anyone else gets the 404
-  a missing conversation gets.
+  a missing conversation gets. A socket carries the session's id instead (`CHAT_SESSION_HEADER`),
+  and takes no message once that session is gone; one that came without it closes at once.
 - **Each turn asks the registry** (`beginTurn`). It records the turn (the first message titles
   the conversation) and returns the agent's snapshot with the workspace's key for its provider,
   opened, or a sentence saying why the agent cannot answer: it was removed, or the workspace has
