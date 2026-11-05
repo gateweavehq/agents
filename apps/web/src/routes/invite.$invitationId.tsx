@@ -2,18 +2,26 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { LegalLinks } from "#/components/legal-links";
 import { Button } from "#/components/ui/button";
 import { VerifyEmailButton } from "#/components/verify-email";
 import { authClient } from "#/lib/auth-client";
 import { formatRelative } from "#/lib/dates";
 import { previewInvitation } from "#/lib/members";
+import { getLegalLinks } from "#/lib/session";
 import { useDocumentTitle } from "#/lib/title";
 import type { InvitationPreview } from "#/server/workspaces";
 
 export const Route = createFileRoute("/invite/$invitationId")({
 	// A verification link that failed sends the browser back here with an error code.
 	validateSearch: z.object({ error: z.string().optional().catch(undefined) }),
-	loader: ({ params }) => previewInvitation({ data: params.invitationId }),
+	loader: async ({ params }) => {
+		const [preview, legal] = await Promise.all([
+			previewInvitation({ data: params.invitationId }),
+			getLegalLinks(),
+		]);
+		return { ...preview, legal };
+	},
 	component: InvitePage,
 });
 
@@ -164,11 +172,13 @@ function ValidInvitation({
 }
 
 function Card({ title, children }: { title: string; children: ReactNode }) {
+	const { legal } = Route.useLoaderData();
 	return (
 		<main className="flex min-h-svh items-center justify-center p-6">
 			<div className="w-full max-w-sm space-y-6">
 				<h1 className="text-xl font-semibold tracking-tight">{title}</h1>
 				{children}
+				<LegalLinks links={legal} />
 			</div>
 		</main>
 	);

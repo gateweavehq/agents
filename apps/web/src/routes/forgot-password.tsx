@@ -40,6 +40,7 @@ function ForgotPasswordPage() {
 	if (!options.email) {
 		return (
 			<AuthPage
+				legal={options.legal}
 				title="Reset your password"
 				description="This server does not send email, so it cannot send you a reset link. Ask whoever runs it to help."
 			>
@@ -51,6 +52,7 @@ function ForgotPasswordPage() {
 	if (sentTo) {
 		return (
 			<AuthPage
+				legal={options.legal}
 				title="Check your email"
 				description={
 					<>
@@ -66,6 +68,7 @@ function ForgotPasswordPage() {
 
 	return (
 		<AuthPage
+			legal={options.legal}
 			title="Reset your password"
 			description="Enter the email address you sign in with. We will send it a link to choose a new password."
 		>
