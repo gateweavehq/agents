@@ -16,9 +16,20 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   Connect provider: see "Signing in through a provider" below.
 - **Rate limits** on sign-in, password reset, invitations and email are counted in a
   `RateLimiter` Durable Object per client address or recipient, so they hold across isolates and
-  locations. Everything else is limited in memory per isolate.
+  locations. Everything else is limited in memory per isolate. Every Worker reaches another zone
+  from one address, `2a06:98c0:3600::103`, so a request with that address and a `cf-worker` header
+  is counted by the zone it names, which Cloudflare sets and a sender cannot change
+  (`workers-address.ts`). Without that, junk from anyone's Worker could use up what a provider's
+  logout or Track's deliveries need. Better Auth counts a request before anything in it can step in,
+  so the request is changed before it gets there, and a session made from a Worker holds a made-up
+  address, which nothing here shows anyone.
 - **Email** goes through Cloudflare Email Service when `EMAIL_FROM` is set: password reset,
   verification and invitations. Without it, invitations are links to share.
+- **What is past its time** goes once a day, on a Cron Trigger every deployment inherits from
+  `wrangler.jsonc` (`apps/web/src/server/db/prune.ts`). Better Auth removes a session or a
+  verification only when something looks it up, so those nobody comes back for would otherwise
+  stay, with the address and browser a session holds, and invitations with the address they were
+  sent to. Gateweave Cloud's privacy policy states these periods, so a change here is a change to it.
 
 ### Signing in through a provider
 

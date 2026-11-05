@@ -1,10 +1,11 @@
 import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
+import { LegalLinks } from "#/components/legal-links";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
-import { getSession } from "#/lib/session";
+import { getLegalLinks, getSession } from "#/lib/session";
 import { slugify, slugProblem } from "#/lib/slug";
 
 export const Route = createFileRoute("/")({
@@ -13,11 +14,13 @@ export const Route = createFileRoute("/")({
 		if (!session) throw redirect({ to: "/login" });
 		return { session };
 	},
+	loader: () => getLegalLinks(),
 	component: WorkspacesPage,
 });
 
 function WorkspacesPage() {
 	const { session } = Route.useRouteContext();
+	const legal = Route.useLoaderData();
 	const router = useRouter();
 	const workspaces = authClient.useListOrganizations();
 
@@ -64,6 +67,8 @@ function WorkspacesPage() {
 			</section>
 
 			<CreateWorkspace />
+
+			<LegalLinks links={legal} />
 		</main>
 	);
 }

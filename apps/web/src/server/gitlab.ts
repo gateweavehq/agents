@@ -3,6 +3,7 @@ import { db } from "./auth";
 import { schema } from "./db";
 import { limitTriggerRequests } from "./rate-limit";
 import { registryFor } from "./registry";
+import { whoSentIt } from "./workers-address";
 
 const ID = /^[\w-]{1,64}$/;
 /** GitLab's push events list at most 20 commits; anything near this is not one. */
@@ -21,9 +22,8 @@ export async function receiveGitLabWebhook(
 	workspaceId: string,
 	connectionId: string,
 ): Promise<Response> {
-	// Inbound webhooks share one budget per sender address.
-	const client = request.headers.get("cf-connecting-ip") ?? "unknown";
-	const { allowed, retryAfter } = limitTriggerRequests(client);
+	// Inbound webhooks share one budget per sender.
+	const { allowed, retryAfter } = limitTriggerRequests(whoSentIt(request));
 	if (!allowed) {
 		return reply(429, "Too many deliveries", { "Retry-After": String(retryAfter ?? 10) });
 	}

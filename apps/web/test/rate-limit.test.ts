@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { startAgents } from "./agents-worker";
+import { fromWorkerOn, whileJunkGoesOn } from "./workers";
 
 // Better Auth turns its limiter on only when NODE_ENV is "production", which a Worker never sets,
 // so the deployed app took unlimited password guesses (TRK-23). Once on, it counted in each
@@ -55,6 +56,37 @@ it("counts a client's attempts in every isolate together", async () => {
 	expect(statuses).toEqual([401, 401, 401, 429]);
 	// Had the Durable Object failed, each isolate would have fallen back to its own count.
 	expect(agents.logs.filter((log) => log.message.startsWith("rate limit:"))).toEqual([]);
+});
+
+it("counts Workers on different zones apart", async () => {
+	const statuses = [];
+	for (let attempt = 0; attempt < 4; attempt++) {
+		statuses.push(await signIn(fromWorkerOn("one.example")));
+	}
+	expect(statuses).toEqual([401, 401, 401, 429]);
+	expect(await signIn(fromWorkerOn("other.example"))).toBe(401);
+});
+
+it("gives nobody a way out of a limit by saying they are a Worker", async () => {
+	const statuses = [];
+	for (let attempt = 0; attempt < 4; attempt++) {
+		statuses.push(
+			await signIn({ "cf-connecting-ip": "203.0.113.60", "cf-worker": `zone-${attempt}.example` }),
+		);
+	}
+	expect(statuses).toEqual([401, 401, 401, 429]);
+});
+
+it("counts Workers on different zones apart for a read from Better Auth", async () => {
+	const get = (zone: string) =>
+		agents.fetchIn(0, `${origin}/api/auth/get-session`, { headers: fromWorkerOn(zone) });
+	const { answer, statuses } = await whileJunkGoesOn(
+		() => get("junk.example"),
+		110,
+		() => get("other.example"),
+	);
+	expect(statuses).toContain(429);
+	expect(answer.status).not.toBe(429);
 });
 
 it("limits how fast one client creates workspaces", async () => {
