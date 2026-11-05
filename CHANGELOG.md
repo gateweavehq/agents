@@ -8,6 +8,23 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.12.4] - 2026-11-05
+
+Sessions and invitations past their time now go by themselves. Updating a self-hosted copy needs no migration and no
+new setting.
+
+### Fixed
+
+- **What was past its time stayed.** Better Auth removes a session or a verification only when something looks it up, so
+  one nobody came back for stayed for good, with the address and browser it came from, and an invitation kept the address
+  it was sent to. A daily Cron Trigger now deletes them, in batches. Nothing anyone can see changes. (#146)
+
+### Upgrading
+
+Deploying creates the Cron Trigger, at 03:29 UTC, from `wrangler.jsonc`. If you keep your own copy of that file, add
+`"triggers": { "crons": ["29 3 * * *"] }`, or the rows stay. It counts toward your account's limit of Cron Triggers. The
+first run deletes everything already past its time.
+
 ## [0.12.3] - 2026-11-05
 
 A Worker with nothing to do with Agents could use up the limits of every other Worker. Updating a self-hosted copy
