@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
+import { fromWorkerOn, whileJunkGoesOn } from "./workers";
 
 const origin = "https://agents.test";
 const GITLAB = "https://gitlab.test";
@@ -58,13 +59,19 @@ const page = async (path: string, cookie: string) =>
 		"",
 	);
 
-const deliver = (path: string, token: string | null, body: unknown) =>
+const deliver = (
+	path: string,
+	token: string | null,
+	body: unknown,
+	headers: Record<string, string> = {},
+) =>
 	agents.fetch(`${origin}${path}`, {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
 			"x-gitlab-event": "Push Hook",
 			...(token === null ? {} : { "x-gitlab-token": token }),
+			...headers,
 		},
 		body: typeof body === "string" ? body : JSON.stringify(body),
 	});
@@ -107,6 +114,18 @@ it("shows a connection to owners and admins with its webhook, and never its toke
 	const outside = await page("/gl-lab/settings/gitlab", stranger.headers.cookie);
 	expect(outside).not.toContain("group_5_bot");
 	expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
+});
+
+it("counts Workers on different zones apart, so junk from one is not another's problem", async () => {
+	const { workspaceId, connection, webhookSecret } = await connected("gl-zones");
+	const path = `/api/gitlab/webhooks/${workspaceId}/${connection.id}`;
+	const { answer, statuses } = await whileJunkGoesOn(
+		() => deliver(path, null, push, fromWorkerOn("junk.example")),
+		120,
+		() => deliver(path, webhookSecret, push, fromWorkerOn("other.example")),
+	);
+	expect(statuses).toContain(429);
+	expect(answer.status).not.toBe(429);
 });
 
 it("takes a push only with the connection's secret token, and queues a scan", async () => {
