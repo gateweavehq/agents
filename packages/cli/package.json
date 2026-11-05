@@ -32,9 +32,9 @@
 	"devDependencies": {
 		"@gateweave/agents-adapters": "workspace:*",
 		"@gateweave/agents-model": "workspace:*",
-		"@types/node": "26.6.5",
+		"@types/node": "catalog:",
 		"typescript": "catalog:",
-		"vite": "8.3.5",
+		"vite": "catalog:",
 		"vitest": "catalog:"
 	}
 }
