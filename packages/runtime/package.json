@@ -19,6 +19,7 @@
 		"@ai-sdk/openai": "4.0.106",
 		"@ai-sdk/openai-compatible": "catalog:",
 		"@ai-sdk/provider": "catalog:",
+		"@ai-sdk/react": "catalog:",
 		"@cloudflare/ai-chat": "catalog:",
 		"@cloudflare/sandbox": "1.0.3",
 		"@gateweave/agents-github": "workspace:*",
@@ -31,7 +32,9 @@
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "catalog:",
+		"@types/node": "catalog:",
 		"typescript": "catalog:",
+		"vite": "catalog:",
 		"vitest": "catalog:",
 		"wrangler": "catalog:"
 	}
