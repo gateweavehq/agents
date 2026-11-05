@@ -8,6 +8,22 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.13.0] - 2026-11-05
+
+A deployment can now link its legal notice, privacy policy and terms. Updating a self-hosted copy needs no migration,
+and nothing changes until you set them. (#148)
+
+### Added
+
+- **Links to your legal pages.** Three optional settings, `LEGAL_NOTICE_URL`, `PRIVACY_POLICY_URL` and `TERMS_URL`, are
+  linked from the pages around signing in, the workspace list and the workspace menu. With `TERMS_URL` set, the sign-in
+  page also says that continuing means agreeing to them. Agents comes with no legal pages of its own and never links to
+  Gateweave's. (#148)
+
+### Upgrading
+
+No migration. To show links, set any of the three addresses; see `docs/self-hosting.md`.
+
 ## [0.12.4] - 2026-11-05
 
 Sessions and invitations past their time now go by themselves. Updating a self-hosted copy needs no migration and no
