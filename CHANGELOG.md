@@ -8,6 +8,36 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.13.1] - 2026-11-06
+
+A server's settings now stay through a deploy, and a chat stops taking messages once its session has ended. If you set a
+spending limit on a self-hosted server as a plain variable, read this one: it may have been gone since your last deploy.
+No migration.
+
+### Fixed
+
+- **Settings made in the dashboard stay through a deploy.** Wrangler removes a plain-text variable it does not find in
+  `wrangler.jsonc` unless `keep_vars` says otherwise, and ours did not. So every deploy took away what had been set as a
+  Text variable, without a word. A limit that is not set is no limit, so `SANDBOX_MONTHLY_BUDGET` or
+  `SANDBOX_DAILY_MINUTES` set that way stopped holding, with sandboxes still running. Secrets were not affected, and
+  neither was Gateweave Cloud. (#155)
+- **A chat stops taking messages once its session has ended.** A chat left open kept running on someone's authority
+  after they signed out, had the session revoked, reset their password or were signed out through ID. Each message now
+  checks the session first and the socket closes if it has gone. A turn already under way finishes, and an idle socket
+  stays open until it sends something. (#154)
+
+### Changed
+
+- **Updated dependencies,** among them agents 0.32, ai 7.0.159, wrangler 4.156 and croner 11. `pnpm check` now fails
+  when agents or `@cloudflare/ai-chat` resolves to more than one copy. (#143, #150, #152)
+- **The self-hosting guide says where the Git account is on the Deploy form.** (#155)
+
+### Upgrading
+
+No migration. After updating, look through the Worker's variables in the dashboard and set again what has gone, first of
+all any limits. A variable taken out of `vars` in `wrangler.jsonc` now stays on the Worker until someone removes it in
+the dashboard, so taking a limit out of `vars` no longer lifts it by itself.
+
 ## [0.13.0] - 2026-11-05
 
 A deployment can now link its legal notice, privacy policy and terms. Updating a self-hosted copy needs no migration,
