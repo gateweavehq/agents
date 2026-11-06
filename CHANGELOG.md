@@ -8,6 +8,33 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.14.1] - 2026-11-06
+
+Branches now build on a copy made with the Deploy button, and a deployment without its secret no longer runs. No
+migration.
+
+### Fixed
+
+- **Every push to a branch of a button's copy failed its build.** The button turns Preview builds on, and Wrangler will
+  not build a Preview without a `previews` block in `wrangler.jsonc`. So each branch showed a failed build, Dependabot's
+  included. Those builds now pass. (#159)
+- **A deployment without `BETTER_AUTH_SECRET` signed sessions with a public value,** the default in Better Auth's
+  source. Better Auth refuses that default only when `NODE_ENV` is `production`, and a Worker has none. A deployed
+  Worker needs the secret to deploy, so this was open only to a Preview given a database and no secret of its own. Now a
+  deployment missing the database or the secret answers 503, says why, and serves nothing else. (#159)
+
+### Changed
+
+- **The self-hosting guide says what a Preview gets:** none of the Worker's bindings or secrets, where it used to say
+  Previews share the database. It says how to give them what they need, and that Dependabot's pull requests on a copy
+  are not needed. `update-copy` keeps Dependabot's file out once a copy has deleted it. (#159)
+
+### Upgrading
+
+No migration. If you gave a Preview a database, give Previews a secret of their own, or they now answer 503: `pnpm
+wrangler preview base-config secret put BETTER_AUTH_SECRET`. Anyone with an account on such a Preview should treat its
+sessions as forgeable until then.
+
 ## [0.14.0] - 2026-11-06
 
 A copy made with the Deploy button can now update. Until now `git pull` refused there, so whoever pressed the button
