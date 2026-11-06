@@ -39,10 +39,18 @@ reach the address can sign up and create workspaces of their own; a workspace is
 its members.
 
 **Preview builds.** The button turns them on: a push to any other branch builds a Preview with its
-own URL. Previews get their own Durable Objects, but they share the D1 database, and so the
-accounts, unless you bind another one in the Worker's
-[Preview settings](https://developers.cloudflare.com/workers/previews/configuration/). Turn them
-off under Settings › Build › Branch control if you don't need them.
+own URL. A Preview gets none of the Worker's bindings or secrets, so its address only says that it
+is not set up, and it cannot reach your data. To make Previews work, create another D1 database and
+apply the migrations to it, name it and the Durable Objects under `previews` in `wrangler.jsonc` as
+[Cloudflare's guide](https://developers.cloudflare.com/workers/previews/resources/) shows, and give
+them a secret of their own with `pnpm wrangler preview base-config secret put BETTER_AUTH_SECRET`.
+If you don't need them, untick **Enable Preview builds** on the form, or turn them off later under
+Settings › Build › Branch control.
+
+**Dependabot.** The copy brings this repository's `.github/dependabot.yml`, so Dependabot opens a
+pull request on it within minutes, and weekly after that. You don't need them: a release brings
+updates that were tested together, and what you merge can conflict with the next update. Delete the
+file unless you want them, and close what it opened.
 
 ## Deploy from the command line
 
