@@ -230,6 +230,8 @@ export async function startAgents(
 		models,
 		hosts = {},
 		secrets = true,
+		withoutDatabase = false,
+		withoutSecret = false,
 		settings = {},
 		isolateSettings = [],
 	}: {
@@ -238,6 +240,9 @@ export async function startAgents(
 		models?: FakeModels;
 		hosts?: Record<string, (request: Request) => Response | Promise<Response>>;
 		secrets?: boolean;
+		/** What a branch's Preview lacks. */
+		withoutDatabase?: boolean;
+		withoutSecret?: boolean;
 		settings?: Record<string, string>;
 		/** Settings that only this copy has, as a deployment's old and new versions would differ. */
 		isolateSettings?: Record<string, string>[];
@@ -270,7 +275,7 @@ export async function startAgents(
 					compatibilityDate: config.compatibility_date,
 					compatibilityFlags: config.compatibility_flags,
 					bindings: {
-						BETTER_AUTH_SECRET: secret,
+						...(withoutSecret ? {} : { BETTER_AUTH_SECRET: secret }),
 						BETTER_AUTH_URL: origin,
 						EMAIL_FROM: `${EMAIL_FROM.name} <${EMAIL_FROM.email}>`,
 						...(secrets ? { SECRETS_KEY: secretsKey } : {}),
@@ -279,7 +284,7 @@ export async function startAgents(
 						...github?.bindings(),
 					},
 					serviceBindings: { EMAIL: "outbox" },
-					d1Databases: { DB: "agents-test" },
+					d1Databases: { [withoutDatabase ? "UNBOUND_DB" : "DB"]: "agents-test" },
 					// Every copy uses the first one's Durable Objects.
 					durableObjects: {
 						REGISTRY: { className: "RegistryDO", useSQLite: true, scriptName: names[0] },
@@ -321,7 +326,7 @@ export async function startAgents(
 		}),
 	);
 
-	const db = await mf.getD1Database("DB");
+	const db = await mf.getD1Database(withoutDatabase ? "UNBOUND_DB" : "DB");
 	const migrations = join(app, "migrations");
 	for (const file of readdirSync(migrations)
 		.filter((name) => name.endsWith(".sql"))
