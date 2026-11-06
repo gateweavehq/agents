@@ -8,6 +8,25 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.14.0] - 2026-11-06
+
+A copy made with the Deploy button can now update. Until now `git pull` refused there, so whoever pressed the button
+stayed on that version. No migration.
+
+### Added
+
+- **`scripts/update-copy.mjs` brings a button's copy up to a release.** The button makes a copy in one new commit, with
+  no history in common with this repository. The script takes the latest release into the copy as one commit and pushes
+  nothing, and a copy can skip releases, however old it is. What the copy changed stays: the Worker's and database's
+  names, the name in `package.json`, and having no workflows. Anything else that conflicts is named for you to fix. The
+  self-hosting guide has the commands. (#157)
+
+### Upgrading
+
+No migration, and nothing changes for Gateweave Cloud or for a deployment from a clone, which keeps updating with `git
+pull`. If you made your copy with the button, this is also how it gets v0.13.1's fix that keeps settings through a
+deploy: read that entry first, because a limit set as a plain variable may already be gone.
+
 ## [0.13.1] - 2026-11-06
 
 A server's settings now stay through a deploy, and a chat stops taking messages once its session has ended. If you set a
