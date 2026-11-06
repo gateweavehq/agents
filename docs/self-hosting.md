@@ -20,6 +20,8 @@ command line.
 The button copies this repository to your GitHub or GitLab account and connects the copy to
 Workers Builds, so every push to its main branch deploys. On the form:
 
+- **Git account** is the first field, the account the copy goes to. If nothing is connected yet,
+  connect GitHub or GitLab there.
 - **Project name** names the Worker. It answers on `<project name>.<your subdomain>.workers.dev`.
 - **D1 database**: choose **+ Create new** and give it a name. The form picks an existing database
   when one in your account has the name in `wrangler.jsonc` (`gateweave-agents`), so check it
@@ -88,7 +90,10 @@ Pages › your Worker › Settings › Variables and Secrets), or from the repos
 pnpm wrangler secret put BETTER_AUTH_URL
 ```
 
-Keep tokens, keys and email addresses as secrets. The limits can be plain variables.
+Keep tokens, keys and email addresses as secrets. The limits can be plain variables, and both stay
+through a deploy, because `wrangler.jsonc` sets `keep_vars`. A server older than v0.13.1 lost its
+plain variables on every deploy, and a limit that is not set is no limit, so look through them
+after updating.
 
 | Name                       | What it does                                                                                                                                                       |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
