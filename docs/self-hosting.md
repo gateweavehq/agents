@@ -249,6 +249,8 @@ stay the record each workspace sees.
 
 ## Updating
 
+**Command line:**
+
 ```sh
 git pull
 pnpm install
@@ -256,3 +258,35 @@ pnpm run deploy
 ```
 
 The deploy applies new D1 migrations before the new code goes live.
+
+**Button:** your copy does not follow this repository on its own, and shares no history with it,
+so `git pull` refuses. This takes the latest release into your copy instead, as one commit on top
+of it. A copy can skip releases, however old it is:
+
+```sh
+git remote add upstream https://github.com/gateweavehq/agents.git   # once
+git fetch upstream
+git show upstream/main:scripts/update-copy.mjs | node --input-type=module
+git push
+```
+
+The script pushes nothing, and `git reset --hard HEAD~1` undoes it until you do. The push is what
+deploys: Workers Builds builds it and applies the D1 migrations.
+
+If GitHub refuses the push with `push declined due to email privacy restrictions`, the commit
+carries the address your GitHub settings keep private. Use the `noreply` address those settings
+show you, and make the commit again:
+
+```sh
+git config user.email "<your noreply address>"
+git commit --amend --reset-author --no-edit
+git push
+```
+
+What your copy changed stays: the Worker's and database's names in `wrangler.jsonc`, the name in
+`package.json`, and having no workflows. If something else you changed conflicts with the release,
+the script names the files for you to fix before committing. To take a release other than the
+latest, end the third line with `node --input-type=module - --to v1.2.3`.
+
+Agents is in early development. Read [CHANGELOG.md](../CHANGELOG.md) before updating, as some
+releases change how things work.
