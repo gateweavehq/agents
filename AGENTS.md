@@ -25,7 +25,7 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 | `packages/runtime`  | `ConversationAgent`: each conversation with an agent, and its runs' traces  |
 | `packages/cli`      | `@gateweave/agents`: applies and checks a setup in a working tree           |
 | `docs/`             | The product spec, the architecture and setting up the GitHub App            |
-| `scripts/`          | Repository tooling (`doctor`)                                               |
+| `scripts/`          | Repository tooling (`doctor`, `update-copy`)                                |
 | `.claude/skills/`   | Step-by-step playbooks for recurring tasks (plain Markdown, any agent)      |
 | `wrangler.jsonc`    | The Worker's config, at the root because the Deploy button reads it there   |
 
