@@ -35,15 +35,31 @@ function post(path: string, body: object) {
 	});
 }
 
-/** The statement the guide gives, for this person and this token. */
-function statementFor(email: string, token: string) {
-	const guide = readFileSync(
-		join(import.meta.dirname, "..", "..", "..", "docs", "self-hosting.md"),
-		"utf8",
-	);
-	const statement = /"(INSERT INTO verification [^"]+)"/.exec(guide)?.[1];
+const guide = readFileSync(
+	join(import.meta.dirname, "..", "..", "..", "docs", "self-hosting.md"),
+	"utf8",
+);
+
+function fromGuide(pattern: RegExp) {
+	const statement = pattern.exec(guide)?.[1];
 	if (!statement) throw new Error("The guide has no such statement");
-	return statement.replaceAll("$TOKEN", token).replace("someone@example.com", email);
+	return statement;
+}
+
+const LIST = /"(SELECT id, email FROM user[^"]*)"/;
+const MAKE_LINK = /"(INSERT INTO verification [^"]+)"/;
+
+/** Finds someone as the guide says to: by reading the list. */
+async function idFromTheList(email: string) {
+	const { results } = await agents.db.prepare(fromGuide(LIST)).all();
+	const id = (results as { id: string; email: string }[]).find((row) => row.email === email)?.id;
+	if (!id) throw new Error("They are not in the list");
+	return id;
+}
+
+/** The statement the guide gives, for this person and this token. */
+function statementFor(person: string, token: string) {
+	return fromGuide(MAKE_LINK).replaceAll("$TOKEN", token).replaceAll("$PERSON", person);
 }
 
 async function sessionOf(cookie: string) {
@@ -55,6 +71,12 @@ async function sessionOf(cookie: string) {
 }
 
 describe("a server that sends no email", () => {
+	it("has nobody paste an address into a command", () => {
+		// An address can hold a quote or a $( ), and this runs in a shell and in SQL.
+		expect(fromGuide(MAKE_LINK)).not.toContain("@");
+		expect(fromGuide(LIST)).not.toContain("@");
+	});
+
 	it("lets whoever runs it help someone back in, as the guide says, once", async () => {
 		const email = "locked-out@reset.test";
 		const entered = await post("/sign-up/email", { name: "Ada", email, password: PASSWORD });
@@ -71,7 +93,7 @@ describe("a server that sends no email", () => {
 		expect(await page.text()).toContain("does not send email");
 
 		const token = "a-token-as-openssl-would-make-it";
-		await agents.db.prepare(statementFor(email, token)).run();
+		await agents.db.prepare(statementFor(await idFromTheList(email), token)).run();
 		const opened = await agents.fetch(`${origin}/reset-password?token=${token}`);
 		expect(opened.status).toBe(200);
 
@@ -90,9 +112,9 @@ describe("a server that sends no email", () => {
 		expect((await post("/sign-in/email", { email, password: NEW_PASSWORD })).status).toBe(200);
 	});
 
-	it("does not make a link for an address with no account", async () => {
+	it("changes nothing with a link for an id nobody has", async () => {
 		const token = "a-token-for-nobody";
-		await agents.db.prepare(statementFor("nobody@reset.test", token)).run();
+		await agents.db.prepare(statementFor("not-anyone", token)).run();
 		expect((await post("/reset-password", { token, newPassword: NEW_PASSWORD })).status).toBe(400);
 	});
 
@@ -102,7 +124,7 @@ describe("a server that sends no email", () => {
 		expect(entered.status).toBe(200);
 
 		const token = "a-token-left-too-long";
-		await agents.db.prepare(statementFor(email, token)).run();
+		await agents.db.prepare(statementFor(await idFromTheList(email), token)).run();
 		const row = await agents.db
 			.prepare("SELECT expires_at AS expiresAt FROM verification WHERE identifier = ?")
 			.bind(`reset-password:${token}`)

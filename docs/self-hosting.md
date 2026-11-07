@@ -176,14 +176,21 @@ Onboard the sender's domain once with `pnpm wrangler email sending enable exampl
 `EMAIL_FROM` to an address on it. Without email, Agents works, but invitations have to be accepted
 from a link that an admin copies, and nobody can reset a forgotten password for themselves.
 
-As you hold the database, you can do it for them, from the repository root. This makes a link that
-works once, for an hour, and using it signs them out everywhere. Whoever opens it can choose the
-password, so send it only to them:
+As you hold the database, you can do it for them, from the repository root. Find their `id` in this
+list. Don't paste an address someone sent you into a command, as it could run as part of it:
 
 ```sh
+pnpm wrangler d1 execute DB --remote --command "SELECT id, email FROM user ORDER BY email"
+```
+
+Then make a link for that `id`. It works once, for an hour, and using it signs them out everywhere.
+Whoever opens it can choose the password, so send it only to them:
+
+```sh
+PERSON=the-id-from-that-list
 TOKEN=$(openssl rand -hex 32)
 pnpm wrangler d1 execute DB --remote --command \
-  "INSERT INTO verification (id, identifier, value, expires_at) SELECT '$TOKEN', 'reset-password:$TOKEN', id, (unixepoch() + 3600) * 1000 FROM user WHERE email = 'someone@example.com'"
+  "INSERT INTO verification (id, identifier, value, expires_at) VALUES ('$TOKEN', 'reset-password:$TOKEN', '$PERSON', (unixepoch() + 3600) * 1000)"
 echo "https://your-server/reset-password?token=$TOKEN"
 ```
 
