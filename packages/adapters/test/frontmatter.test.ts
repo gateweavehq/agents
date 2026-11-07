@@ -36,4 +36,21 @@ describe("parseFrontMatter", () => {
 			data: { globs: "*.ts", alwaysApply: true },
 		});
 	});
+
+	it("takes the blanks and the quotes off a lenient line's value", () => {
+		expect(
+			parseFrontMatter('---\nglobs: *.ts\na: \t b c \t \nb: "d"  \nc:\ne: \'f"\n---\n', {
+				lenient: true,
+			}),
+		).toMatchObject({ ok: true, data: { globs: "*.ts", a: "b c", b: "d", c: "", e: "'f\"" } });
+	});
+
+	it("reads a lenient line of many blanks at once, since it can come from any repository", () => {
+		const blanks = " ".repeat(200_000);
+		const started = Date.now();
+		const front = parseFrontMatter(`---\nglobs: *.ts${blanks}x\n---\n`, { lenient: true });
+
+		expect(Date.now() - started).toBeLessThan(1000);
+		expect(front).toMatchObject({ ok: true, data: { globs: `*.ts${blanks}x` } });
+	});
 });

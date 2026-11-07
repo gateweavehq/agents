@@ -285,7 +285,9 @@ describe("a model request from the sandbox", () => {
 
 	it("goes out as OpenCode sends it to each provider", async () => {
 		const requests = fakeModel((_call, request) =>
-			request.url.startsWith("https://api.openai.com") ? responsesStream() : anthropicStream("Ok."),
+			new URL(request.url).hostname === "api.openai.com"
+				? responsesStream()
+				: anthropicStream("Ok."),
 		);
 		const { context } = meterOf();
 		// `@ai-sdk/anthropic`, with the betas OpenCode adds.
