@@ -30,6 +30,15 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   verification only when something looks it up, so those nobody comes back for would otherwise
   stay, with the address and browser a session holds, and invitations with the address they were
   sent to. Gateweave Cloud's privacy policy states these periods, so a change here is a change to it.
+- **Headers** go on every answer (`apps/web/src/server/security-headers.ts`): `nosniff`, a referrer
+  rule and, over HTTPS, `Strict-Transport-Security`. A page also gets `X-Frame-Options`,
+  `Cache-Control: private, no-store` and a Content-Security-Policy with a nonce made for that
+  response. A conversation shows what a model wrote, and a model can be talked into writing
+  anything, so nothing can frame a page, a script runs only from this Worker's own address or with
+  the nonce, and a page connects only to this Worker. A member's picture is the one thing a page
+  shows from elsewhere, and only from GitHub or the sign-in provider. Vite's dev server gets none of
+  this, because its hot reload adds scripts without a nonce. There are no browser tests here to
+  catch a refusal, so a change to what a page loads needs a look in a browser.
 
 ### Signing in through a provider
 
