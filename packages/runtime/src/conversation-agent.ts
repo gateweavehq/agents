@@ -11,6 +11,7 @@ import {
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
+	SESSION_ENDED,
 	type TriggerTurnOutcome,
 	type TurnEdge,
 	type TurnVia,
@@ -27,7 +28,7 @@ import {
 	type ToolSet,
 	type UIMessage,
 } from "ai";
-import { type ChatSession, SESSION_ENDED, sessionOpening } from "./chat-session";
+import { type ChatSession, sessionOpening } from "./chat-session";
 import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
 import { ClaudeCodeTurn } from "./claude-code";
 import { CodexTurn } from "./codex";

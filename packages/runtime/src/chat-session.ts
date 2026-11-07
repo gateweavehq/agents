@@ -3,9 +3,6 @@ import { z } from "zod";
 /** Where the app's gateway puts the session a chat socket was opened with. */
 export const CHAT_SESSION_HEADER = "x-gateweave-chat-session";
 
-/** Closes a socket whose session has ended, with the code Track's sync sockets use for it. */
-export const SESSION_ENDED = 4401;
-
 const chatSession = z.object({
 	id: z.string().min(1),
 	userId: z.string().min(1),
