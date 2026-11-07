@@ -47,6 +47,7 @@ root unless noted.
 | `pnpm check`      | Biome lint and format check (`pnpm format` fixes most findings)              |
 | `pnpm typecheck`  | Type-check every package (regenerates Wrangler and route types first)        |
 | `pnpm test`       | Run every test suite                                                         |
+| `pnpm test:e2e`   | Build, then run the browser tests (Playwright, Chromium) on port 4722        |
 | `pnpm build`      | Production build                                                             |
 | `pnpm verify`     | Everything CI runs: check, typecheck, test, build                            |
 | `pnpm run deploy` | Build, apply D1 migrations, deploy                                           |
@@ -141,6 +142,16 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
   repositories `files` to test scans; it serves their branches, trees and blobs. Tests that use
   model keys pass a `FakeModels` (`test/fake-models.ts`), which lists models for the keys it
   knows and streams Anthropic's answers for chat.
+- `apps/web/e2e` has browser tests: Playwright drives Chromium against the production build
+  (`vite preview`, port 4722, its own empty local database). They cover what the other suites
+  cannot: a page a policy breaks (`e2e/fixtures.ts` fails a test on any refusal) and what someone
+  sees when a socket closes. `pnpm test:e2e` builds and runs them; the first time, run
+  `pnpm --filter @gateweave/agents-web exec playwright install chromium`. They are not part of
+  `pnpm verify`; CI runs them as the `e2e` job. Every test signs up its own user and workspace.
+  A browser run cannot reach `FakeModels`, so a test's agent has a made-up Anthropic key and a turn
+  ends in Anthropic's refusal, or in a failed request without a network. What someone wrote is
+  stored by then, and that is what these tests read. To run them in two checkouts at once, give
+  each its own port with `AGENTS_E2E_PORT`.
 - Every bug fix gets a test that fails without the fix. Never weaken or skip a test to make a
   change pass.
 

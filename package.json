@@ -16,6 +16,7 @@
 		"wrangler": "pnpm --filter @gateweave/agents-web exec wrangler --cwd ../..",
 		"typecheck": "pnpm -r typecheck",
 		"test": "pnpm -r test && node --test scripts/update-copy.test.mjs",
+		"test:e2e": "pnpm --filter @gateweave/agents-web test:e2e",
 		"check": "biome check && node scripts/check-one-agents.mjs",
 		"format": "biome check --write",
 		"verify": "pnpm check && pnpm typecheck && pnpm test && pnpm build"

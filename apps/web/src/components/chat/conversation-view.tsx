@@ -89,7 +89,7 @@ export function ConversationView({
 	return (
 		<>
 			<div className="min-h-0 flex-1 overflow-y-auto">
-				<div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
+				<section aria-label="Messages" className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
 					{messages.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">
 							Write to {agentName} below.
@@ -117,7 +117,7 @@ export function ConversationView({
 						</p>
 					)}
 					<div ref={end} />
-				</div>
+				</section>
 			</div>
 			<form onSubmit={send} className="shrink-0 border-t p-3 sm:p-4">
 				<div className="mx-auto flex max-w-3xl items-end gap-2">
