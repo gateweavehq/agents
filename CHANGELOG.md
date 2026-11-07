@@ -8,6 +8,23 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.16.4] - 2026-11-07
+
+Reading a session takes one trip to the database instead of two. There is no migration in this release.
+
+### Performance
+
+- **One query fewer each time a session is read.** Better Auth read the session, then the person, as two queries, and
+  each is a trip to D1's primary from wherever the Worker runs: measured at about 19 ms from Frankfurt, 109 from
+  Virginia, 240 from Tokyo and 290 from Sydney with the primary in Eastern Europe.
+  ([#187](https://github.com/gateweavehq/agents/pull/187))
+
+### If you run your own
+
+- **Where your database lives matters more than this does.** A D1 database stays where it was created, and every read
+  and write of a session goes there. Nothing to do for this release, but if your people are far from it, that is where
+  the time goes.
+
 ## [0.16.3] - 2026-11-07
 
 Tries at a password are now held per person where a session asks for one, and the account settings can end every session
