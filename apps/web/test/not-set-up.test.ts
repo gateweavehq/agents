@@ -22,6 +22,8 @@ describe.each([
 		const response = await worker.fetch(`${origin}${path}`);
 		expect(response.status).toBe(503);
 		expect(await response.text()).toContain("docs/self-hosting.md");
+		expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
 	});
 
 	it("makes no account and no session", async () => {

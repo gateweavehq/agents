@@ -140,6 +140,10 @@ session cookies are marked `Secure`, so a browser won't keep them over plain HTT
 [Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/)
 for the domain so that nobody lands on the plain address.
 
+Agents' pages refuse scripts they did not name, so a zone setting that adds scripts to a page does
+nothing here or gets in the way. [Web Analytics' automatic setup and Rocket Loader](https://developers.cloudflare.com/fundamentals/reference/policies-compliances/content-security-policies/)
+are two of them: leave those off for this hostname.
+
 ### Your legal pages
 
 Agents comes with no legal notice, privacy policy or terms, and never links to Gateweave's: whoever runs a
@@ -179,6 +183,9 @@ signed in stay signed in, because Agents asks the provider nothing except when s
 button or the provider signs someone out. With the back-channel logout URI registered, signing out
 at the provider ends the Agents sessions it started. Signing out of Agents leaves the provider's
 session alone.
+
+A member's picture shows when it comes from the provider's own host or from GitHub. From anywhere
+else, the page's policy stops it and their initials show instead.
 
 If Agents and the provider are both Workers, give each a
 [Custom Domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/#worker-to-worker-communication).
