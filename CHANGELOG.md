@@ -8,6 +8,34 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.15.0] - 2026-11-07
+
+People can delete their own account, and deleting a conversation no longer shows an error after it worked. This release
+has two D1 migrations, which `pnpm run deploy` applies before the new code goes live. Neither changes a row. Between the
+migrations and the new code, deleting a workspace answers an error and changes nothing, so try again after the deploy.
+
+### Added
+
+- **Delete your own account, on `/settings/account`.** The conversations you started go, with their messages and
+  sandboxes, in every workspace you are in or leave from this version on. Your runs stay in each workspace's usage under
+  "A former member", and hold no words. What you set up for the team stays with it, such as agents and the tokens you
+  connected, so disconnect those first or revoke them at the service. If you are the only owner of a workspace, hand it
+  over or delete it first. ([#164](https://github.com/gateweavehq/agents/pull/164))
+
+### Changed
+
+- **A workspace now keeps an owner in the database,** so two owners leaving at once can't leave it with none.
+  ([#164](https://github.com/gateweavehq/agents/pull/164))
+
+### Fixed
+
+- **Deleting a conversation showed the error "destroyed" and stayed on the page, though the conversation was gone.**
+  Deleting a workspace also logged a failure for each of its conversations. The object's own `destroyed` line stays in
+  Workers Logs, since that is how it ends. ([#165](https://github.com/gateweavehq/agents/pull/165))
+- **A scanned repository's file could stall reading its front matter.** A line of 200,000 blanks took about 23 seconds
+  in Node when the front matter was not valid YAML. ([#166](https://github.com/gateweavehq/agents/pull/166))
+- **CI's token is read-only by default.** ([#166](https://github.com/gateweavehq/agents/pull/166))
+
 ## [0.14.2] - 2026-11-07
 
 A deployment with no `BETTER_AUTH_URL` now marks its cookies `Secure`. No migration.
