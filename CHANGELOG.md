@@ -8,6 +8,38 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.16.0] - 2026-11-07
+
+People can change their name and password on their account page, and a chat left open no longer loses a message when its
+session ends. There is no migration in this release.
+
+### Added
+
+- **Your name and password on the account page.** Someone who signs in through GitHub or a sign-in provider has no
+  password here, and the page says so. A name they change stays theirs: the provider's is read only when the account is
+  made. ([#176](https://github.com/gateweavehq/agents/pull/176))
+
+### Fixed
+
+- **A chat left open lost messages once its session ended.** Changing a password in another tab was enough. The first
+  message after it showed "WebSocket closed mid-stream" with the box already empty, and later ones showed Stop with no
+  reply. The words now come back to the box. If the browser still has a session, the chat goes on with it and says the
+  message was not sent, which one key press sends again. If it has none, the page says the session ended and links to
+  sign-in, which comes back to the conversation. ([#178](https://github.com/gateweavehq/agents/pull/178))
+
+### Security
+
+- **A new password needs the current one, at five tries a minute.** The change emails the person and ends every other
+  session, whatever the request asks, since whoever knew the old password may be the one asking.
+  ([#176](https://github.com/gateweavehq/agents/pull/176))
+- **A name is 1 to 100 characters, at sign-up too, and a rename changes nothing else.** Ten a minute.
+  ([#176](https://github.com/gateweavehq/agents/pull/176))
+
+### If you run your own
+
+- **Anyone holding a session can now rename that account,** within the rules above. There is no setting for it.
+- **On a server without email, the password email is not sent.** Everything else about the change still happens.
+
 ## [0.15.4] - 2026-11-07
 
 Agents' pages now say what a browser may do with them. There is no migration in this release.
