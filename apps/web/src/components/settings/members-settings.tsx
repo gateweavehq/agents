@@ -3,6 +3,7 @@ import { Copy, Ellipsis, Mail } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { MemberAvatar } from "#/components/members/member-avatar";
+import { InvitationNotice, resentNotice } from "#/components/settings/invitation-notice";
 import { Button } from "#/components/ui/button";
 import {
 	DropdownMenu,
@@ -180,17 +181,7 @@ function InviteSection({
 			{created && (
 				<div className="space-y-2 rounded-lg border bg-muted/40 p-3" aria-live="polite">
 					<p className="text-sm">
-						{byEmail ? (
-							<>
-								We are emailing an invitation to{" "}
-								<span className="font-medium">{created.email}</span>. If it does not arrive, send
-								them this link:
-							</>
-						) : (
-							<>
-								Send this link to <span className="font-medium">{created.email}</span>:
-							</>
-						)}
+						<InvitationNotice byEmail={byEmail} email={created.email} />
 					</p>
 					<div className="flex gap-2">
 						<Input
@@ -243,9 +234,8 @@ function InvitationRow({
 			toast.error("Could not resend the invitation", { description: result.error.message });
 			return;
 		}
-		toast.success(`Emailing the invitation to ${invitation.email} again`, {
-			description: "If it does not arrive, copy the link and send it to them.",
-		});
+		const { title, description } = resentNotice(invitation.email);
+		toast.success(title, { description });
 		await router.invalidate();
 	}
 
