@@ -502,9 +502,112 @@ describe("the daily cron", () => {
 		});
 		await agents.db.prepare("DELETE FROM pending_erasure WHERE user_id = ''").run();
 	});
+
+	it("gets to the rest even when all it asks keep failing", async () => {
+		const client = newClient();
+		const owner = await signUp(client, "Dot", "dot@delete.test");
+		const workspace = await workspaceWithAgent(client, owner.cookie, "queued");
+		const person = await signUp(client, "Eli", "eli@delete.test");
+		await addMember(workspace.workspaceId, person.id);
+		const { id, socket } = await talk(workspace, person, "Still waiting");
+		socket.close();
+		// As many as one run asks, all older than the one that can go.
+		const stuck = Array.from({ length: 20 }, (_, index) => `stuck-${index}`);
+		await agents.db.batch(
+			stuck.flatMap((workspaceId, index) => [
+				agents.db
+					.prepare("INSERT INTO organization (id, name, slug, created_at) VALUES (?, ?, ?, ?)")
+					.bind(workspaceId, workspaceId, workspaceId, index + 1),
+				agents.db
+					.prepare(
+						"INSERT INTO pending_erasure (user_id, organization_id, created_at) VALUES ('', ?, ?)",
+					)
+					.bind(workspaceId, index + 1),
+			]),
+		);
+		await agents.db
+			.prepare(
+				"INSERT INTO pending_erasure (user_id, organization_id, created_at) VALUES (?, ?, ?)",
+			)
+			.bind(person.id, workspace.workspaceId, Date.now())
+			.run();
+
+		await agents.runScheduled();
+
+		expect(await count("pending_erasure", "user_id", "")).toBe(20);
+		expect(await count("pending_erasure", "user_id", person.id)).toBe(1);
+
+		await agents.runScheduled();
+
+		expect(await count("pending_erasure", "user_id", person.id)).toBe(0);
+		await vi.waitFor(async () => expect(await transcript(workspace.workspaceId, id)).toBe("[]"), {
+			timeout: 10_000,
+		});
+		await agents.db.batch(
+			stuck.map((workspaceId) =>
+				agents.db.prepare("DELETE FROM organization WHERE id = ?").bind(workspaceId),
+			),
+		);
+	});
 });
 
 describe("a workspace keeps an owner", () => {
+	it("counts whoever has owner among their roles, which Better Auth keeps as a list", async () => {
+		const client = newClient();
+		const owner = await signUp(client, "Iris", "iris@delete.test");
+		const workspaceId = await newWorkspace(client, owner.cookie, "Listed", "listed");
+		const other = await signUp(client, "Jo", "jo@delete.test");
+		await addMember(workspaceId, other.id);
+		const setRole = (userId: string, role: string) =>
+			agents.db.prepare("UPDATE member SET role = ? WHERE user_id = ?").bind(role, userId).run();
+		const remove = (userId: string) =>
+			agents.db.prepare("DELETE FROM member WHERE user_id = ?").bind(userId).run();
+
+		// A role that only has the word in it makes nobody an owner.
+		await setRole(other.id, "co-owner,admin");
+		await expect(remove(owner.id)).rejects.toThrow(/keep an owner/);
+
+		const member = await agents.db
+			.prepare("SELECT id FROM member WHERE user_id = ?")
+			.bind(other.id)
+			.first<{ id: string }>();
+		const promoted = await authApi("/organization/update-member-role", {
+			client,
+			cookie: owner.cookie,
+			body: { memberId: member?.id, organizationId: workspaceId, role: ["owner", "admin"] },
+		});
+		expect(promoted.status).toBe(200);
+		const { role } = (await agents.db
+			.prepare("SELECT role FROM member WHERE user_id = ?")
+			.bind(other.id)
+			.first<{ role: string }>()) ?? { role: "" };
+		expect(role).toBe("owner,admin");
+
+		// So the plain owner is not the only one, and can go.
+		const gone = await authApi("/account/delete", {
+			client,
+			cookie: owner.cookie,
+			body: { password: PASSWORD },
+		});
+		expect(gone.status).toBe(200);
+
+		// Now they are the last.
+		await expect(remove(other.id)).rejects.toThrow(/keep an owner/);
+		await expect(setRole(other.id, "admin")).rejects.toThrow(/keep an owner/);
+		const refused = await authApi("/account/delete", {
+			client,
+			cookie: other.cookie,
+			body: { password: PASSWORD },
+		});
+		expect(refused.status).toBe(403);
+		expect(await codeOf(refused)).toBe("ONLY_OWNER_OF_WORKSPACES");
+
+		// Staying an owner takes nothing away.
+		await setRole(other.id, "admin,owner");
+		await setRole(other.id, "owner");
+		expect(await count("member", "organization_id", workspaceId)).toBe(1);
+	});
+
 	it("holds in the database, however a row comes to change", async () => {
 		const client = newClient();
 		const owner = await signUp(client, "Hal", "hal@delete.test");

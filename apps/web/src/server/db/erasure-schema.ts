@@ -32,10 +32,12 @@ export const pendingErasure = sqliteTable(
 			.notNull()
 			.references(() => organization.id, { onDelete: "cascade" }),
 		createdAt: integer("created_at").notNull(),
+		/** When asking last failed. The cron goes by it, so those that keep failing wait their turn. */
+		lastTriedAt: integer("last_tried_at"),
 	},
 	(table) => [
 		primaryKey({ columns: [table.userId, table.organizationId] }),
 		index("pendingErasure_organizationId_idx").on(table.organizationId),
-		index("pendingErasure_createdAt_idx").on(table.createdAt),
+		index("pendingErasure_lastTriedAt_idx").on(table.lastTriedAt, table.createdAt),
 	],
 );

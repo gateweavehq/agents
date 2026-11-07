@@ -5,21 +5,24 @@
 -- with no owner has nobody who can fix it, so the database refuses the change that would make one. A
 -- workspace being deleted has gone by the time its members follow, and they are free to go.
 --
+-- Better Auth keeps several roles as a list, such as `owner,admin`, and that is an owner too, so the
+-- word is looked for as a whole item of the list.
+--
 -- Whoever leaves a workspace is noted, because it keeps their conversations, and deleting their
 -- account later has to reach it.
 CREATE TRIGGER `member_delete_keeps_an_owner`
 BEFORE DELETE ON `member`
-WHEN old.`role` = 'owner'
+WHEN instr(',' || old.`role` || ',', ',owner,') > 0
 	AND EXISTS (SELECT 1 FROM `organization` WHERE `id` = old.`organization_id`)
-	AND (SELECT count(*) FROM `member` WHERE `organization_id` = old.`organization_id` AND `role` = 'owner') <= 1
+	AND (SELECT count(*) FROM `member` WHERE `organization_id` = old.`organization_id` AND instr(',' || `role` || ',', ',owner,') > 0) <= 1
 BEGIN
 	SELECT RAISE(ABORT, 'a workspace must keep an owner');
 END;--> statement-breakpoint
 CREATE TRIGGER `member_update_keeps_an_owner`
 BEFORE UPDATE OF `role` ON `member`
-WHEN old.`role` = 'owner'
-	AND new.`role` <> 'owner'
-	AND (SELECT count(*) FROM `member` WHERE `organization_id` = old.`organization_id` AND `role` = 'owner') <= 1
+WHEN instr(',' || old.`role` || ',', ',owner,') > 0
+	AND instr(',' || new.`role` || ',', ',owner,') = 0
+	AND (SELECT count(*) FROM `member` WHERE `organization_id` = old.`organization_id` AND instr(',' || `role` || ',', ',owner,') > 0) <= 1
 BEGIN
 	SELECT RAISE(ABORT, 'a workspace must keep an owner');
 END;--> statement-breakpoint

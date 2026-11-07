@@ -7,7 +7,8 @@ import { registryFor } from "./registry";
 
 /**
  * How many workspaces one cron run asks. A Worker on the Free plan makes 50 subrequests at most, and
- * each of these takes two. They wait in the order they were written, so the oldest always get a turn.
+ * each of these takes two. One that fails goes to the back, so a run of them that keep failing does
+ * not keep the rest from a turn.
  */
 const RETRIES_PER_RUN = 20;
 
@@ -23,16 +24,17 @@ interface Erasure {
 async function forget(db: Database, erasures: Erasure[]): Promise<void> {
 	const results = await Promise.allSettled(
 		erasures.map(async ({ userId, organizationId }) => {
-			await registryFor(organizationId).forgetPerson(userId);
-			await db
-				.delete(schema.pendingErasure)
-				.where(
-					and(
-						eq(schema.pendingErasure.userId, userId),
-						eq(schema.pendingErasure.organizationId, organizationId),
-					),
-				)
-				.run();
+			const row = and(
+				eq(schema.pendingErasure.userId, userId),
+				eq(schema.pendingErasure.organizationId, organizationId),
+			);
+			try {
+				await registryFor(organizationId).forgetPerson(userId);
+			} catch (error) {
+				await db.update(schema.pendingErasure).set({ lastTriedAt: Date.now() }).where(row).run();
+				throw error;
+			}
+			await db.delete(schema.pendingErasure).where(row).run();
 		}),
 	);
 	const failed = results.filter((result) => result.status === "rejected").length;
@@ -62,7 +64,7 @@ export async function retryErasures(db: Database): Promise<void> {
 			organizationId: schema.pendingErasure.organizationId,
 		})
 		.from(schema.pendingErasure)
-		.orderBy(asc(schema.pendingErasure.createdAt))
+		.orderBy(asc(schema.pendingErasure.lastTriedAt), asc(schema.pendingErasure.createdAt))
 		.limit(RETRIES_PER_RUN)
 		.all();
 	if (erasures.length > 0) await forget(db, erasures);

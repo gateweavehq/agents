@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1a77d483-0371-4ea7-aff9-0009d900e256",
+  "id": "dba96d26-a0eb-4b2d-8c12-2f8690049539",
   "prevId": "f26b0d6c-90a2-486a-a5ee-af7d5a6c968e",
   "tables": {
     "account": {
@@ -712,6 +712,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "last_tried_at": {
+          "name": "last_tried_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -722,9 +729,10 @@
           ],
           "isUnique": false
         },
-        "pendingErasure_createdAt_idx": {
-          "name": "pendingErasure_createdAt_idx",
+        "pendingErasure_lastTriedAt_idx": {
+          "name": "pendingErasure_lastTriedAt_idx",
           "columns": [
+            "last_tried_at",
             "created_at"
           ],
           "isUnique": false

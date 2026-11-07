@@ -21,11 +21,11 @@ async function workspacesOnlyTheyOwn(db: Database, userId: string): Promise<stri
 		FROM member
 		JOIN organization ON organization.id = member.organization_id
 		WHERE member.user_id = ${userId}
-			AND member.role = 'owner'
+			AND instr(',' || member.role || ',', ',owner,') > 0
 			AND NOT EXISTS (
 				SELECT 1 FROM member AS other
 				WHERE other.organization_id = member.organization_id
-					AND other.role = 'owner'
+					AND instr(',' || other.role || ',', ',owner,') > 0
 					AND other.user_id <> ${userId}
 			)
 		ORDER BY organization.name
@@ -91,9 +91,9 @@ export function deleteAccount({ db, mailer, onAccountDeleted }: DeleteAccountCon
 							db
 								.insert(schema.pendingErasure)
 								.select(sql`
-									SELECT user_id, organization_id, ${now} FROM member WHERE user_id = ${user.id}
+									SELECT user_id, organization_id, ${now}, NULL FROM member WHERE user_id = ${user.id}
 									UNION
-									SELECT user_id, organization_id, ${now} FROM former_member WHERE user_id = ${user.id}
+									SELECT user_id, organization_id, ${now}, NULL FROM former_member WHERE user_id = ${user.id}
 								`)
 								.onConflictDoNothing(),
 							db

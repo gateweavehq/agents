@@ -1,6 +1,6 @@
 {
-  "id": "e6dc4a93-d1e2-4ab7-9fd2-63ee1986fcbe",
-  "prevId": "1a77d483-0371-4ea7-aff9-0009d900e256",
+  "id": "588e70b5-5cf5-4bdc-b899-73fe494482a3",
+  "prevId": "dba96d26-a0eb-4b2d-8c12-2f8690049539",
   "version": "6",
   "dialect": "sqlite",
   "tables": {
@@ -712,6 +712,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "last_tried_at": {
+          "name": "last_tried_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -722,9 +729,10 @@
           ],
           "isUnique": false
         },
-        "pendingErasure_createdAt_idx": {
-          "name": "pendingErasure_createdAt_idx",
+        "pendingErasure_lastTriedAt_idx": {
+          "name": "pendingErasure_lastTriedAt_idx",
           "columns": [
+            "last_tried_at",
             "created_at"
           ],
           "isUnique": false

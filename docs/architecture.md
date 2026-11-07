@@ -143,9 +143,10 @@ remove a member from a workspace, which leaves their conversations.
   in minutes on any plan. A row goes once its object has gone. One that fails is tried again a
   minute later, then twice as long each time, up to a day, for as long as it takes. Deleting the
   workspace meanwhile reaches those too, since `conversationIds` includes them.
-- **It is asked until it has answered.** The daily cron asks again for the 20 oldest
-  `pending_erasure` rows, a number a Worker on the Free plan can reach. Asking twice finds nothing
-  to do.
+- **It is asked until it has answered.** The daily cron asks again for 20 `pending_erasure` rows, a
+  number a Worker on the Free plan can reach, those never tried again and the ones tried longest ago
+  first, so a run of them that keep failing does not keep the rest waiting. Asking twice finds
+  nothing to do.
 - **Workspaces they left count too.** Each keeps their conversations, which nobody could open. A
   trigger notes whoever leaves in `former_member` (ids only), however they came to leave, and the
   note goes with the account or the workspace. Workspaces someone left before v0.15 are not noted,
