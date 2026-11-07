@@ -42,7 +42,20 @@ export function createMailer(
 	}
 	return {
 		async send({ to, subject, text, html }) {
-			await binding.send({ from: sender, to, subject, text, html });
+			try {
+				await binding.send({ from: sender, to, subject, text, html });
+			} catch (error) {
+				// Many sends run in the background, where nothing else says why. Only the code,
+				// since Workers Logs keeps this and a message can hold the address.
+				console.error("email: a message was not sent", { code: codeOf(error) });
+				throw error;
+			}
 		},
 	};
+}
+
+/** What Email Service says went wrong, such as `E_RECIPIENT_SUPPRESSED`. */
+function codeOf(error: unknown): string {
+	const code = error instanceof Error && "code" in error ? error.code : undefined;
+	return typeof code === "string" ? code : "unknown";
 }

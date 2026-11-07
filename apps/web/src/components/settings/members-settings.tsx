@@ -182,8 +182,9 @@ function InviteSection({
 					<p className="text-sm">
 						{byEmail ? (
 							<>
-								Invitation emailed to <span className="font-medium">{created.email}</span>. You can
-								also send them the link yourself:
+								We are emailing an invitation to{" "}
+								<span className="font-medium">{created.email}</span>. If it does not arrive, send them
+								this link:
 							</>
 						) : (
 							<>
@@ -242,7 +243,9 @@ function InvitationRow({
 			toast.error("Could not resend the invitation", { description: result.error.message });
 			return;
 		}
-		toast.success(`Invitation emailed to ${invitation.email} again`);
+		toast.success(`Emailing the invitation to ${invitation.email} again`, {
+			description: "If it does not arrive, copy the link and send it to them.",
+		});
 		await router.invalidate();
 	}
 
