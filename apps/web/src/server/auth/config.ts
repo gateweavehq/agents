@@ -16,6 +16,11 @@ export interface AuthConfig {
 	db: Database;
 	secret: string;
 	baseURL?: string | undefined;
+	/**
+	 * Marks cookies `Secure` whatever the base URL says. Without a pinned `baseURL`, Better Auth
+	 * decides from NODE_ENV, which a Worker never has, and leaves the attribute off.
+	 */
+	secureCookies?: boolean | undefined;
 	github?: { clientId: string; clientSecret: string } | undefined;
 	/** An OpenID Connect provider to offer on the sign-in page. */
 	oidc?: OidcProvider | undefined;
@@ -64,6 +69,9 @@ export function createAuth(config: AuthConfig) {
 				// and Better Auth puts every request whose address it cannot trust in one bucket.
 				ipAddressHeaders: ["cf-connecting-ip"],
 			},
+			// Only the attribute: `useSecureCookies` would also rename the cookies to `__Secure-...`,
+			// which signs everyone out.
+			...(config.secureCookies && { defaultCookieAttributes: { secure: true } }),
 			// Email goes out after the response. For password reset this also keeps the response
 			// time the same whether or not the account exists.
 			...(config.runInBackground && {

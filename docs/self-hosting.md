@@ -135,7 +135,10 @@ after updating.
 
 In the dashboard, open the Worker and add a custom domain under Settings › Domains & Routes. Or
 add `"routes": [{ "pattern": "agents.example.com", "custom_domain": true }]` to `wrangler.jsonc`.
-Then set `BETTER_AUTH_URL` to that address, and use it in the GitHub apps' URLs.
+Then set `BETTER_AUTH_URL` to that address, and use it in the GitHub apps' URLs. Sign-in needs HTTPS:
+session cookies are marked `Secure`, so a browser won't keep them over plain HTTP. Turn on
+[Always Use HTTPS](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/always-use-https/)
+for the domain so that nobody lands on the plain address.
 
 ### Your legal pages
 
