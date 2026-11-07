@@ -183,8 +183,8 @@ function InviteSection({
 						{byEmail ? (
 							<>
 								We are emailing an invitation to{" "}
-								<span className="font-medium">{created.email}</span>. If it does not arrive, send them
-								this link:
+								<span className="font-medium">{created.email}</span>. If it does not arrive, send
+								them this link:
 							</>
 						) : (
 							<>
