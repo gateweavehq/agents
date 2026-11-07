@@ -1,6 +1,7 @@
 import { env, waitUntil } from "cloudflare:workers";
 import { createDb } from "../db";
 import { mailer } from "../email";
+import { forgetInWorkspaces } from "../erasure";
 import { authRateLimits } from "../rate-limit";
 import { countedByWhoSentIt } from "../workers-address";
 import { deleteWorkspaceData } from "../workspace-deletion";
@@ -80,6 +81,9 @@ function buildAuth() {
 		// and none are left.
 		onWorkspaceDeleted: (workspaceId) =>
 			logFailure(deleteWorkspaceData(workspaceId), "workspace deletion"),
+		// A workspace that does not answer is asked again by the daily cron.
+		onAccountDeleted: (userId) =>
+			logFailure(forgetInWorkspaces(db, userId), "forgetting a deleted account"),
 	});
 }
 

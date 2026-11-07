@@ -20,6 +20,7 @@ import {
 	Settings,
 	Shield,
 	UserPlus,
+	UserRound,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { MemberAvatar } from "#/components/members/member-avatar";
@@ -266,6 +267,12 @@ function WorkspaceMenu() {
 					<Link to="/">
 						<ArrowLeftRight />
 						Switch workspace
+					</Link>
+				</DropdownMenuItem>
+				<DropdownMenuItem asChild>
+					<Link to="/settings/account">
+						<UserRound />
+						Your account
 					</Link>
 				</DropdownMenuItem>
 				<DropdownMenuSeparator />

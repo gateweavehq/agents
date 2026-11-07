@@ -21,6 +21,7 @@ import { Route as WorkspaceLibraryRouteImport } from './routes/$workspace/librar
 import { Route as WorkspaceMcpRouteImport } from './routes/$workspace/mcp'
 import { Route as WorkspaceSettingsRouteImport } from './routes/$workspace/settings'
 import { Route as InviteInvitationIdRouteImport } from './routes/invite.$invitationId'
+import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 import { Route as WorkspaceAgentsIndexRouteImport } from './routes/$workspace/agents.index'
 import { Route as WorkspaceAgentsAgentIdRouteImport } from './routes/$workspace/agents.$agentId'
 import { Route as WorkspaceAssetsAssetIdRouteImport } from './routes/$workspace/assets.$assetId'
@@ -111,6 +112,11 @@ const WorkspaceSettingsRoute = WorkspaceSettingsRouteImport.update({
 const InviteInvitationIdRoute = InviteInvitationIdRouteImport.update({
   id: '/invite/$invitationId',
   path: '/invite/$invitationId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsAccountRoute = SettingsAccountRouteImport.update({
+  id: '/settings/account',
+  path: '/settings/account',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WorkspaceAgentsIndexRoute = WorkspaceAgentsIndexRouteImport.update({
@@ -290,6 +296,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/mcp': typeof WorkspaceMcpRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
+  '/settings/account': typeof SettingsAccountRoute
   '/$workspace/': typeof WorkspaceIndexRoute
   '/$workspace/agents/$agentId': typeof WorkspaceAgentsAgentIdRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
@@ -332,6 +339,7 @@ export interface FileRoutesByTo {
   '/$workspace/library': typeof WorkspaceLibraryRoute
   '/$workspace/mcp': typeof WorkspaceMcpRoute
   '/invite/$invitationId': typeof InviteInvitationIdRoute
+  '/settings/account': typeof SettingsAccountRoute
   '/$workspace': typeof WorkspaceIndexRoute
   '/$workspace/agents/$agentId': typeof WorkspaceAgentsAgentIdRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
@@ -378,6 +386,7 @@ export interface FileRoutesById {
   '/$workspace/mcp': typeof WorkspaceMcpRoute
   '/$workspace/settings': typeof WorkspaceSettingsRouteWithChildren
   '/invite/$invitationId': typeof InviteInvitationIdRoute
+  '/settings/account': typeof SettingsAccountRoute
   '/$workspace/': typeof WorkspaceIndexRoute
   '/$workspace/agents/$agentId': typeof WorkspaceAgentsAgentIdRoute
   '/$workspace/assets/$assetId': typeof WorkspaceAssetsAssetIdRoute
@@ -425,6 +434,7 @@ export interface FileRouteTypes {
     | '/$workspace/mcp'
     | '/$workspace/settings'
     | '/invite/$invitationId'
+    | '/settings/account'
     | '/$workspace/'
     | '/$workspace/agents/$agentId'
     | '/$workspace/assets/$assetId'
@@ -467,6 +477,7 @@ export interface FileRouteTypes {
     | '/$workspace/library'
     | '/$workspace/mcp'
     | '/invite/$invitationId'
+    | '/settings/account'
     | '/$workspace'
     | '/$workspace/agents/$agentId'
     | '/$workspace/assets/$assetId'
@@ -512,6 +523,7 @@ export interface FileRouteTypes {
     | '/$workspace/mcp'
     | '/$workspace/settings'
     | '/invite/$invitationId'
+    | '/settings/account'
     | '/$workspace/'
     | '/$workspace/agents/$agentId'
     | '/$workspace/assets/$assetId'
@@ -553,6 +565,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   InviteInvitationIdRoute: typeof InviteInvitationIdRoute
+  SettingsAccountRoute: typeof SettingsAccountRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiGithubCallbackRoute: typeof ApiGithubCallbackRoute
   ApiGithubInstallRoute: typeof ApiGithubInstallRoute
@@ -648,6 +661,13 @@ declare module '@tanstack/react-router' {
       path: '/invite/$invitationId'
       fullPath: '/invite/$invitationId'
       preLoaderRoute: typeof InviteInvitationIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/account': {
+      id: '/settings/account'
+      path: '/settings/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof SettingsAccountRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$workspace/agents/': {
@@ -963,6 +983,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   InviteInvitationIdRoute: InviteInvitationIdRoute,
+  SettingsAccountRoute: SettingsAccountRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiGithubCallbackRoute: ApiGithubCallbackRoute,
   ApiGithubInstallRoute: ApiGithubInstallRoute,

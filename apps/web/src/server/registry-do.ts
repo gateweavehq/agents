@@ -44,6 +44,16 @@ export class RegistryDO extends Registry {
 			.get();
 		return conversation.triggerTurn(text, workspace ? runsPage(workspace.slug) : null);
 	}
+
+	protected override async destroyConversation(conversationId: string): Promise<void> {
+		const workspaceId = this.ctx.id.name;
+		if (!workspaceId) throw new Error("This registry does not know its workspace");
+		const conversation = await getAgentByName(
+			this.env.CONVERSATIONS,
+			conversationName(workspaceId, conversationId),
+		);
+		await conversation.destroy();
+	}
 }
 
 function hostOf(url: string | undefined): string {

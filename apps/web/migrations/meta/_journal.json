@@ -29,6 +29,20 @@
       "when": 1793811020428,
       "tag": "0003_clear_github_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794019876717,
+      "tag": "0004_account_erasure",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794019877216,
+      "tag": "0005_member_triggers",
+      "breakpoints": true
     }
   ]
 }

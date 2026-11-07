@@ -180,6 +180,14 @@ import {
 	storeEnvSecret,
 } from "./environment";
 import {
+	dueConversations,
+	nextDestroyAt,
+	noteDestroyed,
+	noteDestroyFailed,
+	queueConversationsOf,
+	queuedConversations,
+} from "./forget";
+import {
 	type GitLabAccess,
 	GitLabError,
 	gitlabBranchHead,
@@ -351,6 +359,9 @@ const triggerHeaders = z.object({
  * rest.
  */
 const SCANS_PER_ALARM = 3;
+
+/** A deleted person's conversations destroyed per alarm. Each takes two requests. */
+const DESTROYS_PER_ALARM = 10;
 
 /**
  * One instance per workspace, named by the workspace id. Holds the registry: projects,
@@ -878,6 +889,16 @@ export class RegistryDO extends DurableObject {
 			for (const gone of removed) detachRuns(this.#db, gone);
 			return removed;
 		});
+	}
+
+	/**
+	 * Has the workspace forget someone whose account is gone (`forget.ts`). Once this has answered,
+	 * the work is the alarm's and survives anything. It can be asked again without harm.
+	 */
+	async forgetPerson(userId: string): Promise<void> {
+		const person = id.parse(userId);
+		this.#write(() => queueConversationsOf(this.#db, person, Date.now()));
+		await this.#scheduleAlarm();
 	}
 
 	/**
@@ -1919,26 +1940,48 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * Begins the scheduled runs that are due and works through the scans that are, then sets the
-	 * alarm for what comes next.
+	 * Begins the scheduled runs that are due, works through the scans that are and destroys the
+	 * conversations of people who deleted their accounts, then sets the alarm for what comes next.
 	 */
 	override async alarm(): Promise<void> {
 		await this.#runSchedules();
 		const due = dueScans(this.#db, Date.now(), SCANS_PER_ALARM);
 		for (const request of due) await this.#scan(request);
+		await this.#destroyDueConversations();
 		await this.#scheduleAlarm();
 	}
 
+	/** One that fails waits for its turn again, and the others go on. */
+	async #destroyDueConversations(): Promise<void> {
+		const now = Date.now();
+		await Promise.all(
+			dueConversations(this.#db, now, DESTROYS_PER_ALARM).map(async (conversationId) => {
+				try {
+					await this.destroyConversation(conversationId);
+					this.#write(() => noteDestroyed(this.#db, conversationId));
+				} catch (error) {
+					console.error("registry: a deleted person's conversation was not destroyed", {
+						conversationId,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					this.#write(() => noteDestroyFailed(this.#db, conversationId, now));
+				}
+			}),
+		);
+	}
+
 	/**
-	 * Every conversation of the workspace's, nested ones too, for the app to delete with it: each is
-	 * a Durable Object of its own, with its messages, traces and sandbox.
+	 * Every conversation of the workspace's, nested ones too, and those still waiting to be destroyed,
+	 * for the app to delete with it: each is a Durable Object of its own, with its messages, traces and
+	 * sandbox. The registry goes after, and nothing else would know of them.
 	 */
 	conversationIds(): string[] {
-		return this.#db
+		const listed = this.#db
 			.select({ id: schema.conversations.id })
 			.from(schema.conversations)
 			.all()
 			.map((row) => row.id);
+		return [...listed, ...queuedConversations(this.#db)];
 	}
 
 	/** Deletes everything, when the workspace is deleted. */
@@ -2008,9 +2051,11 @@ export class RegistryDO extends DurableObject {
 			.get()?.id;
 	}
 
-	/** Sets the alarm for the next scan or scheduled run, whichever is due first. */
+	/** Sets the alarm for the next scan, scheduled run or conversation to destroy, whichever is first. */
 	async #scheduleAlarm(): Promise<void> {
-		const due = [nextScanAt(this.#db), nextScheduleAt(this.#db)].filter((at) => at !== null);
+		const due = [nextScanAt(this.#db), nextScheduleAt(this.#db), nextDestroyAt(this.#db)].filter(
+			(at) => at !== null,
+		);
 		if (due.length > 0) await this.ctx.storage.setAlarm(Math.max(Math.min(...due), Date.now()));
 	}
 
@@ -2054,6 +2099,15 @@ export class RegistryDO extends DurableObject {
 		_text: string,
 	): Promise<TriggerTurnOutcome> {
 		return { runId: null, error: "This server does not start scheduled runs" };
+	}
+
+	/**
+	 * Destroys a conversation's Durable Object, with its messages, traces and sandbox. The runtime is
+	 * not this package's to reach, so here it fails and the conversation waits; the app's Worker
+	 * exports a `RegistryDO` that does (`apps/web/src/server/registry-do.ts`).
+	 */
+	protected async destroyConversation(_conversationId: string): Promise<void> {
+		throw new Error("This server does not reach its conversations");
 	}
 
 	/**
