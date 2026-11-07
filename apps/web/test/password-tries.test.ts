@@ -161,7 +161,7 @@ describe("who cannot spend someone's allowance", () => {
 });
 
 describe("once it is spent", () => {
-	it("still lets the person sign in, and end the other sessions", async () => {
+	it("still lets the person end every session, and sign in again", async () => {
 		const person = await newPerson();
 		const signedIn = await api("/sign-in/email", {
 			body: { email: person.email, password: PASSWORD },
@@ -171,10 +171,12 @@ describe("once it is spent", () => {
 		for (let tries = 0; tries < 11; tries++) await tryAt(changing, thief);
 		expect((await tryAt(changing, thief)).status).toBe(429);
 
-		const out = await api("/revoke-other-sessions", { cookie: person.cookie, body: {} });
+		const out = await api("/revoke-sessions", { cookie: person.cookie, body: {} });
 		expect(out.status).toBe(200);
-		const session = await api("/get-session", { cookie: thief.cookie });
-		expect(await session.json()).toBeNull();
+		for (const cookie of [thief.cookie, person.cookie]) {
+			const session = await api("/get-session", { cookie });
+			expect(await session.json()).toBeNull();
+		}
 		const again = await api("/sign-in/email", {
 			body: { email: person.email, password: PASSWORD },
 		});

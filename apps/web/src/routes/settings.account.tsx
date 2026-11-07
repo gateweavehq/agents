@@ -22,7 +22,23 @@ export const Route = createFileRoute("/settings/account")({
 function AccountPage() {
 	const { account, legal } = Route.useRouteContext();
 	const [deleted, setDeleted] = useState(false);
-	useDocumentTitle(deleted ? "Account deleted" : "Your account");
+	const [signedOut, setSignedOut] = useState(false);
+	useDocumentTitle(deleted ? "Account deleted" : signedOut ? "Signed out" : "Your account");
+
+	if (signedOut) {
+		return (
+			<main className="mx-auto max-w-lg space-y-4 p-6 pt-24">
+				<h1 className="text-xl font-semibold tracking-tight">You are signed out everywhere</h1>
+				<p className="text-sm text-muted-foreground">
+					Every session of this account has ended, here and anywhere else.
+				</p>
+				<Button variant="outline" size="sm" asChild>
+					<Link to="/login">Back to sign-in</Link>
+				</Button>
+				<LegalLinks links={legal} />
+			</main>
+		);
+	}
 
 	if (deleted) {
 		return (
@@ -54,7 +70,7 @@ function AccountPage() {
 
 			<ChangeName name={account.name} />
 			<ChangePassword email={account.email} hasPassword={account.hasPassword} />
-			<OtherDevices />
+			<SignOutEverywhere onSignedOut={() => setSignedOut(true)} />
 			<DeleteAccount
 				email={account.email}
 				hasPassword={account.hasPassword}
@@ -284,37 +300,35 @@ function ChangePassword({ email, hasPassword }: { email: string; hasPassword: bo
 /**
  * For someone who thinks a cookie of theirs was stolen. It asks for no password, since whoever holds
  * the cookie can use up the tries at one, and on a server without email there is no reset to go to.
+ * It ends this session too, because the stolen cookie may be a copy of this browser's and nobody can
+ * tell. Those tries don't limit signing in again.
  */
-function OtherDevices() {
+function SignOutEverywhere({ onSignedOut }: { onSignedOut: () => void }) {
 	const [error, setError] = useState<string | null>(null);
-	const [ended, setEnded] = useState(false);
 	const [pending, setPending] = useState(false);
 
 	async function endThem() {
 		setError(null);
-		setEnded(false);
 		setPending(true);
-		const result = await authClient.revokeOtherSessions();
-		setPending(false);
+		const result = await authClient.revokeSessions();
 		if (result.error) {
+			setPending(false);
 			setError(failure(result.error));
 			return;
 		}
-		setEnded(true);
+		onSignedOut();
 	}
 
 	return (
-		<section aria-labelledby="devices-heading" className="space-y-4">
-			<h2 id="devices-heading" className="text-sm font-semibold">
-				Other devices
+		<section aria-labelledby="everywhere-heading" className="space-y-4">
+			<h2 id="everywhere-heading" className="text-sm font-semibold">
+				Sign out everywhere
 			</h2>
 			<div className="space-y-2 rounded-lg border p-4">
 				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-					<p className="text-sm text-muted-foreground" role={ended ? "status" : undefined}>
-						{ended ? "Your other devices are signed out." : "This needs no password."}
-					</p>
+					<p className="text-sm text-muted-foreground">Ends every session, this one too.</p>
 					<LiveButton variant="outline" size="sm" disabled={pending} onClick={endThem}>
-						Sign out everywhere else
+						Sign out everywhere
 					</LiveButton>
 				</div>
 				{error && (

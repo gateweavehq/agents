@@ -86,35 +86,50 @@ test("someone changes their password, and only this browser stays signed in", as
 	}
 });
 
-test("someone signs out their other devices without giving a password", async ({
+test("someone signs out everywhere with no password, and a copy of their cookie stops working", async ({
 	page,
+	context,
 	browser,
 }) => {
 	const person = await signUp(page);
 
 	const elsewhereContext = await newBrowserContext(browser);
+	const copyContext = await newBrowserContext(browser);
 	try {
+		// Whoever stole this browser's cookie has the same session as this browser.
+		await copyContext.addCookies(await context.cookies());
+		const copy = await copyContext.newPage();
+		await copy.goto("/");
+		await expect(copy).not.toHaveURL(/\/login/);
+
 		const elsewhere = await elsewhereContext.newPage();
-		await elsewhere.goto("/login");
-		await waitForHydration(elsewhere);
-		await elsewhere.getByLabel("Email").fill(person.email);
-		await elsewhere.getByLabel("Password").fill(person.password);
-		await elsewhere.getByRole("button", { name: "Sign in", exact: true }).click();
-		await expect(elsewhere).not.toHaveURL(/\/login/);
+		const signIn = async (where: typeof elsewhere) => {
+			await where.goto("/login");
+			await waitForHydration(where);
+			await where.getByLabel("Email").fill(person.email);
+			await where.getByLabel("Password").fill(person.password);
+			await where.getByRole("button", { name: "Sign in", exact: true }).click();
+			await expect(where).not.toHaveURL(/\/login/);
+		};
+		await signIn(elsewhere);
 
 		await page.goto("/settings/account");
 		await waitForHydration(page);
-		await page.getByRole("button", { name: "Sign out everywhere else" }).click();
-		await expect(page.getByRole("status")).toHaveText("Your other devices are signed out.");
+		await page.getByRole("button", { name: "Sign out everywhere" }).click();
+		await expect(
+			page.getByRole("heading", { name: "You are signed out everywhere" }),
+		).toBeVisible();
 
-		await elsewhere.goto("/");
-		await expect(elsewhere).toHaveURL(/\/login/);
+		for (const device of [elsewhere, copy]) {
+			await device.goto("/");
+			await expect(device).toHaveURL(/\/login/);
+		}
 
-		// This browser's session is the one that stays.
-		await page.reload();
-		await expect(page).toHaveURL(/\/settings\/account/);
-		await expect(page.getByRole("heading", { name: "Your account" })).toBeVisible();
+		await page.getByRole("link", { name: "Back to sign-in" }).click();
+		await expect(page).toHaveURL(/\/login/);
+		await signIn(page);
 	} finally {
 		await elsewhereContext.close();
+		await copyContext.close();
 	}
 });
