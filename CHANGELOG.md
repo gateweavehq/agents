@@ -282,10 +282,9 @@ migration.
 - **Every push to a branch of a button's copy failed its build.** The button turns Preview builds on, and Wrangler will
   not build a Preview without a `previews` block in `wrangler.jsonc`. So each branch showed a failed build, Dependabot's
   included. Those builds now pass. (#159)
-- **A deployment without `BETTER_AUTH_SECRET` signed sessions with a public value,** the default in Better Auth's
-  source. Better Auth refuses that default only when `NODE_ENV` is `production`, and a Worker has none. A deployed
-  Worker needs the secret to deploy, so this was open only to a Preview given a database and no secret of its own. Now a
-  deployment missing the database or the secret answers 503, says why, and serves nothing else. (#159)
+- **A deployment missing the database or `BETTER_AUTH_SECRET` now answers 503,** says why, and serves nothing else. A
+  deployed Worker needs the secret to deploy, so this reaches a Preview given a database and no secret of its own.
+  (#159)
 
 ### Changed
 
