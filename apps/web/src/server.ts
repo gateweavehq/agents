@@ -3,6 +3,7 @@ import handler from "@tanstack/react-start/server-entry";
 import { db } from "./server/auth";
 import { handleChatRequest, isChatRequest } from "./server/chat";
 import { pruneExpired } from "./server/db/prune";
+import { retryErasures } from "./server/erasure";
 
 export { SandboxMeterDO } from "@gateweave/agents-registry";
 export { RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
@@ -31,6 +32,7 @@ export default {
 	},
 	// Clears what is past its time, once a day.
 	async scheduled() {
+		await retryErasures(db);
 		await pruneExpired(db);
 	},
 } satisfies ExportedHandler<Cloudflare.Env>;

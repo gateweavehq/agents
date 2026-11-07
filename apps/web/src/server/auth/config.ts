@@ -10,6 +10,7 @@ import type { Database } from "../db";
 import { schema } from "../db";
 import type { Mailer } from "../email/mailer";
 import { invitationEmail, passwordResetEmail, verificationEmail } from "../email/templates";
+import { deleteAccount } from "./delete-account";
 import { type OidcProvider, oidcDatabaseHooks, oidcSignIn } from "./oidc-sign-in";
 
 export interface AuthConfig {
@@ -32,6 +33,8 @@ export interface AuthConfig {
 	rateLimitStorage?: BetterAuthRateLimitOptions["customStorage"];
 	/** Called after a workspace is deleted, to delete what it held outside D1. */
 	onWorkspaceDeleted?: ((workspaceId: string) => Promise<void>) | undefined;
+	/** Called after an account is deleted, to have its workspaces forget the person. */
+	onAccountDeleted?: ((userId: string) => Promise<void>) | undefined;
 }
 
 /**
@@ -188,10 +191,23 @@ export function createAuth(config: AuthConfig) {
 					beforeUpdateOrganization: async ({ organization }) => {
 						if (organization.slug) assertSlug(organization.slug);
 					},
+					// The plugin deletes the members first, which the owner trigger would refuse. With the
+					// workspace gone they follow by cascade, and the plugin finds nothing left to delete.
+					beforeDeleteOrganization: async ({ organization }) => {
+						await config.db
+							.delete(schema.organization)
+							.where(eq(schema.organization.id, organization.id))
+							.run();
+					},
 					afterDeleteOrganization: async ({ organization }) => {
 						await config.onWorkspaceDeleted?.(organization.id);
 					},
 				},
+			}),
+			deleteAccount({
+				db: config.db,
+				mailer,
+				onAccountDeleted: config.onAccountDeleted,
 			}),
 			...(config.oidc ? oidcSignIn(config.db, config.oidc) : []),
 			// Must stay last: forwards Set-Cookie headers from server-side auth calls.

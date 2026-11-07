@@ -106,10 +106,66 @@ not synced to the browser yet (see "Decisions" in the spec).
   (members, invitations, and its GitHub installation link, by cascade). Its
   `afterDeleteOrganization` hook then deletes what it held elsewhere
   (`apps/web/src/server/workspace-deletion.ts`): each conversation the registry knows, nested ones
-  too, with its messages, traces and sandbox, ten at a time, then the registry's storage with its
+  too and those waiting to be destroyed, with its messages, traces and sandbox, ten at a time, then
+  the registry's storage with its
   sealed keys and secrets. A conversation that fails is logged and the rest go on; nothing is
   reachable either way, since no member is left. The GitHub App installation stays on GitHub
   until someone uninstalls it there.
+
+### Deleting an account
+
+People delete their own account on `/settings/account`, through
+`POST /api/auth/account/delete` (`apps/web/src/server/auth/delete-account.ts`). Better Auth's
+`/delete-user` stays off: it lets someone with a password through without it, and its hooks can only
+remove a member from a workspace, which leaves their conversations.
+
+- **What it asks for.** A session from the last day, and the password if the account has one. An
+  account without one types its address in the page, which only guards against a slip.
+- **A workspace keeps an owner.** The only owner of a workspace is refused and told which, because
+  a workspace with no owner has nobody who can fix it. The plugin and this endpoint both count and
+  then act, so two owners leaving at once could each see the other still there. Two triggers on
+  `member` hold it in the database, however a row comes to change, and they let go of a workspace
+  that is being deleted. That needs the organization row to go first, so
+  `beforeDeleteOrganization` deletes it and its members follow by cascade.
+- **D1 goes in one batch.** It notes every workspace that has to forget the person in
+  `pending_erasure` (ids only), deletes the user, and takes invitations addressed to them. Foreign
+  keys take the sessions, sign-ins, memberships and the invitations they sent. It is one
+  transaction, so no account goes without that note, and a trigger's refusal leaves everything in
+  place.
+- **Each registry then forgets them.** A registry keeps ids and no names, so there is nothing to
+  rewrite, and names come from D1, falling back to "A former member". Their conversations have to
+  go, since each holds what they wrote and nobody else can open it. `forgetPerson`
+  (`packages/registry/src/forget.ts`) takes the rows of the conversations they started, nested ones
+  included, clears their runs' link to them and puts the ids in `conversations_to_destroy`, in one
+  write. D1's note goes once that has answered.
+- **The registry's alarm destroys them.** Ten per alarm, each with its messages, traces and sandbox.
+  Each alarm has a subrequest budget of its own, so someone with hundreds of conversations is done
+  in minutes on any plan. A row goes once its object has gone. One that fails is tried again a
+  minute later, then twice as long each time, up to a day, for as long as it takes. Deleting the
+  workspace meanwhile reaches those too, since `conversationIds` includes them.
+- **It is asked until it has answered.** The daily cron asks again for the 20 oldest
+  `pending_erasure` rows, a number a Worker on the Free plan can reach. Asking twice finds nothing
+  to do.
+- **Workspaces they left count too.** Each keeps their conversations, which nobody could open. A
+  trigger notes whoever leaves in `former_member` (ids only), however they came to leave, and the
+  note goes with the account or the workspace. Workspaces someone left before v0.15 are not noted,
+  so their conversations stay in those until someone asks whoever runs the server.
+
+What stays, and the page says so before anyone confirms:
+
+- Their runs, for the workspace's usage, under their id and shown as "A former member". A run holds
+  counts and no words.
+- What they set up for a workspace, because it is the team's: agents, triggers, model keys, secrets,
+  telemetry settings, and MCP and GitLab connections, including tokens they connected. Taking those
+  away would silently break the team's agents, so the page tells people to disconnect them first or
+  revoke them at the service. A GitLab connection names the account it was made with.
+- Conversations a trigger started, which name the trigger and were never theirs.
+- What already left: what model providers received, what telemetry sent, and what agents did on
+  GitHub, GitLab or in Track.
+- Point-in-time recovery, which Cloudflare provides and Agents does not control: 30 days back for a
+  Durable Object, and for D1 30 days on Workers Paid or 7 on Workers Free. Restoring a state from
+  before the deletion brings the person back with it.
+
 ## GitHub
 
 A workspace reads its repositories through a GitHub App ([github-app.md](github-app.md) sets one

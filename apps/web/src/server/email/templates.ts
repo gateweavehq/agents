@@ -59,6 +59,20 @@ export function invitationEmail({
 	});
 }
 
+/** To whoever deleted their account, so that someone who did not hears of it. */
+export function accountDeletedEmail({ email }: { email: string }): Message {
+	return compose({
+		subject: `Your ${PRODUCT} account was deleted`,
+		heading: "Your account was deleted",
+		body: [
+			`The ${PRODUCT} account for ${email} has been deleted, from a session signed in to it. It cannot be brought back.`,
+			"Your conversations with agents are being deleted. What you set up for a workspace stays with it, including tokens you connected, so revoke those at the service if you want them to stop working.",
+		],
+		footer:
+			"If this was not you, someone else had your password or a recent session. Tell whoever runs this server.",
+	});
+}
+
 /** To whoever runs the server, when its sandboxes have spent a share of the month's budget. */
 export function sandboxBudgetEmail({
 	share,
@@ -104,10 +118,16 @@ function compose({
 	subject: string;
 	heading: string;
 	body: string[];
-	action: { label: string; url: string };
+	/** The button, for a message that asks for something. */
+	action?: { label: string; url: string };
 	footer: string;
 }): Message {
-	const text = [...body, `${action.label}: ${action.url}`, footer, `— ${PRODUCT}`].join("\n\n");
+	const link = action ? [`${action.label}: ${action.url}`] : [];
+	const text = [...body, ...link, footer, `— ${PRODUCT}`].join("\n\n");
+	const button = action
+		? `<p style="margin:24px 0"><a href="${escapeHtml(action.url)}" style="display:inline-block;padding:10px 16px;background:#171717;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">${escapeHtml(action.label)}</a></p>
+<p style="margin:0 0 16px;font-size:13px;color:#525252">Or paste this link into your browser:<br><span style="word-break:break-all">${escapeHtml(action.url)}</span></p>`
+		: "";
 	const paragraphs = body
 		.map((line) => `<p style="margin:0 0 16px">${escapeHtml(line)}</p>`)
 		.join("");
@@ -119,8 +139,7 @@ function compose({
 <p style="margin:0 0 24px;font-size:13px;font-weight:600;color:#525252">${PRODUCT}</p>
 <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3">${escapeHtml(heading)}</h1>
 ${paragraphs}
-<p style="margin:24px 0"><a href="${escapeHtml(action.url)}" style="display:inline-block;padding:10px 16px;background:#171717;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">${escapeHtml(action.label)}</a></p>
-<p style="margin:0 0 16px;font-size:13px;color:#525252">Or paste this link into your browser:<br><span style="word-break:break-all">${escapeHtml(action.url)}</span></p>
+${button}
 <p style="margin:24px 0 0;font-size:13px;color:#737373">${escapeHtml(footer)}</p>
 </div>
 </body>

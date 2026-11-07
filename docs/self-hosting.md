@@ -258,6 +258,20 @@ ORDER BY model_dollars DESC
 The events are a copy, kept for Analytics Engine's retention (three months). The registry's runs
 stay the record each workspace sees.
 
+## When someone deletes their account
+
+People delete their own account on `/settings/account`, with no setting to turn on, and their
+conversations go from every workspace, with their messages and sandboxes. If you publish a privacy
+notice, say what stays: their runs, under "A former member", and what they set up for a workspace,
+including tokens they connected.
+[The architecture notes](architecture.md#deleting-an-account) have the full list, including
+workspaces someone left before v0.15, which you would have to clear by hand if they ask, and what
+Cloudflare's point-in-time recovery keeps.
+
+An account that is the only owner of a workspace is refused until someone else owns it or it is
+deleted. If you restore D1 or a workspace's registry to a time before a deletion, the person comes
+back.
+
 ## Updating
 
 **Command line:**

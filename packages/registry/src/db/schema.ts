@@ -507,6 +507,22 @@ export const conversations = sqliteTable(
 );
 
 /**
+ * Conversations whose rows have gone and whose Durable Objects have not yet, after the person who
+ * started them deleted their account. Each holds what they wrote and nothing else knows it exists,
+ * so a row goes only once its object has (`forget.ts`).
+ */
+export const conversationsToDestroy = sqliteTable(
+	"conversations_to_destroy",
+	{
+		id: text("id").primaryKey(),
+		/** When the alarm may try it: at once for a new one, later after each failure. */
+		nextAttemptAt: integer("next_attempt_at").notNull(),
+		failures: integer("failures").notNull().default(0),
+	},
+	(table) => [index("conversations_to_destroy_next_idx").on(table.nextAttemptAt)],
+);
+
+/**
  * Each turn of a conversation, summed up for the Runs page and the Overview. A run outlives its
  * conversation (`conversation_id` is cleared), so usage stays counted; its trace does not.
  */
