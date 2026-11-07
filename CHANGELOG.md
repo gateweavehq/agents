@@ -8,6 +8,27 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.15.4] - 2026-11-07
+
+Agents' pages now say what a browser may do with them. There is no migration in this release.
+
+### Security
+
+- **Pages sent no security headers,** so any site could put Agents in a frame under its own buttons, and a script that
+  got into a page could load and send anything. A conversation shows what a model wrote, so that limit matters here.
+  Every answer now gets `X-Content-Type-Options`, `Referrer-Policy` and, over HTTPS, `Strict-Transport-Security`. A page
+  also gets `X-Frame-Options`, `Cache-Control: private, no-store` and a Content-Security-Policy with a nonce made for
+  that response. ([#174](https://github.com/gateweavehq/agents/pull/174))
+
+### If you run your own
+
+- **A member's picture shows only from GitHub or your sign-in provider's own host.** From anywhere else, their initials
+  show instead.
+- **Leave Web Analytics' automatic setup and Rocket Loader off for this hostname.** A zone setting that adds scripts to
+  a page does nothing here or gets in the way. See "Your own domain" in `docs/self-hosting.md`.
+- **A browser that has seen `Strict-Transport-Security` keeps to HTTPS on that host for a year,** which sign-in already
+  needed.
+
 ## [0.15.3] - 2026-11-07
 
 Someone signing up can no longer choose the address of their picture. There is no migration in this release.
