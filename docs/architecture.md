@@ -132,9 +132,8 @@ remove a member from a workspace, which leaves their conversations.
   account without one types its address in the page, which only guards against a slip. Better
   Auth's `/unlink-account` is disabled, because it removes a password on a recent session alone,
   which would let a stolen cookie get past that question. So are the other routes it offers any
-  session and the app has no use for, such as `/verify-password` and `/change-password`, which
-  take guesses at a password. The list is `disabledPaths` in
-  `apps/web/src/server/auth/config.ts`. Changing a password goes through a reset.
+  session and the app has no use for, such as `/verify-password`, which takes guesses at a
+  password. The list is `disabledPaths` in `apps/web/src/server/auth/config.ts`.
 - **A workspace keeps an owner.** The only owner of a workspace is refused and told which, because
   a workspace with no owner has nobody who can fix it. The plugin and this endpoint both count and
   then act, so two owners leaving at once could each see the other still there. Two triggers on
@@ -183,6 +182,26 @@ What stays, and the page says so before anyone confirms:
 - Point-in-time recovery, which Cloudflare provides and Agents does not control: 30 days back for a
   Durable Object, and for D1 30 days on Workers Paid or 7 on Workers Free. Restoring a state from
   before the deletion brings the person back with it.
+
+### Changing a name or password
+
+People change both on `/settings/account`, through Better Auth's `/update-user` and
+`/change-password`, and what stands behind either may be a stolen cookie. The rules are in
+`apps/web/src/server/auth/account-changes.ts` and the hooks of `config.ts`.
+
+- **A rename takes a name and nothing else:** 1 to 100 characters once trimmed, which sign-up keeps
+  to as well. The route would otherwise set a picture too, whose address everyone in someone's
+  workspaces fetches. It allows ten a minute. Pages read a name from D1, so nothing else holds a
+  copy to tell.
+- **A provider's name is taken once.** GitHub's or an OpenID Connect provider's name fills in a new
+  account and is not read again, so a name changed here stays.
+- **A new password needs the current one,** at five tries a minute, and sends the person an email,
+  which may be how they first hear that someone else has it.
+- **It ends every session,** whatever the request asks, since whoever knew the old password may be
+  why it is changing and may be the one asking. Better Auth makes a new session for the browser that
+  asked, which keeps the `oidc_sid` of the one it replaced, because it came from the same sign-in at
+  the provider and a logout token still has to reach it. A chat left open stops at its next message
+  like any other whose session ended, in that browser too, and a new socket opens on the new cookie.
 
 ## GitHub
 

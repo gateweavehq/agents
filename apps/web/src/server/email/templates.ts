@@ -59,6 +59,19 @@ export function invitationEmail({
 	});
 }
 
+/** To whoever changed their password, so that someone who did not hears of it. */
+export function passwordChangedEmail({ email }: { email: string }): Message {
+	return compose({
+		subject: `Your ${PRODUCT} password was changed`,
+		heading: "Your password was changed",
+		body: [
+			`The password of the ${PRODUCT} account for ${email} was changed, from a session signed in to it. Every other session of this account is signed out.`,
+		],
+		footer:
+			"If this was not you, reset your password from the sign-in page, which signs everyone else out, and tell whoever runs this server.",
+	});
+}
+
 /** To whoever deleted their account, so that someone who did not hears of it. */
 export function accountDeletedEmail({ email }: { email: string }): Message {
 	return compose({

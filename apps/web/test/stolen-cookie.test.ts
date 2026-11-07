@@ -45,13 +45,11 @@ describe("what a session cookie alone reaches", () => {
 	it.each([
 		["POST", "/unlink-account", { accountId: "any" }],
 		["POST", "/verify-password", { password: PASSWORD }],
-		["POST", "/change-password", { currentPassword: PASSWORD, newPassword: "another-long-one" }],
 		["POST", "/get-access-token", { accountId: "any" }],
 		["POST", "/refresh-token", { accountId: "any" }],
 		["GET", "/account-info?accountId=any", undefined],
 		["GET", "/list-accounts", undefined],
 		["GET", "/list-sessions", undefined],
-		["POST", "/update-user", { name: "Someone else" }],
 	] as const)("not %s %s", async (method, path, body) => {
 		const response = await authApi(method, path, body);
 		expect(response.status).toBe(404);
@@ -63,7 +61,13 @@ describe("what a session cookie alone reaches", () => {
 		expect(session.user.name).toBe("Cleo");
 	});
 
-	it("leaves the password as it was", async () => {
+	it("cannot change the password without knowing it", async () => {
+		const refused = await authApi("POST", "/change-password", {
+			currentPassword: "a-guess-at-it",
+			newPassword: "another-long-one",
+		});
+		expect(refused.status).toBe(400);
+
 		const signIn = await agents.fetch(`${origin}/api/auth/sign-in/email`, {
 			method: "POST",
 			headers: {
