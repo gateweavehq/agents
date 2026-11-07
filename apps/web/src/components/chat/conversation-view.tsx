@@ -18,7 +18,6 @@ import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 
 import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
-import { authClient } from "#/lib/auth-client";
 import {
 	type CallState,
 	describeEdgeCall,
@@ -43,11 +42,26 @@ interface ConversationProps {
 /** A new socket closed sooner than this after the last one would close the next one too. */
 const REOPEN_AT_MOST_EVERY_MS = 5_000;
 
+/** Why this conversation cannot go on in this page. */
+type Ended = "signed-out" | "no-access";
+
+/**
+ * Asks the gateway whether a socket for this conversation would open now, which a failed handshake
+ * does not say. Null means it could not tell, which usually means the network.
+ */
+async function endedForNow(path: string): Promise<Ended | "open" | null> {
+	const response = await fetch(path, { method: "HEAD", cache: "no-store" }).catch(() => null);
+	if (response?.ok) return "open";
+	if (response?.status === 401) return "signed-out";
+	if (response?.status === 404) return "no-access";
+	return null;
+}
+
 /**
  * A live conversation. A socket keeps the session it opened with and closes for good at the first
- * message after that session ends, with that message refused. This browser may hold a newer session
- * by then, as it does after changing a password, so going on takes a new socket, which a new key
- * gives. What was being written outlasts the socket here.
+ * message after that session ends or its person leaves the workspace, with that message refused.
+ * This browser may hold a newer session by then, as it does after changing a password, so going on
+ * takes a new socket, which a new key gives. What was being written outlasts the socket here.
  */
 export function ConversationView(props: ConversationProps) {
 	const [socket, setSocket] = useState(0);
@@ -57,8 +71,9 @@ export function ConversationView(props: ConversationProps) {
 	const [betweenSockets, setBetweenSockets] = useState(false);
 	const [draft, setDraft] = useState("");
 	const [notSent, setNotSent] = useState(false);
-	const [sessionEnded, setSessionEnded] = useState(false);
+	const [ended, setEnded] = useState<Ended | null>(null);
 	const reopenedAt = useRef(0);
+	const path = `/api/chat/${encodeURIComponent(props.slug)}/${props.conversationId}`;
 
 	useEffect(() => {
 		if (!betweenSockets) return;
@@ -66,16 +81,29 @@ export function ConversationView(props: ConversationProps) {
 		setSocket((current) => current + 1);
 	}, [betweenSockets]);
 
-	async function onSessionClosed(unsent: string) {
+	function giveBack(unsent: string) {
 		if (unsent) setDraft((typed) => (typed ? `${unsent}\n\n${typed}` : unsent));
-		const session = await authClient.getSession().catch(() => null);
-		if (!session?.data?.session || Date.now() - reopenedAt.current < REOPEN_AT_MOST_EVERY_MS) {
-			setSessionEnded(true);
-			return;
+	}
+
+	// The server closed the socket for good. Without a network to ask, a new socket waits for one.
+	async function onSessionClosed(unsent: string) {
+		giveBack(unsent);
+		const now = await endedForNow(path);
+		if (now === "signed-out" || now === "no-access") {
+			setEnded(now);
+		} else if (Date.now() - reopenedAt.current < REOPEN_AT_MOST_EVERY_MS) {
+			setEnded("signed-out");
+		} else {
+			reopenedAt.current = Date.now();
+			setNotSent(Boolean(unsent));
+			setBetweenSockets(true);
 		}
-		reopenedAt.current = Date.now();
-		setNotSent(Boolean(unsent));
-		setBetweenSockets(true);
+	}
+
+	// The socket dropped and is trying again, which goes on for ever if the gateway refuses it.
+	function onSocketRefused(reason: Ended, unsent: string) {
+		giveBack(unsent);
+		setEnded(reason);
 	}
 
 	if (betweenSockets) return null;
@@ -88,8 +116,10 @@ export function ConversationView(props: ConversationProps) {
 			onDraftChange={setDraft}
 			notSent={notSent}
 			onSend={() => setNotSent(false)}
-			sessionEnded={sessionEnded}
+			ended={ended}
 			onSessionClosed={onSessionClosed}
+			onSocketRefused={onSocketRefused}
+			probePath={path}
 		/>
 	);
 }
@@ -113,15 +143,19 @@ function LiveConversation({
 	onDraftChange,
 	notSent,
 	onSend,
-	sessionEnded,
+	ended,
 	onSessionClosed,
+	onSocketRefused,
+	probePath,
 }: ConversationProps & {
 	draft: string;
 	onDraftChange: (draft: string) => void;
 	notSent: boolean;
 	onSend: () => void;
-	sessionEnded: boolean;
+	ended: Ended | null;
 	onSessionClosed: (unsent: string) => Promise<void>;
+	onSocketRefused: (reason: Ended, unsent: string) => void;
+	probePath: string;
 }) {
 	// The words last sent, until a reply starts: a socket closing over them means they were refused.
 	const sending = useRef("");
@@ -129,6 +163,7 @@ function LiveConversation({
 	const closing = useRef(false);
 	const [closed, setClosed] = useState<{ refused: boolean } | null>(null);
 	const box = useRef<HTMLTextAreaElement>(null);
+	const asking = useRef(false);
 	const agent = useAgent({
 		agent: "ConversationAgent",
 		basePath: `api/chat/${encodeURIComponent(slug)}/${conversationId}`,
@@ -138,12 +173,28 @@ function LiveConversation({
 			setClosed({ refused: Boolean(sending.current) });
 			void onSessionClosed(sending.current);
 		},
+		onClose: () => void askWhyItDropped(),
 	});
-	// Both run for a turn the closing socket cut off too. That turn is not over but refused, and
-	// refreshing the page for it would take someone whose session ended to the sign-in page without
-	// what they wrote.
+
+	// One question per close, with the library's own wait between tries, while someone's away too: a
+	// laptop that slept through its session's end should say so before they write to it.
+	async function askWhyItDropped() {
+		if (closing.current || asking.current) return;
+		asking.current = true;
+		const now = await endedForNow(probePath);
+		asking.current = false;
+		if (closing.current || (now !== "signed-out" && now !== "no-access")) return;
+		closing.current = true;
+		agent.close();
+		setClosed({ refused: Boolean(sending.current) });
+		onSocketRefused(now, sending.current);
+	}
+
+	// Both run for a turn the socket cut off too. That turn is not over but refused, or still waiting
+	// to be, and refreshing the page for it would take someone whose session ended to the sign-in page
+	// without what they wrote.
 	const turnEnded = () => {
-		if (closing.current) return;
+		if (closing.current || agent.readyState !== WebSocket.OPEN) return;
 		sending.current = "";
 		onTurnEnd();
 	};
@@ -225,7 +276,7 @@ function LiveConversation({
 							Your sign-in changed, so that message was not sent. It is back in the box below.
 						</p>
 					)}
-					{sessionEnded && (
+					{ended === "signed-out" && (
 						<p
 							role="alert"
 							className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
@@ -241,6 +292,18 @@ function LiveConversation({
 							to go on.
 						</p>
 					)}
+					{ended === "no-access" && (
+						<p
+							role="alert"
+							className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+						>
+							You can no longer use this conversation
+							{closed?.refused ? ", so that message was not sent" : ""}.{" "}
+							<Link to="/" className="font-medium underline underline-offset-2">
+								Go to your workspaces
+							</Link>
+						</p>
+					)}
 					<div ref={end} />
 				</section>
 			</div>
@@ -254,8 +317,8 @@ function LiveConversation({
 						onKeyDown={onKeyDown}
 						placeholder={disabled ? "This conversation cannot go on" : `Message ${agentName}`}
 						disabled={disabled}
-						// Still there to copy, with nowhere to send it until they sign in.
-						readOnly={sessionEnded}
+						// Still there to copy, with nowhere to send it.
+						readOnly={ended !== null}
 						rows={1}
 						maxLength={100_000}
 						className="max-h-48 min-h-10 resize-none"

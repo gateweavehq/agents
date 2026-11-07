@@ -75,11 +75,14 @@ differing only by configuration. Track has the same code, and the same reasons.
 - **A chat left open stops at its next message.** `apps/web/src/server/chat.ts` checks the session
   when the socket opens and passes its id on; the conversation looks it up in D1 before each
   message (`apps/web/src/server/conversation.ts`), so a socket whose session ended, by this logout
-  or any other way, is closed (4401) without its message reaching the agent. A turn already under
-  way when the session ends finishes, and an idle socket stays open until it sends. The page
-  (`conversation-view.tsx`) puts the refused words back in the box. If this browser still has a
-  session, it opens a new socket on it and says the message was not sent; if not, it says the session
-  ended and offers to sign in.
+  or any other way, is closed (4401) without its message reaching the agent. So is one whose person
+  has left the workspace or been removed from it, which the same query sees. A turn already under
+  way finishes, and an idle socket stays open until it sends. The page (`conversation-view.tsx`)
+  puts the refused words back in the box and asks the gateway with `HEAD` whether a socket would open
+  now. If so, it opens one and says the message was not sent. If not, it says why and leaves the
+  words to copy: the session ended, with a link to sign in, or the conversation is out of reach. It
+  asks the same when a socket drops, since a refused handshake looks like any other dropped socket
+  and the library would retry it for ever.
 - **Signing out of Agents stays in Agents.** The provider's session is left alone, as other apps
   signed in through it would expect, and `disableProviderLogout` keeps the plugin from sending
   anyone there.

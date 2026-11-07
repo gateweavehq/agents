@@ -1,8 +1,11 @@
+import type { BrowserContext, Page, WebSocketRoute } from "@playwright/test";
 import { expect, newBrowserContext, test } from "./fixtures";
 import {
 	addAgent,
 	messages,
+	newPerson,
 	openChat,
+	signUp,
 	startWorkspace,
 	waitForHydration,
 	waitForTurnEnd,
@@ -13,10 +16,7 @@ import {
 
 const NEW_PASSWORD = "a-new-correct-horse";
 
-async function changePassword(
-	page: import("@playwright/test").Page,
-	current: string,
-): Promise<void> {
+async function changePassword(page: Page, current: string): Promise<void> {
 	await page.goto("/settings/account");
 	await waitForHydration(page);
 	await page.getByRole("button", { name: "Change password" }).click();
@@ -117,4 +117,128 @@ test("a chat whose session ended elsewhere says so, keeps the words and offers t
 	await page.getByRole("button", { name: "Sign in", exact: true }).click();
 	await expect(page).toHaveURL(chat);
 	await expect(messages(page).getByText(before)).toBeVisible();
+});
+
+test("a chat left open after its person is removed says so and keeps the words", async ({
+	page,
+	browser,
+}) => {
+	const { name, slug } = await startWorkspace(page);
+	await addAgent(page, slug);
+	await page.goto(`/${slug}/settings/members`);
+	await waitForHydration(page);
+	const guest = newPerson("guest");
+	await page.getByLabel("Email address").fill(guest.email);
+	await page.getByRole("button", { name: "Create invite link" }).click();
+	const invitation = await page.getByLabel("Invite link").first().inputValue();
+	expect(invitation).toContain("/invite/");
+
+	const guestContext = await newBrowserContext(browser);
+	try {
+		const guestPage = await guestContext.newPage();
+		await signUp(guestPage, guest);
+		await guestPage.goto(invitation);
+		await guestPage.getByRole("button", { name: `Join ${name}` }).click();
+		await expect(guestPage).toHaveURL(new RegExp(`/${slug}(/|$)`));
+		const box = await openChat(guestPage, slug);
+		await box.fill("Written while a member");
+		await guestPage.getByRole("button", { name: "Send" }).click();
+		await expect(messages(guestPage).getByText("Written while a member")).toBeVisible();
+		await waitForTurnEnd(guestPage);
+
+		await page.reload();
+		await waitForHydration(page);
+		await page.getByRole("button", { name: `More for ${guest.name}` }).click();
+		await page.getByRole("menuitem", { name: "Remove from workspace" }).click();
+		await page.getByRole("button", { name: "Remove", exact: true }).click();
+		await expect(page.getByText(`${guest.name} was removed`)).toBeVisible();
+
+		const after = "Written after being removed";
+		await box.fill(after);
+		await guestPage.getByRole("button", { name: "Send" }).click();
+
+		await expect(
+			guestPage.getByRole("alert").filter({ hasText: "You can no longer use this conversation" }),
+		).toBeVisible();
+		await expect(guestPage.getByText("WebSocket closed")).toHaveCount(0);
+		await expect(box).toHaveValue(after);
+		await expect(messages(guestPage).getByText(after)).toHaveCount(0);
+		await expect(guestPage.getByRole("button", { name: "Send" })).toBeDisabled();
+		await expect(guestPage.getByRole("link", { name: "Go to your workspaces" })).toBeVisible();
+	} finally {
+		await guestContext.close();
+	}
+});
+
+/** Lets a test drop this browser's chat sockets, as a lost connection or a sleeping laptop would. */
+async function droppableSockets(context: BrowserContext): Promise<Set<WebSocketRoute>> {
+	const sockets = new Set<WebSocketRoute>();
+	await context.routeWebSocket(/\/api\/chat\//, (socket) => {
+		sockets.add(socket);
+		socket.connectToServer();
+		socket.onClose(() => sockets.delete(socket));
+	});
+	return sockets;
+}
+
+test("a chat whose socket dropped while its session ended says so, without being asked", async ({
+	page,
+	context,
+	browser,
+}) => {
+	const sockets = await droppableSockets(context);
+	const { person, slug } = await startWorkspace(page);
+	await addAgent(page, slug);
+	const box = await openChat(page, slug);
+	await box.fill("Written before the change");
+	await page.getByRole("button", { name: "Send" }).click();
+	await expect(messages(page).getByText("Written before the change")).toBeVisible();
+	await waitForTurnEnd(page);
+
+	const elsewhereContext = await newBrowserContext(browser);
+	try {
+		const elsewhere = await elsewhereContext.newPage();
+		await elsewhere.goto("/login");
+		await waitForHydration(elsewhere);
+		await elsewhere.getByLabel("Email").fill(person.email);
+		await elsewhere.getByLabel("Password").fill(person.password);
+		await elsewhere.getByRole("button", { name: "Sign in", exact: true }).click();
+		await expect(elsewhere).not.toHaveURL(/\/login/);
+		await changePassword(elsewhere, person.password);
+	} finally {
+		await elsewhereContext.close();
+	}
+
+	await Promise.all([...sockets].map((socket) => socket.close()));
+
+	await expect(page.getByRole("alert").filter({ hasText: "Your session has ended" })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Sign in again" })).toBeVisible();
+	await expect(messages(page).getByText("Written before the change")).toBeVisible();
+});
+
+test("a chat whose socket dropped with nothing wrong goes on by itself", async ({
+	page,
+	context,
+}) => {
+	const sockets = await droppableSockets(context);
+	const { slug } = await startWorkspace(page);
+	await addAgent(page, slug);
+	const box = await openChat(page, slug);
+	await box.fill("Written before the drop");
+	await page.getByRole("button", { name: "Send" }).click();
+	await expect(messages(page).getByText("Written before the drop")).toBeVisible();
+	await waitForTurnEnd(page);
+
+	await Promise.all([...sockets].map((socket) => socket.close()));
+	await expect.poll(() => sockets.size).toBeGreaterThan(0);
+
+	const after = "Written after the drop";
+	await box.fill(after);
+	await page.getByRole("button", { name: "Send" }).click();
+	await expect(messages(page).getByText(after)).toBeVisible();
+	await waitForTurnEnd(page);
+	await expect(page.getByRole("alert").filter({ hasText: "no longer" })).toHaveCount(0);
+	await expect(page.getByRole("alert").filter({ hasText: "session has ended" })).toHaveCount(0);
+	await page.reload();
+	await expect(messages(page).getByText(after)).toBeVisible();
 });

@@ -17,7 +17,11 @@ export function isChatRequest(url: URL): boolean {
  * conversation's owner are checked. Anyone else gets the same 404 as for a missing conversation.
  *
  *   GET /api/chat/:slug/:conversationId               WebSocket for the conversation
+ *   HEAD /api/chat/:slug/:conversationId              204 if that socket would open, else the refusal
  *   GET /api/chat/:slug/:conversationId/get-messages  its messages (JSON), which the client reads first
+ *
+ * The browser hides why a WebSocket handshake failed, so the page asks with HEAD. Like the handshake
+ * it says only what the caller may know, and it goes no further than the checks.
  */
 export async function handleChatRequest(request: Request): Promise<Response> {
 	const url = new URL(request.url);
@@ -26,13 +30,16 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 
 	const [, slug = "", conversationId = "", messages] = match;
 	const isSocket = messages === undefined;
-	if (request.method !== "GET") return error(405, "Method not allowed");
-	if (isSocket && request.headers.get("Upgrade") !== "websocket") {
+	const isProbe = isSocket && request.method === "HEAD";
+	if (request.method !== "GET" && !isProbe) return error(405, "Method not allowed");
+	if (isSocket && !isProbe && request.headers.get("Upgrade") !== "websocket") {
 		return error(426, "Expected a WebSocket upgrade");
 	}
 	// Session cookies ride along on cross-site WebSocket handshakes, so the origin must match.
 	const origin = request.headers.get("Origin");
-	if ((isSocket || origin) && origin !== url.origin) return error(403, "Cross-origin request");
+	if (((isSocket && !isProbe) || origin) && origin !== url.origin) {
+		return error(403, "Cross-origin request");
+	}
 
 	const session = await getAuth().api.getSession({ headers: request.headers });
 	if (!session) return error(401, "Not signed in");
@@ -43,6 +50,7 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 		session.user.id,
 	);
 	if (!conversation) return error(404, "Conversation not found");
+	if (isProbe) return new Response(null, { status: 204 });
 
 	const agent = await getAgentByName(
 		env.CONVERSATIONS,

@@ -188,5 +188,8 @@ export type TeamEdgeKind = (typeof TEAM_EDGE_KINDS)[number];
 export const TEAM_MEMBER_KINDS = ["agent", "team"] as const;
 export type TeamMemberKind = (typeof TEAM_MEMBER_KINDS)[number];
 
-/** Closes a socket whose session has ended, with the code Track's sync sockets use for it. */
+/**
+ * Closes a socket whose session has ended, with the code Track's sync sockets use for it, or whose
+ * person has left the workspace. The gateway can tell the two apart for the page.
+ */
 export const SESSION_ENDED = 4401;
