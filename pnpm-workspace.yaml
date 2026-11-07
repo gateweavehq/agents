@@ -6,7 +6,8 @@ packages:
 #
 # Every package with agents also depends on its peers, so that agents resolves once: two copies would
 # not share their types, nor their code in the bundle. They are @ai-sdk/react,
-# @modelcontextprotocol/server, vite, and vite's own peer @types/node. `pnpm check` holds this.
+# @modelcontextprotocol/server, vite, and vite's own peers @types/node and esbuild. `pnpm check` holds
+# this.
 catalog:
   "@ai-sdk/openai-compatible": 3.0.82
   "@ai-sdk/provider": 4.0.35
@@ -19,6 +20,7 @@ catalog:
   ai: 7.0.159
   drizzle-kit: 0.31.11
   drizzle-orm: 0.45.4
+  esbuild: 0.28.2
   typescript: 7.0.2
   vite: 8.3.5
   vitest: 5.0.5
@@ -48,3 +50,7 @@ minimumReleaseAgeExclude:
 # GHSA-2m5v-pch6-74hx and others). It only comes in through miniflare, for local dev and tests.
 overrides:
   undici@>=7.0.0 <7.30.1: 7.30.1
+  # esbuild up to 0.24.2 lets any website read a running esbuild dev server
+  # (GHSA-67mh-4wv8-2f99). drizzle-kit brings 0.18.20 through @esbuild-kit/core-utils, which only
+  # calls transform and transformSync and never starts that server.
+  esbuild@<0.25.0: 0.25.12

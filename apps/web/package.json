@@ -66,6 +66,7 @@
 		"@types/react-dom": "19.3.0",
 		"@vitejs/plugin-react": "6.2.1",
 		"drizzle-kit": "catalog:",
+		"esbuild": "catalog:",
 		"miniflare": "5.20261023.0-beta",
 		"tailwindcss": "4.3.3",
 		"tsx": "4.23.15",
