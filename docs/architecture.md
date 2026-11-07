@@ -142,7 +142,10 @@ remove a member from a workspace, which leaves their conversations.
   Each alarm has a subrequest budget of its own, so someone with hundreds of conversations is done
   in minutes on any plan. A row goes once its object has gone. One that fails is tried again a
   minute later, then twice as long each time, up to a day, for as long as it takes. Deleting the
-  workspace meanwhile reaches those too, since `conversationIds` includes them.
+  workspace meanwhile reaches those too, since `conversationIds` includes them. The SDK empties an
+  object and then aborts it, and on Cloudflare the abort can reach the caller before the answer, as
+  an error saying `destroyed`. That counts as done, for every caller
+  (`destroyConversationObject`). Local workerd answers first, so only a deployed Worker shows this.
 - **It is asked until it has answered.** The daily cron asks again for 20 `pending_erasure` rows, a
   number a Worker on the Free plan can reach, those never tried again and the ones tried longest ago
   first, so a run of them that keep failing does not keep the rest waiting. Asking twice finds

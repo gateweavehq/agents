@@ -201,18 +201,19 @@ export const removeChat = createServerFn({ method: "POST" })
 		if (!member) throw new Error("Workspace not found");
 		const removed = await member.registry.removeConversation(data.conversationId, member.userId);
 		if (removed.length === 0) throw new Error("Conversation not found");
-		const [{ env }, { getAgentByName }, { conversationName }] = await Promise.all([
-			import("cloudflare:workers"),
-			import("agents"),
-			import("@gateweave/agents-runtime"),
-		]);
+		const [{ env }, { getAgentByName }, { conversationName, destroyConversationObject }] =
+			await Promise.all([
+				import("cloudflare:workers"),
+				import("agents"),
+				import("@gateweave/agents-runtime"),
+			]);
 		await Promise.all(
 			removed.map(async (conversationId) => {
 				const conversation = await getAgentByName(
 					env.CONVERSATIONS,
 					conversationName(member.workspaceId, conversationId),
 				);
-				await conversation.destroy();
+				await destroyConversationObject(conversation);
 			}),
 		);
 	});

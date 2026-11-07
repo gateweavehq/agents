@@ -4,7 +4,7 @@ import type { AgentSnapshot } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { generateText } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ConversationAgent, conversationName } from "../src";
+import { type ConversationAgent, conversationName, destroyConversationObject } from "../src";
 import { languageModel } from "../src/models";
 import { anthropicStream, ask, closeCode, connect, fakeModel, KEY, SESSION } from "./support";
 
@@ -124,6 +124,48 @@ describe("a conversation", () => {
 		await vi.waitFor(() => expect(requests[0]?.signal?.aborted).toBe(true));
 		await turn;
 		socket.close();
+	});
+});
+
+describe("destroying a conversation's object", () => {
+	it("counts the object aborting itself as done, which is how Cloudflare can answer", async () => {
+		const conversation = { destroy: () => Promise.reject(new Error("destroyed")) };
+
+		await expect(destroyConversationObject(conversation)).resolves.toBeUndefined();
+	});
+
+	it("passes on any other failure, since the object may still hold everything", async () => {
+		const failure = new Error("Network connection lost.");
+		const conversation = { destroy: () => Promise.reject(failure) };
+
+		await expect(destroyConversationObject(conversation)).rejects.toBe(failure);
+	});
+
+	it("does not take a longer message that mentions it for the same thing", async () => {
+		const conversation = {
+			destroy: () => Promise.reject(new Error("the sandbox could not be destroyed")),
+		};
+
+		await expect(destroyConversationObject(conversation)).rejects.toThrow("could not be destroyed");
+	});
+
+	it("empties a real object, whichever way the answer comes", async () => {
+		const name = conversationName("destroying", crypto.randomUUID());
+		const stub = await getAgentByName(env.CONVERSATIONS, name);
+		await runInDurableObject(stub as never, async (_instance, state) => {
+			await state.storage.put("words", "these go");
+		});
+
+		await destroyConversationObject(stub);
+
+		// The object aborts itself just after answering here, so a call right away can still meet that.
+		const left = await vi.waitFor(async () => {
+			const again = await getAgentByName(env.CONVERSATIONS, name);
+			return runInDurableObject(again as never, async (_instance, state) =>
+				state.storage.get("words"),
+			);
+		});
+		expect(left).toBeUndefined();
 	});
 });
 
