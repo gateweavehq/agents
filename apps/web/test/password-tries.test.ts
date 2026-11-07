@@ -1,0 +1,183 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { startAgents } from "./agents-worker";
+
+// What someone holding a session can try at a password, through the public routes of the built
+// Worker. A stolen cookie can be sent from many addresses, so every request here comes from one of
+// its own, which keeps Better Auth's limit per address out of it.
+
+const origin = "https://agents.test";
+const PASSWORD = "a-long-test-password";
+const WRONG = "not-the-password";
+
+let agents: Awaited<ReturnType<typeof startAgents>>;
+
+beforeAll(async () => {
+	agents = await startAgents(origin);
+});
+
+afterAll(async () => {
+	await agents?.dispose();
+});
+
+let clients = 0;
+
+function newClient() {
+	clients += 1;
+	return `198.51.${Math.floor(clients / 250)}.${(clients % 250) + 1}`;
+}
+
+function api(path: string, init: { cookie?: string; body?: object }) {
+	const { cookie, body } = init;
+	return agents.fetch(`${origin}/api/auth${path}`, {
+		method: body ? "POST" : "GET",
+		headers: {
+			origin,
+			"cf-connecting-ip": newClient(),
+			...(body && { "content-type": "application/json" }),
+			...(cookie && { cookie }),
+		},
+		body: body && JSON.stringify(body),
+	});
+}
+
+function cookieOf(response: Response): string {
+	return response.headers
+		.getSetCookie()
+		.map((cookie) => cookie.split(";")[0] ?? "")
+		.filter((cookie) => !cookie.endsWith("="))
+		.join("; ");
+}
+
+let people = 0;
+
+/** A new person with a password, signed in on one device. */
+async function newPerson() {
+	const email = `guessed-at-${++people}@tries.test`;
+	const entered = await api("/sign-up/email", {
+		body: { name: "Ada", email, password: PASSWORD },
+	});
+	expect(entered.status).toBe(200);
+	return { email, cookie: cookieOf(entered) };
+}
+
+type Person = Awaited<ReturnType<typeof newPerson>>;
+
+type Asking = [path: string, body: (password: string) => object];
+
+const changing: Asking = [
+	"/change-password",
+	(password) => ({ currentPassword: password, newPassword: "another-long-password" }),
+];
+
+/** Every path where a session shows a password, and how each asks for it. */
+const ASKING: Asking[] = [changing, ["/account/delete", (password) => ({ password })]];
+
+function tryAt([path, body]: Asking, person: Person, password = WRONG): Promise<Response> {
+	return api(path, { cookie: person.cookie, body: body(password) });
+}
+
+describe("the allowance per person", () => {
+	it("is ten tries, from however many addresses", async () => {
+		const person = await newPerson();
+		for (let tries = 0; tries < 10; tries++) {
+			expect((await tryAt(changing, person)).status).toBe(400);
+		}
+		const refused = await tryAt(changing, person);
+		expect(refused.status).toBe(429);
+		expect(((await refused.json()) as { code?: string }).code).toBe("TOO_MANY_PASSWORD_TRIES");
+	});
+
+	it("refuses the right password too once it is spent, which proves nothing to a guesser", async () => {
+		const person = await newPerson();
+		for (let tries = 0; tries < 10; tries++) await tryAt(changing, person);
+		expect((await tryAt(changing, person, PASSWORD)).status).toBe(429);
+		// It was not changed, whatever the answer says.
+		const signedIn = await api("/sign-in/email", {
+			body: { email: person.email, password: PASSWORD },
+		});
+		expect(signedIn.status).toBe(200);
+	});
+
+	it.each(ASKING)("is spent by %s, and refused there", async (...asking) => {
+		const person = await newPerson();
+		for (let tries = 0; tries < 10; tries++) {
+			expect((await tryAt(asking, person)).status).toBe(400);
+		}
+		expect((await tryAt(asking, person)).status).toBe(429);
+		expect((await tryAt(changing, person)).status).toBe(429);
+	});
+
+	it("is the same one on every device of that person's", async () => {
+		const person = await newPerson();
+		const another = await api("/sign-in/email", {
+			body: { email: person.email, password: PASSWORD },
+		});
+		expect(another.status).toBe(200);
+		const device = { ...person, cookie: cookieOf(another) };
+		for (let tries = 0; tries < 5; tries++) {
+			expect((await tryAt(changing, person)).status).toBe(400);
+			expect((await tryAt(changing, device)).status).toBe(400);
+		}
+		expect((await tryAt(changing, person)).status).toBe(429);
+		expect((await tryAt(changing, device)).status).toBe(429);
+	});
+
+	it("is not spent by a request with no password to check", async () => {
+		const person = await newPerson();
+		for (let tries = 0; tries < 11; tries++) {
+			const nothing = await api("/account/delete", { cookie: person.cookie, body: {} });
+			expect(nothing.status).toBe(400);
+		}
+		expect((await tryAt(changing, person)).status).toBe(400);
+	});
+});
+
+// The cap must not become a way to lock someone out.
+describe("who cannot spend someone's allowance", () => {
+	it("anyone with only their address, signing in or not", async () => {
+		const person = await newPerson();
+		for (let tries = 0; tries < 11; tries++) {
+			const signingIn = await api("/sign-in/email", {
+				body: { email: person.email, password: WRONG },
+			});
+			expect(signingIn.status).toBe(401);
+			const noSession = await api("/change-password", {
+				body: { currentPassword: WRONG, newPassword: "another-long-password" },
+			});
+			expect(noSession.status).toBe(401);
+		}
+		for (let tries = 0; tries < 10; tries++) {
+			expect((await tryAt(changing, person)).status).toBe(400);
+		}
+	});
+
+	it("someone with a session of their own", async () => {
+		const person = await newPerson();
+		const stranger = await newPerson();
+		for (let tries = 0; tries < 10; tries++) await tryAt(changing, stranger);
+		expect((await tryAt(changing, stranger)).status).toBe(429);
+		expect((await tryAt(changing, person)).status).toBe(400);
+	});
+});
+
+describe("once it is spent", () => {
+	it("still lets the person sign in, and end the other sessions", async () => {
+		const person = await newPerson();
+		const signedIn = await api("/sign-in/email", {
+			body: { email: person.email, password: PASSWORD },
+		});
+		expect(signedIn.status).toBe(200);
+		const thief = { ...person, cookie: cookieOf(signedIn) };
+		for (let tries = 0; tries < 11; tries++) await tryAt(changing, thief);
+		expect((await tryAt(changing, thief)).status).toBe(429);
+
+		const out = await api("/revoke-other-sessions", { cookie: person.cookie, body: {} });
+		expect(out.status).toBe(200);
+		const session = await api("/get-session", { cookie: thief.cookie });
+		expect(await session.json()).toBeNull();
+		const again = await api("/sign-in/email", {
+			body: { email: person.email, password: PASSWORD },
+		});
+		expect(again.status).toBe(200);
+	});
+});
