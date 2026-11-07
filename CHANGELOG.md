@@ -8,6 +8,36 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.16.1] - 2026-11-07
+
+A chat left open stops once its person has left the workspace. There is no migration in this release, and updating is
+recommended.
+
+### Security
+
+- **A chat left open went on working after its person left the workspace.** The check for membership ran only when the
+  socket opened. Someone who left, or was removed, could go on getting answers from that tab, on the workspace's key and
+  with its tools, until their session ended. Each message now needs them to still be a member, and sockets opened before
+  updating are covered too. ([#180](https://github.com/gateweavehq/agents/pull/180))
+
+### Fixed
+
+- **A chat that can't go on now says so.** If its person was removed, the page says the conversation can no longer be
+  used, puts the words back in the box and links to their workspaces. Before, the message ran its turn and the page then
+  fell to "Workspace not found" with the words lost. ([#180](https://github.com/gateweavehq/agents/pull/180))
+- **A chat whose socket dropped while its session ended no longer retries for ever.** A laptop that slept through it is
+  the usual case. The page now asks the server why when a socket closes, and says the session ended before anyone writes
+  to it. A dropped socket with nothing wrong reconnects as before.
+  ([#180](https://github.com/gateweavehq/agents/pull/180))
+
+### If you run your own
+
+- **Nothing to set.** Each message on a chat socket already read the session from D1, and that read now also looks at
+  membership.
+- **`HEAD /api/chat/:slug/:conversationId` is new.** It answers whether a socket would open, with the same 401, 403 or
+  404 the handshake gets, and reaches no conversation. A rule of your own in front of the Worker that allows only `GET`
+  there would stop the page telling a closed chat from a dropped one.
+
 ## [0.16.0] - 2026-11-07
 
 People can change their name and password on their account page, and a chat left open no longer loses a message when its
