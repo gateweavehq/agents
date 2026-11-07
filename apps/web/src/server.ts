@@ -25,6 +25,7 @@ function notSetUp() {
 }
 
 function route(request: Request, nonce: string): Response | Promise<Response> {
+	if (!env.DB || !env.BETTER_AUTH_SECRET) return notSetUp();
 	// Chat is handled before TanStack Start so WebSocket upgrade responses pass through untouched.
 	if (isChatRequest(new URL(request.url))) return handleChatRequest(request);
 	return handler.fetch(request, { context: { nonce } });
@@ -32,7 +33,6 @@ function route(request: Request, nonce: string): Response | Promise<Response> {
 
 export default {
 	async fetch(request) {
-		if (!env.DB || !env.BETTER_AUTH_SECRET) return notSetUp();
 		const nonce = newNonce();
 		const response = await route(request, nonce);
 		// Vite's dev server adds inline scripts of its own for hot reload, which have no nonce.
