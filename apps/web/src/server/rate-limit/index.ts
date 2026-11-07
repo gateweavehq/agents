@@ -29,6 +29,22 @@ export const EMAILS_PER_RECIPIENT: Rule[] = [
  */
 export const TRIGGER_REQUESTS: Rule[] = [{ window: 10, max: 60 }];
 
+/**
+ * Passwords one person's sessions can offer, from however many addresses: 10 at once, refilling over
+ * an hour, within 30 that refill over a day. Someone who has forgotten theirs will have gone for a
+ * reset long before this.
+ */
+export const PASSWORD_TRIES_PER_PERSON: Rule[] = [
+	{ window: 60 * 60, max: 10 },
+	{ window: 24 * 60 * 60, max: 30 },
+];
+
+/** Whether someone signed in as this person may offer another password, wherever from. */
+export async function allowPasswordTry(userId: string): Promise<boolean> {
+	const { allowed } = await consumeDurably(`password-try:${userId}`, PASSWORD_TRIES_PER_PERSON);
+	return allowed;
+}
+
 const local = new LocalLimiter();
 
 /**

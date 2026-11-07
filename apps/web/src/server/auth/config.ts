@@ -13,6 +13,7 @@ import { invitationEmail, passwordResetEmail, verificationEmail } from "../email
 import { tellOfChangedPassword, validName, validRename } from "./account-changes";
 import { deleteAccount } from "./delete-account";
 import { type OidcProvider, oidcDatabaseHooks, oidcSignIn } from "./oidc-sign-in";
+import { passwordTries } from "./password-tries";
 
 export interface AuthConfig {
 	db: Database;
@@ -32,6 +33,8 @@ export interface AuthConfig {
 	runInBackground?: ((work: Promise<unknown>) => void) | undefined;
 	/** Where rate limits are counted. This isolate's memory without it. */
 	rateLimitStorage?: BetterAuthRateLimitOptions["customStorage"];
+	/** Whether someone signed in as this person may offer another password. Unlimited without it. */
+	allowPasswordTry?: ((userId: string) => Promise<boolean>) | undefined;
 	/** Called after a workspace is deleted, to delete what it held outside D1. */
 	onWorkspaceDeleted?: ((workspaceId: string) => Promise<void>) | undefined;
 	/** Called after an account is deleted, to have its workspaces forget the person. */
@@ -184,6 +187,7 @@ export function createAuth(config: AuthConfig) {
 			}),
 		},
 		plugins: [
+			...(config.allowPasswordTry ? [passwordTries(config.allowPasswordTry)] : []),
 			organization({
 				invitationExpiresIn: INVITATION_LIFETIME_SECONDS,
 				// Proving the invited address is what makes an invitation safe to hold: without it,
