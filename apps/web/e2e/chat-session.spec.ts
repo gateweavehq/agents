@@ -58,8 +58,12 @@ test("a chat left open gives the words back and goes on, in the browser that cha
 
 	// The new socket takes it, from the keyboard since the box has the focus again.
 	await expect(again).toBeFocused();
-	await page.keyboard.press("Enter");
-	await expect(messages(page).getByText(after)).toBeVisible();
+	// A new socket first asks whether a turn was left running, and until it hears Enter does nothing,
+	// as it does while a turn runs. Pressing again sends nothing twice: the box is empty by then.
+	await expect(async () => {
+		await page.keyboard.press("Enter");
+		await expect(messages(page).getByText(after)).toBeVisible({ timeout: 500 });
+	}).toPass({ timeout: 10_000 });
 	await expect(page.getByRole("status").filter({ hasText: "was not sent" })).toHaveCount(0);
 	await waitForTurnEnd(page);
 	await page.reload();
