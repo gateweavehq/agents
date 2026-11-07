@@ -33,7 +33,13 @@ function gitHubApi(request: Request) {
 	const id = Number((request.headers.get("authorization") ?? "").replace("Bearer ", ""));
 	const email = `github-${id}@example.com`;
 	if (new URL(request.url).pathname === "/user") {
-		return Response.json({ id, login: `person-${id}`, name: "Grace Hopper", email });
+		return Response.json({
+			id,
+			login: `person-${id}`,
+			name: "Grace Hopper",
+			email,
+			avatar_url: `https://avatars.githubusercontent.com/u/${id}`,
+		});
 	}
 	return Response.json([{ email, primary: true, verified: true }]);
 }
@@ -105,6 +111,15 @@ describe("signing in with GitHub", () => {
 		const next = await signIn(101);
 		expect(next?.user.id).toBe(first?.user.id);
 		expect(await gitHubAccount(101)).toMatchObject(NO_TOKENS);
+	});
+
+	it("keeps the picture GitHub gives", async () => {
+		const { user } = (await signIn(103)) as { user: { id: string } };
+		const row = await agents.db
+			.prepare("SELECT image FROM user WHERE id = ?")
+			.bind(user.id)
+			.first<{ image: string | null }>();
+		expect(row).toEqual({ image: "https://avatars.githubusercontent.com/u/103" });
 	});
 
 	it("clears the tokens an earlier version kept, and someone can still sign in", async () => {
