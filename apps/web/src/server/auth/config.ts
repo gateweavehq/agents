@@ -132,6 +132,9 @@ export function createAuth(config: AuthConfig) {
 			"/list-accounts",
 			// Hands over the tokens of someone's sessions.
 			"/list-sessions",
+			// Adds another way into the account, on a session alone. No page offers it, and signing in
+			// links an account by itself where that is safe.
+			"/link-social",
 		],
 		emailVerification: mailer && {
 			sendVerificationEmail: async ({ user, url }) => {
