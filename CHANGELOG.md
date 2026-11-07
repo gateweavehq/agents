@@ -8,6 +8,16 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.15.3] - 2026-11-07
+
+Someone signing up can no longer choose the address of their picture. There is no migration in this release.
+
+### Security
+
+- **An email sign-up could set any picture address,** and other members' browsers then fetched it, which told that
+  server when they were looking and from where. The sign-up form sends no picture, so it is now dropped. GitHub's and a
+  provider's stay. Pictures already stored are not changed. ([#172](https://github.com/gateweavehq/agents/pull/172))
+
 ## [0.15.2] - 2026-11-07
 
 Closes the account routes a stolen session cookie could use and the app does not. Self-hosted copies should update.
