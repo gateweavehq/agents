@@ -210,7 +210,7 @@ People change both on `/settings/account`, through Better Auth's `/update-user` 
   allowance of 10 at once, refilling over an hour, within 30 that refill over a day. Only a request
   with a session for that account spends it, so nobody can lock a person out with their address
   alone, and signing in is not part of it. Whoever holds the cookie can spend it, but a password
-  reset asks for no session.
+  reset asks for no session, and the account page can sign out the other devices with no password.
 - **It ends every session,** whatever the request asks, since whoever knew the old password may be
   why it is changing and may be the one asking. Better Auth makes a new session for the browser that
   asked, which keeps the `oidc_sid` of the one it replaced, because it came from the same sign-in at

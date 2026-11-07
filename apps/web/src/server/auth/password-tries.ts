@@ -20,7 +20,7 @@ const TOO_MANY_TRIES = {
  *
  * Only someone with a session for that account can spend it, so nobody can lock a person out with
  * their address alone, which is why signing in is not part of it. Whoever holds the cookie can spend
- * it, but a password reset asks for no session.
+ * it, but a password reset asks for no session, and signing out other devices asks for no password.
  */
 export function passwordTries(allow: (userId: string) => Promise<boolean>) {
 	return {

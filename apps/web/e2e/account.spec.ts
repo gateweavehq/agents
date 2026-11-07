@@ -85,3 +85,36 @@ test("someone changes their password, and only this browser stays signed in", as
 		await elsewhereContext.close();
 	}
 });
+
+test("someone signs out their other devices without giving a password", async ({
+	page,
+	browser,
+}) => {
+	const person = await signUp(page);
+
+	const elsewhereContext = await newBrowserContext(browser);
+	try {
+		const elsewhere = await elsewhereContext.newPage();
+		await elsewhere.goto("/login");
+		await waitForHydration(elsewhere);
+		await elsewhere.getByLabel("Email").fill(person.email);
+		await elsewhere.getByLabel("Password").fill(person.password);
+		await elsewhere.getByRole("button", { name: "Sign in", exact: true }).click();
+		await expect(elsewhere).not.toHaveURL(/\/login/);
+
+		await page.goto("/settings/account");
+		await waitForHydration(page);
+		await page.getByRole("button", { name: "Sign out everywhere else" }).click();
+		await expect(page.getByRole("status")).toHaveText("Your other devices are signed out.");
+
+		await elsewhere.goto("/");
+		await expect(elsewhere).toHaveURL(/\/login/);
+
+		// This browser's session is the one that stays.
+		await page.reload();
+		await expect(page).toHaveURL(/\/settings\/account/);
+		await expect(page.getByRole("heading", { name: "Your account" })).toBeVisible();
+	} finally {
+		await elsewhereContext.close();
+	}
+});

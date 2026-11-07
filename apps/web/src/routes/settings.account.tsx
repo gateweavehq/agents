@@ -54,6 +54,7 @@ function AccountPage() {
 
 			<ChangeName name={account.name} />
 			<ChangePassword email={account.email} hasPassword={account.hasPassword} />
+			<OtherDevices />
 			<DeleteAccount
 				email={account.email}
 				hasPassword={account.hasPassword}
@@ -276,6 +277,52 @@ function ChangePassword({ email, hasPassword }: { email: string; hasPassword: bo
 					</LiveButton>
 				</div>
 			)}
+		</section>
+	);
+}
+
+/**
+ * For someone who thinks a cookie of theirs was stolen. It asks for no password, since whoever holds
+ * the cookie can use up the tries at one, and on a server without email there is no reset to go to.
+ */
+function OtherDevices() {
+	const [error, setError] = useState<string | null>(null);
+	const [ended, setEnded] = useState(false);
+	const [pending, setPending] = useState(false);
+
+	async function endThem() {
+		setError(null);
+		setEnded(false);
+		setPending(true);
+		const result = await authClient.revokeOtherSessions();
+		setPending(false);
+		if (result.error) {
+			setError(failure(result.error));
+			return;
+		}
+		setEnded(true);
+	}
+
+	return (
+		<section aria-labelledby="devices-heading" className="space-y-4">
+			<h2 id="devices-heading" className="text-sm font-semibold">
+				Other devices
+			</h2>
+			<div className="space-y-2 rounded-lg border p-4">
+				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+					<p className="text-sm text-muted-foreground" role={ended ? "status" : undefined}>
+						{ended ? "Your other devices are signed out." : "This needs no password."}
+					</p>
+					<LiveButton variant="outline" size="sm" disabled={pending} onClick={endThem}>
+						Sign out everywhere else
+					</LiveButton>
+				</div>
+				{error && (
+					<p role="alert" className="text-sm text-destructive">
+						{error}
+					</p>
+				)}
+			</div>
 		</section>
 	);
 }
