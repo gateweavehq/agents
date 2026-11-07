@@ -2,6 +2,7 @@ export { CHAT_SESSION_HEADER, type ChatSession } from "./chat-session";
 export {
 	ConversationAgent,
 	conversationName,
+	destroyConversationObject,
 	type TriggerTurnOutcome,
 } from "./conversation-agent";
 export {

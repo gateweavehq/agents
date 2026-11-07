@@ -1,6 +1,6 @@
 import type { SandboxBudgetPassed, TriggerTurnOutcome } from "@gateweave/agents-model";
 import { RegistryDO as Registry } from "@gateweave/agents-registry";
-import { conversationName } from "@gateweave/agents-runtime";
+import { conversationName, destroyConversationObject } from "@gateweave/agents-runtime";
 import { getAgentByName } from "agents";
 import { eq } from "drizzle-orm";
 import { db } from "./auth";
@@ -52,7 +52,7 @@ export class RegistryDO extends Registry {
 			this.env.CONVERSATIONS,
 			conversationName(workspaceId, conversationId),
 		);
-		await conversation.destroy();
+		await destroyConversationObject(conversation);
 	}
 }
 

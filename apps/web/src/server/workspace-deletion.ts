@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { conversationName } from "@gateweave/agents-runtime";
+import { conversationName, destroyConversationObject } from "@gateweave/agents-runtime";
 import { getAgentByName } from "agents";
 import { registryFor } from "./registry";
 
@@ -24,7 +24,7 @@ export async function deleteWorkspaceData(workspaceId: string): Promise<void> {
 						env.CONVERSATIONS,
 						conversationName(workspaceId, conversationId),
 					);
-					await conversation.destroy();
+					await destroyConversationObject(conversation);
 				} catch (error) {
 					console.error("A deleted workspace's conversation was not deleted", {
 						workspaceId,

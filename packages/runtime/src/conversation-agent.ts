@@ -138,6 +138,22 @@ export function conversationName(workspaceId: string, conversationId: string): s
 }
 
 /**
+ * Destroys a conversation's object, for a caller outside it. The SDK empties the object's storage
+ * and then aborts it, and on Cloudflare the abort can reach the caller before the answer, as an
+ * error saying `destroyed`. That means it worked, so only another error is one.
+ */
+export async function destroyConversationObject(conversation: {
+	destroy(): Promise<void>;
+}): Promise<void> {
+	try {
+		await conversation.destroy();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (message !== "destroyed") throw error;
+	}
+}
+
+/**
  * One conversation with an agent run by Gateweave: its messages, kept in its own SQLite, and the
  * turns that answer them, streamed to every tab that has it open and resumed after a reconnect.
  *
