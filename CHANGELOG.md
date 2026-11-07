@@ -8,6 +8,29 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.16.3] - 2026-11-07
+
+Tries at a password are now held per person where a session asks for one, and the account settings can end every session
+at once. There is no migration in this release.
+
+### Security
+
+- **A stolen cookie could guess at the password from as many addresses as it could be sent from.** Better Auth counts
+  per client address, at five tries a minute. Changing a password and deleting an account now also share an allowance
+  per person: 10 at once, refilling over an hour, within 30 that refill over a day. Over it, they answer 429 with the
+  code `TOO_MANY_PASSWORD_TRIES`, and the page says so in words. It is spent before the password is checked, so the
+  right password counts too and is refused once it has gone. ([#184](https://github.com/gateweavehq/agents/pull/184))
+- **"Sign out everywhere" in the account settings.** It asks for no password and ends every session of the account, this
+  browser's too, because a stolen cookie may be a copy of this browser's and nobody can tell.
+  ([#185](https://github.com/gateweavehq/agents/pull/185))
+
+### If you run your own
+
+- **Nobody can lock a person out with their address alone.** Only a request with a session for that account spends the
+  allowance, and signing in is not part of it. Whoever holds the cookie can spend it, which keeps the person from
+  changing their password in settings for a while. A password reset asks for no session, and signing out everywhere asks
+  for no password.
+
 ## [0.16.2] - 2026-11-07
 
 One auth route that no page uses is closed, and a test now notices when a Better Auth upgrade adds a route. There is no
