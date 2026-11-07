@@ -89,6 +89,24 @@ Keep it. If it changes, workspaces have to add their keys and secret values agai
 Open the Worker's address, create an account and then a workspace. Anyone who can reach the
 address can sign up and create workspaces of their own. A workspace is only visible to its members.
 
+## Where the database lives
+
+Every read and write of an account or a session goes to one place, the D1 database's primary, and
+D1 puts it close to whoever asked for the database unless told otherwise. That may be far from your
+people. Measured from a Worker with the primary in Eastern Europe, one read takes about 20 ms from
+Frankfurt, 110 ms from Virginia, 240 ms from Tokyo and 290 ms from Sydney
+([how](https://github.com/gateweavehq/track/issues/231#issuecomment-6708513383)).
+
+To choose, make the database yourself before the first deploy, with a location hint (`wnam`, `enam`,
+`weur`, `eeur`, `apac` or `oc`):
+
+```sh
+pnpm wrangler d1 create gateweave-agents --location apac
+```
+
+Then pick it instead of **+ Create new** on the button's form, or put its id in `wrangler.jsonc` as
+`database_id`.
+
 ## Settings
 
 Everything except `BETTER_AUTH_SECRET` is optional. Set them in the Cloudflare dashboard (Workers &
