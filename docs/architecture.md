@@ -76,7 +76,10 @@ differing only by configuration. Track has the same code, and the same reasons.
   when the socket opens and passes its id on; the conversation looks it up in D1 before each
   message (`apps/web/src/server/conversation.ts`), so a socket whose session ended, by this logout
   or any other way, is closed (4401) without its message reaching the agent. A turn already under
-  way when the session ends finishes, and an idle socket stays open until it sends.
+  way when the session ends finishes, and an idle socket stays open until it sends. The page
+  (`conversation-view.tsx`) puts the refused words back in the box. If this browser still has a
+  session, it opens a new socket on it and says the message was not sent; if not, it says the session
+  ended and offers to sign in.
 - **Signing out of Agents stays in Agents.** The provider's session is left alone, as other apps
   signed in through it would expect, and `disableProviderLogout` keeps the plugin from sending
   anyone there.
@@ -200,8 +203,9 @@ People change both on `/settings/account`, through Better Auth's `/update-user` 
 - **It ends every session,** whatever the request asks, since whoever knew the old password may be
   why it is changing and may be the one asking. Better Auth makes a new session for the browser that
   asked, which keeps the `oidc_sid` of the one it replaced, because it came from the same sign-in at
-  the provider and a logout token still has to reach it. A chat left open stops at its next message
-  like any other whose session ended, in that browser too, and a new socket opens on the new cookie.
+  the provider and a logout token still has to reach it. A chat left open in that browser refuses
+  its next message like any other whose session ended, then gives the words back and goes on with
+  the new session.
 
 ## GitHub
 

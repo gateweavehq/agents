@@ -1,5 +1,6 @@
 import { useAgentChat } from "@cloudflare/ai-chat/react";
-import type { TeamEdgeKind } from "@gateweave/agents-model";
+import { SESSION_ENDED, type TeamEdgeKind } from "@gateweave/agents-model";
+import { Link } from "@tanstack/react-router";
 import { useAgent } from "agents/react";
 import type { UIMessage } from "ai";
 import {
@@ -17,6 +18,7 @@ import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 
 import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
+import { authClient } from "#/lib/auth-client";
 import {
 	type CallState,
 	describeEdgeCall,
@@ -28,22 +30,7 @@ import {
 import { cn } from "#/lib/utils";
 import { Markdown } from "./markdown";
 
-/**
- * A live conversation: its messages, the reply as it streams in, and the box to write the next
- * message. It connects through the app's chat gateway, which checks that the conversation is the
- * caller's, and reads the messages so far before it shows (so it suspends until then). In a
- * conversation with a team, `members` are the names of the team's members, to show each call over
- * an edge by the member it went to.
- */
-export function ConversationView({
-	slug,
-	conversationId,
-	agentName,
-	members,
-	disabled,
-	onTurnEnd,
-	onBusyChange,
-}: {
+interface ConversationProps {
 	slug: string;
 	conversationId: string;
 	agentName: string;
@@ -51,18 +38,133 @@ export function ConversationView({
 	disabled: boolean;
 	onTurnEnd: () => void;
 	onBusyChange?: (busy: boolean) => void;
+}
+
+/** A new socket closed sooner than this after the last one would close the next one too. */
+const REOPEN_AT_MOST_EVERY_MS = 5_000;
+
+/**
+ * A live conversation. A socket keeps the session it opened with and closes for good at the first
+ * message after that session ends, with that message refused. This browser may hold a newer session
+ * by then, as it does after changing a password, so going on takes a new socket, which a new key
+ * gives. What was being written outlasts the socket here.
+ */
+export function ConversationView(props: ConversationProps) {
+	const [socket, setSocket] = useState(0);
+	// True for the one render between two sockets. The chat hook keeps what it read for a conversation
+	// until the component that read it has gone, so a new one mounted in its place would get the
+	// messages from when the page opened.
+	const [betweenSockets, setBetweenSockets] = useState(false);
+	const [draft, setDraft] = useState("");
+	const [notSent, setNotSent] = useState(false);
+	const [sessionEnded, setSessionEnded] = useState(false);
+	const reopenedAt = useRef(0);
+
+	useEffect(() => {
+		if (!betweenSockets) return;
+		setBetweenSockets(false);
+		setSocket((current) => current + 1);
+	}, [betweenSockets]);
+
+	async function onSessionClosed(unsent: string) {
+		if (unsent) setDraft((typed) => (typed ? `${unsent}\n\n${typed}` : unsent));
+		const session = await authClient.getSession().catch(() => null);
+		if (!session?.data?.session || Date.now() - reopenedAt.current < REOPEN_AT_MOST_EVERY_MS) {
+			setSessionEnded(true);
+			return;
+		}
+		reopenedAt.current = Date.now();
+		setNotSent(Boolean(unsent));
+		setBetweenSockets(true);
+	}
+
+	if (betweenSockets) return null;
+
+	return (
+		<LiveConversation
+			key={socket}
+			{...props}
+			draft={draft}
+			onDraftChange={setDraft}
+			notSent={notSent}
+			onSend={() => setNotSent(false)}
+			sessionEnded={sessionEnded}
+			onSessionClosed={onSessionClosed}
+		/>
+	);
+}
+
+/**
+ * One socket's conversation: its messages, the reply as it streams in, and the box to write the
+ * next message. It connects through the app's chat gateway, which checks that the conversation is
+ * the caller's, and reads the messages so far before it shows (so it suspends until then). In a
+ * conversation with a team, `members` are the names of the team's members, to show each call over
+ * an edge by the member it went to.
+ */
+function LiveConversation({
+	slug,
+	conversationId,
+	agentName,
+	members,
+	disabled,
+	onTurnEnd,
+	onBusyChange,
+	draft,
+	onDraftChange,
+	notSent,
+	onSend,
+	sessionEnded,
+	onSessionClosed,
+}: ConversationProps & {
+	draft: string;
+	onDraftChange: (draft: string) => void;
+	notSent: boolean;
+	onSend: () => void;
+	sessionEnded: boolean;
+	onSessionClosed: (unsent: string) => Promise<void>;
 }) {
+	// The words last sent, until a reply starts: a socket closing over them means they were refused.
+	const sending = useRef("");
+	// Read by callbacks that run before the state below reaches a render.
+	const closing = useRef(false);
+	const [closed, setClosed] = useState<{ refused: boolean } | null>(null);
+	const box = useRef<HTMLTextAreaElement>(null);
 	const agent = useAgent({
 		agent: "ConversationAgent",
 		basePath: `api/chat/${encodeURIComponent(slug)}/${conversationId}`,
+		onConnectionError: (failure) => {
+			if (failure.code !== SESSION_ENDED) return;
+			closing.current = true;
+			setClosed({ refused: Boolean(sending.current) });
+			void onSessionClosed(sending.current);
+		},
 	});
+	// Both run for a turn the closing socket cut off too. That turn is not over but refused, and
+	// refreshing the page for it would take someone whose session ended to the sign-in page without
+	// what they wrote.
+	const turnEnded = () => {
+		if (closing.current) return;
+		sending.current = "";
+		onTurnEnd();
+	};
 	const { messages, sendMessage, stop, status, error, clearError, isStreaming, isRecovering } =
-		useAgentChat({ agent, onFinish: onTurnEnd, onError: onTurnEnd });
-	const [draft, setDraft] = useState("");
-	const busy = status === "submitted" || isStreaming || isRecovering;
+		useAgentChat({ agent, onFinish: turnEnded, onError: turnEnded });
+	const busy = !closed && (status === "submitted" || isStreaming || isRecovering);
 	const end = useRef<HTMLDivElement>(null);
+	// The refused words went into the list as soon as they were sent, and are back in the box now.
+	const shown =
+		closed?.refused && messages.at(-1)?.role === "user" ? messages.slice(0, -1) : messages;
 
 	useEffect(() => onBusyChange?.(busy), [busy, onBusyChange]);
+
+	useEffect(() => {
+		if (status === "streaming") sending.current = "";
+	}, [status]);
+
+	// The box is a new one now, and the words that came back are one key press from going.
+	useEffect(() => {
+		if (notSent) box.current?.focus();
+	}, [notSent]);
 
 	// Follow the reply as it grows.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scrolls whenever the messages change.
@@ -73,9 +175,11 @@ export function ConversationView({
 	async function send(event?: FormEvent) {
 		event?.preventDefault();
 		const text = draft.trim();
-		if (!text || busy || disabled) return;
+		if (!text || busy || disabled || closed) return;
 		clearError();
-		setDraft("");
+		onDraftChange("");
+		onSend();
+		sending.current = text;
 		await sendMessage({ text });
 	}
 
@@ -90,15 +194,15 @@ export function ConversationView({
 		<>
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				<section aria-label="Messages" className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
-					{messages.length === 0 && (
+					{shown.length === 0 && (
 						<p className="py-10 text-center text-sm text-muted-foreground">
 							Write to {agentName} below.
 						</p>
 					)}
-					{messages.map((message) => (
+					{shown.map((message) => (
 						<Message key={message.id} message={message} agentName={agentName} members={members} />
 					))}
-					{status === "submitted" && (
+					{status === "submitted" && !closed && (
 						<p className="text-sm text-muted-foreground" aria-live="polite">
 							{agentName} is thinking…
 						</p>
@@ -108,12 +212,33 @@ export function ConversationView({
 							Picking the reply back up…
 						</p>
 					)}
-					{error && (
+					{error && !closed && (
 						<p
 							role="alert"
 							className="whitespace-pre-wrap break-words rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
 						>
 							{error.message}
+						</p>
+					)}
+					{notSent && (
+						<p role="status" className="text-sm text-muted-foreground">
+							Your sign-in changed, so that message was not sent. It is back in the box below.
+						</p>
+					)}
+					{sessionEnded && (
+						<p
+							role="alert"
+							className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+						>
+							Your session has ended{closed?.refused ? ", so that message was not sent" : ""}.{" "}
+							<Link
+								to="/login"
+								search={{ redirect: window.location.pathname }}
+								className="font-medium underline underline-offset-2"
+							>
+								Sign in again
+							</Link>{" "}
+							to go on.
 						</p>
 					)}
 					<div ref={end} />
@@ -122,12 +247,15 @@ export function ConversationView({
 			<form onSubmit={send} className="shrink-0 border-t p-3 sm:p-4">
 				<div className="mx-auto flex max-w-3xl items-end gap-2">
 					<Textarea
+						ref={box}
 						aria-label={`Message ${agentName}`}
 						value={draft}
-						onChange={(event) => setDraft(event.target.value)}
+						onChange={(event) => onDraftChange(event.target.value)}
 						onKeyDown={onKeyDown}
 						placeholder={disabled ? "This conversation cannot go on" : `Message ${agentName}`}
 						disabled={disabled}
+						// Still there to copy, with nowhere to send it until they sign in.
+						readOnly={sessionEnded}
 						rows={1}
 						maxLength={100_000}
 						className="max-h-48 min-h-10 resize-none"
@@ -140,7 +268,7 @@ export function ConversationView({
 						<Button
 							type="submit"
 							size="icon"
-							disabled={disabled || !draft.trim()}
+							disabled={disabled || Boolean(closed) || !draft.trim()}
 							aria-label="Send"
 						>
 							<ArrowUp />

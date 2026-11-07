@@ -108,3 +108,8 @@ export async function openChat(page: Page, slug: string) {
 	await expect(box).toBeEnabled();
 	return box;
 }
+
+/** Waits until a turn has ended, however it ended: the box's button is Stop until then. */
+export async function waitForTurnEnd(page: Page): Promise<void> {
+	await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 30_000 });
+}

@@ -187,3 +187,6 @@ export type TeamEdgeKind = (typeof TEAM_EDGE_KINDS)[number];
 /** A member of a team is an agent run by Gateweave, or another team, reached through its lead. */
 export const TEAM_MEMBER_KINDS = ["agent", "team"] as const;
 export type TeamMemberKind = (typeof TEAM_MEMBER_KINDS)[number];
+
+/** Closes a socket whose session has ended, with the code Track's sync sockets use for it. */
+export const SESSION_ENDED = 4401;
