@@ -412,6 +412,42 @@ describe("deleting an account", () => {
 		expect(await count("user", "id", person.id)).toBe(0);
 	});
 
+	// It asks for a password only where there is one, so a stolen cookie must not be able to remove
+	// the password first. That takes another way to sign in, as someone who also uses GitHub has.
+	// What else such a cookie can reach is in stolen-cookie.test.ts.
+	it("can't be got past by removing the password first", async () => {
+		const client = newClient();
+		const person = await signUp(client, "Una", "una@delete.test");
+		await agents.db
+			.prepare(
+				"INSERT INTO account (id, account_id, provider_id, user_id, updated_at) VALUES (?, ?, 'github', ?, ?)",
+			)
+			.bind(crypto.randomUUID(), "12345", person.id, Date.now())
+			.run();
+		const row = await agents.db
+			.prepare("SELECT id FROM account WHERE user_id = ? AND provider_id = 'credential'")
+			.bind(person.id)
+			.first<{ id: string }>();
+
+		const removing = await authApi("/unlink-account", {
+			client,
+			cookie: person.cookie,
+			body: { accountId: row?.id },
+		});
+		const deleting = await authApi("/account/delete", {
+			client,
+			cookie: person.cookie,
+			body: {},
+		});
+
+		expect({ removing: removing.status, deleting: deleting.status }).toEqual({
+			removing: 404,
+			deleting: 400,
+		});
+		expect(await count("user", "id", person.id)).toBe(1);
+		expect(await count("account", "user_id", person.id)).toBe(2);
+	});
+
 	it("takes nothing else in the body", async () => {
 		const client = newClient();
 		const person = await signUp(client, "Tess", "tess@delete.test");
