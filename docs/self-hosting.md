@@ -174,7 +174,18 @@ means agreeing to them.
 Agents sends email through [Cloudflare Email Service](https://developers.cloudflare.com/email-service/).
 Onboard the sender's domain once with `pnpm wrangler email sending enable example.com`, then set
 `EMAIL_FROM` to an address on it. Without email, Agents works, but invitations have to be accepted
-from a link that an admin copies, and nobody can reset a forgotten password.
+from a link that an admin copies, and nobody can reset a forgotten password for themselves.
+
+As you hold the database, you can do it for them, from the repository root. This makes a link that
+works once, for an hour, and using it signs them out everywhere. Whoever opens it can choose the
+password, so send it only to them:
+
+```sh
+TOKEN=$(openssl rand -hex 32)
+pnpm wrangler d1 execute DB --remote --command \
+  "INSERT INTO verification (id, identifier, value, expires_at) SELECT '$TOKEN', 'reset-password:$TOKEN', id, (unixepoch() + 3600) * 1000 FROM user WHERE email = 'someone@example.com'"
+echo "https://your-server/reset-password?token=$TOKEN"
+```
 
 ### Sign in through an OpenID Connect provider
 

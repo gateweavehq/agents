@@ -96,12 +96,13 @@ export function createAuth(config: AuthConfig) {
 		},
 		emailAndPassword: {
 			enabled: true,
+			// A reset is how someone takes an account back, so it ends every other session. That includes
+			// the kind `docs/self-hosting.md` says to make by hand on a server with no email.
+			revokeSessionsOnPasswordReset: true,
 			...(mailer && {
 				sendResetPassword: async ({ user, url }) => {
 					await mailer.send({ to: user.email, ...passwordResetEmail({ url }) });
 				},
-				// A reset is how someone takes an account back, so it ends every other session.
-				revokeSessionsOnPasswordReset: true,
 			}),
 		},
 		socialProviders: config.github ? { github: config.github } : {},
