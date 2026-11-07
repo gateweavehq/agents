@@ -8,6 +8,28 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.15.2] - 2026-11-07
+
+Closes the account routes a stolen session cookie could use and the app does not. Self-hosted copies should update.
+There is no migration in this release.
+
+### Security
+
+- **A stolen cookie could delete an account without its password.** Deleting an account asks for the password only where
+  there is one, and Better Auth's `/unlink-account` removed a password on a recent session alone. On an account that
+  also signs in with GitHub or a provider, a cookie under a day old could do both. The route is now closed.
+  ([#170](https://github.com/gateweavehq/agents/pull/170))
+- **A stolen cookie could try passwords.** `/verify-password` and `/change-password` took one from any session. The app
+  has no use for either, and both are closed. ([#170](https://github.com/gateweavehq/agents/pull/170))
+- **Other routes that any session could call and the app has no use for are closed:** `/update-user`, `/list-sessions`,
+  `/list-accounts`, `/get-access-token`, `/refresh-token` and `/account-info`. An account keeps none of a provider's
+  tokens, so the token routes had nothing to give. ([#170](https://github.com/gateweavehq/agents/pull/170))
+
+### Changed
+
+- **These routes now answer 404,** for anyone who called them by hand. The app has no page for any of them, and changing
+  a password still goes through a reset. ([#170](https://github.com/gateweavehq/agents/pull/170))
+
 ## [0.15.1] - 2026-11-07
 
 The members page no longer says an invitation was emailed before that is known. There is no migration in this release.
