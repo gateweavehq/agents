@@ -6,7 +6,8 @@ packages:
 #
 # Every package with agents also depends on its peers, so that agents resolves once: two copies would
 # not share their types, nor their code in the bundle. They are @ai-sdk/react,
-# @modelcontextprotocol/server, vite, and vite's own peer @types/node. `pnpm check` holds this.
+# @modelcontextprotocol/server, vite, and vite's own peers @types/node and esbuild. `pnpm check` holds
+# this.
 catalog:
   "@ai-sdk/openai-compatible": 3.0.82
   "@ai-sdk/provider": 4.0.35
@@ -19,6 +20,7 @@ catalog:
   ai: 7.0.159
   drizzle-kit: 0.31.11
   drizzle-orm: 0.45.4
+  esbuild: 0.28.2
   typescript: 7.0.2
   vite: 8.3.5
   vitest: 5.0.5
