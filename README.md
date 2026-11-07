@@ -4,36 +4,73 @@
 
 <h1 align="center">Gateweave Agents</h1>
 
-See which agents work where, keep their prompts, skills, plugins, scripts and MCP servers in one
-place, apply them to any repository in a click, and run your own teams of agents on Cloudflare.
+<p align="center">
+  <strong>See which coding agents work where, keep what they read in one place, and run your own teams of agents.</strong><br>
+  Open source, on Cloudflare, with no server to run.
+</p>
+
+<p align="center">
+  <a href="https://github.com/gateweavehq/agents/releases/latest"><img src="https://img.shields.io/github/v/release/gateweavehq/agents?label=release" alt="Latest release"></a>
+  <a href="https://github.com/gateweavehq/agents/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/gateweavehq/agents/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/gateweavehq/agents" alt="License: AGPL-3.0"></a>
+</p>
+
+<p align="center">
+  <a href="https://gateweave.com/agents"><strong>See what it does</strong></a> ·
+  <a href="#self-hosting"><strong>Deploy your own</strong></a> ·
+  <a href="setups/">Ready-made setups</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/tour-dark.gif">
+  <img src="docs/images/tour-light.gif" alt="A walk through a workspace. A table shows which coding agents are set up in which repositories. A setup is applied to a repository, which opens a pull request. A team of three agents gets a message, and its lead delegates to another agent and answers. The run's trace shows each model request with its tokens and estimated cost, with the delegated run nested inside.">
+</picture>
+
+<p align="center">
+  The real build, with made-up repositories on a stand-in GitHub and a stand-in for the model, so the
+  answer and its numbers are for show. The time spent loading is cut out.
+</p>
+
+<p align="center">
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/gateweavehq/agents"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare"></a>
+</p>
 
 Gateweave Agents is part of [Gateweave](https://gateweave.com), the family of open-source business
-tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gateweavehq/track).
+tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gateweavehq/track) and
+[Gateweave ID](https://github.com/gateweavehq/id).
 
-> **Status: early development.** Accounts, workspaces, members and invitations work. Workspaces
-> connect to GitHub or GitLab (gitlab.com or self-managed), and the agents configured in each repository (Claude Code, Codex, Gemini
-> CLI, Cursor, GitHub Copilot, Devin) and what they read are found and kept up to date on every
-> push, and can be browsed by project, by repository, by agent and by asset. A workspace library keeps versions of the
-> assets worth sharing and shows which repositories carry each one and which are behind, and
-> setups pin them for a set of coding agents, preview the files they write, apply them to a
-> repository by pull request and show where a repository has drifted from them since. Ready-made
-> setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click,
-> and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI. Workspaces
-> keep their own model provider keys and environment sets (variables, and secrets whose values
-> are stored encrypted), and define agents that Gateweave runs with a model, instructions from
-> the library, an environment set and MCP servers. Agents work in teams, delegating to, asking
-> and reporting to each other along the edges of a graph. Members chat with an agent or a team,
-> and every answer is a run with its trace and estimated cost, the runs a team's agents led to
-> nested inside it; a run can be replayed from any model request with the agent as it is now, and
-> its trace sent to the workspace's own OpenTelemetry endpoint. Triggers start an agent's runs from another service's signed webhooks or on a
-> schedule, if wanted only for issues with a label or a given assignee, and can keep one
-> conversation per issue. An agent with a sandbox works in a checkout of its repository, runs
-> MCP servers that are local commands there, and proposes its work as a pull request. Ready-made agents
-> [triage Gateweave Track issues](docs/track-triage.md) and
-> [work on the ones assigned to them](docs/track-work.md), from a comment on the issue to a pull
-> request, and go on in the same conversation and pull request when someone comments on the issue,
-> such as to answer the agent's question or ask for a change. See [docs/spec.md](docs/spec.md) for
-> the plan.
+> **Status: early development.** [docs/spec.md](docs/spec.md) has the plan.
+
+## What works today
+
+- **Accounts.** Accounts, workspaces, members and invitations.
+- **Find your agents.** Workspaces connect to GitHub or GitLab (gitlab.com or self-managed). The agents
+  configured in each repository (Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot, Devin) and what
+  they read are found and kept up to date on every push, and can be browsed by project, by repository,
+  by agent and by asset.
+- **Keep what they read.** A workspace library keeps versions of the assets worth sharing and shows
+  which repositories carry each one and which are behind.
+- **Apply it.** Setups pin those assets for a set of coding agents, preview the files they write, apply
+  them to a repository by pull request and show where a repository has drifted from them since.
+  Ready-made setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click,
+  and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI.
+- **Run your own agents.** Workspaces keep their own model provider keys and environment sets (variables,
+  and secrets whose values are stored encrypted), and define agents that Gateweave runs with a model,
+  instructions from the library, an environment set and MCP servers. Agents work in teams, delegating
+  to, asking and reporting to each other along the edges of a graph.
+- **See what they did.** Members chat with an agent or a team, and every answer is a run with its trace
+  and estimated cost, the runs a team's agents led to nested inside it. A run can be replayed from any
+  model request with the agent as it is now, and its trace sent to the workspace's own OpenTelemetry
+  endpoint.
+- **Let them start on their own.** Triggers start an agent's runs from another service's signed webhooks
+  or on a schedule, if wanted only for issues with a label or a given assignee, and can keep one
+  conversation per issue.
+- **Let them write code.** An agent with a sandbox works in a checkout of its repository, runs MCP
+  servers that are local commands there, and proposes its work as a pull request. Ready-made agents
+  [triage Gateweave Track issues](docs/track-triage.md) and
+  [work on the ones assigned to them](docs/track-work.md), from a comment on the issue to a pull request,
+  and go on in the same conversation and pull request when someone comments on the issue, such as to
+  answer the agent's question or ask for a change.
 
 ## Tech stack
 
