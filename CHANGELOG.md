@@ -8,6 +8,23 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.16.2] - 2026-11-07
+
+One auth route that no page uses is closed, and a test now notices when a Better Auth upgrade adds a route. There is no
+migration in this release.
+
+### Security
+
+- **`/link-social` now answers 404.** It added another way into an account on a session alone, and no page uses it.
+  Signing in goes on linking an account by itself where that is safe.
+  ([#182](https://github.com/gateweavehq/agents/pull/182))
+- **An upgrade can no longer open a route unnoticed.** A test lists every route that answers, and a new one fails until
+  someone decides whether it stays open. ([#182](https://github.com/gateweavehq/agents/pull/182))
+
+### If you run your own
+
+- **If you call `/api/auth/link-social` by hand, it stops working.** Nothing in the app does.
+
 ## [0.16.1] - 2026-11-07
 
 A chat left open stops once its person has left the workspace. There is no migration in this release, and updating is
