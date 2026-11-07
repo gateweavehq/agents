@@ -8,6 +8,22 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.16.6] - 2026-11-07
+
+Whoever runs a server with no email can now help someone back in. There is no migration in this release.
+
+### Fixed
+
+- **A way back in without email.** Without email nobody could reset a forgotten password, and `/forgot-password` told
+  them to ask whoever runs the server, who had nothing to do about it. The self-hosting guide now says how: find the
+  person's `id` in a list, run one statement, and pass on the link it prints. The link works once, for an hour. Using it
+  signs the person out everywhere, as a reset does with email. ([#196](https://github.com/gateweavehq/agents/pull/196))
+
+### If you run your own
+
+- **Nothing to do for this release.** Nothing changes on a server that sends email.
+- **`CONTRIBUTING.md` now says where a newcomer can start.** ([#194](https://github.com/gateweavehq/agents/pull/194))
+
 ## [0.16.5] - 2026-11-07
 
 People now hear by email when the tries at their password run out. There is no migration in this release.
