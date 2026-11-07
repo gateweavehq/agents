@@ -45,6 +45,18 @@ export async function allowPasswordTry(userId: string): Promise<boolean> {
 	return allowed;
 }
 
+/** Emails one person gets about those tries running out: one a day, since each says the same. */
+export const SPENT_TRIES_EMAILS_PER_PERSON: Rule[] = [{ window: 24 * 60 * 60, max: 1 }];
+
+/** Whether this person may be emailed about those tries running out. Counts this one if so. */
+export async function allowSpentTriesEmail(userId: string): Promise<boolean> {
+	const { allowed } = await consumeDurably(
+		`password-tries-told:${userId}`,
+		SPENT_TRIES_EMAILS_PER_PERSON,
+	);
+	return allowed;
+}
+
 const local = new LocalLimiter();
 
 /**

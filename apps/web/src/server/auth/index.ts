@@ -2,7 +2,7 @@ import { env, waitUntil } from "cloudflare:workers";
 import { createDb } from "../db";
 import { mailer } from "../email";
 import { forgetInWorkspaces } from "../erasure";
-import { allowPasswordTry, authRateLimits } from "../rate-limit";
+import { allowPasswordTry, allowSpentTriesEmail, authRateLimits } from "../rate-limit";
 import { countedByWhoSentIt } from "../workers-address";
 import { deleteWorkspaceData } from "../workspace-deletion";
 import { createAuth } from "./config";
@@ -77,6 +77,7 @@ function buildAuth() {
 		runInBackground: waitUntil,
 		rateLimitStorage: authRateLimits,
 		allowPasswordTry,
+		allowSpentTriesEmail,
 		// The conversations and the registry are deleted with their workspace. A failure is logged
 		// for the operator; until then the data stays unreachable, since only members get through
 		// and none are left.

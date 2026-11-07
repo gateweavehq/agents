@@ -160,6 +160,111 @@ describe("who cannot spend someone's allowance", () => {
 	});
 });
 
+describe("telling the person it has run out", () => {
+	const SUBJECT = "Too many tries at your Gateweave Agents password";
+
+	const told = async (email: string) =>
+		(await agents.emails()).filter((each) => each.to === email && each.subject === SUBJECT);
+
+	/** Email goes out after the response, so wait for it to arrive. */
+	async function untilTold(email: string) {
+		for (let attempt = 0; attempt < 100; attempt++) {
+			const emails = await told(email);
+			if (emails.length > 0) return emails;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		throw new Error(`No email to ${email} about "${SUBJECT}"`);
+	}
+
+	/** Long enough for an email that should not go out to have gone. */
+	const afterTheBackgroundWork = () => new Promise((resolve) => setTimeout(resolve, 500));
+
+	async function verify({ email }: Person) {
+		await agents.db.prepare("UPDATE user SET email_verified = 1 WHERE email = ?").bind(email).run();
+	}
+
+	async function spendAll(person: Person) {
+		for (let tries = 0; tries < 10; tries++) {
+			expect((await tryAt(changing, person)).status).toBe(400);
+		}
+	}
+
+	it("emails them at the first refusal and not before, saying what to do", async () => {
+		const person = await newPerson();
+		await verify(person);
+		await spendAll(person);
+		await afterTheBackgroundWork();
+		expect(await told(person.email)).toEqual([]);
+
+		expect((await tryAt(changing, person)).status).toBe(429);
+		const [email] = await untilTold(person.email);
+		expect(email?.text).toContain(person.email);
+		expect(email?.text).toContain("Sign out everywhere");
+	});
+
+	it("emails them once, however long it goes on", async () => {
+		const person = await newPerson();
+		await verify(person);
+		await spendAll(person);
+		for (let tries = 0; tries < 3; tries++) {
+			expect((await tryAt(changing, person)).status).toBe(429);
+		}
+		await untilTold(person.email);
+		await afterTheBackgroundWork();
+		expect(await told(person.email)).toHaveLength(1);
+	});
+
+	// Anyone can sign up with a stranger's address, and would otherwise have this sent there.
+	it("says nothing to an address they have not shown is theirs, and keeps the email for when they do", async () => {
+		const person = await newPerson();
+		await spendAll(person);
+		expect((await tryAt(changing, person)).status).toBe(429);
+		await afterTheBackgroundWork();
+		expect(await told(person.email)).toEqual([]);
+
+		await verify(person);
+		expect((await tryAt(changing, person)).status).toBe(429);
+		await untilTold(person.email);
+	});
+
+	it("refuses just the same on a server with no email", async () => {
+		const noEmail = await startAgents(origin, { settings: { EMAIL_FROM: "" } });
+		try {
+			const answer = (path: string, cookie: string | undefined, body: object) =>
+				noEmail.fetch(`${origin}/api/auth${path}`, {
+					method: "POST",
+					headers: {
+						origin,
+						"cf-connecting-ip": newClient(),
+						"content-type": "application/json",
+						...(cookie && { cookie }),
+					},
+					body: JSON.stringify(body),
+				});
+			const entered = await answer("/sign-up/email", undefined, {
+				name: "Ada",
+				email: "no-email@tries.test",
+				password: PASSWORD,
+			});
+			expect(entered.status).toBe(200);
+			const cookie = cookieOf(entered);
+			await noEmail.db
+				.prepare("UPDATE user SET email_verified = 1 WHERE email = ?")
+				.bind("no-email@tries.test")
+				.run();
+			const [path, body] = changing;
+			for (let tries = 0; tries < 10; tries++) {
+				expect((await answer(path, cookie, body(WRONG))).status).toBe(400);
+			}
+			expect((await answer(path, cookie, body(WRONG))).status).toBe(429);
+			await afterTheBackgroundWork();
+			expect(await noEmail.emails()).toEqual([]);
+		} finally {
+			await noEmail.dispose();
+		}
+	});
+});
+
 describe("once it is spent", () => {
 	it("still lets the person end every session, and sign in again", async () => {
 		const person = await newPerson();
