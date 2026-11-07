@@ -58,12 +58,12 @@ export function workersAiDailyLimit(settings: WorkersAiSettings): number | null 
 /** Why an agent that uses Workers AI cannot answer on a server that did not turn it on. */
 export const WORKERS_AI_NOT_OFFERED = "This server does not offer Workers AI";
 
-const GATEWAY_URL = /^https:\/\/gateway\.ai\.cloudflare\.com\/v1\/([\w-]+)\/([\w-]+)$/;
+const GATEWAY_URL = /^https:\/\/gateway\.ai\.cloudflare\.com\/v1\/([\w-]+)\/([\w-]+)\/*$/;
 const ACCOUNT_ID = /^[\w-]+$/;
 
 /** The account and gateway an AI Gateway address names, or null when it is not one. */
 export function parseGatewayUrl(url: string): { account: string; gateway: string } | null {
-	const found = GATEWAY_URL.exec(url.replace(/\/+$/, ""));
+	const found = GATEWAY_URL.exec(url);
 	const [, account, gateway] = found ?? [];
 	return account !== undefined && gateway !== undefined ? { account, gateway } : null;
 }

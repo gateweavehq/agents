@@ -64,7 +64,7 @@ describe("verificationEmail", () => {
 		expect(email.subject).toBe("Verify your email for Gateweave Agents");
 		expect(email.text).toContain(url);
 		expect(email.text).toContain("24 hours");
-		expect(email.html).toContain(`href="${url.replace("&", "&amp;")}"`);
+		expect(email.html).toContain(`href="${url.replaceAll("&", "&amp;")}"`);
 	});
 });
 

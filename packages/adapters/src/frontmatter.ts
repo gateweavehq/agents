@@ -47,10 +47,24 @@ export function parseFrontMatter(text: string, options: { lenient?: boolean } = 
 function parseLines(raw: string): Record<string, unknown> {
 	const data: Record<string, unknown> = {};
 	for (const line of raw.split(/\r?\n/)) {
-		const match = /^([A-Za-z][\w-]*):[ \t]*(.*?)[ \t]*$/.exec(line);
+		const match = /^([A-Za-z][\w-]*):(.*)$/.exec(line);
 		if (!match?.[1]) continue;
-		const text = (match[2] ?? "").replace(/^(["'])(.*)\1$/, "$2");
+		const text = withoutBlanks(match[2] ?? "").replace(/^(["'])(.*)\1$/, "$2");
 		data[match[1]] = text === "true" ? true : text === "false" ? false : text;
 	}
 	return data;
+}
+
+/**
+ * The text without the spaces and tabs around it. Not in the expression above, since these lines come
+ * from any repository someone scans, and blanks on both sides of a lazy middle took over 20 seconds
+ * on a line of 200,000.
+ */
+function withoutBlanks(text: string): string {
+	const isBlank = (at: number) => text[at] === " " || text[at] === "\t";
+	let start = 0;
+	let end = text.length;
+	while (start < end && isBlank(start)) start++;
+	while (end > start && isBlank(end - 1)) end--;
+	return text.slice(start, end);
 }
