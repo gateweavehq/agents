@@ -8,6 +8,21 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.15.1] - 2026-11-07
+
+The members page no longer says an invitation was emailed before that is known. There is no migration in this release.
+
+### Changed
+
+- **A mail that fails to send now says why in Workers Logs,** with Cloudflare's error code and without the address. It
+  used to log only a stack, with no reason. ([#168](https://github.com/gateweavehq/agents/pull/168))
+
+### Fixed
+
+- **The members page said an invitation had been emailed, though it couldn't know.** The mail goes in the background, so
+  an invitation to an address that had bounced before looked sent when it wasn't. The page now says the mail is on its
+  way and offers the link in case it doesn't arrive. ([#168](https://github.com/gateweavehq/agents/pull/168))
+
 ## [0.15.0] - 2026-11-07
 
 People can delete their own account, and deleting a conversation no longer shows an error after it worked. This release
