@@ -8,6 +8,22 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.14.2] - 2026-11-07
+
+A deployment with no `BETTER_AUTH_URL` now marks its cookies `Secure`. No migration.
+
+### Fixed
+
+- **Session cookies had no `Secure` on a deployment without `BETTER_AUTH_URL`.** The setting is optional, and without it
+  a browser could send the cookie over plain HTTP, such as on the first request to a custom domain. Now it can't, unless
+  this is local dev. Cookies keep their names, so nobody is signed out. Sign-in needs HTTPS on your own domain, as it
+  already did with the setting, and the guide now says so. ([#162](https://github.com/gateweavehq/agents/pull/162))
+
+### Changed
+
+- **The README shows the product on its first screen,** with a recording in the reader's color scheme and the Deploy
+  button. ([#161](https://github.com/gateweavehq/agents/pull/161))
+
 ## [0.14.1] - 2026-11-06
 
 Branches now build on a copy made with the Deploy button, and a deployment without its secret no longer runs. No
