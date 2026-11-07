@@ -26,6 +26,10 @@ interface Person {
  * holding a copy of their session, and spending it keeps them from changing their password. Only at
  * an address they have shown is theirs, since anyone can sign up with a stranger's and have this
  * sent there. Resolves either way: the request is refused whatever becomes of the email.
+ *
+ * The day's email is counted before it is sent, so requests sent together send one, and one that
+ * fails is not tried again until the next day. Counting after would let whoever holds the cookie use
+ * up what an address may be sent, which a password reset needs.
  */
 export async function tellOfSpentTries(
 	{ id, email, emailVerified }: Person,
