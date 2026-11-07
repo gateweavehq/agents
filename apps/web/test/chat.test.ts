@@ -38,9 +38,43 @@ async function conversationWith(slug: string, { key = true } = {}) {
 		owner,
 		workspaceId,
 		registry,
+		agent,
 		path: `/api/chat/${slug}/${conversation.id}`,
 		conversation,
 	};
+}
+
+/** Someone else in the workspace with a chat open, as the workspace's model keys let them have. */
+async function memberTalking(slug: string, name: string) {
+	const { owner, workspaceId, registry, agent } = await conversationWith(slug);
+	const member = await signUp(agents, origin, name);
+	await agents.db
+		.prepare(
+			"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, 'member', ?)",
+		)
+		.bind(crypto.randomUUID(), workspaceId, member.userId, Date.now())
+		.run();
+	const theirs = await registry.startConversation(agent.id, member.userId);
+	if (!theirs) throw new Error("The conversation did not start");
+	const url = `${origin}/api/chat/${slug}/${theirs.id}`;
+	const { socket } = await agents.connect(url, { cookie: member.headers.cookie, origin });
+	if (!socket) throw new Error("No WebSocket");
+	expect((await ask(socket, "Review my change, please")).text).toBe("Looks good.");
+	return { owner, workspaceId, member, url, socket };
+}
+
+/** Sends over a socket left open, and says whether the socket closed or the agent answered. */
+async function whatHappensTo(socket: Awaited<ReturnType<typeof memberTalking>>["socket"]) {
+	const closed = new Promise<number>((resolve) => {
+		socket.addEventListener("close", (event) => resolve(event.code));
+	});
+	return Promise.race([
+		closed,
+		ask(socket, "Delete the repository").then(
+			() => "the agent answered",
+			() => "the agent answered",
+		),
+	]);
 }
 
 async function page(path: string, cookie: string) {
@@ -106,6 +140,67 @@ it("stops taking messages on a chat left open once its session ends", async () =
 	expect(await closed).toBe(4401);
 	expect(models.requests.length).toBe(sent);
 	expect((await agents.connect(url, { cookie: owner.headers.cookie, origin })).status).toBe(401);
+});
+
+it("stops taking messages on a chat left open once its person is removed from the workspace", async () => {
+	const { owner, workspaceId, member, url, socket } = await memberTalking(
+		"chat-removed",
+		"mel-removed",
+	);
+
+	const removed = await agents.fetch(`${origin}/api/auth/organization/remove-member`, {
+		method: "POST",
+		headers: owner.headers,
+		body: JSON.stringify({
+			memberIdOrEmail: "mel-removed@example.com",
+			organizationId: workspaceId,
+		}),
+	});
+	expect(removed.status).toBe(200);
+
+	const sent = models.requests.length;
+	expect(await whatHappensTo(socket)).toBe(4401);
+	expect(models.requests.length).toBe(sent);
+	expect((await agents.connect(url, { cookie: member.headers.cookie, origin })).status).toBe(404);
+});
+
+it("tells the page with HEAD whether a socket would open, and no more than that", async () => {
+	const { owner, workspaceId, member, url } = await memberTalking("chat-probe", "pia-probe");
+	const probe = async (headers: Record<string, string> = {}) => {
+		const response = await agents.fetch(url, { method: "HEAD", headers });
+		return { status: response.status, body: await response.text() };
+	};
+	const cookie = member.headers.cookie;
+
+	expect(await probe({ cookie })).toEqual({ status: 204, body: "" });
+	expect((await probe()).status).toBe(401);
+	expect((await probe({ cookie: owner.headers.cookie })).status).toBe(404);
+	// Another site's page can send this with the cookie, but the browser keeps the answer from it.
+	expect((await probe({ cookie, origin: "https://evil.test" })).status).toBe(403);
+
+	await agents.fetch(`${origin}/api/auth/organization/leave`, {
+		method: "POST",
+		headers: member.headers,
+		body: JSON.stringify({ organizationId: workspaceId }),
+	});
+	expect((await probe({ cookie })).status).toBe(404);
+	const wrong = await agents.fetch(`${url}/get-messages`, { method: "HEAD", headers: { cookie } });
+	expect(wrong.status).toBe(405);
+});
+
+it("stops taking messages on a chat left open once its person leaves the workspace", async () => {
+	const { workspaceId, member, socket } = await memberTalking("chat-left", "lee-left");
+
+	const left = await agents.fetch(`${origin}/api/auth/organization/leave`, {
+		method: "POST",
+		headers: member.headers,
+		body: JSON.stringify({ organizationId: workspaceId }),
+	});
+	expect(left.status).toBe(200);
+
+	const sent = models.requests.length;
+	expect(await whatHappensTo(socket)).toBe(4401);
+	expect(models.requests.length).toBe(sent);
 });
 
 it("opens again on the new cookie of a browser that changed its password", async () => {

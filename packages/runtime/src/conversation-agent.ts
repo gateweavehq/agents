@@ -239,16 +239,17 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 
 	/**
-	 * Whether the session a socket opened with still holds. Here, until it runs out; the app also
-	 * asks its database, where signing out, revoking it and the provider's logout delete it.
+	 * Whether the session a socket opened with still holds, for this workspace. Here, until it runs
+	 * out; the app also asks its database, where signing out, revoking it and the provider's logout
+	 * delete it, and leaving the workspace ends the membership.
 	 */
-	protected async sessionHolds(session: ChatSession): Promise<boolean> {
+	protected async sessionHolds(session: ChatSession, _workspaceId: string): Promise<boolean> {
 		return session.expiresAt > Date.now();
 	}
 
 	async #sessionEnded(connection: Connection): Promise<boolean> {
 		const session = (connection.state as { session?: ChatSession } | null)?.session;
-		if (session && (await this.sessionHolds(session))) return false;
+		if (session && (await this.sessionHolds(session, this.#parties().workspaceId))) return false;
 		connection.close(SESSION_ENDED, "Session ended");
 		return true;
 	}
