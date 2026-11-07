@@ -8,6 +8,23 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.16.5] - 2026-11-07
+
+People now hear by email when the tries at their password run out. There is no migration in this release.
+
+### Security
+
+- **An email when the tries at a password run out.** Whoever holds a copy of a session can use up the person's
+  allowance, which keeps them from changing their password in settings for a while. They now get an email at the first
+  refusal, saying what happened and what to do, at most once a day and only at an address they have verified. The
+  refusal doesn't wait for it, and it is the same as before. ([#190](https://github.com/gateweavehq/agents/pull/190))
+
+### If you run your own
+
+- **Nothing to do for this release.** With no email set up, nothing changes.
+- **The self-hosting guide now says where your database lives and how to choose.** A D1 database stays where it was
+  made, so this is worth reading before your first deploy. ([#189](https://github.com/gateweavehq/agents/pull/189))
+
 ## [0.16.4] - 2026-11-07
 
 Reading a session takes one trip to the database instead of two. There is no migration in this release.
