@@ -108,6 +108,41 @@ it("stops taking messages on a chat left open once its session ends", async () =
 	expect((await agents.connect(url, { cookie: owner.headers.cookie, origin })).status).toBe(401);
 });
 
+it("opens again on the new cookie of a browser that changed its password", async () => {
+	const { owner, path } = await conversationWith("chat-new-password");
+	const url = `${origin}${path}`;
+	const { socket } = await agents.connect(url, { cookie: owner.headers.cookie, origin });
+	if (!socket) throw new Error("No WebSocket");
+	expect((await ask(socket, "Review my change, please")).text).toBe("Looks good.");
+
+	const changed = await agents.fetch(`${origin}/api/auth/change-password`, {
+		method: "POST",
+		headers: owner.headers,
+		body: JSON.stringify({
+			currentPassword: "a-long-password",
+			newPassword: "another-long-password",
+		}),
+	});
+	expect(changed.status).toBe(200);
+
+	// That session is gone with the rest, so the socket opened on it stops like any other.
+	const sent = models.requests.length;
+	const closed = new Promise<number>((resolve) => {
+		socket.addEventListener("close", (event) => resolve(event.code));
+	});
+	void ask(socket, "Delete the repository").catch(() => {});
+	expect(await closed).toBe(4401);
+	expect(models.requests.length).toBe(sent);
+
+	const cookie = changed.headers
+		.getSetCookie()
+		.map((each) => each.split(";")[0])
+		.join("; ");
+	const { socket: next } = await agents.connect(url, { cookie, origin });
+	if (!next) throw new Error("No WebSocket");
+	expect((await ask(next, "Review my change, please")).text).toBe("Looks good.");
+});
+
 it("keeps a conversation from everyone but the member who started it", async () => {
 	const { workspaceId, path, conversation, registry } = await conversationWith("chat-guild");
 	const url = `${origin}${path}`;

@@ -259,6 +259,19 @@ export function oidcDatabaseHooks() {
 					return oidcSid ? { data: { oidcSid } } : undefined;
 				},
 			},
+			delete: {
+				// Changing a password ends every session and makes a new one for the browser that asked.
+				// That one came from the same sign-in at the provider, so a logout token must still name it.
+				before: async (
+					session: Session & { oidcSid?: string | null },
+					context: GenericEndpointContext | null,
+				) => {
+					if (!context || !session.oidcSid) return;
+					if (session.id === context.context.session?.session.id) {
+						sessionIds.set(context.context, session.oidcSid);
+					}
+				},
+			},
 		},
 	};
 }

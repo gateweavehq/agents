@@ -161,7 +161,7 @@ function SignInForm() {
 					{mode === "sign-up" && (
 						<div className="space-y-2">
 							<Label htmlFor="name">Name</Label>
-							<Input id="name" name="name" autoComplete="name" required />
+							<Input id="name" name="name" autoComplete="name" maxLength={100} required />
 						</div>
 					)}
 					<div className="space-y-2">

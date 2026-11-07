@@ -255,6 +255,23 @@ describe("signing in through a provider", () => {
 		}
 	});
 
+	it("takes the name once, and leaves one they changed here alone", async () => {
+		const email = "renamed@oidc.test";
+		const person = { sub: "sub-renamed", email, name: "Name At The Provider" };
+		const { cookie } = await signIn(agents, provider, person);
+		expect((await userRow(agents, email))?.name).toBe("Name At The Provider");
+
+		const renamed = await authApi(agents, "/update-user", {
+			client: newClient(),
+			cookie,
+			body: { name: "Name In Agents" },
+		});
+		expect(renamed.status).toBe(200);
+
+		await signIn(agents, provider, { ...person, name: "Another Name At The Provider" });
+		expect((await userRow(agents, email))?.name).toBe("Name In Agents");
+	});
+
 	it("falls back on the email for a name the provider does not give", async () => {
 		const email = "nameless@oidc.test";
 		await signIn(agents, provider, { sub: "sub-nameless", email, name: "" });
@@ -668,6 +685,32 @@ describe("signing out at the provider", () => {
 		expect(response.headers.get("cache-control")).toBe("no-store");
 		expect(await isSignedIn(agents, ended.cookie)).toBe(false);
 		expect(await isSignedIn(agents, kept.cookie)).toBe(true);
+	});
+
+	// Changing a password replaces the session it was asked from, and the new one came from the same
+	// sign-in at the provider. Signing out there still has to reach it.
+	it("ends the session that took over from a named one when a password changed", async () => {
+		const email = "changed@oidc.test";
+		await signUpWithPassword(agents, email);
+		await verifyAddress(agents, email);
+		const person = { sub: "sub-changed", email, sid: "sid-changed" };
+		const { cookie } = await signIn(agents, provider, person);
+
+		const changed = await authApi(agents, "/change-password", {
+			client: newClient(),
+			cookie,
+			body: { currentPassword: PASSWORD, newPassword: "another-long-test-password" },
+		});
+		expect(changed.status).toBe(200);
+		const after = cookieOf(changed);
+		expect(await isSignedIn(agents, cookie)).toBe(false);
+		expect(await isSignedIn(agents, after)).toBe(true);
+
+		const response = await deliver(
+			await provider.logoutToken({ sub: person.sub, sid: person.sid }),
+		);
+		expect(response.status).toBe(200);
+		expect(await isSignedIn(agents, after)).toBe(false);
 	});
 
 	it("ends a session while a Worker on another zone sends junk to the same place", async () => {

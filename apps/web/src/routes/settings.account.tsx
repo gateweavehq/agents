@@ -1,4 +1,4 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { LegalLinks } from "#/components/legal-links";
 import { LiveButton } from "#/components/live-button";
@@ -52,6 +52,8 @@ function AccountPage() {
 				</Button>
 			</header>
 
+			<ChangeName name={account.name} />
+			<ChangePassword email={account.email} hasPassword={account.hasPassword} />
 			<DeleteAccount
 				email={account.email}
 				hasPassword={account.hasPassword}
@@ -68,7 +70,214 @@ function failure(error: { code?: string | undefined; message?: string | undefine
 	if (error.code === "SESSION_NOT_FRESH") {
 		return "You signed in a while ago. Sign out and sign in again, then try this again.";
 	}
+	if (error.code === "INVALID_PASSWORD") return "That password is not right.";
 	return error.message || "Something went wrong";
+}
+
+/** Everyone in someone's workspaces sees this name, which pages read from the database. */
+function ChangeName({ name }: { name: string }) {
+	const router = useRouter();
+	const [value, setValue] = useState(name);
+	const [error, setError] = useState<string | null>(null);
+	const [saved, setSaved] = useState(false);
+	const [pending, setPending] = useState(false);
+	const next = value.trim();
+
+	async function onSubmit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		setError(null);
+		setSaved(false);
+		setPending(true);
+		const result = await authClient.updateUser({ name: next });
+		if (result.error) {
+			setPending(false);
+			setError(failure(result.error));
+			return;
+		}
+		// The page's own heading comes from the route, which has to ask again.
+		await router.invalidate();
+		setPending(false);
+		setValue(next);
+		setSaved(true);
+	}
+
+	return (
+		<section aria-labelledby="name-heading" className="space-y-4">
+			<h2 id="name-heading" className="text-sm font-semibold">
+				Name
+			</h2>
+			<form onSubmit={onSubmit} className="space-y-4 rounded-lg border p-4">
+				<div className="space-y-2">
+					<Label htmlFor="account-name">Your name</Label>
+					<Input
+						id="account-name"
+						name="name"
+						value={value}
+						onChange={(event) => {
+							setValue(event.target.value);
+							setSaved(false);
+							setError(null);
+						}}
+						autoComplete="name"
+						maxLength={100}
+						required
+					/>
+					<p className="text-sm text-muted-foreground">Everyone in your workspaces sees it.</p>
+				</div>
+				{error && (
+					<p role="alert" className="text-sm text-destructive">
+						{error}
+					</p>
+				)}
+				{saved && (
+					<p role="status" className="text-sm text-muted-foreground">
+						Your name is changed.
+					</p>
+				)}
+				<LiveButton
+					type="submit"
+					variant="outline"
+					size="sm"
+					disabled={pending || !next || next === name}
+				>
+					Save name
+				</LiveButton>
+			</form>
+		</section>
+	);
+}
+
+/**
+ * Asks for the current password, which the server insists on, as it does for ending every other
+ * session: whoever knew the old password may be why it is changing.
+ */
+function ChangePassword({ email, hasPassword }: { email: string; hasPassword: boolean }) {
+	const [open, setOpen] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [changed, setChanged] = useState(false);
+	const [pending, setPending] = useState(false);
+
+	async function onSubmit(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		const form = new FormData(event.currentTarget);
+		const newPassword = String(form.get("new-password"));
+		setError(null);
+		if (newPassword !== String(form.get("new-password-again"))) {
+			setError("The new passwords do not match.");
+			return;
+		}
+		setPending(true);
+		const result = await authClient.changePassword({
+			currentPassword: String(form.get("current-password")),
+			newPassword,
+			revokeOtherSessions: true,
+		});
+		setPending(false);
+		if (result.error) {
+			setError(failure(result.error));
+			return;
+		}
+		setOpen(false);
+		setChanged(true);
+	}
+
+	return (
+		<section aria-labelledby="password-heading" className="space-y-4">
+			<h2 id="password-heading" className="text-sm font-semibold">
+				Password
+			</h2>
+			{!hasPassword ? (
+				<p className="rounded-lg border p-4 text-sm text-muted-foreground">
+					You sign in through GitHub or your sign-in provider, so this account has no password to
+					change.
+				</p>
+			) : open ? (
+				<form onSubmit={onSubmit} className="space-y-4 rounded-lg border p-4">
+					{/* Tells a password manager which account these passwords belong to. */}
+					<input
+						type="email"
+						name="username"
+						autoComplete="username"
+						value={email}
+						readOnly
+						hidden
+					/>
+					<div className="space-y-2">
+						<Label htmlFor="current-password">Current password</Label>
+						<Input
+							id="current-password"
+							name="current-password"
+							type="password"
+							autoComplete="current-password"
+							required
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="new-password">New password</Label>
+						<Input
+							id="new-password"
+							name="new-password"
+							type="password"
+							autoComplete="new-password"
+							minLength={8}
+							required
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="new-password-again">New password again</Label>
+						<Input
+							id="new-password-again"
+							name="new-password-again"
+							type="password"
+							autoComplete="new-password"
+							minLength={8}
+							required
+						/>
+					</div>
+					<p className="text-sm text-muted-foreground">This signs you out on your other devices.</p>
+					{error && (
+						<p role="alert" className="text-sm text-destructive">
+							{error}
+						</p>
+					)}
+					<div className="flex flex-wrap gap-2">
+						<LiveButton type="submit" variant="outline" size="sm" disabled={pending}>
+							Save password
+						</LiveButton>
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() => {
+								setOpen(false);
+								setError(null);
+							}}
+						>
+							Cancel
+						</Button>
+					</div>
+				</form>
+			) : (
+				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border p-4">
+					<p className="text-sm text-muted-foreground" role={changed ? "status" : undefined}>
+						{changed
+							? "Your password is changed, and your other devices are signed out."
+							: "Use at least 8 characters."}
+					</p>
+					<LiveButton
+						variant="outline"
+						size="sm"
+						onClick={() => {
+							setChanged(false);
+							setOpen(true);
+						}}
+					>
+						Change password
+					</LiveButton>
+				</div>
+			)}
+		</section>
+	);
 }
 
 /**

@@ -10,6 +10,7 @@ import type { Database } from "../db";
 import { schema } from "../db";
 import type { Mailer } from "../email/mailer";
 import { invitationEmail, passwordResetEmail, verificationEmail } from "../email/templates";
+import { tellOfChangedPassword, validName, validRename } from "./account-changes";
 import { deleteAccount } from "./delete-account";
 import { type OidcProvider, oidcDatabaseHooks, oidcSignIn } from "./oidc-sign-in";
 
@@ -63,6 +64,10 @@ export function createAuth(config: AuthConfig) {
 				"/organization/invite-member": { window: 60, max: 20 },
 				// Nobody needs more than a few new workspaces a minute.
 				"/organization/create": { window: 60, max: 10 },
+				// Someone holding a stolen cookie would otherwise have a way to guess at the password.
+				"/change-password": { window: 60, max: 5 },
+				// Nobody needs to change their name more than a few times a minute.
+				"/update-user": { window: 60, max: 10 },
 			},
 			...(config.rateLimitStorage && { customStorage: config.rateLimitStorage }),
 		},
@@ -108,7 +113,7 @@ export function createAuth(config: AuthConfig) {
 				},
 			},
 			account: oidcHooks.account,
-			session: { create: oidcHooks.session.create },
+			session: { create: oidcHooks.session.create, delete: oidcHooks.session.delete },
 		},
 		disabledPaths: [
 			// Returns every pending invitation to any member, ids included (see the hook below).
@@ -120,7 +125,6 @@ export function createAuth(config: AuthConfig) {
 			"/unlink-account",
 			// Say whether a password is right, faster than deleting an account lets anyone guess.
 			"/verify-password",
-			"/change-password",
 			// An account keeps none of a provider's tokens, so these have nothing to give.
 			"/get-access-token",
 			"/refresh-token",
@@ -128,8 +132,6 @@ export function createAuth(config: AuthConfig) {
 			"/list-accounts",
 			// Hands over the tokens of someone's sessions.
 			"/list-sessions",
-			// Renames someone, and sets the picture other members' browsers fetch.
-			"/update-user",
 		],
 		emailVerification: mailer && {
 			sendVerificationEmail: async ({ user, url }) => {
@@ -141,6 +143,14 @@ export function createAuth(config: AuthConfig) {
 		},
 		hooks: {
 			before: createAuthMiddleware(async (ctx) => {
+				if (ctx.path === "/update-user") return { context: { body: validRename(ctx.body) } };
+				if (ctx.path === "/sign-up/email") {
+					return { context: { body: { name: validName(ctx.body?.name) } } };
+				}
+				// Whoever knew the old password may be why it is changing, and may be the one asking.
+				if (ctx.path === "/change-password") {
+					return { context: { body: { revokeOtherSessions: true } } };
+				}
 				if (ctx.path !== "/organization/list-invitations") return;
 				// Better Auth lets every member list invitations. Where accounts cannot verify their
 				// email (a server without email), an invitation's id is enough to accept it with a
@@ -162,6 +172,12 @@ export function createAuth(config: AuthConfig) {
 				if (membership && !canInvite(membership.role)) {
 					throw new APIError("FORBIDDEN", { message: "Only admins can see invitations" });
 				}
+			}),
+			after: createAuthMiddleware(async (ctx) => {
+				if (ctx.path !== "/change-password") return;
+				await ctx.context.runInBackgroundOrAwait(
+					tellOfChangedPassword(ctx.context.returned, mailer),
+				);
 			}),
 		},
 		plugins: [
