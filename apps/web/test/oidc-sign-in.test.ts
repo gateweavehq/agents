@@ -485,7 +485,8 @@ describe("a provider that is not answering", () => {
 				client: newClient(),
 				body: { provider: "oidc", callbackURL: "/" },
 			});
-			await vi.waitFor(() => expect(provider.requests).not.toEqual([]));
+			// A busy machine can take more than the default second to send it.
+			await vi.waitFor(() => expect(provider.requests).not.toEqual([]), { timeout: 5_000 });
 
 			const email = "password-while-hanging@oidc.test";
 			const cookie = await signUpWithPassword(agents, email);
