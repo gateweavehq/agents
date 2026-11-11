@@ -29,7 +29,7 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   `wrangler.jsonc` (`apps/web/src/server/db/prune.ts`). Better Auth removes a session or a
   verification only when something looks it up, so those nobody comes back for would otherwise
   stay, with the address and browser a session holds, and invitations with the address they were
-  sent to. Gateweave Cloud's privacy policy states these periods, so a change here is a change to it.
+  sent to. OAuth refresh tokens, access tokens and client assertions past their time go too, since they name the person an agent acts as. Gateweave Cloud's privacy policy states these periods, so a change here is a change to it.
 - **Headers** go on every answer (`apps/web/src/server/security-headers.ts`): `nosniff`, a referrer
   rule and, over HTTPS, `Strict-Transport-Security`. A page also gets `X-Frame-Options`,
   `Cache-Control: private, no-store` and a Content-Security-Policy with a nonce made for that
