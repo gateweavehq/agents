@@ -8,4 +8,5 @@ export * from "./track-triage";
 export * from "./track-work";
 export * from "./triggers";
 export * from "./vocabulary";
+export * from "./wiki";
 export * from "./workers-ai";

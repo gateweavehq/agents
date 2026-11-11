@@ -2,6 +2,7 @@ import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
 	Activity,
 	ArrowLeftRight,
+	BookOpen,
 	Bot,
 	Boxes,
 	ChevronDown,
@@ -123,6 +124,15 @@ function Sidebar() {
 				>
 					<FolderGit2 className="size-4" />
 					Repositories
+				</Link>
+				<Link
+					to="/$workspace/wiki"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<BookOpen className="size-4" />
+					Wiki
 				</Link>
 				<Link
 					to="/$workspace/agents"

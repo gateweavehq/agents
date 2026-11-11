@@ -91,7 +91,7 @@ function gatewayHeadersOf(
 }
 
 export function languageModel(
-	agent: AgentSnapshot,
+	agent: Pick<AgentSnapshot, "provider" | "model">,
 	key: string | null,
 	settings: GatewaySettings & WorkersAiSettings,
 	metadata: GatewayMetadata,
@@ -221,7 +221,10 @@ export function googleRequest(
  * Why a turn failed, in words fit for whoever is chatting. Never the provider's own message: some
  * repeat part of the key.
  */
-export function describeFailure(agent: AgentSnapshot, error: unknown): string {
+export function describeFailure(
+	agent: Pick<AgentSnapshot, "provider" | "model">,
+	error: unknown,
+): string {
 	const name = MODEL_PROVIDER_NAMES[agent.provider];
 	if (error instanceof SettingsError) return error.message;
 	const cause = RetryError.isInstance(error) ? error.lastError : error;

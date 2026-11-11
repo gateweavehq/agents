@@ -1450,6 +1450,49 @@ server).
   pull request is where a person reviews what an issue talked it into. Agents' proposal settings
   in Track still apply to the agent member.
 
+## Repository wiki
+
+A repository's wiki is pages a model writes about its code (AGT-108), each citing the lines it
+explains, in the shape DeepWiki gives: numbered pages (`1`, `1.1`, `2`) with "Relevant source
+files" and `**Sources:** [path:12-30]()` under what they cover. An owner or admin has one written
+on the Wiki page, choosing a model of a provider the workspace has a key for (Anthropic, OpenAI or
+Google, not Workers AI), and every member reads it. Private repositories are read the way scans
+read them, through the workspace's GitHub or GitLab connection.
+
+- **A Workflow writes it.** `startWiki` in the registry notes a generation and starts the app's
+  `WIKI` Workflow (`apps/web/src/server/wiki/workflow.ts`), one step per model request: one plans
+  the pages, one writes each page, and one makes the wiki the one people read. A step that fails
+  tries again on its own; a wiki that cannot be written is marked failed with the reason, and the
+  one people read stays as it was. A repository has one generation underway at a time (a partial
+  unique index), and one that has not got further for an hour counts as failed, so another can
+  start. A server whose Worker has no `WIKI` binding says so instead of starting.
+- **The key never leaves the step.** Each step asks the registry for what it needs, the key among
+  it, and hands back what it wrote. Workflows keep what a step returns, so a step returns only a
+  count or a length: never the key, a prompt or the repository's code. A provider's refusal is
+  turned into a sentence (`describeFailure`), since its own message can repeat part of the key.
+- **Planning reads the tree and the docs.** The planner gets every file's path and size and the
+  docs worth reading first (`wikiDocs`: the README, `AGENTS.md`, `docs/`, the package manifests),
+  and answers with the pages, each with up to 12 files to read. Files the repository does not have
+  are dropped. Every page then reads the same commit, which planning notes.
+- **`.devin/wiki.json` steers it**, as it steers DeepWiki: its pages are kept exactly, in its
+  order and under its parents, and its notes reach every writer. A file that breaks one of
+  DeepWiki's rules (no pages, more than 30, two with one title, a parent that is not a page, over
+  100 notes or 10,000 characters in one) is set aside, the model plans on its own, and the wiki
+  says why.
+- **A page is written from its files' text**, with line numbers so that it can cite them, up to
+  160,000 characters in all and 40,000 of any one file; a file cut short is marked as such.
+  `checkCitations` keeps a citation only if it names a file the page read and lines it saw, and
+  turns any other into the plain path, so a link never points at lines that do not exist.
+- **The finished wiki replaces the last.** `wikiFinish` deletes the older generations of the
+  repository. A failed one keeps its row and reason but not its pages, and only the newest failure
+  stays.
+- **Each wiki says where it came from**: the commit, the model, its tokens and the cost at the
+  model's list prices, where they are known. The pages link each citation to those
+  lines at that commit on GitHub or GitLab.
+- **What a provider receives** is the repository's paths and the text of the files a page reads,
+  with the workspace's own key, as an agent's run would send them. A wiki stays when the person who
+  started it deletes their account: it is the team's, and keeps only their id, as a run does.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -1488,6 +1531,10 @@ workspace.
 - **Repositories** lists them with their scan status and drift; a repository's page shows its
   agents, the assets they read grouped by kind, the problems the last scan found, the setups
   merged into it with their drift, and the pull requests that applied them.
+- **Wiki** lists the repositories with their wiki's state, and a repository's wiki shows its pages
+  beside their numbered outline, at `/<workspace>/wiki/<repository>/<page>`, the page a path segment
+  so that `1.10` is not read as a number. Owners and admins have one written or written again
+  there, and on a repository's page; see [Repository wiki](#repository-wiki).
 - **Agents** lists every agent and subagent by runtime, and owners and admins define agents run
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its

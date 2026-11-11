@@ -54,6 +54,9 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
   them to a repository by pull request and show where a repository has drifted from them since.
   Ready-made setups, kept as plain folders in [setups/](setups/), are added to a workspace in one click,
   and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI.
+- **Read about the code.** A model writes a wiki of each repository, private ones included, with the
+  workspace's own key: numbered pages that cite the lines they explain, steered by `.devin/wiki.json`
+  as DeepWiki is.
 - **Run your own agents.** Workspaces keep their own model provider keys and environment sets (variables,
   and secrets whose values are stored encrypted), and define agents that Gateweave runs with a model,
   instructions from the library, an environment set and MCP servers. Agents work in teams, delegating

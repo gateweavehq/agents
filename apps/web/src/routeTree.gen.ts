@@ -45,6 +45,7 @@ import { Route as WorkspaceSetupsIndexRouteImport } from './routes/$workspace/se
 import { Route as WorkspaceSetupsSetupIdRouteImport } from './routes/$workspace/setups.$setupId'
 import { Route as WorkspaceTeamsIndexRouteImport } from './routes/$workspace/teams.index'
 import { Route as WorkspaceTeamsTeamIdRouteImport } from './routes/$workspace/teams.$teamId'
+import { Route as WorkspaceWikiIndexRouteImport } from './routes/$workspace/wiki.index'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiGithubCallbackRouteImport } from './routes/api/github/callback'
 import { Route as ApiGithubInstallRouteImport } from './routes/api/github/install'
@@ -52,6 +53,7 @@ import { Route as ApiGithubSetupRouteImport } from './routes/api/github/setup'
 import { Route as ApiGithubWebhooksRouteImport } from './routes/api/github/webhooks'
 import { Route as ApiMcpOauthCallbackRouteImport } from './routes/api/mcp-oauth/callback'
 import { Route as ApiMcpOauthConnectRouteImport } from './routes/api/mcp-oauth/connect'
+import { Route as WorkspaceWikiRepositoryIdChar123PageChar125RouteImport } from './routes/$workspace/wiki.$repositoryId.{-$page}'
 import { Route as ApiTriggersWorkspaceIdTriggerIdRouteImport } from './routes/api/triggers/$workspaceId.$triggerId'
 import { Route as ApiGitlabWebhooksWorkspaceIdConnectionIdRouteImport } from './routes/api/gitlab/webhooks.$workspaceId.$connectionId'
 
@@ -242,6 +244,11 @@ const WorkspaceTeamsTeamIdRoute = WorkspaceTeamsTeamIdRouteImport.update({
   path: '/teams/$teamId',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const WorkspaceWikiIndexRoute = WorkspaceWikiIndexRouteImport.update({
+  id: '/wiki/',
+  path: '/wiki/',
+  getParentRoute: () => WorkspaceRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -277,6 +284,12 @@ const ApiMcpOauthConnectRoute = ApiMcpOauthConnectRouteImport.update({
   path: '/api/mcp-oauth/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkspaceWikiRepositoryIdChar123PageChar125Route =
+  WorkspaceWikiRepositoryIdChar123PageChar125RouteImport.update({
+    id: '/wiki/$repositoryId/{-$page}',
+    path: '/wiki/$repositoryId/{-$page}',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
 const ApiTriggersWorkspaceIdTriggerIdRoute =
   ApiTriggersWorkspaceIdTriggerIdRouteImport.update({
     id: '/api/triggers/$workspaceId/$triggerId',
@@ -334,6 +347,8 @@ export interface FileRoutesByFullPath {
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
+  '/$workspace/wiki/': typeof WorkspaceWikiIndexRoute
+  '/$workspace/wiki/$repositoryId/{-$page}': typeof WorkspaceWikiRepositoryIdChar123PageChar125Route
   '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
   '/api/gitlab/webhooks/$workspaceId/$connectionId': typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
@@ -378,6 +393,8 @@ export interface FileRoutesByTo {
   '/$workspace/settings': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams': typeof WorkspaceTeamsIndexRoute
+  '/$workspace/wiki': typeof WorkspaceWikiIndexRoute
+  '/$workspace/wiki/$repositoryId/{-$page}': typeof WorkspaceWikiRepositoryIdChar123PageChar125Route
   '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
   '/api/gitlab/webhooks/$workspaceId/$connectionId': typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
@@ -426,6 +443,8 @@ export interface FileRoutesById {
   '/$workspace/settings/': typeof WorkspaceSettingsIndexRoute
   '/$workspace/setups/': typeof WorkspaceSetupsIndexRoute
   '/$workspace/teams/': typeof WorkspaceTeamsIndexRoute
+  '/$workspace/wiki/': typeof WorkspaceWikiIndexRoute
+  '/$workspace/wiki/$repositoryId/{-$page}': typeof WorkspaceWikiRepositoryIdChar123PageChar125Route
   '/api/triggers/$workspaceId/$triggerId': typeof ApiTriggersWorkspaceIdTriggerIdRoute
   '/api/gitlab/webhooks/$workspaceId/$connectionId': typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
@@ -475,6 +494,8 @@ export interface FileRouteTypes {
     | '/$workspace/settings/'
     | '/$workspace/setups/'
     | '/$workspace/teams/'
+    | '/$workspace/wiki/'
+    | '/$workspace/wiki/$repositoryId/{-$page}'
     | '/api/triggers/$workspaceId/$triggerId'
     | '/api/gitlab/webhooks/$workspaceId/$connectionId'
   fileRoutesByTo: FileRoutesByTo
@@ -519,6 +540,8 @@ export interface FileRouteTypes {
     | '/$workspace/settings'
     | '/$workspace/setups'
     | '/$workspace/teams'
+    | '/$workspace/wiki'
+    | '/$workspace/wiki/$repositoryId/{-$page}'
     | '/api/triggers/$workspaceId/$triggerId'
     | '/api/gitlab/webhooks/$workspaceId/$connectionId'
   id:
@@ -566,6 +589,8 @@ export interface FileRouteTypes {
     | '/$workspace/settings/'
     | '/$workspace/setups/'
     | '/$workspace/teams/'
+    | '/$workspace/wiki/'
+    | '/$workspace/wiki/$repositoryId/{-$page}'
     | '/api/triggers/$workspaceId/$triggerId'
     | '/api/gitlab/webhooks/$workspaceId/$connectionId'
   fileRoutesById: FileRoutesById
@@ -844,6 +869,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceTeamsTeamIdRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/$workspace/wiki/': {
+      id: '/$workspace/wiki/'
+      path: '/wiki'
+      fullPath: '/$workspace/wiki/'
+      preLoaderRoute: typeof WorkspaceWikiIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -892,6 +924,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/api/mcp-oauth/connect'
       preLoaderRoute: typeof ApiMcpOauthConnectRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/$workspace/wiki/$repositoryId/{-$page}': {
+      id: '/$workspace/wiki/$repositoryId/{-$page}'
+      path: '/wiki/$repositoryId/{-$page}'
+      fullPath: '/$workspace/wiki/$repositoryId/{-$page}'
+      preLoaderRoute: typeof WorkspaceWikiRepositoryIdChar123PageChar125RouteImport
+      parentRoute: typeof WorkspaceRoute
     }
     '/api/triggers/$workspaceId/$triggerId': {
       id: '/api/triggers/$workspaceId/$triggerId'
@@ -967,6 +1006,8 @@ interface WorkspaceRouteChildren {
   WorkspaceRunsIndexRoute: typeof WorkspaceRunsIndexRoute
   WorkspaceSetupsIndexRoute: typeof WorkspaceSetupsIndexRoute
   WorkspaceTeamsIndexRoute: typeof WorkspaceTeamsIndexRoute
+  WorkspaceWikiIndexRoute: typeof WorkspaceWikiIndexRoute
+  WorkspaceWikiRepositoryIdChar123PageChar125Route: typeof WorkspaceWikiRepositoryIdChar123PageChar125Route
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
@@ -990,6 +1031,9 @@ const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceRunsIndexRoute: WorkspaceRunsIndexRoute,
   WorkspaceSetupsIndexRoute: WorkspaceSetupsIndexRoute,
   WorkspaceTeamsIndexRoute: WorkspaceTeamsIndexRoute,
+  WorkspaceWikiIndexRoute: WorkspaceWikiIndexRoute,
+  WorkspaceWikiRepositoryIdChar123PageChar125Route:
+    WorkspaceWikiRepositoryIdChar123PageChar125Route,
 }
 
 const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(
