@@ -326,8 +326,8 @@ TypeScript with no I/O, so it runs in the Worker. The scanner lists the reposito
     and `.claude/rules` files stay Claude Code's; other runtimes ignore both.
   - _Skills_ go to `.claude/skills` for Claude Code and `.agents/skills` for Codex, Gemini CLI and
     Cursor, in a folder named after the `name` in `SKILL.md`, so a library can call a skill anything.
-  - _MCP servers_ go to `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json` and
-    `.cursor/mcp.json`. A stored server is converted between formats. The registry keeps
+  - _MCP servers_ go to `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json`,
+    `.cursor/mcp.json` and `.vscode/mcp.json`. A stored server is converted between formats. The registry keeps
     `<redacted>` where a secret was, so the writer writes a reference to an environment variable
     instead (`${NAME}`, `${env:NAME}`, Codex's `env_vars` and `env_http_headers`), named after the
     `env` entry or header. A `<redacted>` anywhere else has no name to point at, so that server is
@@ -335,8 +335,9 @@ TypeScript with no I/O, so it runs in the Worker. The scanner lists the reposito
   - _Not written_ (reported as problems): `settings`, `prompt`, `script`, `env-set` and `plugin`.
 - **Applying is planned, not guessed.** `planApply` decides how those files land in a repository
   (pure, like the writers): files it owns are replaced, symlinks and non-folders in the way are
-  reported and left alone, and in the four MCP configuration files only the setup's own servers
-  are merged in, so a repository's other servers and settings survive.
+  reported and left alone, and in the five MCP configuration files only the setup's own servers
+  are merged in (under `servers` in VS Code's, `mcpServers` in the other JSON ones), so a
+  repository's other servers and settings survive.
 
 ## Scans
 
@@ -405,6 +406,14 @@ configures (`packages/registry/src/setups.ts`). Owners and admins manage them.
   files, adds a version when the files differ, and creates the asset otherwise. It then creates
   a setup pinning the result. Adding the same setup twice therefore makes no new versions. An
   owner or admin reaches it from the Setups page.
+- **A setup can ask for an address.** A self-hosted MCP server, such as Gateweave Mail's, is at
+  a different address in every install, so its asset in `setup.json` has an `askUrl`, and its
+  file holds an example. Whoever adds the setup gives the address (a dialog on the Setups page,
+  `--url <server>=<url>` in the CLI), and `withAddresses` writes it into the server's file before
+  anything else reads it. The address must pass `mcpServerUrl`, as a server written in the app
+  does. Adding the setup again with another address makes a new version of that server only,
+  which setups pinning the older one are then offered as an update: a workspace keeps one address
+  for each server name.
 
 ## Applying setups
 
@@ -1357,6 +1366,9 @@ file the pull request would.
   checkout does not look changed.
 - **`check` fails on what `apply` would write**: exit code 1 lists each file as missing or
   differing. Paths it would leave alone are warnings, not failures.
+- **Addresses come from flags.** A setup that asks for an MCP server's address (`askUrl`) takes
+  it from `--url <server>=<url>`, for `apply` and `check` alike, and stops with exit code 2,
+  naming the flag, when one is missing.
 - **One file, no dependencies.** Vite bundles the CLI, the workspace packages it uses and the
   ready-made setups into `dist/main.js`, so a version always writes the same files.
 - **Published from CI.** Pushing a `cli-v<version>` tag runs `publish-cli.yml`, which publishes

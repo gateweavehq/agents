@@ -53,7 +53,13 @@ export const MERGED_FILES: ReadonlySet<string> = new Set([
 	".cursor/mcp.json",
 	".gemini/settings.json",
 	".codex/config.toml",
+	".vscode/mcp.json",
 ]);
+
+/** VS Code keeps its servers under `servers`; the others under `mcpServers`. */
+function serversKey(path: string): string {
+	return path === ".vscode/mcp.json" ? "servers" : "mcpServers";
+}
 
 type Outcome =
 	| { kind: "change"; content: string }
@@ -131,11 +137,12 @@ function parseJson(text: string): unknown {
 }
 
 function mergeJson(file: WrittenFile, text: string): Outcome {
+	const key = serversKey(file.path);
 	let setup: Record<string, unknown>;
 	try {
 		const parsed = parseJson(file.content);
-		const servers = isPlainObject(parsed) ? parsed.mcpServers : undefined;
-		if (!isPlainObject(servers)) return PROBLEM("The setup's file has no mcpServers to merge");
+		const servers = isPlainObject(parsed) ? parsed[key] : undefined;
+		if (!isPlainObject(servers)) return PROBLEM(`The setup's file has no ${key} to merge`);
 		setup = servers;
 	} catch {
 		return PROBLEM("The setup's file is not valid JSON");
@@ -149,9 +156,9 @@ function mergeJson(file: WrittenFile, text: string): Outcome {
 	}
 	if (!isPlainObject(existing))
 		return PROBLEM("Is not a JSON object, so the servers could not be merged");
-	const current = existing.mcpServers;
+	const current = existing[key];
 	if (current !== undefined && !isPlainObject(current))
-		return PROBLEM("Has an mcpServers that is not an object, so the servers could not be merged");
+		return PROBLEM(`Has a ${key} that is not an object, so the servers could not be merged`);
 
 	const known = current ?? {};
 	if (
@@ -168,10 +175,10 @@ function mergeJson(file: WrittenFile, text: string): Outcome {
 	]);
 	for (const [name, server] of Object.entries(setup))
 		if (!Object.hasOwn(known, name)) servers.push([name, server]);
-	const merged: [string, unknown][] = Object.entries(existing).map(([key, value]) =>
-		key === "mcpServers" ? [key, Object.fromEntries(servers)] : [key, value],
+	const merged: [string, unknown][] = Object.entries(existing).map(([name, value]) =>
+		name === key ? [name, Object.fromEntries(servers)] : [name, value],
 	);
-	if (current === undefined) merged.push(["mcpServers", Object.fromEntries(servers)]);
+	if (current === undefined) merged.push([key, Object.fromEntries(servers)]);
 
 	const content = `${JSON.stringify(Object.fromEntries(merged), null, indentOf(text))}\n`;
 	return content === text ? UNCHANGED : CHANGE(content);

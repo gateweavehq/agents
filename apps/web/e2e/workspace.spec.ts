@@ -71,3 +71,30 @@ test("someone joins by an invitation", async ({ page, browser }) => {
 		await guestContext.close();
 	}
 });
+
+test("someone adds a ready-made setup that asks for its server's address", async ({ page }) => {
+	const { slug } = await startWorkspace(page);
+	await page.goto(`/${slug}/setups`);
+	await waitForHydration(page);
+	await page
+		.locator("li")
+		.filter({ has: page.getByText("Gateweave Mail", { exact: true }) })
+		.getByRole("button", { name: "Add to workspace" })
+		.click();
+
+	const dialog = page.getByRole("dialog");
+	const address = dialog.getByLabel("Your Mail's MCP address");
+	await expect(address).toHaveAttribute("placeholder", "https://mail.example.com/mcp");
+	await address.fill("http://mail.acme.dev/mcp");
+	await dialog.getByRole("button", { name: "Add to workspace" }).click();
+	await expect(dialog.getByRole("alert")).toContainText("The URL must start with https://");
+
+	await address.fill("https://mail.acme.dev/mcp");
+	await dialog.getByRole("button", { name: "Add to workspace" }).click();
+	await expect(page).toHaveURL(new RegExp(`/${slug}/setups/[^/]+$`));
+	// The preview writes the address given, and the key only as the variable that holds it.
+	const preview = page.locator("pre").filter({ hasText: '"gateweave-mail"' }).first();
+	await expect(preview).toContainText('"url": "https://mail.acme.dev/mcp"');
+	await expect(preview).toContainText("GATEWEAVE_MAIL_KEY");
+	await expect(page.getByText("https://mail.example.com/mcp")).toHaveCount(0);
+});

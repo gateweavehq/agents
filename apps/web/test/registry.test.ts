@@ -350,7 +350,15 @@ it("lists the ready-made setups on the Setups page, with a button to add each", 
 
 	const html = await page(ada.cookie);
 	expect(html).toContain("Ready-made");
-	for (const name of ["Baseline", "Review", "code-review", "github", "security-review"]) {
+	for (const name of [
+		"Baseline",
+		"Review",
+		"code-review",
+		"github",
+		"security-review",
+		"Gateweave Mail",
+		"gateweave-mail",
+	]) {
 		expect(html).toContain(name);
 	}
 	expect(html).toContain("Add to workspace");

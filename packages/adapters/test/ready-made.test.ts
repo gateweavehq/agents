@@ -8,7 +8,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
-import { detect, readSetupFolder, type SetupFolder, wantsFile, writeAssets } from "../src";
+import {
+	detect,
+	readSetupFolder,
+	type SetupFolder,
+	wantsFile,
+	withAddresses,
+	writeAssets,
+} from "../src";
 import { repo } from "./support";
 
 const ROOT = fileURLToPath(new URL("../../../setups", import.meta.url));
@@ -48,6 +55,12 @@ describe("ready-made setups", () => {
 		describe(slug, () => {
 			const { files, setup } = load(slug);
 			const written = writeAssets(setup.assets, setup.runtimes);
+
+			it("takes an address like its example for each server it asks one for", () => {
+				const examples = setup.addresses.map(({ server, example }) => [server, example]);
+				const answered = withAddresses(setup, Object.fromEntries(examples));
+				expect(answered.ok ? [] : answered.problems).toEqual([]);
+			});
 
 			it("has no dotfiles", () => {
 				const dotted = [...files.keys()].filter((path) =>

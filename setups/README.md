@@ -16,18 +16,32 @@ setups/<slug>/
 `setup.json` is the `setupManifest` schema in `packages/model/src/inputs.ts`:
 
 - `name` and `description`: what the Setups page shows.
-- `runtimes`: the coding agents it configures, from `claude-code`, `codex`, `gemini-cli` and
-  `cursor`.
+- `runtimes`: the coding agents it configures, from `claude-code`, `codex`, `gemini-cli`,
+  `cursor`, `copilot` and `devin`.
 - `assets`: each has a `kind` (`instructions`, `skill` or `mcp-server` are the kinds that can be
   written), a `name`, an optional `description`, and a `path` to a file or folder relative to
   `setup.json`. The name of a library asset is unique per kind, and an asset keeps its name when
   setups share it, so give instructions a name of their own (for example "Review rules") rather
   than `AGENTS.md`, or two setups would become versions of one asset.
+- `askUrl` (optional, MCP servers only): for a server that is at a different address in every
+  install, such as a self-hosted one, what to ask for. Its file is plain JSON with an example
+  `url`. Whoever adds the setup gives their address, in a dialog on the Setups page or with
+  `--url <server>=<url>` in the CLI, and it replaces the example.
 
 An MCP server is stored the way the registry stores a scanned one: values under `env` and
 `headers` are `<redacted>`, and the files a setup writes then refer to an environment variable
 for each (a header `Authorization` becomes the variable `AUTHORIZATION`, which holds the whole
-header value, such as `Bearer <token>`). Never put a real token in a folder.
+header value, such as `Bearer <token>`). A header can name its own variable instead, as
+`"Authorization": "Bearer ${GATEWEAVE_MAIL_KEY}"`, which keeps two servers from sharing one
+`AUTHORIZATION`. Never put a real token in a folder.
+
+A setup owns the instruction files it writes (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`), so one
+with instructions replaces a repository's. A setup meant to add to what a repository has, as
+`mail` does, has none: it writes its skills, and merges its servers into the MCP configuration.
+
+The `mail` setup's skill is Gateweave Mail's own (`plugins/gateweave-mail/skills/mail/SKILL.md` in
+[gateweavehq/mail](https://github.com/gateweavehq/mail)), named `gateweave-mail` here. Mail's tests
+hold that skill to its tools, so when it changes there, copy it here again.
 
 ## Rules the tests enforce
 
@@ -40,6 +54,7 @@ adding it. For each folder:
 - It has no dotfiles.
 - `detect` finds each asset again in what it writes, for each runtime.
 - The MCP configuration it writes holds no literal token.
+- Every address it asks for (`askUrl`) can be given, as its example is.
 
 `apps/web/src/server/ready-made.test.ts` checks that the app can load every folder.
 

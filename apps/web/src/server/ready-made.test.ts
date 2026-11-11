@@ -4,7 +4,7 @@ import { importInputOf, readyMadeResults, readyMadeSetups } from "./ready-made";
 it("bundles the setup folders, and every one loads", () => {
 	const results = readyMadeResults();
 	expect(results.map((result) => result.slug)).toEqual(
-		expect.arrayContaining(["baseline", "review"]),
+		expect.arrayContaining(["baseline", "mail", "review"]),
 	);
 	for (const result of results) {
 		expect(result.ok, result.ok ? "" : `${result.slug}: ${result.problems.join("; ")}`).toBe(true);

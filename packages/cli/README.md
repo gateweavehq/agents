@@ -5,7 +5,7 @@ setup's files into a repository the way the app's pull request would, and checks
 repository still holds them.
 
 A setup is a folder with a `setup.json` and the files of its assets: instructions, skills and
-MCP servers, for Claude Code, Codex, Gemini CLI and Cursor. The CLI also carries the ready-made
+MCP servers, for Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot and Devin. The CLI also carries the ready-made
 setups from the repository's `setups/` folder, so a name is enough.
 
 ## Usage
@@ -20,10 +20,20 @@ gateweave-agents check <setup>           # exit 1 when the files no longer match
 `<setup>` is a folder (`./agents-setup`) or a ready-made setup's name. `--dir <path>` points at
 a working tree other than the current folder.
 
+Some setups ask for the address of an MCP server that every install runs at its own address, such
+as Gateweave Mail's. Give it with `--url <server>=<url>`, to `apply` and to `check` alike:
+
+```sh
+gateweave-agents apply mail --url gateweave-mail=https://mail.example.com/mcp
+```
+
+The address goes into the repository's MCP settings. The agent's key never does: they read it
+from the `GATEWEAVE_MAIL_KEY` environment variable.
+
 What it writes and what it leaves alone are decided by the same code as the app's pull requests:
 
 - The setup owns the files it writes, except the MCP configuration files (`.mcp.json`,
-  `.cursor/mcp.json`, `.gemini/settings.json`, `.codex/config.toml`). Only its own servers are
+  `.cursor/mcp.json`, `.gemini/settings.json`, `.codex/config.toml`, `.vscode/mcp.json`). Only its own servers are
   merged into those, and every other server and setting stays as it was.
 - A symlink, or a file or folder in the way, is never written through or replaced. The CLI says
   which paths it left alone and why, without failing, since a repository may keep `CLAUDE.md` as
@@ -62,7 +72,8 @@ not run (a wrong argument, or a setup that cannot be read).
 Each asset's `path` is a file or a folder next to `setup.json`. An MCP server is one server's
 JSON (`{ "type": "http", "url": "…" }`, or a `command` with `args`). In its `env` and `headers`,
 a value written as `${NAME}` becomes each agent's own way of reading that environment variable,
-so secrets never go in the files.
+so secrets never go in the files. An MCP server whose address differs from one install to the
+next has an `askUrl` in `setup.json`, saying what to ask for, and an example `url` in its file.
 
 ## License
 

@@ -1,0 +1,20 @@
+{
+	"name": "Gateweave Mail",
+	"description": "Adds Gateweave Mail's skill and MCP server, for sign-up codes, waiting for mail, reading and sending. The key stays in GATEWEAVE_MAIL_KEY, and the repository's instructions stay as they are.",
+	"runtimes": ["claude-code", "codex", "gemini-cli", "cursor", "copilot"],
+	"assets": [
+		{
+			"kind": "skill",
+			"name": "gateweave-mail",
+			"description": "Use Gateweave Mail's tools well: codes, waits, sending, addresses and webhooks.",
+			"path": "skills/gateweave-mail"
+		},
+		{
+			"kind": "mcp-server",
+			"name": "gateweave-mail",
+			"description": "Your Gateweave Mail's MCP server, reached with an agent's key from GATEWEAVE_MAIL_KEY.",
+			"path": "servers/gateweave-mail.json",
+			"askUrl": "Your Mail's MCP address, as Settings → Agents in Mail shows it"
+		}
+	]
+}
