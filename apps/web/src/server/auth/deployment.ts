@@ -48,6 +48,30 @@ export async function mayMakeAccount(
 	return row?.allowed === 1;
 }
 
+/** How long a pass for a provider's account lasts: the time it takes to make the row. */
+const PASS_SECONDS = 60;
+
+/**
+ * Where the owner trusts the provider, lets the account being made from it past the trigger
+ * `user_needs_a_way_in`, for a minute. Expired passes go whenever one is written.
+ */
+export async function grantProviderPass(db: Database, email: string): Promise<void> {
+	const address = email.toLowerCase();
+	const now = Date.now();
+	await db.run(sql`DELETE FROM sign_up_pass WHERE expires_at <= ${now}`);
+	await db.run(sql`
+		INSERT INTO sign_up_pass (email, expires_at)
+		SELECT ${address}, ${now + PASS_SECONDS * 1000}
+		WHERE COALESCE((SELECT trust_provider FROM deployment WHERE id = 1), 0) = 1
+		ON CONFLICT (email) DO UPDATE SET expires_at = excluded.expires_at
+	`);
+}
+
+/** The account is made, so its pass has done its work. */
+export async function spendPass(db: Database, email: string): Promise<void> {
+	await db.run(sql`DELETE FROM sign_up_pass WHERE email = ${email.toLowerCase()}`);
+}
+
 export async function signUpState(db: Database): Promise<SignUpState> {
 	const row = await db.get<{ signUp: string | null; hasAccounts: number }>(sql`
 		SELECT (SELECT sign_up FROM deployment WHERE id = 1) AS signUp,

@@ -12,7 +12,13 @@ import type { Mailer } from "../email/mailer";
 import { invitationEmail, passwordResetEmail, verificationEmail } from "../email/templates";
 import { tellOfChangedPassword, validName, validRename } from "./account-changes";
 import { deleteAccount } from "./delete-account";
-import { deploymentPlugin, mayMakeAccount, SIGN_UP_CLOSED } from "./deployment";
+import {
+	deploymentPlugin,
+	grantProviderPass,
+	mayMakeAccount,
+	SIGN_UP_CLOSED,
+	spendPass,
+} from "./deployment";
 import {
 	type OidcProvider,
 	oidcDatabaseHooks,
@@ -128,10 +134,13 @@ export function createAuth(config: AuthConfig) {
 						if (!(await mayMakeAccount(config.db, user.email, { viaProvider }))) {
 							throw APIError.from("FORBIDDEN", SIGN_UP_CLOSED);
 						}
+						// The trigger cannot tell where an account comes from, so with trust on it wants this.
+						if (viaProvider) await grantProviderPass(config.db, user.email);
 						// A picture is fetched by the browser of everyone in someone's workspaces, so whoever
 						// chooses its address learns who is looking and from where. The form sends none.
 						return context?.path === "/sign-up/email" ? { data: { image: null } } : undefined;
 					},
+					after: async (user) => spendPass(config.db, user.email),
 				},
 			},
 			account: oidcHooks.account,

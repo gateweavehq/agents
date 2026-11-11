@@ -573,7 +573,7 @@ describe("a server that has an owner", () => {
 			);
 		});
 
-		it("lets the owner's account go once sign-up is open, and the server has no owner then", async () => {
+		it("lets the owner's account go once sign-up is open, and hands the server to the oldest account left", async () => {
 			await setSignUp(agents, owner, "open");
 			// Only the owner of workspaces has to hand them on first, which is another rule.
 			await agents.db.prepare("DELETE FROM organization").run();
@@ -585,8 +585,66 @@ describe("a server that has an owner", () => {
 			const row = await agents.db
 				.prepare("SELECT owner_id FROM deployment WHERE id = 1")
 				.first<{ owner_id: string | null }>();
-			expect(row?.owner_id).toBeNull();
+			expect(row?.owner_id).toBe(await userId(agents, "anyone@anywhere.test"));
 		});
+	});
+});
+
+describe("a server whose owner goes", () => {
+	let agents: Agents;
+
+	beforeAll(async () => {
+		agents = await startAgents(origin);
+	});
+
+	afterAll(async () => {
+		await agents?.dispose();
+	});
+
+	async function ownerOf() {
+		const row = await agents.db
+			.prepare("SELECT owner_id FROM deployment WHERE id = 1")
+			.first<{ owner_id: string | null }>();
+		return row?.owner_id;
+	}
+
+	async function leave(cookie: string) {
+		const gone = await api(agents, "/account/delete", { cookie, body: { password: PASSWORD } });
+		expect(gone.status).toBe(200);
+	}
+
+	it("passes to the earliest account left, then to nobody, and the next account takes it", async () => {
+		const first = await signedUp(agents, "first@leaving.test");
+		await signedUp(agents, "second@leaving.test");
+		const third = await signedUp(agents, "third@leaving.test");
+		const second = await userId(agents, "second@leaving.test");
+		expect(await ownerOf()).toBe(await userId(agents, "first@leaving.test"));
+
+		await leave(first);
+		expect(await ownerOf()).toBe(second);
+
+		// Someone who is not the owner leaving changes nothing.
+		await leave(third);
+		expect(await ownerOf()).toBe(second);
+
+		const lastCookie = cookieOf(
+			await api(agents, "/sign-in/email", {
+				body: { email: "second@leaving.test", password: PASSWORD },
+			}),
+		);
+		await leave(lastCookie);
+		expect(await ownerOf()).toBeNull();
+
+		await signedUp(agents, "next@leaving.test");
+		expect(await ownerOf()).toBe(await userId(agents, "next@leaving.test"));
+	});
+
+	it("is refused while sign-up is closed, whatever asks", async () => {
+		await agents.db.prepare("UPDATE deployment SET sign_up = 'closed'").run();
+		await expect(
+			agents.db.prepare("DELETE FROM user WHERE email = 'next@leaving.test'").run(),
+		).rejects.toThrow(/a server must keep its owner/);
+		expect(await ownerOf()).toBe(await userId(agents, "next@leaving.test"));
 	});
 });
 
@@ -830,11 +888,58 @@ describe("signing in through GitHub and a provider", () => {
 		await expectClosed(await signUp(agents, "password@provider.test"));
 	});
 
-	it("holds what trust opens to verified addresses in the database", async () => {
-		await expect(insertUser(agents, "unverified@raw.test", false)).rejects.toThrow(
+	it("keeps the database exact with trust on: only a pass lets an address in", async () => {
+		const pass = (email: string, expiresAt: number) =>
+			agents.db
+				.prepare("INSERT OR REPLACE INTO sign_up_pass (email, expires_at) VALUES (?, ?)")
+				.bind(email, expiresAt)
+				.run();
+		// No pass, verified or not, as a path that skipped the hook would meet it.
+		for (const verified of [false, true]) {
+			await expect(insertUser(agents, `nopass${verified}@raw.test`, verified)).rejects.toThrow(
+				/sign-up is closed here/,
+			);
+		}
+		// A pass for another address, or one that has run out, is no pass.
+		await pass("other@raw.test", Date.now() + 60_000);
+		await expect(insertUser(agents, "mine@raw.test", true)).rejects.toThrow(
 			/sign-up is closed here/,
 		);
-		await insertUser(agents, "verified@raw.test", true);
+		await pass("mine@raw.test", Date.now() - 1000);
+		await expect(insertUser(agents, "mine@raw.test", true)).rejects.toThrow(
+			/sign-up is closed here/,
+		);
+		await pass("mine@raw.test", Date.now() + 60_000);
+		await insertUser(agents, "Mine@Raw.test", true);
+	});
+
+	it("writes a pass only for the provider, and takes it back once the account is made", async () => {
+		await setTrust(true);
+		await agents.db.prepare("DELETE FROM sign_up_pass").run();
+		await agents.db
+			.prepare("INSERT INTO sign_up_pass (email, expires_at) VALUES ('old@pass.test', 1)")
+			.run();
+		await throughGitHub("never-passed@github.test");
+		await signUp(agents, "never-passed2@github.test");
+		expect((await agents.db.prepare("SELECT email FROM sign_up_pass").all()).results).toHaveLength(
+			1,
+		);
+		const { location } = await throughProvider("passed@provider.test");
+		expect(location.searchParams.get("error")).toBeNull();
+		// The expired pass went when this one was written, and this one when its account was made.
+		expect((await agents.db.prepare("SELECT email FROM sign_up_pass").all()).results).toEqual([]);
+		await setTrust(false);
+	});
+
+	it("refuses GitHub and a password with trust on, in the hook and in the database", async () => {
+		await setTrust(true);
+		const github = await throughGitHub("hook-and-trigger@github.test");
+		expect(github.location.searchParams.get("error")).toBe("SIGN_UP_CLOSED");
+		await expectClosed(await signUp(agents, "hook-and-trigger@password.test"));
+		await expect(insertUser(agents, "hook-and-trigger@github.test", true)).rejects.toThrow(
+			/sign-up is closed here/,
+		);
+		await setTrust(false);
 	});
 
 	it("stops trusting the provider when the owner says so", async () => {

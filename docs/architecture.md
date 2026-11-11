@@ -122,11 +122,13 @@ hold it. Track and Agents have the same shape, and ID's is the model.
   whether or not it has one.
 - **The database refuses the rest.** The trigger `user_needs_a_way_in` has the same rule for a path
   that forgets to ask, with a missing `deployment` row counting as closed. One part of the rule
-  cannot be in it: whether an account comes from the provider is known only when its sign-in is
-  linked, which is after the user row. So where the owner trusts the provider, the trigger lets
-  through an address that was verified, which a password sign-up never is, and the hook narrows that
-  to the provider (`signsInThroughProvider`, by the route Better Auth ran, `/callback/:id` with the
-  provider's id). The trust is the hook's, and the database holds the rest.
+  cannot be read from the user row: whether an account comes from the provider is known only when
+  its sign-in is linked, which is after it. So the hook, which knows the route Better Auth ran
+  (`signsInThroughProvider`: `/callback/:id` with the provider's id), writes a pass for the address
+  in `sign_up_pass`, good for a minute, and only where the owner trusts the provider. With trust on
+  the trigger lets an insert through only while an unexpired pass exists for `lower(new.email)`.
+  `user.create.after` deletes it, and writing one deletes the expired. A path that skips the hook
+  has no pass, so trust opens nothing for it.
 - **The refusal says one thing for every address:** "This server takes new accounts by invitation.
   Ask whoever runs it to invite you." (`SIGN_UP_CLOSED`). For GitHub and the provider it comes back
   to `/login?error=SIGN_UP_CLOSED`, which the page words itself. With `SIGN_UP_REQUEST_URL` set to an
@@ -138,8 +140,11 @@ hold it. Track and Agents have the same shape, and ID's is the model.
   the domain, exists yet.
 - **The owner's account stays while sign-up is closed.** Without it a closed server would have nobody
   who can open it. The account page refuses with words, and `deployment_keeps_its_owner` holds it in
-  the database. On an open server the account may go, which leaves the server without an owner until
-  someone sets one in SQL (`UPDATE deployment SET owner_id = '<user id>'`).
+  the database. On an open server the account may go, and ownership passes to the earliest account
+  left (`created_at`, then `id`) in the trigger `deployment_hands_over_its_owner`, which runs before
+  the row goes so that the foreign key finds nothing to empty. Every account here is a person, so
+  none is skipped. If none is left the owner is empty, and the next account becomes it. A server is
+  never left without an owner while it has accounts.
 - **Not here:** server invitations, and a rule that only the owner makes workspaces while closed. ID
   has both, because its apps trust whoever has an account. Here a workspace's admin may still invite
   any address, and that invitation is a way in.

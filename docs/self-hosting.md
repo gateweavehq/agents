@@ -264,9 +264,9 @@ Set `SIGN_UP_REQUEST_URL` to an https address, such as a waitlist page, and the 
 "Ask for access" linking to it while sign-up is by invitation.
 
 While sign-up is by invitation, the account that runs the server cannot be deleted, because nobody
-else could open it again. Open sign-up first, which lets it go. If that account is deleted on an
-open server, nobody runs it, and you set an owner again in the database:
-`pnpm wrangler d1 execute DB --remote --command "UPDATE deployment SET owner_id = '<user id>'"`.
+else could open it again. Open sign-up first, which lets it go. When the owner's account is deleted
+on an open server, ownership passes to the oldest account that is left, who then sees **This
+server**. If none is left, the next account to sign up becomes the owner.
 
 The list is personal data: it holds email addresses of people who may not have an account, and the
 server keeps them until you take them off. Deleting an account does not take its address off the

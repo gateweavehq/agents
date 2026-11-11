@@ -42,3 +42,13 @@ export const signUpAllow = sqliteTable(
 		check("sign_up_allow_note", sql`${table.note} IS NULL OR length(${table.note}) <= 200`),
 	],
 );
+
+/**
+ * A minute's leave to make one account, which the sign-in hook writes once it knows the account comes
+ * from the provider the owner trusts. The trigger on `user` cannot tell where an account comes from,
+ * so with trust on it lets in an address only while one of these is there.
+ */
+export const signUpPass = sqliteTable("sign_up_pass", {
+	email: text("email").primaryKey(),
+	expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+});
