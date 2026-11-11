@@ -8,6 +8,41 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.19.0] - 2026-11-12
+
+A wiki of each repository, written with the workspace's own model key, and an MCP endpoint that AI
+agents sign in to with OAuth to read it, with the tools DeepWiki has. This release has one D1
+migration and one Durable Object migration.
+
+### Added
+
+- **Repository wikis.** An owner or admin has a wiki written for any repository the workspace
+  connects, private ones included, on the new **Wiki** page or from a repository's page. They choose
+  a model from a provider the workspace has a key for. Every member reads it: numbered pages with
+  the source files each was written from, citations linked to those lines at the commit, and the
+  model, tokens and estimated cost. `.devin/wiki.json` steers it as it steers DeepWiki. Writing again
+  keeps the current wiki readable until the new one is done, and a wiki that can't be written says
+  why. ([#210](https://github.com/gateweavehq/agents/pull/210))
+- **An MCP endpoint for AI agents.** `/mcp` lets an AI agent work with Agents as the person who
+  connected it. It signs in with OAuth, and the person approves it on a consent page. Its tools
+  only read: `list_workspaces`, and `read_wiki_structure` and `read_wiki_contents`, which keep
+  DeepWiki's names, arguments and answers. An agent set up for DeepWiki's MCP server reads a
+  workspace's wikis unchanged. It never takes a browser's session cookie.
+  ([#208](https://github.com/gateweavehq/agents/pull/208),
+  [#210](https://github.com/gateweavehq/agents/pull/210))
+
+### If you run your own
+
+- **Deploying creates the wiki Workflow**, `gateweave-agents-wiki`, and applies D1 migration `0010`
+  for the OAuth server. The workspace registries add their wiki tables when each one wakes.
+- **`/mcp` needs `BETTER_AUTH_URL`.** Tokens are bound to one address, so without it `/mcp` answers
+  404 and nothing else changes.
+- **The workspace slugs `mcp` and `oauth` are now reserved**, so no new workspace takes them. The
+  new routes would hide pages of a workspace that already has one, so check before you update:
+  `SELECT slug FROM organization WHERE slug IN ('mcp', 'oauth')` on the D1 database.
+- **Model usage stays the workspace's.** A wiki costs the workspace one model request to plan it and
+  one per page, with its own key.
+
 ## [0.18.0] - 2026-11-11
 
 The account that runs a server can now close sign-up and keep a list of who may make an account.
