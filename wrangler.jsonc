@@ -88,7 +88,9 @@
 				"SANDBOX_DAILY_MINUTES": "120",
 				"SANDBOX_MONTHLY_BUDGET": "100",
 				"WORKERS_AI_WORKSPACES": "sandbox",
-				"WORKERS_AI_DAILY_DOLLARS": "20"
+				"WORKERS_AI_DAILY_DOLLARS": "20",
+				// While sign-up is by invitation, "Ask for access" leads to Gateweave Cloud's waitlist.
+				"SIGN_UP_REQUEST_URL": "https://gateweave.com/waitlist"
 			},
 			// One usage event per run, for charting usage across workspaces (docs/self-hosting.md).
 			"analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "gateweave_agents_usage" }],

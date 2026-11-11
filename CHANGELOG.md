@@ -8,6 +8,36 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.18.0] - 2026-11-11
+
+The account that runs a server can now close sign-up and keep a list of who may make an account.
+This release has four migrations, and nothing changes on a server until its owner changes it.
+
+### Added
+
+- **Sign-up by invitation, with a list.** The account that runs the server sees a section, **This
+  server**, on its account page. Choosing **By invitation** there lets in only addresses on the
+  owner's list (`ada@example.com`) or at a domain on it (`@example.com`, which covers that domain and
+  not its subdomains), addresses with a pending invitation to a workspace, and, where the owner turns
+  on **Trust**, anyone who signs in through the server's OpenID Connect provider. GitHub is never
+  trusted that way. Everyone else is told the same words, however they come and whether or not the
+  address has an account. The list holds up to 5,000 entries with notes, shows whether an account
+  exists yet for each, and changing anything needs a sign-in from the last day. A trigger in D1 holds
+  the same rule for any path that makes an account. ([#205](https://github.com/gateweavehq/agents/pull/205))
+- **Ask for access.** If `SIGN_UP_REQUEST_URL` is set to an https address, the sign-in pages link to
+  it as "Ask for access" while sign-up is by invitation. Gateweave Cloud points it at its waitlist.
+  ([#205](https://github.com/gateweavehq/agents/pull/205))
+- **A server always has an owner.** While sign-up is by invitation, the owner's account can't be
+  deleted, since nobody else could open sign-up again. On an open server, deleting it passes
+  ownership to the oldest account left. ([#205](https://github.com/gateweavehq/agents/pull/205))
+
+### If you run your own
+
+- **Nothing changes unless you change it.** An upgrade leaves a server with accounts open, with its
+  oldest account as the owner. Deploying applies migrations `0006` to `0009`.
+- **The list holds addresses of people who may not have an account yet.** The self-hosting guide says
+  so, for your own privacy notice. ([#205](https://github.com/gateweavehq/agents/pull/205))
+
 ## [0.17.0] - 2026-11-11
 
 A ready-made setup for Gateweave Mail, and applying a setup now merges into a repository's `.vscode/mcp.json` instead of
