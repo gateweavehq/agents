@@ -34,9 +34,10 @@ Workers Builds, so every push to its main branch deploys. On the form:
 When the build finishes, add `SECRETS_KEY` under Workers & Pages › your Worker › Settings ›
 Variables and Secrets, as a secret: a long random string, such as another
 `openssl rand -base64 32`. Workspaces encrypt their model keys and secret values with it, so keep
-a copy. Then open the Worker's address, create an account and then a workspace. Anyone who can
-reach the address can sign up and create workspaces of their own; a workspace is only visible to
-its members.
+a copy. Then open the Worker's address, create an account and then a workspace. The first account
+runs the server. Until it changes that, anyone who can reach the address can sign up and create
+workspaces of their own, and a workspace is only visible to its members. See
+[Who may sign up](#who-may-sign-up) to close that.
 
 **Preview builds.** The button turns them on: a push to any other branch builds a Preview with its
 own URL. A Preview gets none of the Worker's bindings or secrets, so its address only says that it
@@ -86,8 +87,10 @@ openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY
 
 Keep it. If it changes, workspaces have to add their keys and secret values again.
 
-Open the Worker's address, create an account and then a workspace. Anyone who can reach the
-address can sign up and create workspaces of their own. A workspace is only visible to its members.
+Open the Worker's address, create an account and then a workspace. The first account runs the
+server. Until it changes that, anyone who can reach the address can sign up and create workspaces
+of their own, and a workspace is only visible to its members. See
+[Who may sign up](#who-may-sign-up) to close that.
 
 ## Where the database lives
 
@@ -137,6 +140,7 @@ after updating.
 | `LEGAL_NOTICE_URL`         | The address of your legal notice. See [below](#your-legal-pages).                                                                                                  |
 | `PRIVACY_POLICY_URL`       | The address of your privacy policy.                                                                                                                                |
 | `TERMS_URL`                | The address of your terms.                                                                                                                                         |
+| `SIGN_UP_REQUEST_URL`      | Where "Ask for access" leads while sign-up is by invitation: an https address. See [below](#who-may-sign-up).                                                      |
 | `AI_GATEWAY_URL`           | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                     |
 | `AI_GATEWAY_TOKEN`         | The gateway's token, when it is authenticated.                                                                                                                     |
 | `WORKERS_AI_TOKEN`         | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.                                                         |
@@ -231,6 +235,46 @@ each other at all: Cloudflare answers with error 1042, and the button says it co
 provider. If they have to stay on `workers.dev`, add `global_fetch_strictly_public` to
 `compatibility_flags` in each one's `wrangler.jsonc`.
 
+### Who may sign up
+
+A server is open when you deploy it: anyone who can reach the address may make an account. The first
+account runs the server, and its account page (`/settings/account`) has a section, **This server**,
+that only that account sees. Choose **By invitation** there, and from then on only these may make an
+account:
+
+- the first account of a server that has none;
+- an address on the list below it, or at a domain on it;
+- an address with a pending invitation to a workspace, from any workspace's admin as before;
+- where you turn on **Trust** your provider (shown when a
+  [provider](#sign-in-through-an-openid-connect-provider) is set up), anyone who signs in through
+  it, since it keeps its own list. GitHub is never trusted that way.
+
+People who already have an account sign in as before. Everyone else is told "This server takes new
+accounts by invitation. Ask whoever runs it to invite you.", whichever way they come (a password,
+GitHub or the provider) and whether or not the address has an account.
+
+The list takes an address (`ada@example.com`) or a domain with an `@` in front (`@example.com`). A
+domain covers addresses at exactly that domain and not its subdomains, so `@example.com` does not
+cover `ada@mail.example.com`. An entry may have a note of your own, up to 200 characters. The list
+holds up to 5,000 entries, each shown with when it was added and whether an account with that
+address (or at that domain) exists yet. Taking an entry off stops letting more people in with it; an
+account it made stays. Changing anything needs a sign-in from the last day.
+
+Set `SIGN_UP_REQUEST_URL` to an https address, such as a waitlist page, and the sign-in pages show
+"Ask for access" linking to it while sign-up is by invitation.
+
+While sign-up is by invitation, the account that runs the server cannot be deleted, because nobody
+else could open it again. Open sign-up first, which lets it go. If that account is deleted on an
+open server, nobody runs it, and you set an owner again in the database:
+`pnpm wrangler d1 execute DB --remote --command "UPDATE deployment SET owner_id = '<user id>'"`.
+
+The list is personal data: it holds email addresses of people who may not have an account, and the
+server keeps them until you take them off. Deleting an account does not take its address off the
+list. Say so in your privacy notice if you publish one, and remove an address when someone asks.
+
+An upgrade changes nothing for a server that has accounts: it stays open, with its oldest account as
+the owner.
+
 ### Sandboxes
 
 A sandbox is a Linux machine for each conversation with an agent that has one. The agent runs
@@ -313,7 +357,8 @@ workspaces someone left before v0.15, which you would have to clear by hand if t
 Cloudflare's point-in-time recovery keeps.
 
 An account that is the only owner of a workspace is refused until someone else owns it or it is
-deleted. If you restore D1 or a workspace's registry to a time before a deletion, the person comes
+deleted. So is the account that runs the server while [sign-up is by invitation](#who-may-sign-up),
+and an address on the owner's list stays there, since the list is the owner's. If you restore D1 or a workspace's registry to a time before a deletion, the person comes
 back.
 
 ## Updating

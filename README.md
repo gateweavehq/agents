@@ -89,7 +89,8 @@ pnpm dev:setup   # creates .dev.vars with a random secret, migrates the local da
 pnpm dev         # http://localhost:4720
 ```
 
-Sign up with any email and password, then create a workspace. To enable "Sign in with GitHub",
+Sign up with any email and password, then create a workspace. The first account runs the server,
+and can close sign-up to people it has not let in (account page > This server). To enable "Sign in with GitHub",
 uncomment and fill in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.dev.vars`. To connect
 workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes. GitLab
 needs nothing on the server: an owner or admin connects it in Settings > GitLab with an access

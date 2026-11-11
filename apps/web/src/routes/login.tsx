@@ -157,6 +157,23 @@ function SignInForm() {
 					</>
 				)}
 
+				{options.signUpClosed && (
+					<p className="text-center text-sm text-muted-foreground">
+						{mode === "sign-up"
+							? "This server takes new accounts by invitation. Use the address you were invited with. "
+							: "This server takes new accounts by invitation. "}
+						{options.requestAccessUrl && (
+							<a
+								href={options.requestAccessUrl}
+								rel="noopener"
+								className="font-medium text-foreground underline-offset-4 hover:underline"
+							>
+								Ask for access
+							</a>
+						)}
+					</p>
+				)}
+
 				<form onSubmit={onSubmit} className="space-y-4">
 					{mode === "sign-up" && (
 						<div className="space-y-2">

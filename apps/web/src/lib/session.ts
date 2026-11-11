@@ -17,9 +17,13 @@ export const getSession = createServerFn({ method: "GET" }).handler(async () => 
 	return withoutToken(await getAuth().api.getSession({ headers: getRequestHeaders() }));
 });
 
-/** For the account page: who this is, and whether deleting them needs a password. */
+/**
+ * For the account page: who this is, whether deleting them needs a password, and whether they run
+ * the server, which is what shows them its settings.
+ */
 export const getAccount = createServerFn({ method: "GET" }).handler(async () => {
-	const { getAuth } = await import("#/server/auth");
+	const { getAuth, db, oidcProviderName } = await import("#/server/auth");
+	const { ownsServer } = await import("#/server/auth/deployment");
 	const { legalLinks } = await import("#/server/legal");
 	const auth = getAuth();
 	const legal = legalLinks();
@@ -31,17 +35,29 @@ export const getAccount = createServerFn({ method: "GET" }).handler(async () => 
 		({ providerId, password }) => providerId === "credential" && Boolean(password),
 	);
 	const { name, email } = found.user;
-	return { account: { name, email, hasPassword }, legal };
+	const ownsThisServer = await ownsServer(db, found.user.id);
+	return {
+		account: { name, email, hasPassword, ownsServer: ownsThisServer },
+		legal,
+		provider: ownsThisServer ? oidcProviderName : null,
+	};
 });
 
 export const getAuthOptions = createServerFn({ method: "GET" }).handler(async () => {
-	const { emailEnabled, githubEnabled, oidcProviderName } = await import("#/server/auth");
+	const { db, emailEnabled, githubEnabled, oidcProviderName } = await import("#/server/auth");
+	const { signUpState } = await import("#/server/auth/deployment");
 	const { legalLinks } = await import("#/server/legal");
+	const { signUpRequestUrl } = await import("#/server/sign-up");
+	const closed = (await signUpState(db)) === "by-invitation";
 	return {
 		github: githubEnabled,
 		oidc: oidcProviderName,
 		email: emailEnabled,
 		legal: legalLinks(),
+		/** Whether new accounts are by invitation, so the page can say so. */
+		signUpClosed: closed,
+		/** Where to ask for an invitation, if the server says. */
+		requestAccessUrl: closed ? (signUpRequestUrl() ?? null) : null,
 	};
 });
 
