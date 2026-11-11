@@ -18,6 +18,12 @@ export const WIKI_MAX_NOTE_LENGTH = 10_000;
 /** Files a writer reads for one page, chosen when the wiki is planned. */
 export const WIKI_FILES_PER_PAGE = 12;
 
+/** How many levels pages nest, and so how many parts a page number has at most: 1.2.1.3.2. */
+export const WIKI_MAX_DEPTH = 5;
+
+/** A page number, such as 2.1: at most 30 pages, so two digits a part. */
+export const WIKI_PAGE_NUMBER = /^\d{1,2}(\.\d{1,2}){0,4}$/;
+
 /** The longest page kept. A model that writes more is cut off, and the page says so. */
 export const WIKI_MAX_PAGE_LENGTH = 60_000;
 
@@ -124,7 +130,7 @@ export interface NumberedWikiPage<T> {
 /**
  * The pages in reading order, numbered as DeepWiki numbers them: top-level pages 1, 2, 3 in their
  * order, and each page's children after it, 2.1, 2.2. A parent that is not a page, or that would
- * make a cycle, counts as none.
+ * make a cycle, counts as none, and pages nest at most `WIKI_MAX_DEPTH` levels.
  */
 export function numberWikiPages<T extends { title: string; parent: string | null }>(
 	pages: readonly T[],
@@ -135,12 +141,19 @@ export function numberWikiPages<T extends { title: string; parent: string | null
 		if (parent === null || !byTitle.has(parent)) return null;
 		// Parents that lead back to the page would hide them all: break the cycle here.
 		const seen = new Set([page.title]);
+		const ancestors: string[] = [];
 		let at: string | null = parent;
 		while (at !== null) {
 			if (seen.has(at)) return null;
 			seen.add(at);
+			ancestors.push(at);
 			const up: string | null = byTitle.get(at)?.parent ?? null;
 			at = up !== null && byTitle.has(up) ? up : null;
+		}
+		// A page deeper than the levels a page number has goes under its ancestor on the last level
+		// but one, so that every page can be opened.
+		if (ancestors.length >= WIKI_MAX_DEPTH) {
+			return ancestors[ancestors.length - (WIKI_MAX_DEPTH - 1)] ?? null;
 		}
 		return parent;
 	};

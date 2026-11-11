@@ -24,6 +24,7 @@ import {
 	type GatewaySettings,
 	languageModel,
 } from "@gateweave/agents-runtime";
+import { APICallError } from "ai";
 import { registryFor } from "../registry";
 import { planWiki, WikiAnswerError, writeWikiPage } from "./write";
 
@@ -54,6 +55,7 @@ export class WikiWorkflow extends WorkflowEntrypoint<Env, WikiParams> {
 			const pages = await step.do("plan the pages", MODEL_STEP, async () => {
 				const context = await registry.wikiPlanContext(generation);
 				if ("status" in context) throw new NonRetryableError(context.message);
+				if ("planned" in context) return context.planned;
 				const { plan, tokens } = await asking(context.model, () =>
 					planWiki(modelOf(context.model), context),
 				);
@@ -78,7 +80,12 @@ export class WikiWorkflow extends WorkflowEntrypoint<Env, WikiParams> {
 				if (!(await registry.wikiFinish(generation))) throw new NonRetryableError(WIKI_GONE);
 			});
 		} catch (error) {
-			const message = error instanceof Error && error.message ? error.message : "It failed";
+			// A step's error comes back named after its class, "NonRetryableError: …", which is not
+			// for people to read.
+			const message =
+				error instanceof Error && error.message
+					? error.message.replace(/^(?:NonRetryable)?Error: /, "")
+					: "It failed";
 			await step.do("record why it failed", QUICK, async () => {
 				await registry.wikiFail(generation, message);
 			});
@@ -88,7 +95,8 @@ export class WikiWorkflow extends WorkflowEntrypoint<Env, WikiParams> {
 
 /**
  * Runs a model request, and makes its failure fit to keep and show: a provider's own message can
- * repeat part of the key, so it never passes.
+ * repeat part of the key, so it never passes. A refusal that asking again cannot change, such as
+ * a key the provider does not take, fails the wiki at once instead of after every retry.
  */
 async function asking<T>(
 	chosen: { provider: KeyedProvider; model: string },
@@ -99,6 +107,10 @@ async function asking<T>(
 	} catch (error) {
 		if (error instanceof WikiAnswerError) throw error;
 		console.error("wiki: a model request failed", failureForLogs(error));
-		throw new Error(describeFailure(chosen, error));
+		const message = describeFailure(chosen, error);
+		if (APICallError.isInstance(error) && !error.isRetryable) {
+			throw new NonRetryableError(message);
+		}
+		throw new Error(message);
 	}
 }

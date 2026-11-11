@@ -177,17 +177,22 @@ export function startWikiGeneration(
 	return { generation };
 }
 
-/** Marks the generations that stopped getting further as failed, so another can start. */
+/**
+ * Fails the generations that stopped getting further, as any failure is failed, pages and all, so
+ * another can start.
+ */
 export function failStalledWikis(db: Db, now: number): void {
-	db.update(wikiGenerations)
-		.set({ status: "failed", error: WIKI_STALLED, finishedAt: now })
+	const stalled = db
+		.select({ id: wikiGenerations.id })
+		.from(wikiGenerations)
 		.where(
 			and(
 				inArray(wikiGenerations.status, UNDERWAY),
 				sql`${wikiGenerations.heartbeatAt} < ${now - WIKI_STALLED_MS}`,
 			),
 		)
-		.run();
+		.all();
+	for (const { id } of stalled) failWikiGeneration(db, id, WIKI_STALLED, now);
 }
 
 /** The generation and its repository, while it is being written and the repository is live. */

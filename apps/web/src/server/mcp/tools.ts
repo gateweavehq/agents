@@ -1,4 +1,5 @@
 import {
+	WIKI_PAGE_NUMBER,
 	type WikiPage,
 	wikiContentsText,
 	wikiNotFoundText,
@@ -41,8 +42,6 @@ async function run<Result extends Record<string, unknown>>(
 function text(value: string, isError = false): CallToolResult {
 	return { content: [{ type: "text", text: value }], ...(isError ? { isError: true } : {}) };
 }
-
-const PAGE_NUMBER = /^\d{1,2}(\.\d{1,2}){0,4}$/;
 
 // DeepWiki's tools take `repoName` alone. An Agents server holds many workspaces, so `workspace`
 // is there for the rare repository in more than one of the person's, and is otherwise left out.
@@ -142,7 +141,7 @@ export function createAgentsServer(access: AgentsAccess): McpServer {
 			inputSchema: wikiInput.extend({
 				page: z
 					.string()
-					.regex(PAGE_NUMBER)
+					.regex(WIKI_PAGE_NUMBER)
 					.optional()
 					.describe('One page\'s number from read_wiki_structure, such as "2.1", to read only it.'),
 			}),

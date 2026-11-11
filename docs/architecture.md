@@ -1475,10 +1475,13 @@ read them, through the workspace's GitHub or GitLab connection.
 - **A Workflow writes it.** `startWiki` in the registry notes a generation and starts the app's
   `WIKI` Workflow (`apps/web/src/server/wiki/workflow.ts`), one step per model request: one plans
   the pages, one writes each page, and one makes the wiki the one people read. A step that fails
-  tries again on its own; a wiki that cannot be written is marked failed with the reason, and the
-  one people read stays as it was. A repository has one generation underway at a time (a partial
-  unique index), and one that has not got further for an hour counts as failed, so another can
-  start. A server whose Worker has no `WIKI` binding says so instead of starting.
+  tries again on its own, and so does an answer that is empty, cut off at the output limit or, for
+  a plan, not the JSON asked for. A refusal that asking again cannot change, such as a key the
+  provider does not take, fails at once. A wiki that cannot be written is marked failed with the
+  reason, and the one people read stays as it was. A plan saved by a try whose answer was lost is
+  not asked for again. A repository has one generation underway at a time (a partial unique
+  index), and one that has not got further for an hour counts as failed, so another can start. A
+  server whose Worker has no `WIKI` binding says so instead of starting.
 - **The key never leaves the step.** Each step asks the registry for what it needs, the key among
   it, and hands back what it wrote. Workflows keep what a step returns, so a step returns only a
   count or a length: never the key, a prompt or the repository's code. A provider's refusal is
@@ -1491,11 +1494,14 @@ read them, through the workspace's GitHub or GitLab connection.
   order and under its parents, and its notes reach every writer. A file that breaks one of
   DeepWiki's rules (no pages, more than 30, two with one title, a parent that is not a page, over
   100 notes or 10,000 characters in one) is set aside, the model plans on its own, and the wiki
-  says why.
+  says why. Pages nest at most five levels, as far as a page number such as `1.2.1.3.2` goes; a
+  deeper one goes under its ancestor on the fourth, so each can be opened.
 - **A page is written from its files' text**, with line numbers so that it can cite them, up to
   160,000 characters in all and 40,000 of any one file; a file cut short is marked as such.
-  `checkCitations` keeps a citation only if it names a file the page read and lines it saw, and
-  turns any other into the plain path, so a link never points at lines that do not exist.
+  `checkCitations` keeps a citation only if it names a file the page read and lines it saw (a
+  file's last newline ends its last line, not another), and turns any other into the plain path,
+  so a link never points at lines that do not exist. It reads a page in linear time, whatever the
+  model wrote.
 - **The finished wiki replaces the last.** `wikiFinish` deletes the older generations of the
   repository. A failed one keeps its row and reason but not its pages, and only the newest failure
   stays.

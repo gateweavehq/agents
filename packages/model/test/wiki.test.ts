@@ -3,8 +3,10 @@ import {
 	checkCitations,
 	numberWikiPages,
 	parseWikiSteering,
+	WIKI_MAX_DEPTH,
 	WIKI_MAX_PAGE_LENGTH,
 	WIKI_MAX_PAGES,
+	WIKI_PAGE_NUMBER,
 	wikiContentsText,
 	wikiNotFoundText,
 	wikiStructureText,
@@ -85,6 +87,26 @@ describe("numbering", () => {
 			"3 C",
 		]);
 	});
+
+	it("nests pages no deeper than a page number reaches, so each can be opened", () => {
+		const titles = ["A", "B", "C", "D", "E", "F", "G"];
+		const numbered = numberWikiPages(
+			titles.map((title, i) => ({ title, parent: i === 0 ? null : (titles[i - 1] ?? null) })),
+		);
+		expect(numbered.map(({ number, page }) => `${number} ${page.title}`)).toEqual([
+			"1 A",
+			"1.1 B",
+			"1.1.1 C",
+			"1.1.1.1 D",
+			"1.1.1.1.1 E",
+			"1.1.1.1.2 F",
+			"1.1.1.1.3 G",
+		]);
+		for (const { number, depth } of numbered) {
+			expect(number).toMatch(WIKI_PAGE_NUMBER);
+			expect(depth).toBeLessThan(WIKI_MAX_DEPTH);
+		}
+	});
 });
 
 describe("citations", () => {
@@ -109,9 +131,9 @@ describe("citations", () => {
 
 	it("reads a page of brackets in linear time", () => {
 		const body = "[!".repeat(WIKI_MAX_PAGE_LENGTH / 2);
-		const started = performance.now();
+		const started = Date.now();
 		expect(checkCitations(body, sources)).toBe(body);
-		expect(performance.now() - started).toBeLessThan(500);
+		expect(Date.now() - started).toBeLessThan(500);
 	});
 });
 

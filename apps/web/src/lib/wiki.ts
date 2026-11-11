@@ -1,5 +1,6 @@
 import {
 	WIKI_CITATION,
+	WIKI_PAGE_NUMBER,
 	type WikiDetail,
 	type WikiEntry,
 	type WikiPage,
@@ -9,7 +10,6 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const id = z.string().min(1).max(64);
-const PAGE_NUMBER = /^\d{1,2}(\.\d{1,2}){0,4}$/;
 
 /** The registry of the workspace `slug`, or null if the caller may not see the workspace. */
 async function registryOf(slug: string) {
@@ -41,7 +41,7 @@ export const getWiki = createServerFn({ method: "GET" })
 		// An address with no page opens the first; one with a page no wiki numbers so finds none.
 		const number = data.page === undefined ? wiki.pages[0]?.number : data.page;
 		const page =
-			number && PAGE_NUMBER.test(number)
+			number && WIKI_PAGE_NUMBER.test(number)
 				? await registry.getWikiPage(data.repositoryId, number)
 				: null;
 		return { wiki, page };

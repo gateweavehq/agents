@@ -70,7 +70,7 @@ beforeAll(async () => {
 		const page = asked.includes("1.1 Sync  ← this page") ? "sync" : "overview";
 		return anthropicMessage(
 			page === "sync"
-				? "`sync` posts the ops.\n\n**Sources:** [src/sync.ts:1-3](), [src/sync.ts:90-99]()"
+				? "`sync` posts the ops.\n\n**Sources:** [src/sync.ts:1-3](), [src/sync.ts:4]()"
 				: "A list kept in sync.\n\n**Sources:** [README.md:3]()",
 		);
 	};
@@ -147,8 +147,8 @@ it("writes a repository's wiki with the workspace's key, as .devin/wiki.json ste
 		purpose: "How it syncs",
 		commit: headOf(app),
 		sources: [
-			{ path: "src/sync.ts", lines: 4 },
-			{ path: "src/store.ts", lines: 2 },
+			{ path: "src/sync.ts", lines: 3 },
+			{ path: "src/store.ts", lines: 1 },
 		],
 		body: "`sync` posts the ops.\n\n**Sources:** [src/sync.ts:1-3](), `src/sync.ts`",
 	});
@@ -175,8 +175,14 @@ it("keeps the wiki people read while another is written, then replaces it", asyn
 
 	await registry.startWiki(repositoryId, choice, userId);
 	const first = await settled(registry, repositoryId);
+	expect(first.live?.status).toBe("ready");
 	const again = await registry.startWiki(repositoryId, choice, userId);
 	expect(again).toMatchObject({ generation: expect.any(String) });
+	// While it is written, people still read the first.
+	const meanwhile = await registry.getWiki(repositoryId);
+	expect(meanwhile?.live?.id).toBe(first.live?.id);
+	expect(meanwhile?.latest?.status).toMatch(/planning|writing/);
+	expect(meanwhile?.pages).toHaveLength(2);
 	// One at a time.
 	expect(await registry.startWiki(repositoryId, choice, userId)).toMatchObject({
 		status: "refused",
@@ -199,6 +205,34 @@ it("refuses to write without a key for the provider", async () => {
 	expect((await registry.getWiki(repositoryId))?.latest).toBeNull();
 });
 
+it("fails at once, saying why, when the provider refuses the key", async () => {
+	const refusedKey = "sk-ant-refused-key";
+	const { headers: ada, userId } = await signUp(agents, origin, "ada-wiki-refused");
+	const id = await createWorkspace(agents, origin, ada, "wiki-refused");
+	const registry = await agents.registry(id);
+	const repositoryId = await repositoryIn(registry);
+	await registry.saveProviderKey({ provider: "anthropic", key: refusedKey }, userId);
+	await registry.startWiki(
+		repositoryId,
+		{ provider: "anthropic", model: "claude-sonnet-5-5" },
+		userId,
+	);
+
+	const wiki = await settled(registry, repositoryId);
+	expect(wiki.live).toBeNull();
+	expect(wiki.pages).toEqual([]);
+	expect(wiki.latest).toMatchObject({
+		status: "failed",
+		error: "Anthropic refused the workspace's key. An owner or admin can check it in Settings.",
+	});
+	// Asking again could not change a refusal, so the step asked once.
+	const asked = models.requests.filter(
+		(request) => request.headers.get("x-api-key") === refusedKey,
+	);
+	expect(asked).toHaveLength(1);
+	expect(JSON.stringify(agents.logs)).not.toContain(refusedKey);
+});
+
 it("shows members the wiki's pages, citations linked to the lines at the commit", async () => {
 	const { headers: ada, userId } = await signUp(agents, origin, "ada-wiki-page");
 	const id = await createWorkspace(agents, origin, ada, "wiki-page");
@@ -210,7 +244,7 @@ it("shows members the wiki's pages, citations linked to the lines at the commit"
 		{ provider: "anthropic", model: "claude-sonnet-5-5" },
 		userId,
 	);
-	await settled(registry, repositoryId);
+	expect((await settled(registry, repositoryId)).live?.status).toBe("ready");
 
 	const page = await agents.fetch(`${origin}/wiki-page/wiki/${repositoryId}/1.1`, {
 		headers: { cookie: ada.cookie },
@@ -240,7 +274,7 @@ it("lets a member's AI agent read the wiki over MCP with DeepWiki's tools, and n
 		{ provider: "anthropic", model: "claude-sonnet-5-5" },
 		userId,
 	);
-	await settled(registry, repositoryId);
+	expect((await settled(registry, repositoryId)).live?.status).toBe("ready");
 
 	const textOf = (result: Awaited<ReturnType<Client["callTool"]>>) =>
 		(result.content as { text: string }[])[0]?.text ?? "";

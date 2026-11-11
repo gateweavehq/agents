@@ -28,8 +28,10 @@ import { z } from "zod";
 export const PAGE_TEXT_BUDGET = 160_000;
 export const PAGE_FILE_LENGTH = 40_000;
 
-const PLAN_OUTPUT_TOKENS = 8_000;
-const PAGE_OUTPUT_TOKENS = 8_192;
+// Room for a model that reasons first, since its reasoning counts against the same limit: a
+// plan of 30 pages with their files, or a page of about 2,500 words, needs well under half.
+const PLAN_OUTPUT_TOKENS = 16_000;
+const PAGE_OUTPUT_TOKENS = 16_000;
 
 /** A plan as the model writes it: loose, since the plan it makes is checked and cut down after. */
 const modelPlan = z.object({
@@ -161,7 +163,8 @@ export async function writeWikiPage(
 	let budget = PAGE_TEXT_BUDGET;
 	for (const file of context.files) {
 		if (file.text === null || budget <= 0) continue;
-		const all = file.text.split("\n");
+		// A file's last newline ends its last line; it does not start another.
+		const all = file.text.replace(/\r?\n$/, "").split("\n");
 		let shown = 0;
 		let length = 0;
 		const limit = Math.min(budget, PAGE_FILE_LENGTH);
@@ -180,10 +183,9 @@ export async function writeWikiPage(
 		maxOutputTokens: PAGE_OUTPUT_TOKENS,
 	});
 	const sources: WikiSource[] = files.map((file) => ({ path: file.path, lines: file.shown }));
-	return {
-		page: { body: tidyPage(answer.text, context.page.title), sources },
-		tokens: answer.tokens,
-	};
+	const body = tidyPage(answer.text, context.page.title);
+	if (body === "") throw new WikiAnswerError("The model wrote nothing for the page");
+	return { page: { body, sources }, tokens: answer.tokens };
 }
 
 function pagePrompt(
@@ -268,6 +270,10 @@ async function ask(
 	request: { system: string; prompt: string; maxOutputTokens: number },
 ): Promise<{ text: string; tokens: RequestTokens }> {
 	const result = await generateText({ model, ...request, maxRetries: 1 });
+	// An answer cut off at the limit is a page that stops mid-sentence, or a plan that is not JSON.
+	if (result.finishReason === "length") {
+		throw new WikiAnswerError("The model ran out of room before it finished");
+	}
 	const { usage } = result;
 	return {
 		text: result.text,

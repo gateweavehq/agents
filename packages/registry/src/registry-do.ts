@@ -128,6 +128,7 @@ import {
 	triggerSecret,
 	turnVia,
 	WIKI_MAX_PAGES,
+	WIKI_PAGE_NUMBER,
 	WIKI_STEERING_PATH,
 	type WikiDetail,
 	type WikiEntry,
@@ -1993,10 +1994,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	getWikiPage(repositoryId: string, number: string): WikiPage | null {
-		const page = z
-			.string()
-			.regex(/^\d{1,2}(\.\d{1,2}){0,4}$/)
-			.parse(number);
+		const page = z.string().regex(WIKI_PAGE_NUMBER).parse(number);
 		return wikiPage(this.#db, id.parse(repositoryId), page);
 	}
 
@@ -2061,11 +2059,17 @@ export class RegistryDO extends DurableObject {
 	/**
 	 * Reads what planning needs, for `WikiWorkflow` alone: the repository's files at the head of its
 	 * default branch, the docs worth reading first, `.devin/wiki.json`, and the workspace's key,
-	 * opened, which the workflow keeps in memory for the step.
+	 * opened, which the workflow keeps in memory for the step. A plan already saved, by a try of the
+	 * step whose answer was lost, comes back as its number of pages, so it is not asked for again.
 	 */
-	async wikiPlanContext(generationId: string): Promise<WikiPlanContext | ProviderRefusal> {
+	async wikiPlanContext(
+		generationId: string,
+	): Promise<WikiPlanContext | { planned: number } | ProviderRefusal> {
 		const generation = id.parse(generationId);
 		const underway = underwayGeneration(this.#db, generation);
+		if (underway?.generation.status === "writing") {
+			return { planned: underway.generation.pagesTotal };
+		}
 		if (underway?.generation.status !== "planning") return refused(WIKI_GONE);
 		const { repository } = underway;
 		const source = await this.#sourceOf(repository);

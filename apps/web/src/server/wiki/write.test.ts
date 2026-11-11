@@ -4,11 +4,11 @@ import { describe, expect, it } from "vitest";
 import { jsonIn, planWiki, tidyPage, WikiAnswerError, writeWikiPage } from "./write";
 
 /** A model that answers every request with `text`, and keeps what it was asked. */
-function answering(text: string) {
+function answering(text: string, finished: "stop" | "length" = "stop") {
 	return new MockLanguageModelV4({
 		doGenerate: async () => ({
 			content: [{ type: "text", text }],
-			finishReason: { unified: "stop", raw: "end_turn" },
+			finishReason: { unified: finished, raw: finished === "stop" ? "end_turn" : "max_tokens" },
 			usage: {
 				inputTokens: { total: 1000, noCache: 800, cacheRead: 200, cacheWrite: 0 },
 				outputTokens: { total: 300, text: 300, reasoning: 0 },
@@ -169,6 +169,32 @@ describe("writing a page", () => {
 		expect(asked).toContain("Follow docs/architecture.md.");
 		expect(asked).toContain("(for this page) Cite the oplog.");
 		expect(asked).toContain("2 Sync  ← this page");
+	});
+
+	it("counts a file's last line once, however it ends", async () => {
+		const { page } = await writeWikiPage(answering("Body."), {
+			...context,
+			files: [
+				{ path: "a.ts", text: "one\ntwo\n" },
+				{ path: "b.ts", text: "one\r\ntwo\r\n" },
+				{ path: "c.ts", text: "one\ntwo" },
+			],
+		});
+		expect(page.sources).toEqual([
+			{ path: "a.ts", lines: 2 },
+			{ path: "b.ts", lines: 2 },
+			{ path: "c.ts", lines: 2 },
+		]);
+	});
+
+	it("fails a page that is empty or cut off, so the step tries again", async () => {
+		// Only the title, which is taken away.
+		await expect(writeWikiPage(answering("# Sync\n\n"), context)).rejects.toBeInstanceOf(
+			WikiAnswerError,
+		);
+		await expect(
+			writeWikiPage(answering("It syncs, and then", "length"), context),
+		).rejects.toBeInstanceOf(WikiAnswerError);
 	});
 
 	it("shows a long file only up to its budget, and says so", async () => {
