@@ -23,11 +23,21 @@ setups/<slug>/
   `setup.json`. The name of a library asset is unique per kind, and an asset keeps its name when
   setups share it, so give instructions a name of their own (for example "Review rules") rather
   than `AGENTS.md`, or two setups would become versions of one asset.
+- `askUrl` (optional, MCP servers only): for a server that is at a different address in every
+  install, such as a self-hosted one, what to ask for. Its file is plain JSON with an example
+  `url`. Whoever adds the setup gives their address, in a dialog on the Setups page or with
+  `--url <server>=<url>` in the CLI, and it replaces the example.
 
 An MCP server is stored the way the registry stores a scanned one: values under `env` and
 `headers` are `<redacted>`, and the files a setup writes then refer to an environment variable
 for each (a header `Authorization` becomes the variable `AUTHORIZATION`, which holds the whole
-header value, such as `Bearer <token>`). Never put a real token in a folder.
+header value, such as `Bearer <token>`). A header can name its own variable instead, as
+`"Authorization": "Bearer ${GATEWEAVE_MAIL_KEY}"`, which keeps two servers from sharing one
+`AUTHORIZATION`. Never put a real token in a folder.
+
+The `mail` setup's skill is Gateweave Mail's own (`plugins/gateweave-mail/skills/mail/SKILL.md` in
+[gateweavehq/mail](https://github.com/gateweavehq/mail)), named `gateweave-mail` here. Mail's tests
+hold that skill to its tools, so when it changes there, copy it here again.
 
 ## Rules the tests enforce
 

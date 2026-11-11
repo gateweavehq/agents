@@ -317,6 +317,12 @@ export const setupManifest = setupInput
 					 */
 					path: repositoryPath,
 					metadata: metadata.default({}),
+					/**
+					 * For an MCP server whose address differs from one install to the next, such as a
+					 * self-hosted one: what to ask for. The file holds an example address, and whoever
+					 * adds the setup gives theirs in its place.
+					 */
+					askUrl: z.string().trim().min(1).max(200).optional(),
 				}),
 			)
 			.min(1)
@@ -325,6 +331,13 @@ export const setupManifest = setupInput
 	.superRefine((manifest, ctx) => {
 		const seen = new Set<string>();
 		for (const [index, asset] of manifest.assets.entries()) {
+			if (asset.askUrl !== undefined && asset.kind !== "mcp-server") {
+				ctx.addIssue({
+					code: "custom",
+					path: ["assets", index, "askUrl"],
+					message: "Only an MCP server has an address to ask for",
+				});
+			}
 			const key = `${asset.kind}\0${asset.name}`;
 			if (seen.has(key)) {
 				ctx.addIssue({

@@ -1,0 +1,26 @@
+{
+	"name": "Gateweave Mail",
+	"description": "Gives agents an inbox in Gateweave Mail: sign-up codes, waiting for mail, reading and sending, with the key kept out of the repository.",
+	"runtimes": ["claude-code", "codex", "gemini-cli", "cursor", "copilot"],
+	"assets": [
+		{
+			"kind": "instructions",
+			"name": "Mail rules",
+			"description": "How agents in the repository treat mail and the Mail key.",
+			"path": "AGENTS.md"
+		},
+		{
+			"kind": "skill",
+			"name": "gateweave-mail",
+			"description": "Use Gateweave Mail's tools well: codes, waits, sending, addresses and webhooks.",
+			"path": "skills/gateweave-mail"
+		},
+		{
+			"kind": "mcp-server",
+			"name": "gateweave-mail",
+			"description": "Your Gateweave Mail's MCP server, reached with an agent's key from GATEWEAVE_MAIL_KEY.",
+			"path": "servers/gateweave-mail.json",
+			"askUrl": "Your Mail's MCP address, as Settings → Agents in Mail shows it"
+		}
+	]
+}

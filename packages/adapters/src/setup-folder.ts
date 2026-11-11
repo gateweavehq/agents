@@ -3,9 +3,10 @@
  * its assets. Ready-made setups ship this way, so contributors propose one as a folder, and the
  * CLI reads one from disk. Pure, so both read it the same way.
  */
-import { type SetupRuntime, setupManifest } from "@gateweave/agents-model";
-import { basename, compare } from "./util";
+import { mcpServerUrl, type SetupRuntime, setupManifest } from "@gateweave/agents-model";
+import { basename, compare, isPlainObject } from "./util";
 import type { AssetToWrite } from "./write";
+import { readMcpConnection } from "./write-mcp";
 
 /** Most files one asset of a setup folder may have, as a scan keeps for one asset. */
 const MAX_ASSET_FILES = 500;
@@ -15,6 +16,18 @@ export interface SetupFolder {
 	description: string | null;
 	runtimes: SetupRuntime[];
 	assets: AssetToWrite[];
+	/** The MCP servers whose address whoever adds the setup gives (`askUrl`), in manifest order. */
+	addresses: AskedAddress[];
+}
+
+/** An MCP server's address that a setup asks for, since it differs from one install to the next. */
+export interface AskedAddress {
+	/** The server's asset name. */
+	server: string;
+	/** What to ask, from the manifest. */
+	label: string;
+	/** The address the folder's file holds, which shows what one looks like. */
+	example: string;
 }
 
 export type SetupFolderResult =
@@ -47,6 +60,7 @@ export function readSetupFolder(files: ReadonlyMap<string, string>): SetupFolder
 	const { name, description, runtimes } = parsed.data;
 	const problems: string[] = [];
 	const assets: AssetToWrite[] = [];
+	const addresses: AskedAddress[] = [];
 	for (const asset of parsed.data.assets) {
 		const own = files.get(asset.path);
 		const prefix = `${asset.path}/`;
@@ -64,10 +78,89 @@ export function readSetupFolder(files: ReadonlyMap<string, string>): SetupFolder
 		} else {
 			const { kind, description: about, metadata } = asset;
 			assets.push({ kind, name: asset.name, description: about, files: found, metadata });
+			if (asset.askUrl !== undefined) {
+				const example = askedUrl(found);
+				if (typeof example === "string") {
+					addresses.push({ server: asset.name, label: asset.askUrl, example });
+				} else {
+					problems.push(`${asset.name}: ${example.problem}`);
+				}
+			}
 		}
 	}
 	if (problems.length > 0) return { ok: false, problems };
-	return { ok: true, setup: { name, description, runtimes, assets } };
+	return { ok: true, setup: { name, description, runtimes, assets, addresses } };
+}
+
+/**
+ * The address in a server whose address is asked for, or why it cannot be asked for. Only a
+ * plain JSON file with a `url` is rewritten, so nothing else in it changes when the answer goes in.
+ */
+function askedUrl(files: AssetToWrite["files"]): string | { problem: string } {
+	const connection = readMcpConnection(files);
+	if (!connection.ok) return { problem: connection.message };
+	if (connection.connection.transport === "stdio") {
+		return { problem: "askUrl is for a server reached over the network, not a local command" };
+	}
+	const [file] = files;
+	const value = file?.content ? parsePlainJson(file.content) : undefined;
+	if (!file?.path.endsWith(".json") || !isPlainObject(value) || typeof value.url !== "string") {
+		return { problem: "askUrl needs the server in a JSON file with a url" };
+	}
+	const example = mcpServerUrl.safeParse(value.url);
+	if (!example.success) {
+		return { problem: `its example address: ${example.error.issues[0]?.message ?? "not valid"}` };
+	}
+	return example.data;
+}
+
+function parsePlainJson(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The setup with the addresses it asks for given, by server name: each server's file holds the
+ * given address instead of its example. Every address asked for must be given, and nothing else.
+ */
+export function withAddresses(
+	setup: SetupFolder,
+	given: Readonly<Record<string, string>>,
+): SetupFolderResult {
+	const problems: string[] = [];
+	const asked = new Map(setup.addresses.map((address) => [address.server, address]));
+	for (const name of Object.keys(given)) {
+		if (!asked.has(name)) problems.push(`${setup.name} asks for no address for ${name}`);
+	}
+	const answers = new Map<string, string>();
+	for (const { server, label } of setup.addresses) {
+		const value = Object.hasOwn(given, server) ? given[server] : undefined;
+		if (value === undefined || value.trim() === "") {
+			problems.push(`${server}: give its address (${label})`);
+			continue;
+		}
+		const url = mcpServerUrl.safeParse(value);
+		if (url.success) answers.set(server, url.data);
+		else problems.push(`${server}: ${url.error.issues[0]?.message ?? "not a valid address"}`);
+	}
+	if (problems.length > 0) return { ok: false, problems };
+
+	const assets = setup.assets.map((asset) => {
+		const url = asset.kind === "mcp-server" ? answers.get(asset.name) : undefined;
+		if (url === undefined) return asset;
+		return {
+			...asset,
+			files: asset.files.map((file) => {
+				// The folder was read with this file as plain JSON holding a url.
+				const value = parsePlainJson(file.content ?? "") as Record<string, unknown>;
+				return { path: file.path, content: `${JSON.stringify({ ...value, url }, null, 2)}\n` };
+			}),
+		};
+	});
+	return { ok: true, setup: { ...setup, assets, addresses: [] } };
 }
 
 /**

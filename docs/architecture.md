@@ -405,6 +405,12 @@ configures (`packages/registry/src/setups.ts`). Owners and admins manage them.
   files, adds a version when the files differ, and creates the asset otherwise. It then creates
   a setup pinning the result. Adding the same setup twice therefore makes no new versions. An
   owner or admin reaches it from the Setups page.
+- **A setup can ask for an address.** A self-hosted MCP server, such as Gateweave Mail's, is at
+  a different address in every install, so its asset in `setup.json` has an `askUrl`, and its
+  file holds an example. Whoever adds the setup gives the address (a dialog on the Setups page,
+  `--url <server>=<url>` in the CLI), and `withAddresses` writes it into the server's file before
+  anything else reads it. The address must pass `mcpServerUrl`, as a server written in the app
+  does. Adding the setup again with another address makes a new version of that server only.
 
 ## Applying setups
 
@@ -1357,6 +1363,9 @@ file the pull request would.
   checkout does not look changed.
 - **`check` fails on what `apply` would write**: exit code 1 lists each file as missing or
   differing. Paths it would leave alone are warnings, not failures.
+- **Addresses come from flags.** A setup that asks for an MCP server's address (`askUrl`) takes
+  it from `--url <server>=<url>`, for `apply` and `check` alike, and stops with exit code 2,
+  naming the flag, when one is missing.
 - **One file, no dependencies.** Vite bundles the CLI, the workspace packages it uses and the
   ready-made setups into `dist/main.js`, so a version always writes the same files.
 - **Published from CI.** Pushing a `cli-v<version>` tag runs `publish-cli.yml`, which publishes

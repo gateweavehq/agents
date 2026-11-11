@@ -1,0 +1,7 @@
+{
+  "headers": {
+    "Authorization": "Bearer ${GATEWEAVE_MAIL_KEY}"
+  },
+  "type": "http",
+  "url": "https://mail.example.com/mcp"
+}

@@ -20,6 +20,16 @@ gateweave-agents check <setup>           # exit 1 when the files no longer match
 `<setup>` is a folder (`./agents-setup`) or a ready-made setup's name. `--dir <path>` points at
 a working tree other than the current folder.
 
+Some setups ask for the address of an MCP server that every install runs at its own address, such
+as Gateweave Mail's. Give it with `--url <server>=<url>`, to `apply` and to `check` alike:
+
+```sh
+gateweave-agents apply mail --url gateweave-mail=https://mail.example.com/mcp
+```
+
+The address goes into the repository's MCP settings. The agent's key never does: they read it
+from the `GATEWEAVE_MAIL_KEY` environment variable.
+
 What it writes and what it leaves alone are decided by the same code as the app's pull requests:
 
 - The setup owns the files it writes, except the MCP configuration files (`.mcp.json`,
@@ -62,7 +72,8 @@ not run (a wrong argument, or a setup that cannot be read).
 Each asset's `path` is a file or a folder next to `setup.json`. An MCP server is one server's
 JSON (`{ "type": "http", "url": "…" }`, or a `command` with `args`). In its `env` and `headers`,
 a value written as `${NAME}` becomes each agent's own way of reading that environment variable,
-so secrets never go in the files.
+so secrets never go in the files. An MCP server whose address differs from one install to the
+next has an `askUrl` in `setup.json`, saying what to ask for, and an example `url` in its file.
 
 ## License
 

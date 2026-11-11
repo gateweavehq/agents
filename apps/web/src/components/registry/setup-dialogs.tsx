@@ -394,3 +394,85 @@ function ApplyResult({ outcome, repository }: { outcome: ApplyOutcome; repositor
 		</div>
 	);
 }
+
+/**
+ * Asks for the address of each MCP server a ready-made setup leaves to whoever adds it, such as a
+ * self-hosted server's, before adding it with them.
+ */
+export function ReadyMadeAddressesDialog({
+	name,
+	addresses,
+	onAdd,
+	onClose,
+}: {
+	name: string;
+	addresses: { server: string; label: string; example: string }[];
+	onAdd: (given: Record<string, string>) => Promise<void>;
+	onClose: () => void;
+}) {
+	const [given, setGiven] = useState<Record<string, string>>({});
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const complete = addresses.every(({ server }) => (given[server] ?? "").trim() !== "");
+
+	async function onSubmit(event: FormEvent) {
+		event.preventDefault();
+		setPending(true);
+		setError(null);
+		try {
+			await onAdd(
+				Object.fromEntries(addresses.map(({ server }) => [server, (given[server] ?? "").trim()])),
+			);
+		} catch (failure) {
+			setError(message(failure));
+			setPending(false);
+		}
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+			<DialogContent className="max-w-md">
+				<form onSubmit={onSubmit} className="space-y-4">
+					<DialogHeader>
+						<DialogTitle>Add {name}</DialogTitle>
+						<DialogDescription>
+							Its MCP server is at a different address for everyone who runs it, so give yours. The
+							address goes into the repository's MCP settings; a key never does.
+						</DialogDescription>
+					</DialogHeader>
+					{addresses.map(({ server, label, example }, index) => (
+						<div key={server} className="space-y-2">
+							<Label htmlFor={`address-${server}`}>{label}</Label>
+							<Input
+								id={`address-${server}`}
+								type="url"
+								inputMode="url"
+								value={given[server] ?? ""}
+								onChange={(event) =>
+									setGiven((current) => ({ ...current, [server]: event.target.value }))
+								}
+								placeholder={example}
+								maxLength={2000}
+								autoFocus={index === 0}
+								required
+							/>
+						</div>
+					))}
+					{error && (
+						<p role="alert" className="text-sm text-destructive">
+							{error}
+						</p>
+					)}
+					<DialogFooter className="gap-2">
+						<Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={pending || !complete}>
+							Add to workspace
+						</Button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
+	);
+}

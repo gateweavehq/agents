@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { KindLabel, RuntimeBadge } from "#/components/registry/labels";
-import { SetupDialog } from "#/components/registry/setup-dialogs";
+import { ReadyMadeAddressesDialog, SetupDialog } from "#/components/registry/setup-dialogs";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { addReadyMadeSetup, createSetup, getReadyMadeSetups, getSetups } from "#/lib/registry";
@@ -119,7 +119,13 @@ function SetupsPage() {
 										<RuntimeBadge key={runtime} runtime={runtime} />
 									))}
 								</span>
-								{admin && <AddReadyMadeButton slug={item.slug} name={item.name} />}
+								{admin && (
+									<AddReadyMadeButton
+										slug={item.slug}
+										name={item.name}
+										addresses={item.addresses}
+									/>
+								)}
 							</li>
 						))}
 					</ul>
@@ -129,18 +135,35 @@ function SetupsPage() {
 	);
 }
 
-function AddReadyMadeButton({ slug: setup, name }: { slug: string; name: string }) {
+function AddReadyMadeButton({
+	slug: setup,
+	name,
+	addresses,
+}: {
+	slug: string;
+	name: string;
+	addresses: { server: string; label: string; example: string }[];
+}) {
 	const { slug } = useWorkspace();
 	const navigate = useNavigate();
 	const [pending, setPending] = useState(false);
+	const [asking, setAsking] = useState(false);
+
+	async function added(given: Record<string, string>) {
+		const setupId = await addReadyMadeSetup({ data: { slug, setup, addresses: given } });
+		toast.success(`${name} was added to the workspace`);
+		// Its page is where it is applied.
+		await navigate({ to: "/$workspace/setups/$setupId", params: { workspace: slug, setupId } });
+	}
 
 	async function add() {
+		if (addresses.length > 0) {
+			setAsking(true);
+			return;
+		}
 		setPending(true);
 		try {
-			const setupId = await addReadyMadeSetup({ data: { slug, setup } });
-			toast.success(`${name} was added to the workspace`);
-			// Its page is where it is applied.
-			await navigate({ to: "/$workspace/setups/$setupId", params: { workspace: slug, setupId } });
+			await added({});
 		} catch (failure) {
 			toast.error(failure instanceof Error ? failure.message : "Something went wrong");
 			setPending(false);
@@ -148,9 +171,19 @@ function AddReadyMadeButton({ slug: setup, name }: { slug: string; name: string 
 	}
 
 	return (
-		<Button size="sm" variant="outline" onClick={add} disabled={pending}>
-			Add to workspace
-		</Button>
+		<>
+			<Button size="sm" variant="outline" onClick={add} disabled={pending}>
+				Add to workspace
+			</Button>
+			{asking && (
+				<ReadyMadeAddressesDialog
+					name={name}
+					addresses={addresses}
+					onAdd={added}
+					onClose={() => setAsking(false)}
+				/>
+			)}
+		</>
 	);
 }
 

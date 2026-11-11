@@ -445,6 +445,8 @@ export interface ReadyMadeSummary {
 	description: string | null;
 	runtimes: SetupRuntime[];
 	assets: { kind: AssetKind; name: string }[];
+	/** The MCP servers whose address whoever adds it gives, since each install has its own. */
+	addresses: { server: string; label: string; example: string }[];
 }
 
 /** The setups that ship with the app, for any member to see. */
@@ -460,18 +462,31 @@ export const getReadyMadeSetups = createServerFn({ method: "GET" })
 			description: setup.description,
 			runtimes: setup.runtimes,
 			assets: setup.assets.map(({ kind, name }) => ({ kind, name })),
+			addresses: setup.addresses,
 		}));
 	});
 
-/** Adds a ready-made setup to the workspace and returns the new setup's id. */
+/**
+ * Adds a ready-made setup to the workspace and returns the new setup's id. `addresses` gives, by
+ * server name, the address of each MCP server the setup asks for.
+ */
 export const addReadyMadeSetup = createServerFn({ method: "POST" })
-	.validator(z.object({ slug: z.string().min(1), setup: z.string().min(1).max(100) }))
+	.validator(
+		z.object({
+			slug: z.string().min(1),
+			setup: z.string().min(1).max(100),
+			addresses: z.record(z.string().max(200), z.string().max(2000)).default({}),
+		}),
+	)
 	.handler(async ({ data }): Promise<string> => {
 		const registry = await managedRegistryOf(data.slug);
 		const { importInputOf, readyMadeSetups } = await import("#/server/ready-made");
+		const { withAddresses } = await import("@gateweave/agents-adapters");
 		const found = readyMadeSetups().find((candidate) => candidate.slug === data.setup);
 		if (!found) throw new Error("There is no such ready-made setup");
-		return registry.importSetup(importInputOf(found));
+		const answered = withAddresses(found.setup, data.addresses);
+		if (!answered.ok) throw new Error(answered.problems.join(". "));
+		return registry.importSetup(importInputOf({ slug: found.slug, setup: answered.setup }));
 	});
 
 export const updateSetup = createServerFn({ method: "POST" })

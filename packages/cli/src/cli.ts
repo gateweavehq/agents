@@ -5,7 +5,7 @@
  */
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { planApply, writeAssets } from "@gateweave/agents-adapters";
+import { planApply, withAddresses, writeAssets } from "@gateweave/agents-adapters";
 import { RUNTIME_NAMES } from "@gateweave/agents-model";
 import { version } from "../package.json";
 import { loadSetup, READY_MADE } from "./setups";
@@ -33,6 +33,9 @@ Commands:
 Options:
   --dir <path>    The repository's working tree (default: the current folder)
   --dry-run       With apply: say what would be written, and write nothing
+  --url <server>=<url>
+                  The address of an MCP server that the setup asks for, such as
+                  --url gateweave-mail=https://mail.example.com/mcp (once for each)
   -h, --help      Show this help
   -v, --version   Show the version`;
 
@@ -62,8 +65,16 @@ export async function run(args: readonly string[], io: Io): Promise<number> {
 	}
 	if (target === undefined || extra.length > 0) return usage(io);
 	if (values["dry-run"] && command === "check") return usage(io, "--dry-run is for apply");
+	const urls: Record<string, string> = {};
+	for (const pair of values.url ?? []) {
+		const split = pair.indexOf("=");
+		const server = pair.slice(0, split).trim();
+		if (split < 0 || server === "") return usage(io, `--url takes <server>=<url>, not ${pair}`);
+		if (Object.hasOwn(urls, server)) return usage(io, `--url gives ${server} twice`);
+		urls[server] = pair.slice(split + 1);
+	}
 	try {
-		return await applyOrCheck(command, target, values.dir, values["dry-run"] === true, io);
+		return await applyOrCheck(command, target, values.dir, values["dry-run"] === true, urls, io);
 	} catch (error) {
 		io.err(message(error));
 		return FAILED;
@@ -77,6 +88,7 @@ function parse(args: readonly string[]) {
 		options: {
 			dir: { type: "string" },
 			"dry-run": { type: "boolean" },
+			url: { type: "string", multiple: true },
 			help: { type: "boolean", short: "h" },
 			version: { type: "boolean", short: "v" },
 		},
@@ -102,6 +114,7 @@ async function applyOrCheck(
 	target: string,
 	dir: string | undefined,
 	dryRun: boolean,
+	urls: Readonly<Record<string, string>>,
 	io: Io,
 ): Promise<number> {
 	const loaded = await loadSetup(target, io.cwd);
@@ -110,7 +123,17 @@ async function applyOrCheck(
 		for (const problem of loaded.problems) io.err(`  ${problem}`);
 		return FAILED;
 	}
-	const { setup } = loaded;
+	// A server whose address differs from one install to the next takes it from --url.
+	const answered = withAddresses(loaded.setup, urls);
+	if (!answered.ok) {
+		io.err(`Cannot use ${loaded.from}:`);
+		for (const problem of answered.problems) io.err(`  ${problem}`);
+		for (const { server, example } of loaded.setup.addresses) {
+			if (!Object.hasOwn(urls, server)) io.err(`Pass --url ${server}=<url>, such as ${example}`);
+		}
+		return FAILED;
+	}
+	const { setup } = answered;
 	const root = resolve(io.cwd, dir ?? ".");
 	const written = writeAssets(setup.assets, setup.runtimes);
 	const paths = written.files.map((file) => file.path);

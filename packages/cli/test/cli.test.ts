@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readSetupFolder, writeAssets } from "@gateweave/agents-adapters";
+import { readSetupFolder, withAddresses, writeAssets } from "@gateweave/agents-adapters";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { run } from "../src/cli";
 import { READY_MADE } from "../src/setups";
@@ -174,9 +174,59 @@ describe("ready-made setups", () => {
 		expect(listed.code).toBe(0);
 		expect(listed.out.split("\n").filter(Boolean)).toEqual([...READY_MADE.keys()]);
 		for (const [name, files] of READY_MADE) {
-			const result = readSetupFolder(files);
+			const read = readSetupFolder(files);
+			if (!read.ok) throw new Error(`${name}: ${read.problems.join("; ")}`);
+			const examples = read.setup.addresses.map(({ server, example }) => [server, example]);
+			const result = withAddresses(read.setup, Object.fromEntries(examples));
 			if (!result.ok) throw new Error(`${name}: ${result.problems.join("; ")}`);
 			expect(writeAssets(result.setup.assets, result.setup.runtimes).problems, name).toEqual([]);
 		}
+	});
+
+	it("take the address of a server they ask for from --url, for apply and check alike", async () => {
+		const url = "https://mail.acme.dev/mcp";
+		const missing = await cli("apply", "mail");
+		expect(missing.code).toBe(2);
+		expect(missing.err).toContain("gateweave-mail: give its address");
+		expect(missing.err).toContain(
+			"Pass --url gateweave-mail=<url>, such as https://mail.example.com/mcp",
+		);
+
+		const applied = await cli("apply", "mail", "--dir", "repo", "--url", `gateweave-mail=${url}`);
+		expect(applied.code, applied.err).toBe(0);
+		const mcp = JSON.parse(await readFile(join(repo, ".mcp.json"), "utf8"));
+		expect(mcp.mcpServers["gateweave-mail"]).toEqual({
+			// biome-ignore lint/suspicious/noTemplateCurlyInString: the reference Claude Code expands
+			headers: { Authorization: "Bearer ${GATEWEAVE_MAIL_KEY}" },
+			type: "http",
+			url,
+		});
+		const codex = await readFile(join(repo, ".codex/config.toml"), "utf8");
+		expect(codex).toContain('bearer_token_env_var = "GATEWEAVE_MAIL_KEY"');
+		expect(codex).toContain(`url = "${url}"`);
+
+		const held = await cli("check", "mail", "--dir", "repo", "--url", `gateweave-mail=${url}`);
+		expect(held.code, held.out).toBe(0);
+		const moved = await cli(
+			"check",
+			"mail",
+			"--dir",
+			"repo",
+			"--url",
+			"gateweave-mail=https://mail.other.dev/mcp",
+		);
+		expect(moved.code).toBe(1);
+		expect(moved.out).toContain("differs  .mcp.json");
+
+		for (const args of [
+			["--url", "gateweave-mail"],
+			["--url", `=${url}`],
+			["--url", `gateweave-mail=${url}`, "--url", `gateweave-mail=${url}`],
+		]) {
+			expect((await cli("apply", "mail", "--dir", "repo", ...args)).code, args.join(" ")).toBe(2);
+		}
+		const unasked = await cli("apply", "baseline", "--dir", "repo", "--url", `github=${url}`);
+		expect(unasked.code).toBe(2);
+		expect(unasked.err).toContain("Baseline asks for no address for github");
 	});
 });
