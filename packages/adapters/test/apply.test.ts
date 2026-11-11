@@ -139,6 +139,33 @@ describe("merged JSON", () => {
 		expect(merged.mcpServers.acme).toEqual({ command: "npx", args: ["a"] });
 	});
 
+	it("merges into VS Code's servers, keeping its other servers and inputs", () => {
+		const path = ".vscode/mcp.json";
+		const setup = `${JSON.stringify({ servers: { acme: { type: "http", url: "https://a.dev/mcp" } } }, null, 2)}\n`;
+		const existing = `${JSON.stringify(
+			{
+				inputs: [{ id: "token", type: "promptString", password: true }],
+				servers: { other: { type: "stdio", command: "other" } },
+			},
+			null,
+			"\t",
+		)}\n`;
+		expect(JSON.parse(change(plan({ [path]: setup }, { [path]: existing }), path))).toEqual({
+			inputs: [{ id: "token", type: "promptString", password: true }],
+			servers: {
+				other: { type: "stdio", command: "other" },
+				acme: { type: "http", url: "https://a.dev/mcp" },
+			},
+		});
+		expect(plan({ [path]: setup }, { [path]: setup }).unchanged).toEqual([path]);
+		// Its `servers` is VS Code's; an `mcpServers` there is someone else's and stays.
+		const appended = change(plan({ [path]: setup }, { [path]: '{ "mcpServers": {} }' }), path);
+		expect(JSON.parse(appended)).toEqual({
+			mcpServers: {},
+			servers: { acme: { type: "http", url: "https://a.dev/mcp" } },
+		});
+	});
+
 	it("adds servers named like the properties every object has", () => {
 		const setup = `${JSON.stringify({ mcpServers: { constructor: { command: "c" }, toString: { command: "t" } } })}\n`;
 		const result = plan({ ".mcp.json": setup }, { ".mcp.json": '{"mcpServers":{}}' });
@@ -363,6 +390,7 @@ describe("the plan", () => {
 			".cursor/mcp.json",
 			".gemini/settings.json",
 			".mcp.json",
+			".vscode/mcp.json",
 		]);
 	});
 

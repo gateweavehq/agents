@@ -1,14 +1,8 @@
 {
 	"name": "Gateweave Mail",
-	"description": "Gives agents an inbox in Gateweave Mail: sign-up codes, waiting for mail, reading and sending, with the key kept out of the repository.",
+	"description": "Adds Gateweave Mail's skill and MCP server, for sign-up codes, waiting for mail, reading and sending. The key stays in GATEWEAVE_MAIL_KEY, and the repository's instructions stay as they are.",
 	"runtimes": ["claude-code", "codex", "gemini-cli", "cursor", "copilot"],
 	"assets": [
-		{
-			"kind": "instructions",
-			"name": "Mail rules",
-			"description": "How agents in the repository treat mail and the Mail key.",
-			"path": "AGENTS.md"
-		},
 		{
 			"kind": "skill",
 			"name": "gateweave-mail",

@@ -65,13 +65,14 @@ export async function run(args: readonly string[], io: Io): Promise<number> {
 	}
 	if (target === undefined || extra.length > 0) return usage(io);
 	if (values["dry-run"] && command === "check") return usage(io, "--dry-run is for apply");
-	const urls: Record<string, string> = {};
+	// A Map, since a server's name is any text, even `__proto__`.
+	const urls = new Map<string, string>();
 	for (const pair of values.url ?? []) {
 		const split = pair.indexOf("=");
 		const server = pair.slice(0, split).trim();
 		if (split < 0 || server === "") return usage(io, `--url takes <server>=<url>, not ${pair}`);
-		if (Object.hasOwn(urls, server)) return usage(io, `--url gives ${server} twice`);
-		urls[server] = pair.slice(split + 1);
+		if (urls.has(server)) return usage(io, `--url gives ${server} twice`);
+		urls.set(server, pair.slice(split + 1));
 	}
 	try {
 		return await applyOrCheck(command, target, values.dir, values["dry-run"] === true, urls, io);
@@ -114,7 +115,7 @@ async function applyOrCheck(
 	target: string,
 	dir: string | undefined,
 	dryRun: boolean,
-	urls: Readonly<Record<string, string>>,
+	urls: ReadonlyMap<string, string>,
 	io: Io,
 ): Promise<number> {
 	const loaded = await loadSetup(target, io.cwd);
@@ -124,12 +125,12 @@ async function applyOrCheck(
 		return FAILED;
 	}
 	// A server whose address differs from one install to the next takes it from --url.
-	const answered = withAddresses(loaded.setup, urls);
+	const answered = withAddresses(loaded.setup, Object.fromEntries(urls));
 	if (!answered.ok) {
 		io.err(`Cannot use ${loaded.from}:`);
 		for (const problem of answered.problems) io.err(`  ${problem}`);
 		for (const { server, example } of loaded.setup.addresses) {
-			if (!Object.hasOwn(urls, server)) io.err(`Pass --url ${server}=<url>, such as ${example}`);
+			if (!urls.has(server)) io.err(`Pass --url ${server}=<url>, such as ${example}`);
 		}
 		return FAILED;
 	}
@@ -160,9 +161,10 @@ async function applyOrCheck(
 			io.out(`All ${plan.unchanged.length} ${files(plan.unchanged.length)} hold what it writes.`);
 		} else {
 			const total = plan.changes.length + plan.unchanged.length;
+			const flags = [...urls].map(([server, url]) => ` --url ${server}=${url}`).join("");
 			io.out(
 				`${plan.changes.length} of ${total} ${files(total)} differ from the setup. ` +
-					`Run \`gateweave-agents apply ${target}\` to write them.`,
+					`Run \`gateweave-agents apply ${target}${flags}\` to write them.`,
 			);
 		}
 	}

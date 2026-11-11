@@ -12,7 +12,7 @@ import {
 	type SetupPins,
 	type SetupRuntime,
 } from "@gateweave/agents-model";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Checkbox } from "#/components/ui/checkbox";
 import {
@@ -410,10 +410,12 @@ export function ReadyMadeAddressesDialog({
 	onAdd: (given: Record<string, string>) => Promise<void>;
 	onClose: () => void;
 }) {
-	const [given, setGiven] = useState<Record<string, string>>({});
+	const id = useId();
+	// A Map, since a server's name is any text, even one an object already has as a property.
+	const [given, setGiven] = useState<ReadonlyMap<string, string>>(() => new Map());
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const complete = addresses.every(({ server }) => (given[server] ?? "").trim() !== "");
+	const complete = addresses.every(({ server }) => (given.get(server) ?? "").trim() !== "");
 
 	async function onSubmit(event: FormEvent) {
 		event.preventDefault();
@@ -421,7 +423,9 @@ export function ReadyMadeAddressesDialog({
 		setError(null);
 		try {
 			await onAdd(
-				Object.fromEntries(addresses.map(({ server }) => [server, (given[server] ?? "").trim()])),
+				Object.fromEntries(
+					addresses.map(({ server }) => [server, (given.get(server) ?? "").trim()]),
+				),
 			);
 		} catch (failure) {
 			setError(message(failure));
@@ -436,30 +440,34 @@ export function ReadyMadeAddressesDialog({
 					<DialogHeader>
 						<DialogTitle>Add {name}</DialogTitle>
 						<DialogDescription>
-							Its MCP server is at a different address for everyone who runs it, so give yours. The
-							address goes into the repository's MCP settings; a key never does.
+							Its MCP server is at a different address for everyone who runs it, so give yours. It
+							goes into the setup, and from there into the repositories you apply it to. A key never
+							does.
 						</DialogDescription>
 					</DialogHeader>
 					{addresses.map(({ server, label, example }, index) => (
 						<div key={server} className="space-y-2">
-							<Label htmlFor={`address-${server}`}>{label}</Label>
+							<Label htmlFor={`${id}-${index}`}>{label}</Label>
 							<Input
-								id={`address-${server}`}
+								id={`${id}-${index}`}
 								type="url"
 								inputMode="url"
-								value={given[server] ?? ""}
-								onChange={(event) =>
-									setGiven((current) => ({ ...current, [server]: event.target.value }))
-								}
+								value={given.get(server) ?? ""}
+								onChange={(event) => {
+									const { value } = event.target;
+									setGiven((current) => new Map(current).set(server, value));
+								}}
 								placeholder={example}
 								maxLength={2000}
 								autoFocus={index === 0}
 								required
+								aria-invalid={error ? true : undefined}
+								aria-describedby={error ? `${id}-error` : undefined}
 							/>
 						</div>
 					))}
 					{error && (
-						<p role="alert" className="text-sm text-destructive">
+						<p id={`${id}-error`} role="alert" className="text-sm text-destructive">
 							{error}
 						</p>
 					)}

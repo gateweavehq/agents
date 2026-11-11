@@ -217,6 +217,10 @@ describe("ready-made setups", () => {
 		);
 		expect(moved.code).toBe(1);
 		expect(moved.out).toContain("differs  .mcp.json");
+		// The command it suggests is one that works.
+		expect(moved.out).toContain(
+			"Run `gateweave-agents apply mail --url gateweave-mail=https://mail.other.dev/mcp`",
+		);
 
 		for (const args of [
 			["--url", "gateweave-mail"],
@@ -228,5 +232,8 @@ describe("ready-made setups", () => {
 		const unasked = await cli("apply", "baseline", "--dir", "repo", "--url", `github=${url}`);
 		expect(unasked.code).toBe(2);
 		expect(unasked.err).toContain("Baseline asks for no address for github");
+		const named = await cli("apply", "mail", "--dir", "repo", "--url", `__proto__=${url}`);
+		expect(named.code).toBe(2);
+		expect(named.err).toContain("Gateweave Mail asks for no address for __proto__");
 	});
 });

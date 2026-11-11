@@ -5,7 +5,7 @@ setup's files into a repository the way the app's pull request would, and checks
 repository still holds them.
 
 A setup is a folder with a `setup.json` and the files of its assets: instructions, skills and
-MCP servers, for Claude Code, Codex, Gemini CLI and Cursor. The CLI also carries the ready-made
+MCP servers, for Claude Code, Codex, Gemini CLI, Cursor, GitHub Copilot and Devin. The CLI also carries the ready-made
 setups from the repository's `setups/` folder, so a name is enough.
 
 ## Usage
@@ -33,7 +33,7 @@ from the `GATEWEAVE_MAIL_KEY` environment variable.
 What it writes and what it leaves alone are decided by the same code as the app's pull requests:
 
 - The setup owns the files it writes, except the MCP configuration files (`.mcp.json`,
-  `.cursor/mcp.json`, `.gemini/settings.json`, `.codex/config.toml`). Only its own servers are
+  `.cursor/mcp.json`, `.gemini/settings.json`, `.codex/config.toml`, `.vscode/mcp.json`). Only its own servers are
   merged into those, and every other server and setting stays as it was.
 - A symlink, or a file or folder in the way, is never written through or replaced. The CLI says
   which paths it left alone and why, without failing, since a repository may keep `CLAUDE.md` as

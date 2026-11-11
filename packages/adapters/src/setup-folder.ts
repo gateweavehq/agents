@@ -104,7 +104,13 @@ function askedUrl(files: AssetToWrite["files"]): string | { problem: string } {
 	}
 	const [file] = files;
 	const value = file?.content ? parsePlainJson(file.content) : undefined;
-	if (!file?.path.endsWith(".json") || !isPlainObject(value) || typeof value.url !== "string") {
+	if (
+		!file?.path.endsWith(".json") ||
+		!isPlainObject(value) ||
+		typeof value.url !== "string" ||
+		// Gemini's `httpUrl` would be the address used, and the one given would go unread.
+		value.url !== connection.connection.url
+	) {
 		return { problem: "askUrl needs the server in a JSON file with a url" };
 	}
 	const example = mcpServerUrl.safeParse(value.url);
