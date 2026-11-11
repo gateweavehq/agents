@@ -3,6 +3,7 @@ import {
 	checkCitations,
 	numberWikiPages,
 	parseWikiSteering,
+	WIKI_MAX_PAGE_LENGTH,
 	WIKI_MAX_PAGES,
 	wikiContentsText,
 	wikiNotFoundText,
@@ -104,6 +105,13 @@ describe("citations", () => {
 				sources,
 			),
 		).toBe("`src/sync.ts` `src/other.ts` `README.md` `README.md`");
+	});
+
+	it("reads a page of brackets in linear time", () => {
+		const body = "[!".repeat(WIKI_MAX_PAGE_LENGTH / 2);
+		const started = performance.now();
+		expect(checkCitations(body, sources)).toBe(body);
+		expect(performance.now() - started).toBeLessThan(500);
 	});
 });
 

@@ -168,8 +168,12 @@ export interface WikiSource {
 	lines: number | null;
 }
 
-/** A citation in a page's text: `[path:12-30]()`, DeepWiki's form, with an empty link. */
-export const WIKI_CITATION = /\[([^\]\s:]+):(\d+)(?:-(\d+))?\]\(\)/g;
+/**
+ * A citation in a page's text: `[path:12-30]()`, DeepWiki's form, with an empty link. The path
+ * holds no `[`, so each attempt stops at the next one: a page that is a long run of `[` costs
+ * linear time, not quadratic. A path with brackets in it never matched anyway, for its `]`.
+ */
+export const WIKI_CITATION = /\[([^[\]\s:]{1,512}):(\d{1,9})(?:-(\d{1,9}))?\]\(\)/g;
 
 /**
  * Keeps the citations that name a file the page read and lines it has, and turns the rest into the
