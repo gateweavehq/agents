@@ -57,6 +57,10 @@ BETTER_AUTH_SECRET=
 # In local dev nothing is sent: each email is printed in the terminal and saved to a file.
 # EMAIL_FROM=
 
+# Optional: where "Ask for access" on the sign-in pages leads while the server's owner has closed
+# sign-up (an https address, such as a waitlist). Nothing is shown when it is unset.
+# SIGN_UP_REQUEST_URL=
+
 # Optional: the addresses of your legal pages, linked from the sign-in pages and the workspace menu.
 # Nothing is linked when they are unset.
 # LEGAL_NOTICE_URL=

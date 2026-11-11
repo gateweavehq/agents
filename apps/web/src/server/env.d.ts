@@ -21,6 +21,12 @@ declare namespace Cloudflare {
 		 */
 		EMAIL_FROM?: string;
 		/**
+		 * Where someone can ask for access once the server's owner has closed sign-up: an https
+		 * address. The sign-in pages then show "Ask for access", linking to it. Nothing is shown
+		 * when it is unset or is not an https address.
+		 */
+		SIGN_UP_REQUEST_URL?: string;
+		/**
 		 * The addresses of this deployment's legal pages, linked from the sign-in pages and the
 		 * workspace menu. Each is left out when unset, or when it is not an http(s) address.
 		 */

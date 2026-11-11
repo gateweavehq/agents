@@ -7,10 +7,17 @@ import type { Database } from "../db";
 import { schema } from "../db";
 import type { Mailer } from "../email/mailer";
 import { accountDeletedEmail } from "../email/templates";
+import { mustKeepAccount } from "./deployment";
 
 // "Deleting an account" in docs/architecture.md.
 
 export const DELETE_ACCOUNT = "/account/delete";
+
+const RUNS_THE_SERVER = {
+	code: "RUNS_THE_SERVER",
+	message:
+		"You run this server, and sign-up is closed, so this account has to stay. Open sign-up first, which lets your account go.",
+};
 
 const WRONG_PASSWORD = { code: "INVALID_PASSWORD", message: "That password is not right." };
 
@@ -67,6 +74,10 @@ export function deleteAccount({ db, mailer, onAccountDeleted }: DeleteAccountCon
 				async (ctx) => {
 					const { session, internalAdapter, password } = ctx.context;
 					const { user } = session;
+
+					// Without its owner, a closed server has nobody who can open it. The trigger
+					// `deployment_keeps_its_owner` holds this whatever asks.
+					if (await mustKeepAccount(db, user.id)) throw APIError.from("FORBIDDEN", RUNS_THE_SERVER);
 
 					const onlyTheirs = await workspacesOnlyTheyOwn(db, user.id);
 					if (onlyTheirs.length > 0) throw onlyOwnerOf(onlyTheirs);

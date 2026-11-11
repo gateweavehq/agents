@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-rout
 import { type FormEvent, useState } from "react";
 import { LegalLinks } from "#/components/legal-links";
 import { LiveButton } from "#/components/live-button";
+import { ServerSettings } from "#/components/settings/server-settings";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
@@ -12,15 +13,15 @@ import { useDocumentTitle } from "#/lib/title";
 // Under /settings because no workspace can be called that, so this takes no workspace's address.
 export const Route = createFileRoute("/settings/account")({
 	beforeLoad: async () => {
-		const { account, legal } = await getAccount();
+		const { account, legal, provider } = await getAccount();
 		if (!account) throw redirect({ to: "/login" });
-		return { account, legal };
+		return { account, legal, provider };
 	},
 	component: AccountPage,
 });
 
 function AccountPage() {
-	const { account, legal } = Route.useRouteContext();
+	const { account, legal, provider } = Route.useRouteContext();
 	const [deleted, setDeleted] = useState(false);
 	const [signedOut, setSignedOut] = useState(false);
 	useDocumentTitle(deleted ? "Account deleted" : signedOut ? "Signed out" : "Your account");
@@ -70,6 +71,7 @@ function AccountPage() {
 
 			<ChangeName name={account.name} />
 			<ChangePassword email={account.email} hasPassword={account.hasPassword} />
+			{account.ownsServer && <ServerSettings provider={provider} />}
 			<SignOutEverywhere onSignedOut={() => setSignedOut(true)} />
 			<DeleteAccount
 				email={account.email}

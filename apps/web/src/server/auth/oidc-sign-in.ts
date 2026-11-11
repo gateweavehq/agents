@@ -13,6 +13,15 @@ import { schema } from "../db";
  */
 export const OIDC_PROVIDER = "oidc";
 
+/**
+ * Whether the account being made comes from the OpenID Connect provider's sign-in. Better Auth answers
+ * it at `/callback/:id`, after checking the provider's ID token against this request's state, and
+ * `path` is the route's pattern with the provider's id in `params`.
+ */
+export function signsInThroughProvider(context: GenericEndpointContext | null) {
+	return context?.path === "/callback/:id" && context.params?.id === OIDC_PROVIDER;
+}
+
 /** An OpenID Connect provider people may sign in through, instead of or as well as a password. */
 export interface OidcProvider {
 	issuer: string;

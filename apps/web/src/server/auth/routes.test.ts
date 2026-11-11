@@ -37,6 +37,13 @@ const SERVED = [
 	"POST /update-session",
 	"POST /update-user",
 
+	// The server owner's: each answers anyone else with 404, and changes want a fresh session.
+	"GET /deployment/get",
+	"POST /deployment/allow/add",
+	"POST /deployment/allow/remove",
+	"POST /deployment/sign-up",
+	"POST /deployment/trust-provider",
+
 	// Off unless configured, and they are not: `user.changeEmail` and `user.deleteUser`.
 	"GET /delete-user/callback",
 	"POST /change-email",

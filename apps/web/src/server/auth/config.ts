@@ -12,7 +12,19 @@ import type { Mailer } from "../email/mailer";
 import { invitationEmail, passwordResetEmail, verificationEmail } from "../email/templates";
 import { tellOfChangedPassword, validName, validRename } from "./account-changes";
 import { deleteAccount } from "./delete-account";
-import { type OidcProvider, oidcDatabaseHooks, oidcSignIn } from "./oidc-sign-in";
+import {
+	deploymentPlugin,
+	grantProviderPass,
+	mayMakeAccount,
+	SIGN_UP_CLOSED,
+	spendPass,
+} from "./deployment";
+import {
+	type OidcProvider,
+	oidcDatabaseHooks,
+	oidcSignIn,
+	signsInThroughProvider,
+} from "./oidc-sign-in";
 import { passwordTries, tellOfSpentTries } from "./password-tries";
 
 export interface AuthConfig {
@@ -115,10 +127,20 @@ export function createAuth(config: AuthConfig) {
 		databaseHooks: {
 			user: {
 				create: {
-					// A picture is fetched by the browser of everyone in someone's workspaces, so whoever
-					// chooses its address learns who is looking and from where. The form sends none.
-					before: async (_user, context) =>
-						context?.path === "/sign-up/email" ? { data: { image: null } } : undefined,
+					// Every way an account is made comes through here, so this is where a closed server
+					// refuses, and the trigger `user_needs_a_way_in` holds it if something skips this.
+					before: async (user, context) => {
+						const viaProvider = signsInThroughProvider(context);
+						if (!(await mayMakeAccount(config.db, user.email, { viaProvider }))) {
+							throw APIError.from("FORBIDDEN", SIGN_UP_CLOSED);
+						}
+						// The trigger cannot tell where an account comes from, so with trust on it wants this.
+						if (viaProvider) await grantProviderPass(config.db, user.email);
+						// A picture is fetched by the browser of everyone in someone's workspaces, so whoever
+						// chooses its address learns who is looking and from where. The form sends none.
+						return context?.path === "/sign-up/email" ? { data: { image: null } } : undefined;
+					},
+					after: async (user) => spendPass(config.db, user.email),
 				},
 			},
 			account: oidcHooks.account,
@@ -157,6 +179,12 @@ export function createAuth(config: AuthConfig) {
 			before: createAuthMiddleware(async (ctx) => {
 				if (ctx.path === "/update-user") return { context: { body: validRename(ctx.body) } };
 				if (ctx.path === "/sign-up/email") {
+					// Before Better Auth looks for an account with the address, which would tell someone
+					// on a closed server which addresses have one.
+					const address: unknown = ctx.body?.email;
+					if (typeof address === "string" && !(await mayMakeAccount(config.db, address))) {
+						throw APIError.from("FORBIDDEN", SIGN_UP_CLOSED);
+					}
 					return { context: { body: { name: validName(ctx.body?.name) } } };
 				}
 				// Whoever knew the old password may be why it is changing, and may be the one asking.
@@ -268,6 +296,7 @@ export function createAuth(config: AuthConfig) {
 				mailer,
 				onAccountDeleted: config.onAccountDeleted,
 			}),
+			deploymentPlugin({ db: config.db, hasProvider: Boolean(config.oidc) }),
 			...(config.oidc ? oidcSignIn(config.db, config.oidc) : []),
 			// Must stay last: forwards Set-Cookie headers from server-side auth calls.
 			tanstackStartCookies(),

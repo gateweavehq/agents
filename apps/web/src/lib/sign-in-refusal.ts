@@ -3,6 +3,8 @@ const REFUSALS: Record<string, string> = {
 	account_not_linked:
 		"This address already has an account here, and we could not confirm it is yours. Sign in with your password. If you have not verified the address yet, do that first.",
 	email_not_found: "We were not given an email address for you, and an account needs one.",
+	SIGN_UP_CLOSED:
+		"This server takes new accounts by invitation. Ask whoever runs it to invite you.",
 };
 
 /**

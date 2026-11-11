@@ -50,7 +50,8 @@
 	// Email through Cloudflare Email Service. Nothing is sent until EMAIL_FROM names a sender on a
 	// domain onboarded to Email Sending; without it, Agents runs with email off.
 	"send_email": [{ "name": "EMAIL" }],
-	// Optional: a USAGE Analytics Engine dataset (see docs/self-hosting.md), and GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM, the six
+	// Optional: a USAGE Analytics Engine dataset (see docs/self-hosting.md), and GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM,
+	// SIGN_UP_REQUEST_URL (where "Ask for access" leads once the owner closes sign-up), the six
 	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, AI_GATEWAY_URL with AI_GATEWAY_TOKEN,
 	// WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID and the WORKERS_AI_*
 	// limits, and the SANDBOX_*

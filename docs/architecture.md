@@ -86,6 +86,68 @@ differing only by configuration. Track has the same code, and the same reasons.
 - **Signing out of Agents stays in Agents.** The provider's session is left alone, as other apps
   signed in through it would expect, and `disableProviderLogout` keeps the plugin from sending
   anyone there.
+- **A closed server may trust it.** While sign-up is by invitation, the owner can have anyone who
+  signs in through the provider make an account, since it keeps its own list. See "Who owns a
+  server" below.
+
+### Who owns a server
+
+**One account runs the server, and decides who else may make an account.** A row in `deployment` (one
+row, `id` = 1) names the owner (`owner_id`), says whether sign-up is `open` or `closed`, and whether
+the sign-in provider is trusted (`trust_provider`). A second table, `sign_up_allow`, is the owner's
+list. `apps/web/src/server/auth/deployment.ts` asks, and the triggers in `0007_sign_up_hold.sql`
+hold it. Track and Agents have the same shape, and ID's is the model.
+
+- **A new server is open, so a self-hosted one changes nothing.** `0007_sign_up_hold.sql` makes the
+  oldest account the owner of a server that has accounts, and leaves the owner empty on one that has
+  none, where the first account becomes it (`first_account_owns_deployment`). D1 runs writes one at
+  a time, so there is only one first. The owner closes sign-up on their account page, under "This
+  server".
+- **Closed means an address needs a way in.** The first account of a server with none; an address on
+  the list, or at a domain on it; an address with a pending, unexpired invitation to a workspace,
+  from any workspace's admin as before; or, where the owner trusts the provider, an account made
+  through it. GitHub is never trusted that way. People who already have an account sign in as ever.
+- **The list holds an address, lowercased, or a domain written with a leading `@`.** A domain covers
+  addresses at exactly that domain, which is the part after the last `@`, and not its subdomains.
+  Entries are checked with zod at the owner's endpoint (`apps/web/src/lib/sign-up-allow.ts`):
+  trimmed, lowercased, a valid address or `@` and a valid domain name, which for a name with other
+  letters is its punycode. A note of at most 200 characters is the owner's own. At most 5,000
+  entries: the endpoint says so, and the trigger `sign_up_allow_is_capped` holds it when two adds
+  arrive together. Taking an entry off lets no more people in; an account it already made stays.
+- **Every path that makes an account asks.** `databaseHooks.user.create.before` in `auth/config.ts`
+  covers email and password sign-up, GitHub, the sign-in provider and accepting an invitation (which
+  follows making the account). `mayMakeAccount` is the one function that decides. A `before` hook on
+  `/sign-up/email` asks first, so that Better Auth's "that address is taken" does not tell a stranger
+  which addresses have an account: on a closed server an address with no way in hears the refusal
+  whether or not it has one.
+- **The database refuses the rest.** The trigger `user_needs_a_way_in` has the same rule for a path
+  that forgets to ask, with a missing `deployment` row counting as closed. One part of the rule
+  cannot be read from the user row: whether an account comes from the provider is known only when
+  its sign-in is linked, which is after it. So the hook, which knows the route Better Auth ran
+  (`signsInThroughProvider`: `/callback/:id` with the provider's id), writes a pass for the address
+  in `sign_up_pass`, good for a minute, and only where the owner trusts the provider. With trust on
+  the trigger lets an insert through only while an unexpired pass exists for `lower(new.email)`.
+  `user.create.after` deletes it, and writing one deletes the expired. A path that skips the hook
+  has no pass, so trust opens nothing for it.
+- **The refusal says one thing for every address:** "This server takes new accounts by invitation.
+  Ask whoever runs it to invite you." (`SIGN_UP_CLOSED`). For GitHub and the provider it comes back
+  to `/login?error=SIGN_UP_CLOSED`, which the page words itself. With `SIGN_UP_REQUEST_URL` set to an
+  https address, the sign-in page also shows "Ask for access" linking to it while sign-up is closed.
+- **The owner's endpoints are Better Auth's `/deployment/...`.** To anyone but the owner they answer
+  404 as if they were not there. Everything that changes something asks for a fresh session
+  (`freshAge`, a day), since each lets others in and would outlast a stolen cookie. Listing takes a
+  search and a page at a time (50), newest first, with whether an account with the address, or at
+  the domain, exists yet.
+- **The owner's account stays while sign-up is closed.** Without it a closed server would have nobody
+  who can open it. The account page refuses with words, and `deployment_keeps_its_owner` holds it in
+  the database. On an open server the account may go, and ownership passes to the earliest account
+  left (`created_at`, then `id`) in the trigger `deployment_hands_over_its_owner`, which runs before
+  the row goes so that the foreign key finds nothing to empty. Every account here is a person, so
+  none is skipped. If none is left the owner is empty, and the next account becomes it. A server is
+  never left without an owner while it has accounts.
+- **Not here:** server invitations, and a rule that only the owner makes workspaces while closed. ID
+  has both, because its apps trust whoever has an account. Here a workspace's admin may still invite
+  any address, and that invitation is a way in.
 
 ## The registry
 
@@ -142,6 +204,9 @@ remove a member from a workspace, which leaves their conversations.
   password. The list is `disabledPaths` in `apps/web/src/server/auth/config.ts`, and
   `apps/web/src/server/auth/routes.test.ts` fails when an upgrade adds a route to what answers, so
   someone decides about it.
+- **A closed server keeps its owner.** Whoever runs the server is refused while sign-up is closed,
+  and `deployment_keeps_its_owner` holds it. See "Who owns a server". The owner's list of addresses
+  stays when they go: it holds people who may have no account.
 - **A workspace keeps an owner.** The only owner of a workspace is refused and told which, because
   a workspace with no owner has nobody who can fix it. The plugin and this endpoint both count and
   then act, so two owners leaving at once could each see the other still there. Two triggers on

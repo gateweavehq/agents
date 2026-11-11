@@ -43,6 +43,34 @@
       "when": 1794019877216,
       "tag": "0005_member_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794425783842,
+      "tag": "0006_sign_up_allowlist",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794425784931,
+      "tag": "0007_sign_up_hold",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794427959625,
+      "tag": "0008_sign_up_pass",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794427960663,
+      "tag": "0009_sign_up_exact",
+      "breakpoints": true
     }
   ]
 }
