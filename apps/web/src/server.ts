@@ -12,6 +12,7 @@ export { RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
 export { ConversationAgent } from "./server/conversation";
 export { RateLimiter } from "./server/rate-limit";
 export { RegistryDO } from "./server/registry-do";
+export { WikiWorkflow } from "./server/wiki/workflow";
 
 /** OAuth discovery documents for MCP clients. Better Auth serves them at the root. */
 const OAUTH_DISCOVERY =

@@ -127,10 +127,18 @@ import {
 	triggerPatch,
 	triggerSecret,
 	turnVia,
+	WIKI_MAX_PAGES,
+	WIKI_PAGE_NUMBER,
+	WIKI_STEERING_PATH,
+	type WikiDetail,
+	type WikiEntry,
+	type WikiPage,
+	type WikiStartInput,
 	WORKERS_AI_DAY_USED,
 	WORKERS_AI_NOT_INVITED,
 	type WorkersAiSettings,
 	type WrittenAssetInput,
+	wikiStartInput,
 	workersAiDailyLimit,
 	workersAiOffered,
 	workersAiOfferTo,
@@ -283,7 +291,7 @@ import {
 	utcDay,
 	utcMonth,
 } from "./sandbox-meter";
-import { type RepositorySource, scanRepository } from "./scanner";
+import { type RepositorySource, readTexts, scanRepository } from "./scanner";
 import {
 	applyScan,
 	reconcileInstallation,
@@ -338,6 +346,36 @@ import {
 	verifyDelivery,
 } from "./triggers";
 import { type UsageSettings, usagePoint, writeUsage } from "./usage";
+import {
+	failWikiGeneration,
+	finishWikiGeneration,
+	listWikiEntries,
+	recordWikiCommit,
+	repositoryNamed,
+	saveWikiPage,
+	saveWikiPlan,
+	startWikiGeneration,
+	underwayGeneration,
+	WIKI_DOC_LENGTH,
+	WIKI_DOCS_BUDGET,
+	WIKI_GONE,
+	type WikiEnv,
+	type WikiPageContext,
+	type WikiPageInput,
+	type WikiParams,
+	type WikiPlanContext,
+	type WikiPlanInput,
+	type WikiUsage,
+	wikiDetail,
+	wikiDocs,
+	wikiListing,
+	wikiPage,
+	wikiPageInput,
+	wikiPagesOf,
+	wikiPageToWrite,
+	wikiPlanInput,
+	wikiUsage,
+} from "./wiki";
 
 const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
@@ -1943,6 +1981,235 @@ export class RegistryDO extends DurableObject {
 	 * Begins the scheduled runs that are due, works through the scans that are and destroys the
 	 * conversations of people who deleted their accounts, then sets the alarm for what comes next.
 	 */
+	// Repository wikis (AGT-108). Members read them; owners and admins have them written, which
+	// spends the workspace's key. `WikiWorkflow` in the app writes one, calling the methods below
+	// that take a generation, for it alone.
+
+	listWikis(): WikiEntry[] {
+		return listWikiEntries(this.#db, Date.now());
+	}
+
+	getWiki(repositoryId: string): WikiDetail | null {
+		return wikiDetail(this.#db, id.parse(repositoryId), Date.now());
+	}
+
+	getWikiPage(repositoryId: string, number: string): WikiPage | null {
+		const page = z.string().regex(WIKI_PAGE_NUMBER).parse(number);
+		return wikiPage(this.#db, id.parse(repositoryId), page);
+	}
+
+	/** Every page of the wiki in reading order, with the repository's name as its host spells it. */
+	readWiki(repositoryId: string): { repoName: string; pages: WikiPage[] } | null {
+		const detail = wikiDetail(this.#db, id.parse(repositoryId), Date.now());
+		const pages = detail ? wikiPagesOf(this.#db, detail.repositoryId) : null;
+		if (!detail || !pages) return null;
+		return { repoName: `${detail.owner}/${detail.name}`, pages };
+	}
+
+	/** The id of the live repository named `owner/name`, ignoring case, as DeepWiki names one. */
+	wikiRepositoryNamed(fullName: string): string | null {
+		return repositoryNamed(this.#db, z.string().min(3).max(300).parse(fullName));
+	}
+
+	/**
+	 * Has the repository's wiki written, by the provider's model the member chose, with the
+	 * workspace's key. Returns the generation's id, or why it cannot start.
+	 */
+	async startWiki(
+		repositoryId: string,
+		input: WikiStartInput,
+		startedBy: string,
+	): Promise<{ generation: string } | ProviderRefusal> {
+		const repository = id.parse(repositoryId);
+		const choice = wikiStartInput.parse(input);
+		const member = id.parse(startedBy);
+		const workflows = (this.env as WikiEnv).WIKI;
+		if (!workflows) {
+			return refused(
+				"This server cannot write wikis: its Worker has no WIKI workflow. Whoever runs it can deploy the current wrangler.jsonc.",
+			);
+		}
+		if (sealedKeyOf(this.#db, choice.provider) === null) {
+			return refused(
+				`${providerMissing(choice.provider)}, so it cannot write the wiki. An owner or admin can add one in Settings.`,
+			);
+		}
+		const started = this.#write(() =>
+			startWikiGeneration(this.#db, repository, choice, member, Date.now()),
+		);
+		if ("refused" in started) return refused(started.refused);
+		const params: WikiParams = {
+			workspaceId: this.ctx.id.name ?? "",
+			generation: started.generation,
+		};
+		try {
+			await workflows.create({ id: started.generation, params });
+		} catch (error) {
+			console.error("registry: the wiki's workflow did not start", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			this.#write(() =>
+				failWikiGeneration(this.#db, started.generation, "It could not start", Date.now()),
+			);
+			return refused("The wiki could not start just now. Try again shortly.");
+		}
+		return started;
+	}
+
+	/**
+	 * Reads what planning needs, for `WikiWorkflow` alone: the repository's files at the head of its
+	 * default branch, the docs worth reading first, `.devin/wiki.json`, and the workspace's key,
+	 * opened, which the workflow keeps in memory for the step. A plan already saved, by a try of the
+	 * step whose answer was lost, comes back as its number of pages, so it is not asked for again.
+	 */
+	async wikiPlanContext(
+		generationId: string,
+	): Promise<WikiPlanContext | { planned: number } | ProviderRefusal> {
+		const generation = id.parse(generationId);
+		const underway = underwayGeneration(this.#db, generation);
+		if (underway?.generation.status === "writing") {
+			return { planned: underway.generation.pagesTotal };
+		}
+		if (underway?.generation.status !== "planning") return refused(WIKI_GONE);
+		const { repository } = underway;
+		const source = await this.#sourceOf(repository);
+		if ("unavailable" in source) return refused(source.unavailable);
+		const head = await source.head();
+		const { files, truncated: treeTruncated } = await source.files(head.tree);
+		const { listing, truncated } = wikiListing(files);
+		const steeringFile = files.find((file) => file.path === WIKI_STEERING_PATH && !file.symlink);
+		const docs = wikiDocs(files);
+		const texts = await readTexts(this.#db, source, steeringFile ? [steeringFile, ...docs] : docs);
+		const steering = steeringFile ? (texts.get(steeringFile.blob) ?? null) : null;
+		let budget = WIKI_DOCS_BUDGET;
+		const read: { path: string; text: string }[] = [];
+		for (const doc of docs) {
+			const text = texts.get(doc.blob);
+			if (typeof text !== "string" || budget <= 0) continue;
+			read.push({ path: doc.path, text: text.slice(0, Math.min(budget, WIKI_DOC_LENGTH)) });
+			budget -= Math.min(text.length, WIKI_DOC_LENGTH);
+		}
+		const recorded = this.#write(() =>
+			recordWikiCommit(this.#db, generation, { commit: head.commit, tree: head.tree }, Date.now()),
+		);
+		if (!recorded) return refused(WIKI_GONE);
+		const model = await this.#wikiModel(underway.generation);
+		if ("status" in model) return model;
+		return {
+			repository: { owner: repository.owner, name: repository.name },
+			commit: head.commit,
+			listing,
+			truncated: truncated || treeTruncated,
+			docs: read,
+			steering,
+			model,
+		};
+	}
+
+	/** Keeps the plan `WikiWorkflow` made, for it alone. Returns how many pages there are. */
+	async wikiSavePlan(
+		generationId: string,
+		plan: WikiPlanInput,
+		usage: WikiUsage,
+	): Promise<number | ProviderRefusal> {
+		const generation = id.parse(generationId);
+		const data = wikiPlanInput.parse(plan);
+		const spent = wikiUsage.parse(usage);
+		const underway = underwayGeneration(this.#db, generation);
+		if (!underway?.generation.tree) return refused(WIKI_GONE);
+		const source = await this.#sourceOf(underway.repository);
+		if ("unavailable" in source) return refused(source.unavailable);
+		const { files } = await source.files(underway.generation.tree);
+		const byPath = new Map(files.map((file) => [file.path, file]));
+		const pages = this.#write(() =>
+			saveWikiPlan(this.#db, generation, data, byPath, spent, Date.now()),
+		);
+		return pages ?? refused(WIKI_GONE);
+	}
+
+	/**
+	 * Reads what writing one page needs, for `WikiWorkflow` alone: the page, the wiki's outline, its
+	 * files' text at the generation's commit, and the workspace's key, opened.
+	 */
+	async wikiPageContext(
+		generationId: string,
+		position: number,
+	): Promise<WikiPageContext | ProviderRefusal> {
+		const generation = id.parse(generationId);
+		const at = z.number().int().min(0).max(WIKI_MAX_PAGES).parse(position);
+		const underway = underwayGeneration(this.#db, generation);
+		if (!underway?.generation.commit || underway.generation.status !== "writing") {
+			return refused(WIKI_GONE);
+		}
+		const found = wikiPageToWrite(this.#db, generation, at);
+		if (!found) return refused(WIKI_GONE);
+		const { page, outline } = found;
+		const source = await this.#sourceOf(underway.repository);
+		if ("unavailable" in source) return refused(source.unavailable);
+		const texts = await readTexts(
+			this.#db,
+			source,
+			page.files.map((file) => ({ ...file, symlink: false })),
+		);
+		const model = await this.#wikiModel(underway.generation);
+		if ("status" in model) return model;
+		const { repository } = underway;
+		return {
+			repository: { owner: repository.owner, name: repository.name },
+			commit: underway.generation.commit,
+			page: { number: page.number, title: page.title, purpose: page.purpose, notes: page.notes },
+			outline,
+			notes: underway.generation.notes,
+			files: page.files.map((file) => ({ path: file.path, text: texts.get(file.blob) ?? null })),
+			model,
+		};
+	}
+
+	/** Keeps a page `WikiWorkflow` wrote, for it alone. False when the wiki is no longer written. */
+	wikiSavePage(
+		generationId: string,
+		position: number,
+		page: WikiPageInput,
+		usage: WikiUsage,
+	): boolean {
+		const generation = id.parse(generationId);
+		const at = z.number().int().min(0).max(WIKI_MAX_PAGES).parse(position);
+		const data = wikiPageInput.parse(page);
+		const spent = wikiUsage.parse(usage);
+		return this.#write(() => saveWikiPage(this.#db, generation, at, data, spent, Date.now()));
+	}
+
+	/** Makes the finished wiki the one people read, for `WikiWorkflow` alone. */
+	wikiFinish(generationId: string): boolean {
+		const generation = id.parse(generationId);
+		return this.#write(() => finishWikiGeneration(this.#db, generation, Date.now()));
+	}
+
+	/** Records why the wiki was not written, for `WikiWorkflow` alone. */
+	wikiFail(generationId: string, message: string): boolean {
+		const generation = id.parse(generationId);
+		const why = z.string().max(2000).parse(message);
+		return this.#write(() => failWikiGeneration(this.#db, generation, why, Date.now()));
+	}
+
+	/** The generation's provider, model and the workspace's key for it, opened. */
+	async #wikiModel(
+		generation: schema.WikiGenerationRow,
+	): Promise<WikiPlanContext["model"] | ProviderRefusal> {
+		const opened = await this.#openKey(generation.provider);
+		if ("status" in opened) return opened;
+		return { provider: generation.provider, model: generation.model, key: opened.key };
+	}
+
+	/** Where to read a repository from, GitHub or GitLab, or why it cannot be read here. */
+	async #sourceOf(
+		repository: schema.RepositoryRow,
+	): Promise<RepositorySource | { unavailable: string }> {
+		return repository.provider === "gitlab"
+			? this.#gitlabSource(repository)
+			: sourceFor(this.env as SourceEnv, repository);
+	}
+
 	override async alarm(): Promise<void> {
 		await this.#runSchedules();
 		const due = dueScans(this.#db, Date.now(), SCANS_PER_ALARM);

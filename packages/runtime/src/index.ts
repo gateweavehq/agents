@@ -12,6 +12,12 @@ export {
 	SIGN_IN_AGAIN,
 	startOAuth,
 } from "./mcp-oauth";
+export {
+	describeFailure,
+	failureForLogs,
+	type GatewaySettings,
+	languageModel,
+} from "./models";
 export { RunnerSandbox, SandboxOutbound } from "./sandbox";
 export {
 	checkMcpServer,

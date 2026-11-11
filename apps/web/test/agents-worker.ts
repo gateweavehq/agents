@@ -52,6 +52,10 @@ import type {
 	TriggerRefusal,
 	TriggerTarget,
 	TurnMcpServer,
+	WikiDetail,
+	WikiEntry,
+	WikiPage,
+	WikiStartInput,
 	WrittenAssetInput,
 } from "@gateweave/agents-model";
 import { convertV4MiniflareOptions, Miniflare, type V4ModuleDefinition } from "miniflare";
@@ -150,6 +154,14 @@ export interface RegistryStub {
 		triggerId: string,
 		secret?: string,
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal | null>;
+	listWikis(): Promise<WikiEntry[]>;
+	getWiki(repositoryId: string): Promise<WikiDetail | null>;
+	getWikiPage(repositoryId: string, number: string): Promise<WikiPage | null>;
+	startWiki(
+		repositoryId: string,
+		input: WikiStartInput,
+		startedBy: string,
+	): Promise<{ generation: string } | ProviderRefusal>;
 	setUpTrackTriage(
 		input: TrackTriagePlan,
 		createdBy: string,
@@ -293,6 +305,14 @@ export async function startAgents(
 							className: "ConversationAgent",
 							useSQLite: true,
 							scriptName: names[0],
+						},
+					},
+					// Every copy starts its wikis in the first one's workflow.
+					workflows: {
+						WIKI: {
+							name: "gateweave-agents-wiki",
+							className: "WikiWorkflow",
+							...(index === 0 ? {} : { scriptName: names[0] }),
 						},
 					},
 					outboundService: (request: Request) => {

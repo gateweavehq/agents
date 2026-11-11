@@ -37,6 +37,11 @@
 			{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
 		]
 	},
+	// Writes a repository's wiki, one model request per step (apps/web/src/server/wiki/workflow.ts).
+	// Each workspace's registry starts the ones of its repositories.
+	"workflows": [
+		{ "name": "gateweave-agents-wiki", "binding": "WIKI", "class_name": "WikiWorkflow" }
+	],
 	// RunnerSandbox is each conversation's sandbox. It does nothing unless an environment binds it
 	// as SANDBOX with a container, as cloud and staging do: a sandbox needs Docker to deploy and is
 	// paid by the account, so self-hosted deploys leave it off until their operator opts in.
@@ -80,6 +85,9 @@
 					{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
 				]
 			},
+			"workflows": [
+				{ "name": "gateweave-agents-wiki", "binding": "WIKI", "class_name": "WikiWorkflow" }
+			],
 			// Cloud's sandboxes are for the workspaces it invites (SANDBOX_WORKSPACES), within these
 			// limits. Both secrets are required, so a deploy fails rather than offer sandboxes to every
 			// workspace or spend the budget with nobody told. Workers AI, once WORKERS_AI_TOKEN is set,
@@ -124,6 +132,13 @@
 					{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
 				]
 			},
+			"workflows": [
+				{
+					"name": "gateweave-agents-staging-wiki",
+					"binding": "WIKI",
+					"class_name": "WikiWorkflow"
+				}
+			],
 			// Staging's sandboxes are open to every workspace, within these limits. Its operator hears
 			// of the budget at SANDBOX_ALERT_EMAIL, a secret.
 			"vars": { "SANDBOX_DAILY_MINUTES": "180", "SANDBOX_MONTHLY_BUDGET": "20" },

@@ -23,6 +23,8 @@ import {
 	TEAM_MEMBER_KINDS,
 	TRIGGER_DELIVERY_STATUSES,
 	type TriggerSchedule,
+	WIKI_STATUSES,
+	type WikiSource,
 } from "@gateweave/agents-model";
 import { sql } from "drizzle-orm";
 import {
@@ -703,6 +705,79 @@ export const gitlabConnections = sqliteTable("gitlab_connections", {
 	lastDeliveryAt: integer("last_delivery_at"),
 });
 
+/**
+ * Each writing of a repository's wiki (AGT-108). The newest that is `ready` is the one people
+ * read; finishing one deletes the older ones. At most one per repository is under way
+ * (`planning` or `writing`) at a time, which the partial index holds.
+ */
+export const wikiGenerations = sqliteTable(
+	"wiki_generations",
+	{
+		id: text("id").primaryKey(),
+		repositoryId: text("repository_id")
+			.notNull()
+			.references(() => repositories.id),
+		status: text("status", { enum: WIKI_STATUSES }).notNull(),
+		/** The commit and tree it reads, from planning on, so every page sees the same code. */
+		commit: text("commit"),
+		tree: text("tree"),
+		steered: integer("steered", { mode: "boolean" }).notNull().default(false),
+		steeringProblem: text("steering_problem"),
+		/** The repository's notes from `.devin/wiki.json`, given to every page's writer. */
+		notes: text("notes", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+		provider: text("provider", { enum: KEYED_PROVIDERS }).notNull(),
+		model: text("model").notNull(),
+		startedBy: text("started_by").notNull(),
+		startedAt: integer("started_at").notNull(),
+		/** When it last got further; one that stops for long is taken as failed. */
+		heartbeatAt: integer("heartbeat_at").notNull(),
+		finishedAt: integer("finished_at"),
+		error: text("error"),
+		pagesTotal: integer("pages_total").notNull().default(0),
+		pagesDone: integer("pages_done").notNull().default(0),
+		inputTokens: integer("input_tokens").notNull().default(0),
+		outputTokens: integer("output_tokens").notNull().default(0),
+		cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+		cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+		/** Millionths of a dollar; null once a request's model has no prices. */
+		cost: integer("cost").default(0),
+	},
+	(table) => [
+		index("wiki_generations_repository_idx").on(table.repositoryId, table.startedAt),
+		uniqueIndex("wiki_generations_underway_idx")
+			.on(table.repositoryId)
+			.where(sql`${table.status} in ('planning', 'writing')`),
+	],
+);
+
+/**
+ * A wiki's pages, in reading order (`position`). Planning writes them all without a body, with
+ * the files their writer reads; writing fills each body in.
+ */
+export const wikiPages = sqliteTable(
+	"wiki_pages",
+	{
+		generationId: text("generation_id")
+			.notNull()
+			.references(() => wikiGenerations.id, { onDelete: "cascade" }),
+		position: integer("position").notNull(),
+		number: text("number").notNull(),
+		depth: integer("depth").notNull(),
+		title: text("title").notNull(),
+		purpose: text("purpose").notNull(),
+		notes: text("notes", { mode: "json" }).$type<string[]>().notNull(),
+		files: text("files", { mode: "json" }).$type<FileEntry[]>().notNull(),
+		/** The files the writer read, with their lines, for checking citations and listing sources. */
+		sources: text("sources", { mode: "json" }).$type<WikiSource[]>(),
+		body: text("body"),
+		writtenAt: integer("written_at"),
+	},
+	(table) => [
+		primaryKey({ columns: [table.generationId, table.position] }),
+		uniqueIndex("wiki_pages_number_idx").on(table.generationId, table.number),
+	],
+);
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type GitLabConnectionRow = typeof gitlabConnections.$inferSelect;
@@ -718,3 +793,5 @@ export type EnvSecretRow = typeof envSecrets.$inferSelect;
 export type TeamRow = typeof teams.$inferSelect;
 export type TriggerRow = typeof triggers.$inferSelect;
 export type TriggerDeliveryRow = typeof triggerDeliveries.$inferSelect;
+export type WikiGenerationRow = typeof wikiGenerations.$inferSelect;
+export type WikiPageRow = typeof wikiPages.$inferSelect;

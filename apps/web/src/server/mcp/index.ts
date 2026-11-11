@@ -3,7 +3,8 @@ import { createDpopReplayStore } from "better-auth/oauth2";
 import type { JWTPayload } from "jose";
 import { db, getAuth, mcpResource } from "../auth";
 import { MCP_SCOPE } from "../auth/config";
-import { listWorkspaces } from "../workspaces";
+import { registryFor } from "../registry";
+import { listWorkspaces, workspaceIdsOf } from "../workspaces";
 import { protectResource } from "./protect";
 import { type AgentsAccess, createAgentsServer } from "./tools";
 
@@ -78,11 +79,30 @@ function protect(resource: string) {
 	};
 }
 
-/** What a caller reaches: every workspace the user is in. */
+/** What a caller reaches: every workspace the user is in, each found through D1 first. */
 function accessFor(userId: string): AgentsAccess {
 	return {
 		async workspaces() {
 			return listWorkspaces(db, userId);
+		},
+		async wikis(repoName, workspace) {
+			const memberships = (await workspaceIdsOf(db, userId)).filter(
+				(membership) => workspace === undefined || membership.slug === workspace,
+			);
+			const matches = await Promise.all(
+				memberships.map(async (membership) => {
+					const registry = registryFor(membership.id);
+					const repositoryId = await registry.wikiRepositoryNamed(repoName);
+					if (!repositoryId) return null;
+					const wiki = await registry.readWiki(repositoryId);
+					return {
+						workspace: membership.slug,
+						repoName: wiki?.repoName ?? repoName,
+						pages: wiki?.pages ?? null,
+					};
+				}),
+			);
+			return matches.filter((match) => match !== null);
 		},
 	};
 }

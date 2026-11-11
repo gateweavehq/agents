@@ -78,7 +78,8 @@ function ConsentPage() {
 		<Card title={`Allow ${clientName} to use Gateweave Agents?`}>
 			<p className="text-sm text-muted-foreground">
 				It will act as you, <span className="text-foreground">{viewer.email}</span>: it can see the
-				names of the workspaces you belong to, and nothing else yet.
+				names of the workspaces you belong to and read their repositories' wikis, which may describe
+				private code. It cannot change anything.
 			</p>
 			<p className="text-sm text-muted-foreground">
 				Then you go back to{" "}

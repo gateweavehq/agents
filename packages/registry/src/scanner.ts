@@ -147,7 +147,7 @@ function setText(
 }
 
 /** Texts for these files: from the registry when it holds them, from the source otherwise. */
-async function readTexts(
+export async function readTexts(
 	db: Db,
 	source: RepositorySource,
 	files: readonly SourceFile[],

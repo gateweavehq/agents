@@ -773,11 +773,24 @@ to, through Better Auth's MCP plugin (the `jwt()` and `mcp()` plugins in
    never accepted there, so a web page cannot make a signed-in browser call it, and no Origin
    check is needed. There are no agent members here, so the only credential is an OAuth token.
 
-Today there is one tool, `list_workspaces`, which returns the name and slug of every workspace
-the person belongs to, read from D1. The wiki tools will go next to it in
-`apps/web/src/server/mcp/tools.ts`. Tools reach Agents only through the `AgentsAccess` object
-`createAgentsServer` is given, which offers what the signed-in person may see, and each tool that
-reads a workspace must resolve its slug to the person's membership first (invariant 1).
+The tools, in `apps/web/src/server/mcp/tools.ts`, only read:
+
+- `list_workspaces` returns the name and slug of every workspace the person belongs to, read
+  from D1.
+- `read_wiki_structure` and `read_wiki_contents` read a [repository wiki](#repository-wiki) with
+  DeepWiki's names, arguments and answers, so an agent set up for DeepWiki's or Devin's MCP server
+  works unchanged: `repoName` is `owner/name` in any case (for GitLab the full path, split at the
+  last slash), and the answers are DeepWiki's text, down to "Error fetching wiki for …:
+  Repository not found." Two arguments DeepWiki lacks are optional: `workspace`, for the rare
+  repository with a wiki in more than one of the person's workspaces, which the tool then asks
+  for, and `page`, to read one page of `read_wiki_contents` instead of all of them. A repository
+  in the person's workspaces without a wiki yet says so; anything else, a workspace they are not in
+  among it, is "not found".
+
+Tools reach Agents only through the `AgentsAccess` object `createAgentsServer` is given, which
+offers what the signed-in person may see. A tool that reads a workspace resolves it to the
+person's membership in D1 first (invariant 1): the wiki tools ask the registry of each workspace
+the person is in, or only the one named, and of no other.
 
 Tokens must name one canonical URL, so the endpoint, and the authorization server, exist only
 when `BETTER_AUTH_URL` pins the base URL. Without it `/mcp` answers `404`. The workspace slugs
@@ -1450,6 +1463,57 @@ server).
   pull request is where a person reviews what an issue talked it into. Agents' proposal settings
   in Track still apply to the agent member.
 
+## Repository wiki
+
+A repository's wiki is pages a model writes about its code (AGT-108), each citing the lines it
+explains, in the shape DeepWiki gives: numbered pages (`1`, `1.1`, `2`) with "Relevant source
+files" and `**Sources:** [path:12-30]()` under what they cover. An owner or admin has one written
+on the Wiki page, choosing a model of a provider the workspace has a key for (Anthropic, OpenAI or
+Google, not Workers AI), and every member reads it. Private repositories are read the way scans
+read them, through the workspace's GitHub or GitLab connection.
+
+- **A Workflow writes it.** `startWiki` in the registry notes a generation and starts the app's
+  `WIKI` Workflow (`apps/web/src/server/wiki/workflow.ts`), one step per model request: one plans
+  the pages, one writes each page, and one makes the wiki the one people read. A step that fails
+  tries again on its own, and so does an answer that is empty, cut off at the output limit or, for
+  a plan, not the JSON asked for. A refusal that asking again cannot change, such as a key the
+  provider does not take, fails at once. A wiki that cannot be written is marked failed with the
+  reason, and the one people read stays as it was. A plan saved by a try whose answer was lost is
+  not asked for again. A repository has one generation underway at a time (a partial unique
+  index), and one that has not got further for an hour counts as failed, so another can start. A
+  server whose Worker has no `WIKI` binding says so instead of starting.
+- **The key never leaves the step.** Each step asks the registry for what it needs, the key among
+  it, and hands back what it wrote. Workflows keep what a step returns, so a step returns only a
+  count or a length: never the key, a prompt or the repository's code. A provider's refusal is
+  turned into a sentence (`describeFailure`), since its own message can repeat part of the key.
+- **Planning reads the tree and the docs.** The planner gets every file's path and size and the
+  docs worth reading first (`wikiDocs`: the README, `AGENTS.md`, `docs/`, the package manifests),
+  and answers with the pages, each with up to 12 files to read. Files the repository does not have
+  are dropped. Every page then reads the same commit, which planning notes.
+- **`.devin/wiki.json` steers it**, as it steers DeepWiki: its pages are kept exactly, in its
+  order and under its parents, and its notes reach every writer. A file that breaks one of
+  DeepWiki's rules (no pages, more than 30, two with one title, a parent that is not a page, over
+  100 notes or 10,000 characters in one) is set aside, the model plans on its own, and the wiki
+  says why. Pages nest at most five levels, as far as a page number such as `1.2.1.3.2` goes; a
+  deeper one goes under its ancestor on the fourth, so each can be opened.
+- **A page is written from its files' text**, with line numbers so that it can cite them, up to
+  160,000 characters in all and 40,000 of any one file; a file cut short is marked as such.
+  `checkCitations` keeps a citation only if it names a file the page read and lines it saw (a
+  file's last newline ends its last line, not another), and turns any other into the plain path,
+  so a link never points at lines that do not exist. It reads a page in linear time, whatever the
+  model wrote.
+- **The finished wiki replaces the last.** `wikiFinish` deletes the older generations of the
+  repository. A failed one keeps its row and reason but not its pages, and only the newest failure
+  stays.
+- **Each wiki says where it came from**: the commit, the model, its tokens and the cost at the
+  model's list prices, where they are known. The pages link each citation to those
+  lines at that commit on GitHub or GitLab.
+- **AI agents read it over MCP** at `/mcp`, with DeepWiki's `read_wiki_structure` and
+  `read_wiki_contents`, as the person who connected them; see [AI agents (MCP)](#ai-agents-mcp).
+- **What a provider receives** is the repository's paths and the text of the files a page reads,
+  with the workspace's own key, as an agent's run would send them. A wiki stays when the person who
+  started it deletes their account: it is the team's, and keeps only their id, as a run does.
+
 ## The CLI
 
 `@gateweave/agents` (`packages/cli`) applies a setup kept as files to a working tree, and checks
@@ -1488,6 +1552,10 @@ workspace.
 - **Repositories** lists them with their scan status and drift; a repository's page shows its
   agents, the assets they read grouped by kind, the problems the last scan found, the setups
   merged into it with their drift, and the pull requests that applied them.
+- **Wiki** lists the repositories with their wiki's state, and a repository's wiki shows its pages
+  beside their numbered outline, at `/<workspace>/wiki/<repository>/<page>`, the page a path segment
+  so that `1.10` is not read as a number. Owners and admins have one written or written again
+  there, and on a repository's page; see [Repository wiki](#repository-wiki).
 - **Agents** lists every agent and subagent by runtime, and owners and admins define agents run
   by Gateweave there. An agent's page shows where a coding agent is configured and what it reads,
   or how an agent run by Gateweave works: its model, whether the workspace has a key for it, its

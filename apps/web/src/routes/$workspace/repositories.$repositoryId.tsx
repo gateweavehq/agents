@@ -1,6 +1,6 @@
 import { ASSET_KIND_NAMES, ASSET_KINDS, type Asset } from "@gateweave/agents-model";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { ExternalLink, Lock, RefreshCw } from "lucide-react";
+import { BookOpen, ExternalLink, Lock, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { DriftRow } from "#/components/registry/drift";
@@ -27,6 +27,7 @@ export const Route = createFileRoute("/$workspace/repositories/$repositoryId")({
 
 function RepositoryPage() {
 	const detail = Route.useLoaderData();
+	const { slug } = useWorkspace();
 	useDocumentTitle(detail ? detail.repository.name : "Repository");
 	useRefreshWhile(detail?.repository.scanPending ?? false);
 
@@ -71,6 +72,15 @@ function RepositoryPage() {
 					</p>
 				</div>
 				<div className="flex shrink-0 gap-2">
+					<Button asChild variant="ghost" size="sm">
+						<Link
+							to="/$workspace/wiki/$repositoryId/{-$page}"
+							params={{ workspace: slug, repositoryId: repository.id }}
+						>
+							<BookOpen />
+							Wiki
+						</Link>
+					</Button>
 					<ScanButton pending={repository.scanPending} />
 					<Button asChild variant="ghost" size="sm">
 						<a href={repositoryUrl(repository)} target="_blank" rel="noreferrer">

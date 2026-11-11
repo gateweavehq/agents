@@ -4,6 +4,7 @@ Agents runs on your own Cloudflare account as one Worker. It uses:
 
 - a D1 database for accounts and the list of workspaces;
 - a Durable Object for each workspace's registry and for each conversation with an agent;
+- a Workflow that writes repository wikis, one step per model request;
 - if you turn sandboxes on, a container for each conversation whose agent has one.
 
 Agents call models with each workspace's own provider keys, so model usage is billed to the
@@ -71,7 +72,7 @@ database are named `gateweave-agents`. To use other names, change `name` and `da
 
 The first deploy does three things:
 
-1. It creates the D1 database and the Durable Object namespaces.
+1. It creates the D1 database, the Durable Object namespaces and the wiki Workflow.
 2. It generates `BETTER_AUTH_SECRET`, which is never shown.
 3. It applies the migrations.
 

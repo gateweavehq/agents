@@ -35,6 +35,7 @@ import m0033 from "./0033_sticky_ozymandias.sql";
 import m0034 from "./0034_square_rafael_vega.sql";
 import m0035 from "./0035_jazzy_banshee.sql";
 import m0036 from "./0036_conversations_to_destroy.sql";
+import m0037 from "./0037_wiki.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -77,5 +78,6 @@ export default {
 		m0034,
 		m0035,
 		m0036,
+		m0037,
 	},
 };
