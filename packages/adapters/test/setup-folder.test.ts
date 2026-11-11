@@ -211,6 +211,11 @@ describe("setup folders", () => {
 		expect(
 			problems(server, { "servers/acme.json": JSON.stringify({ url: "http://acme.example.com" }) }),
 		).toEqual(["acme: its example address: The URL must start with https://"]);
+		// Gemini's httpUrl is the address its file is read for, so the given one would go unread.
+		const both = { httpUrl: "https://real.example.com/mcp", url: "https://acme.example.com/mcp" };
+		expect(problems(server, { "servers/acme.json": JSON.stringify(both) })).toEqual([
+			"acme: askUrl needs the server in a JSON file with a url",
+		]);
 	});
 
 	it("say which asset has no files", () => {
