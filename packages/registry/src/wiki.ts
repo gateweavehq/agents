@@ -515,10 +515,11 @@ export function wikiPagesOf(db: Db, repositoryId: string): WikiPage[] | null {
 
 /**
  * The live repository named `owner/name`, ignoring case, as DeepWiki's tools name one. With two
- * (a GitHub and a GitLab one), the one with a wiki.
+ * (a GitHub and a GitLab one), the one with a wiki. A GitLab project's owner is its namespace,
+ * which can hold slashes itself (`group/subgroup/name`), so the name is what follows the last one.
  */
 export function repositoryNamed(db: Db, fullName: string): string | null {
-	const slash = fullName.indexOf("/");
+	const slash = fullName.lastIndexOf("/");
 	if (slash <= 0) return null;
 	const owner = fullName.slice(0, slash).toLowerCase();
 	const name = fullName.slice(slash + 1).toLowerCase();

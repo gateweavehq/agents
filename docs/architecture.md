@@ -773,11 +773,24 @@ to, through Better Auth's MCP plugin (the `jwt()` and `mcp()` plugins in
    never accepted there, so a web page cannot make a signed-in browser call it, and no Origin
    check is needed. There are no agent members here, so the only credential is an OAuth token.
 
-Today there is one tool, `list_workspaces`, which returns the name and slug of every workspace
-the person belongs to, read from D1. The wiki tools will go next to it in
-`apps/web/src/server/mcp/tools.ts`. Tools reach Agents only through the `AgentsAccess` object
-`createAgentsServer` is given, which offers what the signed-in person may see, and each tool that
-reads a workspace must resolve its slug to the person's membership first (invariant 1).
+The tools, in `apps/web/src/server/mcp/tools.ts`, only read:
+
+- `list_workspaces` returns the name and slug of every workspace the person belongs to, read
+  from D1.
+- `read_wiki_structure` and `read_wiki_contents` read a [repository wiki](#repository-wiki) with
+  DeepWiki's names, arguments and answers, so an agent set up for DeepWiki's or Devin's MCP server
+  works unchanged: `repoName` is `owner/name` in any case (for GitLab the full path, split at the
+  last slash), and the answers are DeepWiki's text, down to "Error fetching wiki for …:
+  Repository not found." Two arguments DeepWiki lacks are optional: `workspace`, for the rare
+  repository with a wiki in more than one of the person's workspaces, which the tool then asks
+  for, and `page`, to read one page of `read_wiki_contents` instead of all of them. A repository
+  in the person's workspaces without a wiki yet says so; anything else, a workspace they are not in
+  among it, is "not found".
+
+Tools reach Agents only through the `AgentsAccess` object `createAgentsServer` is given, which
+offers what the signed-in person may see. A tool that reads a workspace resolves it to the
+person's membership in D1 first (invariant 1): the wiki tools ask the registry of each workspace
+the person is in, or only the one named, and of no other.
 
 Tokens must name one canonical URL, so the endpoint, and the authorization server, exist only
 when `BETTER_AUTH_URL` pins the base URL. Without it `/mcp` answers `404`. The workspace slugs
@@ -1489,6 +1502,8 @@ read them, through the workspace's GitHub or GitLab connection.
 - **Each wiki says where it came from**: the commit, the model, its tokens and the cost at the
   model's list prices, where they are known. The pages link each citation to those
   lines at that commit on GitHub or GitLab.
+- **AI agents read it over MCP** at `/mcp`, with DeepWiki's `read_wiki_structure` and
+  `read_wiki_contents`, as the person who connected them; see [AI agents (MCP)](#ai-agents-mcp).
 - **What a provider receives** is the repository's paths and the text of the files a page reads,
   with the workspace's own key, as an agent's run would send them. A wiki stays when the person who
   started it deletes their account: it is the team's, and keeps only their id, as a run does.

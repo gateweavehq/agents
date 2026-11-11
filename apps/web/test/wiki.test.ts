@@ -1,9 +1,11 @@
 import type { WikiDetail } from "@gateweave/agents-model";
+import type { Client } from "@modelcontextprotocol/client";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { type RegistryStub, startAgents } from "./agents-worker";
 import { FakeGitHub, headOf } from "./fake-github";
 import { FakeModels } from "./fake-models";
+import { connectAgent } from "./mcp-client";
 
 const origin = "https://agents.test";
 const KEY = "sk-ant-wiki-test-key";
@@ -225,4 +227,45 @@ it("shows members the wiki's pages, citations linked to the lines at the commit"
 		})
 	).text();
 	expect(other).not.toContain("posts the ops.");
+});
+
+it("lets a member's AI agent read the wiki over MCP with DeepWiki's tools, and no one else's", async () => {
+	const { headers: ada, userId } = await signUp(agents, origin, "ada-wiki-mcp");
+	const id = await createWorkspace(agents, origin, ada, "wiki-mcp");
+	const registry = await agents.registry(id);
+	const repositoryId = await repositoryIn(registry);
+	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, userId);
+	await registry.startWiki(
+		repositoryId,
+		{ provider: "anthropic", model: "claude-sonnet-5-5" },
+		userId,
+	);
+	await settled(registry, repositoryId);
+
+	const textOf = (result: Awaited<ReturnType<Client["callTool"]>>) =>
+		(result.content as { text: string }[])[0]?.text ?? "";
+
+	const client = await connectAgent(agents, origin, ada.cookie);
+	// DeepWiki's argument alone, in any case, as agents write repository names.
+	const structure = await client.callTool({
+		name: "read_wiki_structure",
+		arguments: { repoName: "ACME/App" },
+	});
+	expect(textOf(structure)).toBe("Available pages for acme/app:\n\n- 1 Overview\n  - 1.1 Sync");
+	const page = await client.callTool({
+		name: "read_wiki_contents",
+		arguments: { repoName: "acme/app", page: "1.1" },
+	});
+	expect(textOf(page)).toContain("`sync` posts the ops.");
+	expect(textOf(page)).toContain("- [src/sync.ts](src/sync.ts)");
+	await client.close();
+
+	const { headers: eve } = await signUp(agents, origin, "eve-wiki-mcp");
+	const stranger = await connectAgent(agents, origin, eve.cookie);
+	for (const args of [{ repoName: "acme/app" }, { repoName: "acme/app", workspace: "wiki-mcp" }]) {
+		const refused = await stranger.callTool({ name: "read_wiki_contents", arguments: args });
+		expect(refused.isError).toBe(true);
+		expect(textOf(refused)).toBe("Error fetching wiki for acme/app: Repository not found.");
+	}
+	await stranger.close();
 });

@@ -70,6 +70,20 @@ export async function listWorkspaces(db: Database, userId: string): Promise<Work
 	return rows.map((row) => ({ ...row, role: toRole(row.role) }));
 }
 
+/** The id and slug of every workspace the user belongs to, for reaching their registries. */
+export async function workspaceIdsOf(
+	db: Database,
+	userId: string,
+): Promise<{ id: string; slug: string }[]> {
+	return db
+		.select({ id: schema.organization.id, slug: schema.organization.slug })
+		.from(schema.member)
+		.innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+		.where(eq(schema.member.userId, userId))
+		.orderBy(schema.organization.slug)
+		.all();
+}
+
 /** The names of the workspace's members, by user id. */
 export async function memberNames(db: Database, workspaceId: string): Promise<Map<string, string>> {
 	const rows = await db

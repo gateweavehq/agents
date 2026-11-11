@@ -56,7 +56,7 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
   and the [CLI](packages/cli) applies a setup to a working tree and checks it in CI.
 - **Read about the code.** A model writes a wiki of each repository, private ones included, with the
   workspace's own key: numbered pages that cite the lines they explain, steered by `.devin/wiki.json`
-  as DeepWiki is.
+  as DeepWiki is. AI agents read it over MCP with DeepWiki's tools, signing in with OAuth.
 - **Run your own agents.** Workspaces keep their own model provider keys and environment sets (variables,
   and secrets whose values are stored encrypted), and define agents that Gateweave runs with a model,
   instructions from the library, an environment set and MCP servers. Agents work in teams, delegating

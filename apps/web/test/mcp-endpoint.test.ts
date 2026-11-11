@@ -1,22 +1,18 @@
 import {
 	Client,
-	type OAuthClientInformationMixed,
-	type OAuthClientProvider,
-	type OAuthTokens,
 	StreamableHTTPClientTransport,
 	UnauthorizedError,
 } from "@modelcontextprotocol/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
+import { authApi as authApiIn, MemoryProvider, redirectUrl } from "./mcp-client";
 
 // An AI agent connecting to Agents' own /mcp from scratch, against the built Worker in workerd:
 // discovery, dynamic client registration, sign-in, consent, the PKCE code exchange and a tool
 // call. (`mcp-oauth.test.ts` is the other direction: Agents' agents reaching library servers.)
 
 const origin = "https://agents.test";
-// Never called: the test reads the code from where consent sends the browser.
-const redirectUrl = "http://127.0.0.1:47199/callback";
 
 let agents: Awaited<ReturnType<typeof startAgents>>;
 
@@ -28,57 +24,8 @@ afterAll(async () => {
 	await agents?.dispose();
 });
 
-/** Calls Better Auth as a browser on Agents' own pages would. */
-async function authApi(path: string, cookie: string, body: object) {
-	const response = await agents.fetch(`${origin}/api/auth${path}`, {
-		method: "POST",
-		headers: { "content-type": "application/json", origin, cookie },
-		body: JSON.stringify(body),
-	});
-	if (!response.ok) throw new Error(`${path}: ${response.status} ${await response.text()}`);
-	return response;
-}
-
-/** An MCP client's OAuth state, kept in memory. */
-class MemoryProvider implements OAuthClientProvider {
-	client: OAuthClientInformationMixed | undefined;
-	savedTokens: OAuthTokens | undefined;
-	verifier = "";
-	authorizationUrl: URL | undefined;
-
-	get redirectUrl() {
-		return redirectUrl;
-	}
-	get clientMetadata() {
-		return {
-			client_name: "Agents integration test",
-			redirect_uris: [redirectUrl],
-			grant_types: ["authorization_code", "refresh_token"],
-			response_types: ["code"],
-			token_endpoint_auth_method: "none",
-		};
-	}
-	clientInformation() {
-		return this.client;
-	}
-	saveClientInformation(client: OAuthClientInformationMixed) {
-		this.client = client;
-	}
-	tokens() {
-		return this.savedTokens;
-	}
-	saveTokens(tokens: OAuthTokens) {
-		this.savedTokens = tokens;
-	}
-	saveCodeVerifier(verifier: string) {
-		this.verifier = verifier;
-	}
-	codeVerifier() {
-		return this.verifier;
-	}
-	redirectToAuthorization(url: URL) {
-		this.authorizationUrl = url;
-	}
+function authApi(path: string, cookie: string, body: object) {
+	return authApiIn(agents, origin, path, cookie, body);
 }
 
 const listTools = {
