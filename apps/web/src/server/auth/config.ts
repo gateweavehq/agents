@@ -1,8 +1,9 @@
+import { mcp } from "@better-auth/mcp";
 import type { BetterAuthRateLimitOptions } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { betterAuth } from "better-auth/minimal";
-import { organization } from "better-auth/plugins";
+import { jwt, organization } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { and, count, eq, gt } from "drizzle-orm";
 import { slugProblem } from "../../lib/slug";
@@ -39,6 +40,11 @@ export interface AuthConfig {
 	github?: { clientId: string; clientSecret: string } | undefined;
 	/** An OpenID Connect provider to offer on the sign-in page. */
 	oidc?: OidcProvider | undefined;
+	/**
+	 * URL of the MCP endpoint. Turns Agents into an OAuth server that AI agents sign in to, with
+	 * tokens bound to this URL. It must be canonical, so it needs a pinned `baseURL`.
+	 */
+	mcpResource?: string | undefined;
 	/** Sends email. Without it, password reset is off and invitations are links to share. */
 	mailer?: Mailer | undefined;
 	/** Keeps work such as sending email going after the response, like `ctx.waitUntil`. */
@@ -150,6 +156,8 @@ export function createAuth(config: AuthConfig) {
 			// Returns every pending invitation to any member, ids included (see the hook below).
 			// The app does not use it.
 			"/organization/get-full-organization",
+			// The JWT plugin's session-to-token exchange. Agents get tokens through OAuth instead.
+			"/token",
 			// The rest are offered to any session, and the app does not use them. A cookie may be stolen.
 			// Takes a password away on a recent session alone, and deleting an account then asks for
 			// none. Gateweave ID keeps it, and asks for the password there; see its passwordRemoval.
@@ -166,6 +174,18 @@ export function createAuth(config: AuthConfig) {
 			// Adds another way into the account, on a session alone. No page offers it, and signing in
 			// links an account by itself where that is safe.
 			"/link-social",
+			// Agents register themselves, and no page manages what they registered or were granted.
+			"/oauth2/create-client",
+			"/oauth2/get-client",
+			"/oauth2/get-clients",
+			"/oauth2/update-client",
+			"/oauth2/delete-client",
+			"/oauth2/client/rotate-keys",
+			"/oauth2/client/rotate-secret",
+			"/oauth2/get-consent",
+			"/oauth2/get-consents",
+			"/oauth2/update-consent",
+			"/oauth2/delete-consent",
 		],
 		emailVerification: mailer && {
 			sendVerificationEmail: async ({ user, url }) => {
@@ -298,6 +318,25 @@ export function createAuth(config: AuthConfig) {
 			}),
 			deploymentPlugin({ db: config.db, hasProvider: Boolean(config.oidc) }),
 			...(config.oidc ? oidcSignIn(config.db, config.oidc) : []),
+			...(config.mcpResource
+				? [
+						// Signs access tokens; the MCP endpoint verifies them against its JWKS. Sessions
+						// are not turned into JWTs: tokens come only from the OAuth flow.
+						jwt({ disableSettingJwtHeader: true }),
+						mcp({
+							resource: config.mcpResource,
+							loginPage: "/login",
+							consentPage: "/oauth/consent",
+							scopes: ["openid", "profile", "email", "offline_access", MCP_SCOPE],
+							// MCP clients register themselves. Anyone can register a client, so the
+							// consent page names where the grant will go, and consent is never skipped.
+							allowDynamicClientRegistration: true,
+							allowUnauthenticatedClientRegistration: true,
+							// Some clients leave out application_type; infer it from the redirect URIs.
+							clientRegistrationDefaultApplicationType: "infer",
+						}),
+					]
+				: []),
 			// Must stay last: forwards Set-Cookie headers from server-side auth calls.
 			tanstackStartCookies(),
 		],
@@ -308,6 +347,9 @@ export type Auth = ReturnType<typeof createAuth>;
 
 /** What a client may send to an auth path that has no rule of its own: Better Auth's default. */
 export const DEFAULT_AUTH_LIMIT = { window: 10, max: 100 };
+
+/** Lets an agent act as the user in Agents: read what the user can, with their permissions. */
+export const MCP_SCOPE = "agents";
 
 export const INVITATION_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
 

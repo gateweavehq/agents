@@ -127,7 +127,7 @@ after updating.
 | Name                       | What it does                                                                                                                                                       |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `BETTER_AUTH_SECRET`       | Signs sessions. Required.                                                                                                                                          |
-| `BETTER_AUTH_URL`          | The address people use, such as `https://agents.example.com`. Inferred from each request when unset.                                                               |
+| `BETTER_AUTH_URL`          | The address people use, such as `https://agents.example.com`. Inferred from each request when unset, and then `/mcp` is off.                                       |
 | `SECRETS_KEY`              | Encrypts model provider keys and environment secrets (32 random bytes, base64). Model keys are off without it.                                                     |
 | `GITHUB_CLIENT_ID`         | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                       |
 | `GITHUB_CLIENT_SECRET`     | The client secret of the same GitHub OAuth app.                                                                                                                    |

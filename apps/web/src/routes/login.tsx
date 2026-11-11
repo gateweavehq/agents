@@ -6,12 +6,14 @@ import { LegalLinks } from "#/components/legal-links";
 import { LiveButton } from "#/components/live-button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
-import { authClient } from "#/lib/auth-client";
+import { authClient, inAuthorizationFlow } from "#/lib/auth-client";
 import { safeRedirect } from "#/lib/redirect";
 import { getAuthOptions, getSession } from "#/lib/session";
 import { signInRefusal } from "#/lib/sign-in-refusal";
 
-const loginSearch = z.object({
+// Loose, so the parameters of an agent's authorization request stay in the URL. The OAuth client
+// plugin reads them from there when signing in.
+const loginSearch = z.looseObject({
 	/** Where to go once signed in, such as the invitation that sent the user here. */
 	redirect: z.string().optional().catch(undefined),
 	/** Prefills the email field, for example with the address an invitation was sent to. */
@@ -23,7 +25,9 @@ const loginSearch = z.object({
 
 export const Route = createFileRoute("/login")({
 	validateSearch: loginSearch,
-	beforeLoad: async ({ search }) => {
+	beforeLoad: async ({ search, location }) => {
+		// An authorization request can ask a signed-in user to sign in again (`prompt=login`).
+		if (inAuthorizationFlow(location.searchStr)) return;
 		if (await getSession()) throw redirect({ href: safeRedirect(search.redirect) ?? "/" });
 	},
 	loader: () => getAuthOptions(),
@@ -33,7 +37,11 @@ export const Route = createFileRoute("/login")({
 /** The provider's id in Better Auth. The server's constant is out of the browser's reach. */
 const OIDC_PROVIDER = "oidc";
 
-/** This page's address without why the last attempt came back, for a refusal to return to. */
+/**
+ * This page's address without why the last attempt came back. A refusal ends in a redirect, so it
+ * needs a page to return to, and that has to keep the query: on the way to an agent's authorization,
+ * the query is what that authorization carries on from.
+ */
 function thisPage() {
 	const query = new URLSearchParams(window.location.search);
 	query.delete("error");
@@ -119,6 +127,8 @@ function SignInForm() {
 				description: `We sent a link to verify ${email}.`,
 			});
 		}
+		// The auth client is already on its way back to the agent's authorization.
+		if (inAuthorizationFlow(window.location.search)) return;
 		setPending(false);
 		await router.invalidate();
 		await router.navigate({ href: next });

@@ -25,6 +25,8 @@
 		"@ai-sdk/provider": "catalog:",
 		"@ai-sdk/react": "catalog:",
 		"@better-auth/core": "1.7.16",
+		"@better-auth/mcp": "1.7.16",
+		"@better-auth/oauth-provider": "1.7.16",
 		"@cloudflare/ai-chat": "catalog:",
 		"@fontsource-variable/inter": "5.3.0",
 		"@gateweave/agents-adapters": "workspace:*",
@@ -54,8 +56,9 @@
 		"zod": "catalog:"
 	},
 	"devDependencies": {
-		"@playwright/test": "1.64.1",
 		"@cloudflare/vite-plugin": "1.67.0",
+		"@modelcontextprotocol/client": "2.4.0",
+		"@playwright/test": "1.64.1",
 		"@tailwindcss/vite": "4.3.3",
 		"@tanstack/devtools-vite": "0.8.6",
 		"@tanstack/react-devtools": "0.10.14",
