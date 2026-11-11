@@ -1,0 +1,138 @@
+{
+	"repo_notes": [
+		{
+			"content": "Gateweave Agents is an open-source product that shows which AI agents work in which repositories, keeps their prompts, skills, plugins, scripts and MCP servers in one place, and runs agents and teams of agents on Cloudflare. It ships as one Worker; each workspace's registry is a Durable Object (RegistryDO) with SQLite, and each conversation with an agent is a Durable Object of its own (ConversationAgent). AGENTS.md is the source of truth for how the project is built, docs/architecture.md describes how it is built today, and docs/spec.md describes what it is meant to become: follow them, cite them, and prefer their wording over guesses.",
+			"author": "Maintainers"
+		},
+		{
+			"content": "The invariants in AGENTS.md are load-bearing and should appear wherever they apply: workspaces are private and every server function checks the caller's membership in D1 first (currentMember), with non-members getting the same not-found as a missing workspace; the registry and conversations have no public route and are reached only after that check; registry writes stay synchronous inside transactionSync with Drizzle's sync API, and a scan awaits GitHub first and writes after; server code never reaches the browser bundle; one Better Auth instance per isolate (getAuth()); migrations are append-only; GitHub installation ids are not trusted until GitHub vouches for them and webhooks are acted on only after their signature checks out; secrets stay local, and workspace secrets (model keys, environment-set secrets, MCP server headers) are sealed in packages/registry/src/secrets.ts and never reach the browser, files, prompts or logs.",
+			"author": "Maintainers"
+		},
+		{
+			"content": "Packages: apps/web (the Worker: TanStack Start UI, Better Auth, D1, the gateway to the registry), packages/model (the registry's vocabulary, entities and zod input schemas, no server code), packages/adapters (pure functions that turn a repository's files into a scan, one adapter per coding agent), packages/registry (RegistryDO: projects, repositories, agents, assets, setups, scans, runs, teams, triggers), packages/github (the GitHub App's client: JWT, installation tokens, OAuth, webhooks), packages/runtime (ConversationAgent, sandboxes and run traces), packages/cli (@gateweave/agents, which applies and checks a setup in a working tree). setups/ holds ready-made setups, sandbox/ the sandbox container's Dockerfile. Generated files (routeTree.gen.ts, worker-configuration.d.ts, auth-schema.ts, migrations/ and packages/registry/drizzle/) should be referenced, not documented line by line. Auth, rate limiting, email, the Worker test harness and UI primitives were copied from Gateweave Track and are owned here.",
+			"author": "Maintainers"
+		}
+	],
+	"pages": [
+		{
+			"title": "Overview",
+			"purpose": "What Gateweave Agents is, what runs where (one Worker, D1, a RegistryDO per workspace, a ConversationAgent per conversation), the product phases in docs/spec.md, how to run it locally (pnpm dev on port 4720) and how to self-host it (docs/self-hosting.md)."
+		},
+		{
+			"title": "Repository Layout",
+			"purpose": "The Worker and the six packages, what each owns, how they depend on each other, and the commands in AGENTS.md (check, typecheck, test, test:e2e, verify, deploy).",
+			"parent": "Overview"
+		},
+		{
+			"title": "Invariants",
+			"purpose": "Each invariant from AGENTS.md, why it exists, where the code enforces it, and what breaks if it is violated.",
+			"parent": "Overview"
+		},
+		{
+			"title": "Product Spec and Concepts",
+			"purpose": "The problem, concepts (workspaces, projects, repositories, agents, assets, setups, teams), agents as members, supported coding agents, phases and recorded decisions from docs/spec.md.",
+			"parent": "Overview"
+		},
+		{
+			"title": "Architecture",
+			"purpose": "One Worker: TanStack Start server functions as the API, Better Auth and D1, rate limits in a Durable Object, email, the daily cron, security headers and Content Security Policy, and how the Worker reaches the registry and conversations."
+		},
+		{
+			"title": "Authentication and Accounts",
+			"purpose": "Better Auth accounts, sessions and workspaces, signing in through an OpenID Connect provider (OIDC_ISSUER, generic-oauth, Gateweave ID), who owns a server and the sign-up list, changing a name or password, and deleting an account.",
+			"parent": "Architecture"
+		},
+		{
+			"title": "Workspace Privacy and Access",
+			"purpose": "currentMember in apps/web/src/server/access.ts, why non-members see not-found, how registryFor and the chat gateway check the session, membership and ownership before passing a request on, and erasure of a former member.",
+			"parent": "Architecture"
+		},
+		{
+			"title": "Database and Migrations",
+			"purpose": "D1 tables (Better Auth and Agents' own), the RegistryDO SQLite schema in packages/registry/drizzle, Drizzle Kit, append-only migrations and the schema-change skill.",
+			"parent": "Architecture"
+		},
+		{
+			"title": "The Registry",
+			"purpose": "RegistryDO in packages/registry: one Durable Object per workspace, its SQLite tables, synchronous transactional writes, input validation against packages/model, and how pages read it through server functions."
+		},
+		{
+			"title": "Model Package",
+			"purpose": "packages/model: the registry's entities and zod input schemas, shared by the Worker, registry and CLI, with no server code.",
+			"parent": "The Registry"
+		},
+		{
+			"title": "GitHub and GitLab",
+			"purpose": "The GitHub App client in packages/github (JWT, installation tokens, OAuth with PKCE, webhook signatures), how a workspace connects an installation only after GitHub vouches for it (docs/github-app.md), and reading GitLab projects with an access token."
+		},
+		{
+			"title": "Format Adapters and Scans",
+			"purpose": "packages/adapters turning a repository's files into agents and assets (pure, no I/O), and how RegistryDO scans: scan_requests, alarms, pushes to the default branch, and what a scan leaves behind. Follow .claude/skills/add-adapter/SKILL.md to add one.",
+			"parent": "The Registry"
+		},
+		{
+			"title": "Library and Setups",
+			"purpose": "The library of versioned assets, setups pinned to asset versions, the ready-made setups in setups/, and how pins move by hand.",
+			"parent": "The Registry"
+		},
+		{
+			"title": "Applying Setups and Drift",
+			"purpose": "Applying a setup to a repository by pull request (the default branch is never written), drift between a repository and a merged setup computed on demand, and the CLI that checks it in CI.",
+			"parent": "Library and Setups"
+		},
+		{
+			"title": "CLI",
+			"purpose": "@gateweave/agents in packages/cli: readSetupFolder, planApply and writeAssets shared with the app, applying a setup to a working tree and checking it for CI.",
+			"parent": "Library and Setups"
+		},
+		{
+			"title": "Model Providers and Workers AI",
+			"purpose": "Workspace-owned keys for Anthropic, OpenAI and Google, how keys are sealed and checked, Workers AI paid by the deployment when it opts in, and the AI Gateway setting."
+		},
+		{
+			"title": "Agents Run by Gateweave",
+			"purpose": "Agent definitions (runtime gateweave) in the registry, environment sets with variables and secrets, MCP servers from the library (remote and local), and how secrets are sealed and only opened when a request needs them."
+		},
+		{
+			"title": "Chat and ConversationAgent",
+			"purpose": "packages/runtime: ConversationAgent on the Agents SDK's AIChatAgent, streaming over a WebSocket, resuming after a reconnect, beginTurn, and the chat gateway in apps/web/src/server/chat.ts.",
+			"parent": "Agents Run by Gateweave"
+		},
+		{
+			"title": "Runs and Traces",
+			"purpose": "Every turn that reaches the model is a run: the registry's summary rows, the conversation's trace, usage and estimated cost, the Runs pages, and the optional USAGE Analytics Engine dataset.",
+			"parent": "Agents Run by Gateweave"
+		},
+		{
+			"title": "Sandboxes and Engines",
+			"purpose": "The container sandbox per conversation (RunnerSandbox), the SANDBOX binding and who is offered it, the engines gateweave, claude-code, codex and opencode with the providers each needs, engine exit diagnostics, and docs/docker-sandboxes.md on why Docker's sandboxes are not used for now.",
+			"parent": "Agents Run by Gateweave"
+		},
+		{
+			"title": "Teams",
+			"purpose": "A team as a directed graph of agents and other teams in the registry (teams, team_members, team_edges), delegation, and a team's turns.",
+			"parent": "Agents Run by Gateweave"
+		},
+		{
+			"title": "Triggers",
+			"purpose": "Starting a run of an agent or a team's lead from a webhook or a schedule, the Worker route in apps/web/src/server/triggers.ts, and how triggers are managed by owners and admins.",
+			"parent": "Agents Run by Gateweave"
+		},
+		{
+			"title": "Gateweave Track Integration",
+			"purpose": "The agents made for Gateweave Track: triage of new issues (docs/track-triage.md) and issue work in a sandbox ending in a pull request (docs/track-work.md), with the agent as an agent member of a Track workspace."
+		},
+		{
+			"title": "Web App Pages",
+			"purpose": "apps/web: TanStack Start routes, server functions in apps/web/src/lib/registry.ts that check membership first, server modules imported dynamically, and the workspace pages (Overview, Projects, Repositories, Agents, Library, Setups, Chat, Runs, Usage, settings)."
+		},
+		{
+			"title": "Testing",
+			"purpose": "The test suites and where they run: registry and runtime inside workerd against real Durable Objects, model, github, cli and adapters in Node, Worker tests through Miniflare with FakeGitHub and FakeModels, and Playwright e2e against the production build."
+		},
+		{
+			"title": "Deployment and Self-Hosting",
+			"purpose": "The Deploy button, wrangler.jsonc at the root, settings (domain, legal pages, email, OIDC provider, who may sign up, sandboxes, usage), D1 migrations on deploy, the staging and cloud environments, and releases."
+		}
+	]
+}
