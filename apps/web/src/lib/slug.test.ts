@@ -20,3 +20,10 @@ describe("slugProblem", () => {
 		}
 	});
 });
+
+describe("slugProblem for the agents door", () => {
+	it("reserves /mcp and /oauth", () => {
+		expect(slugProblem("mcp")).not.toBeNull();
+		expect(slugProblem("oauth")).not.toBeNull();
+	});
+});

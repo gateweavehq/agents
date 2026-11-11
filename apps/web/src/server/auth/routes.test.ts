@@ -71,7 +71,30 @@ const SERVED = [
 	"POST /organization/set-active",
 	"POST /organization/update",
 	"POST /organization/update-member-role",
+
+	// The OAuth flow that MCP clients sign in through.
+	"GET /.well-known/oauth-authorization-server",
+	"GET /.well-known/openid-configuration",
+	"GET /jwks",
+	"GET /oauth2/public-client",
+	"GET,POST /oauth2/authorize",
+	"GET,POST /oauth2/end-session",
+	"GET,POST /oauth2/userinfo",
+	"POST /oauth2/consent",
+	"POST /oauth2/continue",
+	"POST /oauth2/end-session/confirm",
+	"POST /oauth2/introspect",
+	"POST /oauth2/public-client-prelogin",
+	"POST /oauth2/register",
+	"POST /oauth2/revoke",
+	"POST /oauth2/token",
 ];
+
+/** Marked server-only, and answered over HTTP all the same. They say nothing that isn't public. */
+const SERVER_ONLY_BUT_ANSWERED = new Set([
+	"/.well-known/oauth-authorization-server",
+	"/.well-known/openid-configuration",
+]);
 
 let mf: Miniflare;
 let db: Database;
@@ -112,6 +135,7 @@ describe("What Better Auth serves", () => {
 			github: { clientId: "id", clientSecret: "secret" },
 			oidc: { issuer: "https://id.test", clientId: "id", clientSecret: "secret" },
 			mailer: { send: async () => {} },
+			mcpResource: "https://agents.test/mcp",
 		});
 
 	/**
@@ -128,7 +152,9 @@ describe("What Better Auth serves", () => {
 			};
 			if (!endpoint.path) return [];
 			const { method, metadata } = endpoint.options;
-			const open = !metadata?.SERVER_ONLY && !closed.has(endpoint.path);
+			const open =
+				(!metadata?.SERVER_ONLY || SERVER_ONLY_BUT_ANSWERED.has(endpoint.path)) &&
+				!closed.has(endpoint.path);
 			return [{ path: endpoint.path, methods: [method].flat(), open }];
 		});
 	}

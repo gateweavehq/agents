@@ -71,6 +71,13 @@
       "when": 1794427960663,
       "tag": "0009_sign_up_exact",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1794435667513,
+      "tag": "0010_mcp_oauth_server",
+      "breakpoints": true
     }
   ]
 }

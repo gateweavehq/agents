@@ -750,6 +750,39 @@ run as a local command.
   admins when that happened (`secretTiesFailedAt`), never why or any value, and marks each value
   to enter again.
 
+## AI agents (MCP)
+
+`/mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server, so AI agents can
+work with Agents as the person who connected them. It is the other direction from
+[MCP servers](#mcp-servers): there, Agents' own agents reach other servers (`mcp-oauth.ts`); here,
+outside agents reach Agents. Agents is also the OAuth authorization server these agents sign in
+to, through Better Auth's MCP plugin (the `jwt()` and `mcp()` plugins in
+`apps/web/src/server/auth/config.ts`, ported from Gateweave Track):
+
+1. An agent calls `/mcp` without a token and gets a `401` pointing to the protected resource
+   metadata (`/.well-known/oauth-protected-resource/mcp`), which names Agents' authorization
+   server.
+2. The agent registers itself (dynamic client registration) and sends the person to authorize,
+   with PKCE. They sign in if needed and approve it on `/oauth/consent`. Anyone can register a
+   client under any name, so the consent page also says where the grant will go, and consent is
+   never skipped.
+3. The agent gets an access token, a JWT bound to the `/mcp` URL with the `agents` scope, and a
+   refresh token. The gateway (`apps/web/src/server/mcp/index.ts`) verifies the signature, the
+   audience and the scope (`protect.ts`). It reads Agents' signing keys in-process rather than
+   from the JWKS URL, because a Worker cannot reliably fetch its own hostname. Session cookies are
+   never accepted there, so a web page cannot make a signed-in browser call it, and no Origin
+   check is needed. There are no agent members here, so the only credential is an OAuth token.
+
+Today there is one tool, `list_workspaces`, which returns the name and slug of every workspace
+the person belongs to, read from D1. The wiki tools will go next to it in
+`apps/web/src/server/mcp/tools.ts`. Tools reach Agents only through the `AgentsAccess` object
+`createAgentsServer` is given, which offers what the signed-in person may see, and each tool that
+reads a workspace must resolve its slug to the person's membership first (invariant 1).
+
+Tokens must name one canonical URL, so the endpoint, and the authorization server, exist only
+when `BETTER_AUTH_URL` pins the base URL. Without it `/mcp` answers `404`. The workspace slugs
+`mcp` and `oauth` are reserved, so no workspace shadows `/mcp` or `/oauth/...`.
+
 ## Sandboxes
 
 An agent with a sandbox works on a Linux machine of its own in each conversation: it runs

@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
 import handler from "@tanstack/react-start/server-entry";
-import { db } from "./server/auth";
+import { db, handleAuthRequest } from "./server/auth";
 import { handleChatRequest, isChatRequest } from "./server/chat";
 import { pruneExpired } from "./server/db/prune";
 import { retryErasures } from "./server/erasure";
+import { handleMcpRequest, isMcpRequest } from "./server/mcp";
 import { newNonce, withSecurityHeaders } from "./server/security-headers";
 
 export { SandboxMeterDO } from "@gateweave/agents-registry";
@@ -11,6 +12,10 @@ export { RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
 export { ConversationAgent } from "./server/conversation";
 export { RateLimiter } from "./server/rate-limit";
 export { RegistryDO } from "./server/registry-do";
+
+/** OAuth discovery documents for MCP clients. Better Auth serves them at the root. */
+const OAUTH_DISCOVERY =
+	/^\/\.well-known\/(oauth-protected-resource|oauth-authorization-server|openid-configuration)(\/|$)/;
 
 /**
  * A branch's Preview gets none of the Worker's bindings or secrets, and accounts can't be run safely
@@ -25,8 +30,12 @@ function notSetUp() {
 
 function route(request: Request, nonce: string): Response | Promise<Response> {
 	if (!env.DB || !env.BETTER_AUTH_SECRET) return notSetUp();
+	const url = new URL(request.url);
+	// Agents that read Agents sign in with OAuth and call here; no cookies, and no TanStack Start.
+	if (isMcpRequest(url)) return handleMcpRequest(request);
+	if (OAUTH_DISCOVERY.test(url.pathname)) return handleAuthRequest(request);
 	// Chat is handled before TanStack Start so WebSocket upgrade responses pass through untouched.
-	if (isChatRequest(new URL(request.url))) return handleChatRequest(request);
+	if (isChatRequest(url)) return handleChatRequest(request);
 	return handler.fetch(request, { context: { nonce } });
 }
 

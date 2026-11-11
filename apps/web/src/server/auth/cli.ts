@@ -6,5 +6,7 @@ import { createAuth } from "./config";
 export const auth = createAuth({
 	db: createDb({} as D1Database),
 	secret: "schema-generation-only",
+	// Every optional plugin, so the schema has every table. The OAuth server needs a base URL.
 	baseURL: "http://localhost:4720",
+	mcpResource: "http://localhost:4720/mcp",
 });
