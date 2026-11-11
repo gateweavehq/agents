@@ -8,6 +8,35 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.17.0] - 2026-11-11
+
+A ready-made setup for Gateweave Mail, and applying a setup now merges into a repository's `.vscode/mcp.json` instead of
+replacing it. There is no migration in this release.
+
+### Added
+
+- **A ready-made Gateweave Mail setup.** It adds Mail's skill and MCP server to a repository, for Claude Code, Codex,
+  Gemini CLI, Cursor and GitHub Copilot, so their agents can read sign-up codes, wait for mail and send it. Adding it
+  asks for your Mail's MCP address. The agent's key is read from `GATEWEAVE_MAIL_KEY` and never written to the
+  repository. The setup has no instructions, so it leaves a repository's `AGENTS.md` and `CLAUDE.md` alone.
+  ([#202](https://github.com/gateweavehq/agents/pull/202))
+- **A setup can ask for an MCP server's address.** For a server that every install runs at its own address, an
+  `askUrl` in `setup.json` makes the Setups page ask for it when the setup is added. The address is checked as one
+  typed on the MCP page is. The CLI takes it as `--url <server>=<url>` from its next release.
+  ([#202](https://github.com/gateweavehq/agents/pull/202))
+
+### Fixed
+
+- **Applying a setup no longer replaces `.vscode/mcp.json`.** It replaced the whole file, so the repository's other
+  servers and its `inputs` were lost. Only the setup's own servers are merged in now, as in the other MCP files.
+  ([#202](https://github.com/gateweavehq/agents/pull/202))
+
+### If you run your own
+
+- **Nothing to do for this release.**
+- **CI's browser tests install Chromium alone** when Ubuntu's package mirror can't be reached.
+  ([#203](https://github.com/gateweavehq/agents/pull/203))
+
 ## [0.16.6] - 2026-11-07
 
 Whoever runs a server with no email can now help someone back in. There is no migration in this release.
