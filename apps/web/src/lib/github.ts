@@ -48,4 +48,9 @@ export const disconnectGitHub = createServerFn({ method: "POST" })
 			throw new Error("This workspace has no such installation");
 		}
 		await unlinkInstallation(installation);
+		const { auditFor } = await import("#/server/audit");
+		await auditFor(member)({
+			action: "github.disconnected",
+			target: { type: "github", id: String(installation.id), label: installation.accountLogin },
+		});
 	});

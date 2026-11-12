@@ -21,8 +21,11 @@ async function memberOf(slug: string, admin: boolean) {
 	const member = await currentMember(slug);
 	if (!member) return null;
 	if (admin && !isAdmin(member.membership.role)) throw new Error("Only admins can do this");
-	const { registryFor } = await import("#/server/registry");
-	return { member, registry: registryFor(member.membership.workspaceId) };
+	const [{ registryFor }, { auditFor }] = await Promise.all([
+		import("#/server/registry"),
+		import("#/server/audit"),
+	]);
+	return { member, registry: registryFor(member.membership.workspaceId), audit: auditFor(member) };
 }
 
 /**
@@ -58,7 +61,12 @@ export const createEnvSet = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<string> => {
 		const found = await memberOf(data.slug, true);
 		if (!found) throw new Error("Workspace not found");
-		return found.registry.createEnvSet(data.set);
+		const assetId = await found.registry.createEnvSet(data.set);
+		await found.audit({
+			action: "envSet.created",
+			target: { type: "envSet", id: assetId, label: data.set.name },
+		});
+		return assetId;
 	});
 
 export const editEnvSet = createServerFn({ method: "POST" })
@@ -66,7 +74,12 @@ export const editEnvSet = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<number> => {
 		const found = await memberOf(data.slug, true);
 		if (!found) throw new Error("Workspace not found");
-		return found.registry.editEnvSet(data.set);
+		const version = await found.registry.editEnvSet(data.set);
+		await found.audit({
+			action: "envSet.edited",
+			target: await envSetTarget(found.registry, data.set.assetId),
+		});
+		return version;
 	});
 
 /** Stores a secret's value, sealed. The value is not part of the answer. */
@@ -78,6 +91,11 @@ export const setEnvSecret = createServerFn({ method: "POST" })
 		const { name, email } = found.member.user;
 		const saved = await found.registry.setEnvSecret(data.secret, name || email);
 		if ("status" in saved) throw new Error(saved.message);
+		await found.audit({
+			action: "envSecret.set",
+			target: await envSetTarget(found.registry, data.secret.assetId),
+			detail: { name: data.secret.name },
+		});
 	});
 
 export const removeEnvSecret = createServerFn({ method: "POST" })
@@ -85,5 +103,22 @@ export const removeEnvSecret = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<boolean> => {
 		const found = await memberOf(data.slug, true);
 		if (!found) throw new Error("Workspace not found");
-		return found.registry.removeEnvSecret(data.assetId, data.name);
+		const removed = await found.registry.removeEnvSecret(data.assetId, data.name);
+		if (removed) {
+			await found.audit({
+				action: "envSecret.removed",
+				target: await envSetTarget(found.registry, data.assetId),
+				detail: { name: data.name },
+			});
+		}
+		return removed;
 	});
+
+/** An environment set as the audit log names it, by the name it has now. */
+async function envSetTarget(
+	registry: { getAsset: (assetId: string) => Promise<{ asset: { name: string } } | null> },
+	assetId: string,
+) {
+	const detail = await registry.getAsset(assetId);
+	return { type: "envSet" as const, id: assetId, label: detail?.asset.name ?? null };
+}

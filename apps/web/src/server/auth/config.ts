@@ -6,12 +6,15 @@ import { betterAuth } from "better-auth/minimal";
 import { jwt, organization } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { and, count, eq, gt } from "drizzle-orm";
+import { z } from "zod";
 import { slugProblem } from "../../lib/slug";
+import { recordAudit } from "../audit";
 import type { Database } from "../db";
 import { schema } from "../db";
 import type { Mailer } from "../email/mailer";
 import { invitationEmail, passwordResetEmail, verificationEmail } from "../email/templates";
 import { tellOfChangedPassword, validName, validRename } from "./account-changes";
+import { type AuditedPath, auditRecordOf, isAuditedPath, type Replaced } from "./audit";
 import { deleteAccount } from "./delete-account";
 import {
 	deploymentPlugin,
@@ -70,6 +73,29 @@ export interface AuthConfig {
 export function createAuth(config: AuthConfig) {
 	const { mailer } = config;
 	const oidcHooks = oidcDatabaseHooks();
+	// What an audited change replaced, read before it is made, for the after hook to record.
+	const replacedBy = new WeakMap<Request, Replaced>();
+
+	/** Records what an audited path did. Logged, not thrown, when it fails: the change is made. */
+	async function audit(
+		path: AuditedPath,
+		actorId: string,
+		answer: unknown,
+		body: unknown,
+		request?: Request,
+	) {
+		const made = auditRecordOf(path, answer, {
+			body,
+			replaced: request && replacedBy.get(request),
+		});
+		if (!made) return;
+		try {
+			await recordAudit(config.db, made.workspaceId, actorId, made.record);
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			console.error(`audit: could not record ${made.record.action}: ${reason}`);
+		}
+	}
 
 	return betterAuth({
 		secret: config.secret,
@@ -197,6 +223,11 @@ export function createAuth(config: AuthConfig) {
 		},
 		hooks: {
 			before: createAuthMiddleware(async (ctx) => {
+				// `ctx.request` is set for HTTP requests and absent for direct `auth.api` calls.
+				if (ctx.request) {
+					const replaced = await replacedFor(config.db, ctx.path, ctx.body);
+					if (replaced) replacedBy.set(ctx.request, replaced);
+				}
 				if (ctx.path === "/update-user") return { context: { body: validRename(ctx.body) } };
 				if (ctx.path === "/sign-up/email") {
 					// Before Better Auth looks for an account with the address, which would tell someone
@@ -234,6 +265,15 @@ export function createAuth(config: AuthConfig) {
 				}
 			}),
 			after: createAuthMiddleware(async (ctx) => {
+				if (isAuditedPath(ctx.path)) {
+					// Leaving keeps the session, so whoever left is still known here.
+					const session = await getSessionFromCtx(ctx);
+					if (!session) return;
+					await ctx.context.runInBackgroundOrAwait(
+						audit(ctx.path, session.user.id, ctx.context.returned, ctx.body, ctx.request),
+					);
+					return;
+				}
 				if (ctx.path !== "/change-password") return;
 				await ctx.context.runInBackgroundOrAwait(
 					tellOfChangedPassword(ctx.context.returned, mailer),
@@ -360,6 +400,35 @@ export const VERIFICATION_LIFETIME_SECONDS = 24 * 60 * 60;
 export const INVITATION_EMAILS_PER_DAY = 100;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** What an audited change is about to replace: a member's role, or the workspace's name and slug. */
+async function replacedFor(
+	db: Database,
+	path: string,
+	body: unknown,
+): Promise<Replaced | undefined> {
+	if (path === "/organization/update-member-role") {
+		const memberId = z.object({ memberId: z.string() }).safeParse(body);
+		if (!memberId.success) return undefined;
+		const row = await db
+			.select({ role: schema.member.role })
+			.from(schema.member)
+			.where(eq(schema.member.id, memberId.data.memberId))
+			.get();
+		return row && { role: row.role };
+	}
+	if (path === "/organization/update") {
+		const target = z.object({ organizationId: z.string() }).safeParse(body);
+		if (!target.success) return undefined;
+		const row = await db
+			.select({ name: schema.organization.name, slug: schema.organization.slug })
+			.from(schema.organization)
+			.where(eq(schema.organization.id, target.data.organizationId))
+			.get();
+		return row && { name: row.name, slug: row.slug };
+	}
+	return undefined;
+}
 
 /** Owners and admins can invite, matching Better Auth's default access control. */
 function canInvite(role: string) {

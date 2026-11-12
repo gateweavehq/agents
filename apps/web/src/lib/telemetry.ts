@@ -13,8 +13,11 @@ async function memberOf(slug: string, admin: boolean) {
 	const member = await currentMember(slug);
 	if (!member) return null;
 	if (admin && !isAdmin(member.membership.role)) throw new Error("Only admins can do this");
-	const { registryFor } = await import("#/server/registry");
-	return { member, registry: registryFor(member.membership.workspaceId) };
+	const [{ registryFor }, { auditFor }] = await Promise.all([
+		import("#/server/registry"),
+		import("#/server/audit"),
+	]);
+	return { member, registry: registryFor(member.membership.workspaceId), audit: auditFor(member) };
 }
 
 /** The settings, or null when the workspace exports nothing; `member: false` for a non-member. */
@@ -38,6 +41,11 @@ export const setTelemetry = createServerFn({ method: "POST" })
 		const { name, email } = found.member.user;
 		const saved = await found.registry.setTelemetry(data.settings, name || email);
 		if ("status" in saved) throw new Error(saved.message);
+		const { hostOf } = await import("#/lib/audit-events");
+		await found.audit({
+			action: "telemetry.set",
+			target: { type: "telemetry", id: null, label: hostOf(saved.endpoint) },
+		});
 		return saved;
 	});
 
@@ -46,5 +54,12 @@ export const removeTelemetry = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<boolean> => {
 		const found = await memberOf(data.slug, true);
 		if (!found) throw new Error("Workspace not found");
-		return found.registry.removeTelemetry();
+		const removed = await found.registry.removeTelemetry();
+		if (removed) {
+			await found.audit({
+				action: "telemetry.removed",
+				target: { type: "telemetry", id: null, label: null },
+			});
+		}
+		return removed;
 	});

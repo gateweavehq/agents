@@ -32,7 +32,14 @@ async function adminOf(slug: string) {
 	const found = await memberOf(slug);
 	if (!found) throw new Error("Workspace not found");
 	if (!found.admin) throw new Error("Only admins can do this");
-	return found;
+	const { auditFor } = await import("#/server/audit");
+	return { ...found, audit: auditFor(found.member) };
+}
+
+/** A connection as the audit log names it: the account, at the GitLab it is on. */
+function gitlabTarget(connection: GitLabConnection) {
+	const host = new URL(connection.baseUrl).host;
+	return { type: "gitlab" as const, id: connection.id, label: `${connection.account} on ${host}` };
 }
 
 /** A connection as the page shows it; its webhook's address only to owners and admins. */
@@ -68,6 +75,7 @@ export const connectGitLab = createServerFn({ method: "POST" })
 			const { name, email } = found.member.user;
 			const made = await found.registry.gitlabConnect(data.connection, name || email);
 			if ("status" in made) throw new Error(made.message);
+			await found.audit({ action: "gitlab.connected", target: gitlabTarget(made.connection) });
 			return {
 				connection: { ...made.connection, webhookUrl: found.webhookUrl(made.connection.id) },
 				webhookSecret: made.webhookSecret,
@@ -92,6 +100,12 @@ export const newGitLabWebhookSecret = createServerFn({ method: "POST" })
 		const found = await adminOf(data.slug);
 		const secret = await found.registry.gitlabNewWebhookSecret(data.connectionId);
 		if (typeof secret !== "string") throw new Error(secret.message);
+		const connection = (await found.registry.gitlabConnections()).find(
+			(candidate) => candidate.id === data.connectionId,
+		);
+		if (connection) {
+			await found.audit({ action: "gitlab.secretReplaced", target: gitlabTarget(connection) });
+		}
 		return secret;
 	});
 
@@ -99,5 +113,12 @@ export const disconnectGitLab = createServerFn({ method: "POST" })
 	.validator(connectionAction)
 	.handler(async ({ data }): Promise<boolean> => {
 		const found = await adminOf(data.slug);
-		return found.registry.gitlabDisconnect(data.connectionId);
+		const connection = (await found.registry.gitlabConnections()).find(
+			(candidate) => candidate.id === data.connectionId,
+		);
+		const disconnected = await found.registry.gitlabDisconnect(data.connectionId);
+		if (disconnected && connection) {
+			await found.audit({ action: "gitlab.disconnected", target: gitlabTarget(connection) });
+		}
+		return disconnected;
 	});

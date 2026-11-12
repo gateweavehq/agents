@@ -152,8 +152,17 @@ export async function finishVerify(request: Request): Promise<Response> {
 		if (!listed || !(await controlsInstallation(token, listed))) return finish("denied");
 		const installation = await config.app.installation(state.installationId);
 		// state.userId is the signed-in user, checked above.
-		if ((await linkInstallation(state.workspaceId, installation, state.userId)) === "taken") {
-			return finish("taken");
+		const outcome = await linkInstallation(state.workspaceId, installation, state.userId);
+		if (outcome === "taken") return finish("taken");
+		if (outcome === "linked") {
+			const { auditFor } = await import("../audit");
+			await auditFor({
+				user: { id: state.userId },
+				membership: { workspaceId: state.workspaceId },
+			})({
+				action: "github.connected",
+				target: { type: "github", id: String(installation.id), label: installation.account.login },
+			});
 		}
 		const linked = await findInstallation(installation.id);
 		if (linked) await syncInstallation(linked);

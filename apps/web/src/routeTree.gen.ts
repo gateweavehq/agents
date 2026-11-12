@@ -35,6 +35,7 @@ import { Route as WorkspaceRepositoriesRepositoryIdRouteImport } from './routes/
 import { Route as WorkspaceRunsIndexRouteImport } from './routes/$workspace/runs.index'
 import { Route as WorkspaceRunsRunIdRouteImport } from './routes/$workspace/runs.$runId'
 import { Route as WorkspaceSettingsIndexRouteImport } from './routes/$workspace/settings.index'
+import { Route as WorkspaceSettingsAuditRouteImport } from './routes/$workspace/settings.audit'
 import { Route as WorkspaceSettingsGithubRouteImport } from './routes/$workspace/settings.github'
 import { Route as WorkspaceSettingsGitlabRouteImport } from './routes/$workspace/settings.gitlab'
 import { Route as WorkspaceSettingsMembersRouteImport } from './routes/$workspace/settings.members'
@@ -191,6 +192,11 @@ const WorkspaceSettingsIndexRoute = WorkspaceSettingsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => WorkspaceSettingsRoute,
 } as any)
+const WorkspaceSettingsAuditRoute = WorkspaceSettingsAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => WorkspaceSettingsRoute,
+} as any)
 const WorkspaceSettingsGithubRoute = WorkspaceSettingsGithubRouteImport.update({
   id: '/github',
   path: '/github',
@@ -324,6 +330,7 @@ export interface FileRoutesByFullPath {
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
+  '/$workspace/settings/audit': typeof WorkspaceSettingsAuditRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/gitlab': typeof WorkspaceSettingsGitlabRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
@@ -370,6 +377,7 @@ export interface FileRoutesByTo {
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
+  '/$workspace/settings/audit': typeof WorkspaceSettingsAuditRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/gitlab': typeof WorkspaceSettingsGitlabRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
@@ -420,6 +428,7 @@ export interface FileRoutesById {
   '/$workspace/projects/$projectId': typeof WorkspaceProjectsProjectIdRoute
   '/$workspace/repositories/$repositoryId': typeof WorkspaceRepositoriesRepositoryIdRoute
   '/$workspace/runs/$runId': typeof WorkspaceRunsRunIdRoute
+  '/$workspace/settings/audit': typeof WorkspaceSettingsAuditRoute
   '/$workspace/settings/github': typeof WorkspaceSettingsGithubRoute
   '/$workspace/settings/gitlab': typeof WorkspaceSettingsGitlabRoute
   '/$workspace/settings/members': typeof WorkspaceSettingsMembersRoute
@@ -471,6 +480,7 @@ export interface FileRouteTypes {
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/runs/$runId'
+    | '/$workspace/settings/audit'
     | '/$workspace/settings/github'
     | '/$workspace/settings/gitlab'
     | '/$workspace/settings/members'
@@ -517,6 +527,7 @@ export interface FileRouteTypes {
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/runs/$runId'
+    | '/$workspace/settings/audit'
     | '/$workspace/settings/github'
     | '/$workspace/settings/gitlab'
     | '/$workspace/settings/members'
@@ -566,6 +577,7 @@ export interface FileRouteTypes {
     | '/$workspace/projects/$projectId'
     | '/$workspace/repositories/$repositoryId'
     | '/$workspace/runs/$runId'
+    | '/$workspace/settings/audit'
     | '/$workspace/settings/github'
     | '/$workspace/settings/gitlab'
     | '/$workspace/settings/members'
@@ -799,6 +811,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceSettingsIndexRouteImport
       parentRoute: typeof WorkspaceSettingsRoute
     }
+    '/$workspace/settings/audit': {
+      id: '/$workspace/settings/audit'
+      path: '/audit'
+      fullPath: '/$workspace/settings/audit'
+      preLoaderRoute: typeof WorkspaceSettingsAuditRouteImport
+      parentRoute: typeof WorkspaceSettingsRoute
+    }
     '/$workspace/settings/github': {
       id: '/$workspace/settings/github'
       path: '/github'
@@ -964,6 +983,7 @@ const WorkspaceChatRouteWithChildren = WorkspaceChatRoute._addFileChildren(
 )
 
 interface WorkspaceSettingsRouteChildren {
+  WorkspaceSettingsAuditRoute: typeof WorkspaceSettingsAuditRoute
   WorkspaceSettingsGithubRoute: typeof WorkspaceSettingsGithubRoute
   WorkspaceSettingsGitlabRoute: typeof WorkspaceSettingsGitlabRoute
   WorkspaceSettingsMembersRoute: typeof WorkspaceSettingsMembersRoute
@@ -974,6 +994,7 @@ interface WorkspaceSettingsRouteChildren {
 }
 
 const WorkspaceSettingsRouteChildren: WorkspaceSettingsRouteChildren = {
+  WorkspaceSettingsAuditRoute: WorkspaceSettingsAuditRoute,
   WorkspaceSettingsGithubRoute: WorkspaceSettingsGithubRoute,
   WorkspaceSettingsGitlabRoute: WorkspaceSettingsGitlabRoute,
   WorkspaceSettingsMembersRoute: WorkspaceSettingsMembersRoute,

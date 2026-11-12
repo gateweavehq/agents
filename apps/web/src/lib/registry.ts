@@ -40,6 +40,7 @@ import {
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { changedFields, hostOf } from "#/lib/audit-events";
 import type { FileDiff } from "#/lib/version-diff";
 
 const id = z.string().min(1).max(64);
@@ -53,14 +54,43 @@ async function registryOf(slug: string) {
 	return registryFor(member.membership.workspaceId);
 }
 
-/** The registry of the workspace `slug`, for changes only owners and admins may make. */
-async function managedRegistryOf(slug: string) {
+/**
+ * For changes only owners and admins may make: the registry of the workspace `slug`, and what
+ * records a change in its audit log once the change is made.
+ */
+async function managedOf(slug: string) {
 	const { currentMember } = await import("#/server/access");
 	const { isAdmin } = await import("#/lib/roles");
 	const member = await currentMember(slug);
 	if (!member || !isAdmin(member.membership.role)) throw new Error("Only admins can do this");
-	const { registryFor } = await import("#/server/registry");
-	return registryFor(member.membership.workspaceId);
+	const [{ registryFor }, { auditFor }] = await Promise.all([
+		import("#/server/registry"),
+		import("#/server/audit"),
+	]);
+	return { registry: registryFor(member.membership.workspaceId), audit: auditFor(member) };
+}
+
+/** The registry of the workspace `slug`, for changes only owners and admins may make. */
+async function managedRegistryOf(slug: string) {
+	return (await managedOf(slug)).registry;
+}
+
+/** What an edit to an agent run by Gateweave can change. */
+const AGENT_FIELDS = [
+	"provider",
+	"model",
+	"instructions",
+	"environment",
+	"mcpServers",
+	"sandbox",
+	"repository",
+	"engine",
+] as const;
+
+function agentChanges(before: AgentDetail, after: AgentDetail): string[] {
+	const named = changedFields(before.agent, after.agent, ["name", "description"]);
+	if (!before.definition || !after.definition) return named;
+	return [...named, ...changedFields(before.definition, after.definition, AGENT_FIELDS)];
 }
 
 /** The span of time the Overview sums the workspace's runs over. */
@@ -127,24 +157,47 @@ export const getAgent = createServerFn({ method: "GET" })
 export const createAgent = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), agent: agentDefinitionInput }))
 	.handler(async ({ data }): Promise<Agent> => {
-		const registry = await managedRegistryOf(data.slug);
-		return registry.createAgent(data.agent);
+		const { registry, audit } = await managedOf(data.slug);
+		const agent = await registry.createAgent(data.agent);
+		await audit({
+			action: "agent.created",
+			target: { type: "agent", id: agent.id, label: agent.name },
+			detail: { provider: data.agent.provider, model: data.agent.model },
+		});
+		return agent;
 	});
 
 export const updateAgent = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), agentId: id, agent: agentDefinitionInput }))
 	.handler(async ({ data }): Promise<Agent> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getAgent(data.agentId);
 		const agent = await registry.updateAgent(data.agentId, data.agent);
 		if (!agent) throw new Error("Agent not found");
+		const after = await registry.getAgent(data.agentId);
+		const fields = before && after ? agentChanges(before, after) : [];
+		if (fields.length > 0) {
+			await audit({
+				action: "agent.updated",
+				target: { type: "agent", id: agent.id, label: agent.name },
+				detail: { fields },
+			});
+		}
 		return agent;
 	});
 
 export const removeAgent = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), agentId: id }))
 	.handler(async ({ data }): Promise<void> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getAgent(data.agentId);
 		await registry.removeAgent(data.agentId);
+		if (before) {
+			await audit({
+				action: "agent.removed",
+				target: { type: "agent", id: before.agent.id, label: before.agent.name },
+			});
+		}
 	});
 
 /** Every team, with the agents that can lead a new one. */
@@ -183,33 +236,59 @@ export const getTeam = createServerFn({ method: "GET" })
 export const createTeam = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), team: newTeamInput }))
 	.handler(async ({ data }): Promise<Team> => {
-		const registry = await managedRegistryOf(data.slug);
-		return registry.createTeam(data.team);
+		const { registry, audit } = await managedOf(data.slug);
+		const team = await registry.createTeam(data.team);
+		await audit({
+			action: "team.created",
+			target: { type: "team", id: team.id, label: team.name },
+		});
+		return team;
 	});
 
 export const updateTeam = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), teamId: id, team: teamInput }))
 	.handler(async ({ data }): Promise<Team> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getTeam(data.teamId);
 		const team = await registry.updateTeam(data.teamId, data.team);
 		if (!team) throw new Error("Team not found");
+		const fields = before ? changedFields(before.team, team, ["name", "description"]) : [];
+		if (fields.length > 0) {
+			await audit({
+				action: "team.updated",
+				target: { type: "team", id: team.id, label: team.name },
+				detail: { fields },
+			});
+		}
 		return team;
 	});
 
 export const deleteTeam = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), teamId: id }))
 	.handler(async ({ data }): Promise<void> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getTeam(data.teamId);
 		await registry.deleteTeam(data.teamId);
+		if (before) {
+			await audit({
+				action: "team.deleted",
+				target: { type: "team", id: before.team.id, label: before.team.name },
+			});
+		}
 	});
 
 /** Gives a team exactly these members, edges and lead. */
 export const setTeamGraph = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), teamId: id, graph: teamGraphInput }))
 	.handler(async ({ data }): Promise<Team> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
 		const team = await registry.setTeamGraph(data.teamId, data.graph);
 		if (!team) throw new Error("Team not found");
+		await audit({
+			action: "team.updated",
+			target: { type: "team", id: team.id, label: team.name },
+			detail: { fields: ["members"] },
+		});
 		return team;
 	});
 
@@ -297,8 +376,15 @@ export const updateProject = createServerFn({ method: "POST" })
 export const deleteProject = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), projectId: id }))
 	.handler(async ({ data }): Promise<void> => {
-		const registry = await managedRegistryOf(data.slug);
-		await registry.deleteProject(data.projectId);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getProject(data.projectId);
+		const deleted = await registry.deleteProject(data.projectId);
+		if (deleted && before) {
+			await audit({
+				action: "project.deleted",
+				target: { type: "project", id: before.project.id, label: before.project.name },
+			});
+		}
 	});
 
 /** Gives a project exactly these repositories. */
@@ -331,8 +417,16 @@ export const addToLibrary = createServerFn({ method: "POST" })
 export const removeFromLibrary = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), assetId: id }))
 	.handler(async ({ data }): Promise<void> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getAsset(data.assetId);
 		await registry.removeFromLibrary(data.assetId);
+		if (before) {
+			await audit({
+				action: "library.removed",
+				target: { type: "asset", id: before.asset.id, label: before.asset.name },
+				detail: { kind: before.asset.kind },
+			});
+		}
 	});
 
 /** Creates a library asset from text typed in the app. Returns its id. */
@@ -355,16 +449,29 @@ export const editLibraryAsset = createServerFn({ method: "POST" })
 export const createMcpServer = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), server: mcpServerInput }))
 	.handler(async ({ data }): Promise<string> => {
-		const registry = await managedRegistryOf(data.slug);
-		return registry.createMcpServer(data.server);
+		const { registry, audit } = await managedOf(data.slug);
+		const assetId = await registry.createMcpServer(data.server);
+		await audit({
+			action: "mcpServer.created",
+			target: { type: "mcpServer", id: assetId, label: data.server.name },
+			detail: { host: hostOf(data.server.url) },
+		});
+		return assetId;
 	});
 
 /** Saves a library MCP server's settings as its next version. Returns the version it is at now. */
 export const editMcpServer = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), server: mcpServerEditInput }))
 	.handler(async ({ data }): Promise<number> => {
-		const registry = await managedRegistryOf(data.slug);
-		return registry.editMcpServer(data.server);
+		const { registry, audit } = await managedOf(data.slug);
+		const version = await registry.editMcpServer(data.server);
+		const edited = await registry.getAsset(data.server.assetId);
+		await audit({
+			action: "mcpServer.edited",
+			target: { type: "mcpServer", id: data.server.assetId, label: edited?.asset.name ?? null },
+			detail: { host: hostOf(data.server.url) },
+		});
+		return version;
 	});
 
 /**
@@ -434,8 +541,13 @@ export const getSetup = createServerFn({ method: "GET" })
 export const createSetup = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), setup: setupInput }))
 	.handler(async ({ data }): Promise<Setup> => {
-		const registry = await managedRegistryOf(data.slug);
-		return registry.createSetup(data.setup);
+		const { registry, audit } = await managedOf(data.slug);
+		const setup = await registry.createSetup(data.setup);
+		await audit({
+			action: "setup.created",
+			target: { type: "setup", id: setup.id, label: setup.name },
+		});
+		return setup;
 	});
 
 /** A ready-made setup, as the Setups page lists it. */
@@ -479,30 +591,56 @@ export const addReadyMadeSetup = createServerFn({ method: "POST" })
 		}),
 	)
 	.handler(async ({ data }): Promise<string> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
 		const { importInputOf, readyMadeSetups } = await import("#/server/ready-made");
 		const { withAddresses } = await import("@gateweave/agents-adapters");
 		const found = readyMadeSetups().find((candidate) => candidate.slug === data.setup);
 		if (!found) throw new Error("There is no such ready-made setup");
 		const answered = withAddresses(found.setup, data.addresses);
 		if (!answered.ok) throw new Error(answered.problems.join(". "));
-		return registry.importSetup(importInputOf({ slug: found.slug, setup: answered.setup }));
+		const setupId = await registry.importSetup(
+			importInputOf({ slug: found.slug, setup: answered.setup }),
+		);
+		await audit({
+			action: "setup.created",
+			target: { type: "setup", id: setupId, label: answered.setup.name },
+			detail: { readyMade: found.slug },
+		});
+		return setupId;
 	});
 
 export const updateSetup = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), setupId: id, setup: setupInput }))
 	.handler(async ({ data }): Promise<Setup> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getSetup(data.setupId);
 		const setup = await registry.updateSetup(data.setupId, data.setup);
 		if (!setup) throw new Error("Setup not found");
+		const fields = before
+			? changedFields(before.setup, setup, ["name", "description", "runtimes"])
+			: [];
+		if (fields.length > 0) {
+			await audit({
+				action: "setup.updated",
+				target: { type: "setup", id: setup.id, label: setup.name },
+				detail: { fields },
+			});
+		}
 		return setup;
 	});
 
 export const deleteSetup = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), setupId: id }))
 	.handler(async ({ data }): Promise<void> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
+		const before = await registry.getSetup(data.setupId);
 		await registry.deleteSetup(data.setupId);
+		if (before) {
+			await audit({
+				action: "setup.deleted",
+				target: { type: "setup", id: before.setup.id, label: before.setup.name },
+			});
+		}
 	});
 
 /**
@@ -512,7 +650,7 @@ export const deleteSetup = createServerFn({ method: "POST" })
 export const applySetup = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), setupId: id, repositoryId: id }))
 	.handler(async ({ data }): Promise<ApplyOutcome> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
 		const { appOrigin } = await import("#/server/origin");
 		const path = `/${encodeURIComponent(data.slug)}/setups/${encodeURIComponent(data.setupId)}`;
 		const outcome = await registry.applySetup(
@@ -521,6 +659,23 @@ export const applySetup = createServerFn({ method: "POST" })
 			`${appOrigin()}${path}`,
 		);
 		if (outcome.status === "refused") throw new Error(outcome.message);
+		// Opening or updating a pull request is a change in the repository; the rest are not.
+		if (outcome.status === "opened" || outcome.status === "updated") {
+			const [setup, repository] = await Promise.all([
+				registry.getSetup(data.setupId),
+				registry.getRepository(data.repositoryId),
+			]);
+			await audit({
+				action: "setup.applied",
+				target: { type: "setup", id: data.setupId, label: setup?.setup.name ?? null },
+				detail: {
+					repository: repository
+						? `${repository.repository.owner}/${repository.repository.name}`
+						: null,
+					pullRequest: outcome.status,
+				},
+			});
+		}
 		return outcome;
 	});
 
@@ -528,9 +683,14 @@ export const applySetup = createServerFn({ method: "POST" })
 export const setSetupAssets = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), setupId: id, pins: setupPins }))
 	.handler(async ({ data }): Promise<Setup> => {
-		const registry = await managedRegistryOf(data.slug);
+		const { registry, audit } = await managedOf(data.slug);
 		const setup = await registry.setSetupAssets(data.setupId, data.pins);
 		if (!setup) throw new Error("Setup not found");
+		await audit({
+			action: "setup.updated",
+			target: { type: "setup", id: setup.id, label: setup.name },
+			detail: { fields: ["assets"] },
+		});
 		return setup;
 	});
 
@@ -569,8 +729,16 @@ export const getMcpServers = createServerFn({ method: "GET" })
 export const disconnectMcpServer = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), assetId: id }))
 	.handler(async ({ data }): Promise<boolean> => {
-		const registry = await managedRegistryOf(data.slug);
-		return registry.mcpOAuthDisconnect(data.assetId);
+		const { registry, audit } = await managedOf(data.slug);
+		const disconnected = await registry.mcpOAuthDisconnect(data.assetId);
+		if (disconnected) {
+			const server = await registry.getAsset(data.assetId);
+			await audit({
+				action: "mcpServer.disconnected",
+				target: { type: "mcpServer", id: data.assetId, label: server?.asset.name ?? null },
+			});
+		}
+		return disconnected;
 	});
 
 /**

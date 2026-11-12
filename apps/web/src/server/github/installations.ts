@@ -24,7 +24,8 @@ export async function listInstallations(workspaceId: string) {
 		.all();
 }
 
-export type LinkOutcome = "linked" | "taken";
+/** `relinked` when the workspace already had it, as when someone connects it again. */
+export type LinkOutcome = "linked" | "relinked" | "taken";
 
 /**
  * Links an installation to a workspace. One already linked to another workspace stays there:
@@ -48,7 +49,7 @@ export async function linkInstallation(
 		.values({ id: installation.id, workspaceId, linkedBy: userId, createdAt: now, ...fields })
 		.onConflictDoUpdate({ target: schema.githubInstallation.id, set: fields })
 		.run();
-	return "linked";
+	return existing ? "relinked" : "linked";
 }
 
 /** Brings the workspace's registry in line with the repositories GitHub says the app reaches. */

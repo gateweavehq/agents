@@ -1,4 +1,5 @@
 import { type Column, inArray, lt } from "drizzle-orm";
+import { pruneAudit } from "../audit";
 import type { Database } from "./index";
 import { schema } from "./index";
 
@@ -29,7 +30,7 @@ async function pruneOlder(
  * looks it up, so those nobody comes back for would otherwise stay forever: a session holds the
  * address and browser it came from, a verification an abandoned sign-up's code, and an invitation an
  * address that may never have had anything to do with this deployment. OAuth tokens name the person
- * an agent acts as. The privacy policy states
+ * an agent acts as. The audit log goes after a year, as it names people. The privacy policy states
  * these, so a change here is a change to it.
  */
 export async function pruneExpired(db: Database): Promise<void> {
@@ -41,4 +42,5 @@ export async function pruneExpired(db: Database): Promise<void> {
 	await pruneOlder(db, schema.oauthAccessToken, schema.oauthAccessToken.expiresAt, now);
 	await pruneOlder(db, schema.oauthClientAssertion, schema.oauthClientAssertion.expiresAt, now);
 	await pruneOlder(db, schema.invitation, schema.invitation.expiresAt, now);
+	await pruneAudit(db, now.getTime());
 }
