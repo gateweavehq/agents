@@ -81,14 +81,38 @@ function protect(resource: string) {
 
 /** What a caller reaches: every workspace the user is in, each found through D1 first. */
 function accessFor(userId: string): AgentsAccess {
+	const membershipsIn = async (workspace: string | undefined) =>
+		(await workspaceIdsOf(db, userId)).filter(
+			(membership) => workspace === undefined || membership.slug === workspace,
+		);
 	return {
 		async workspaces() {
 			return listWorkspaces(db, userId);
 		},
-		async wikis(repoName, workspace) {
-			const memberships = (await workspaceIdsOf(db, userId)).filter(
-				(membership) => workspace === undefined || membership.slug === workspace,
+		async wikiRepos(workspace) {
+			const memberships = await membershipsIn(workspace);
+			const listed = await Promise.all(
+				memberships.map(async (membership) =>
+					(await registryFor(membership.id).listWikis()).flatMap((entry) =>
+						entry.live
+							? [
+									{
+										workspace: membership.slug,
+										repoName: `${entry.owner}/${entry.name}`,
+										private: entry.private,
+										pages: entry.live.pagesTotal,
+										commit: entry.live.commit,
+										writtenAt: entry.live.finishedAt,
+									},
+								]
+							: [],
+					),
+				),
 			);
+			return listed.flat();
+		},
+		async wikis(repoName, workspace) {
+			const memberships = await membershipsIn(workspace);
 			const matches = await Promise.all(
 				memberships.map(async (membership) => {
 					const registry = registryFor(membership.id);
