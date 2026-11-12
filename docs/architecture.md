@@ -1636,6 +1636,33 @@ Pages refresh themselves while a scan of what they show is waiting or running.
 **Settings** has the workspace's members and invitations, its GitHub connection, where its run
 traces go (Telemetry), its model provider keys, and, for owners, deleting the workspace.
 
+## Backups
+
+D1 can be backed up from outside the Worker, but the Durable Objects can't: only the Worker's own
+code reads their SQLite. So the Worker exports a named entrypoint, `Backup`
+(`apps/web/src/server/backup.ts`), for a backup Worker such as Gateweave Backup's.
+
+- **No route.** A named entrypoint can't be reached from the internet. Only a Worker in the same
+  Cloudflare account with a service binding to it can call it, so that binding is the access, the
+  way the gateways' checks are for people and agents.
+- **`objects(cursor)`** lists, 20 workspaces at a time from D1, each one's `registry.<workspace>`
+  and then `conversation.<workspace>.<id>` for each conversation its registry lists, those of a
+  team's turns and of triggers included (`backupConversations`). Deleted workspaces aren't
+  listed, nor are conversations waiting to be destroyed.
+- **`read(name, statements)`** runs the SELECTs of a SQLite dump in that object, after checking in
+  D1 that the workspace exists and, for a conversation, that its registry still lists it, so a
+  backup never wakes a deleted object nor makes an empty one. For any other name it answers null.
+  The object's `backupRead` (`packages/registry/src/backup.ts`) takes only `SELECT` and
+  `PRAGMA table_list` or `table_info`, one statement each, and runs them together in one
+  transaction that it always rolls back. They see one moment, and nothing they run can change the
+  object.
+- **What a dump holds.** Every table of the object's SQLite, the Agents SDK's own included: a
+  conversation's messages are in `cf_agents_session_messages`. A Durable Object's key-value storage
+  (`_cf_KV`) can't be read with SQL, so a dump leaves it out; the Agents SDK keeps its own
+  bookkeeping there, such as the object's name and where a stream was, not messages.
+- **Restoring** an object from a backup isn't built in. The backup's SQL restores into a SQLite
+  database, to read or to load by hand.
+
 ## What comes next
 
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after

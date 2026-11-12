@@ -9,6 +9,7 @@ import { newNonce, withSecurityHeaders } from "./server/security-headers";
 
 export { SandboxMeterDO } from "@gateweave/agents-registry";
 export { RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
+export { Backup } from "./server/backup";
 export { ConversationAgent } from "./server/conversation";
 export { RateLimiter } from "./server/rate-limit";
 export { RegistryDO } from "./server/registry-do";

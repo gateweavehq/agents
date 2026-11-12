@@ -156,6 +156,7 @@ import {
 	runApplication,
 	saveApplication,
 } from "./apply";
+import { type BackupRow, readForBackup } from "./backup";
 import {
 	type ConversationTurn,
 	conversationParties,
@@ -908,6 +909,37 @@ export class RegistryDO extends DurableObject {
 
 	listConversations(startedBy: string, agentId?: string): Conversation[] {
 		return listConversations(this.#db, id.parse(startedBy), id.optional().parse(agentId));
+	}
+
+	/** Reads for Gateweave Backup, run together and rolled back (`./backup.ts`). */
+	backupRead(statements: unknown): BackupRow[][] {
+		return readForBackup(this.ctx.storage, statements);
+	}
+
+	/**
+	 * Every conversation's id, those a team's agent or a trigger started included, for a backup to
+	 * read each one's Durable Object. Unlike `conversationIds`, not those waiting to be destroyed,
+	 * which were deleted. Ids only: whose they are stays here.
+	 */
+	backupConversations(): string[] {
+		return this.#db
+			.select({ id: schema.conversations.id })
+			.from(schema.conversations)
+			.orderBy(schema.conversations.id)
+			.all()
+			.map((row) => row.id);
+	}
+
+	/** Whether a conversation is in the index, so a backup never wakes one that isn't. */
+	backupHasConversation(conversationId: unknown): boolean {
+		const parsed = id.safeParse(conversationId);
+		if (!parsed.success) return false;
+		const row = this.#db
+			.select({ id: schema.conversations.id })
+			.from(schema.conversations)
+			.where(eq(schema.conversations.id, parsed.data))
+			.get();
+		return row !== undefined;
 	}
 
 	getConversation(conversationId: string, startedBy: string): Conversation | null {

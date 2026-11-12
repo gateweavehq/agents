@@ -17,7 +17,12 @@ import {
 	type TurnVia,
 	type WorkersAiSettings,
 } from "@gateweave/agents-model";
-import type { ConversationTurn, RegistryDO } from "@gateweave/agents-registry";
+import {
+	type BackupRow,
+	type ConversationTurn,
+	type RegistryDO,
+	readForBackup,
+} from "@gateweave/agents-registry";
 import { type Agent, type Connection, type ConnectionContext, getAgentByName } from "agents";
 import {
 	convertToModelMessages,
@@ -262,6 +267,14 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		await Promise.all(
 			interrupted.map(({ runId, finish }) => this.#report(registry, runId, finish)),
 		);
+	}
+
+	/**
+	 * Reads for Gateweave Backup, run together and rolled back (the registry's `backup.ts`). The
+	 * app's Backup entrypoint calls it only for a conversation the registry lists.
+	 */
+	backupRead(statements: unknown): BackupRow[][] {
+		return readForBackup(this.ctx.storage, statements);
 	}
 
 	/** A run's trace, for the app's Runs page; none when this conversation has no such run. */

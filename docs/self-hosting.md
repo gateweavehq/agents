@@ -362,6 +362,20 @@ deleted. So is the account that runs the server while [sign-up is by invitation]
 and an address on the owner's list stays there, since the list is the owner's. If you restore D1 or a workspace's registry to a time before a deletion, the person comes
 back.
 
+## Backups
+
+D1 has 30 days of Time Travel, restored in place. For copies you keep yourself, a backup Worker in
+the same account can read every workspace's registry and conversations through the Worker's
+`Backup` entrypoint, which has no route; see [Backups](architecture.md#backups) in the
+architecture notes. Gateweave Backup binds to it with a service binding:
+
+```jsonc
+"services": [{ "binding": "AGENTS_APP", "service": "gateweave-agents", "entrypoint": "Backup" }]
+```
+
+Your D1 database is backed up by binding it directly. The copies hold people's conversations with
+agents: keep them as you keep the database, and say so in your privacy notice if you publish one.
+
 ## Updating
 
 **Command line:**
