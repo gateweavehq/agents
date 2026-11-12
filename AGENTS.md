@@ -24,6 +24,8 @@ Read [docs/spec.md](docs/spec.md) for what the product is meant to become and
 | `packages/github`   | The GitHub App's client: JWT, installation tokens, OAuth, webhooks          |
 | `packages/runtime`  | `ConversationAgent`: each conversation with an agent, and its runs' traces  |
 | `packages/cli`      | `@gateweave/agents`: applies and checks a setup in a working tree           |
+| `setups/`           | Ready-made setups any workspace adds in one click, bundled into the Worker  |
+| `sandbox/`          | The Dockerfile of the container each conversation's sandbox runs in         |
 | `docs/`             | The product spec, the architecture and setting up the GitHub App            |
 | `scripts/`          | Repository tooling (`doctor`, `update-copy`)                                |
 | `.claude/skills/`   | Step-by-step playbooks for recurring tasks (plain Markdown, any agent)      |
