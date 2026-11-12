@@ -1,3 +1,4 @@
+export { type BackupRow, readForBackup } from "./backup";
 export type { ConversationTurn } from "./conversations";
 export { RegistryDO } from "./registry-do";
 export { SandboxMeterDO } from "./sandbox-meter";

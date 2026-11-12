@@ -70,7 +70,11 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    the schemas in `packages/model`. Conversations (`ConversationAgent`) have no public route
    either: `apps/web/src/server/chat.ts` checks the session, the membership and that the
    conversation is the caller's, then passes the request on without its cookies. The Runs
-   pages read a trace (`runTrace`) only for a run the caller may see.
+   pages read a trace (`runTrace`) only for a run the caller may see. A backup Worker, such as
+   Gateweave Backup's, reaches both only through the named `Backup` entrypoint
+   (`apps/web/src/server/backup.ts`), which has no route: a service binding from a Worker in the
+   same account is its access. It reads only what D1 and the registry list, and sends only reads,
+   which the object checks and always rolls back (`packages/registry/src/backup.ts`).
 3. **Registry writes stay synchronous.** Each runs inside `ctx.storage.transactionSync` with
    Drizzle's sync API (`.get()`, `.all()`, `.run()`), so it applies whole or not at all. Never
    `await` in the middle of a write. A scan awaits GitHub first and writes after, in a
