@@ -68,6 +68,15 @@ export const setUpTrackWork = createServerFn({ method: "POST" })
 		if ("status" in made) throw new Error(made.message);
 		// The MCP page shows the server as checked, with the tools Track offered.
 		await registry.recordMcpCheck(made.mcpServerId, check);
+		const [{ auditFor }, { hostOf }] = await Promise.all([
+			import("#/server/audit"),
+			import("#/lib/audit-events"),
+		]);
+		await auditFor(member)({
+			action: "trackWork.setUp",
+			target: { type: "agent", id: made.agent.id, label: made.agent.name },
+			detail: { track: hostOf(data.work.trackUrl) },
+		});
 		return {
 			agentId: made.agent.id,
 			agentName: made.agent.name,

@@ -27,8 +27,11 @@ async function memberOf(slug: string, admin: boolean) {
 	const member = await currentMember(slug);
 	if (!member) return null;
 	if (admin && !isAdmin(member.membership.role)) throw new Error("Only admins can do this");
-	const { registryFor } = await import("#/server/registry");
-	return { member, registry: registryFor(member.membership.workspaceId) };
+	const [{ registryFor }, { auditFor }] = await Promise.all([
+		import("#/server/registry"),
+		import("#/server/audit"),
+	]);
+	return { member, registry: registryFor(member.membership.workspaceId), audit: auditFor(member) };
 }
 
 /** The workspace's sandbox time today (UTC), in minutes, and the server's daily limit if any. */
@@ -123,6 +126,11 @@ export const saveProviderKey = createServerFn({ method: "POST" })
 		const { name, email } = found.member.user;
 		const saved = await found.registry.saveProviderKey(data.key, name || email);
 		if ("status" in saved) throw new Error(saved.message);
+		const { provider } = data.key;
+		await found.audit({
+			action: "providerKey.saved",
+			target: { type: "providerKey", id: provider, label: provider },
+		});
 		return saved;
 	});
 
@@ -142,5 +150,12 @@ export const removeProviderKey = createServerFn({ method: "POST" })
 	.handler(async ({ data }): Promise<boolean> => {
 		const found = await memberOf(data.slug, true);
 		if (!found) throw new Error("Workspace not found");
-		return found.registry.removeProviderKey(data.provider);
+		const removed = await found.registry.removeProviderKey(data.provider);
+		if (removed) {
+			await found.audit({
+				action: "providerKey.removed",
+				target: { type: "providerKey", id: data.provider, label: data.provider },
+			});
+		}
+		return removed;
 	});

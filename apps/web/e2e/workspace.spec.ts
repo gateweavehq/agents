@@ -1,5 +1,6 @@
 import { expect, newBrowserContext, test } from "./fixtures";
 import {
+	AGENT,
 	addAgent,
 	messages,
 	newPerson,
@@ -36,12 +37,24 @@ test("the other pages of a workspace load", async ({ page }) => {
 		["chat", "Chat"],
 		["settings/models", "Workers AI"],
 		["settings/members", "Members"],
+		["settings/audit", "Audit log"],
 	];
 	for (const [path, heading] of pages) {
 		await page.goto(`/${slug}/${path}`);
 		await waitForHydration(page);
 		await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible();
 	}
+});
+
+test("an admin's changes reach the audit log", async ({ page }) => {
+	const { slug } = await startWorkspace(page);
+	await addAgent(page, slug);
+
+	await page.goto(`/${slug}/settings/audit`);
+	await waitForHydration(page);
+	const log = page.getByRole("list", { name: "Audit log" });
+	await expect(log.getByText("saved the Anthropic key")).toBeVisible();
+	await expect(log.getByText(`created the agent ${AGENT}`)).toBeVisible();
 });
 
 test("someone joins by an invitation", async ({ page, browser }) => {

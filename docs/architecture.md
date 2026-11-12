@@ -29,7 +29,7 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   `wrangler.jsonc` (`apps/web/src/server/db/prune.ts`). Better Auth removes a session or a
   verification only when something looks it up, so those nobody comes back for would otherwise
   stay, with the address and browser a session holds, and invitations with the address they were
-  sent to. OAuth refresh tokens, access tokens and client assertions past their time go too, since they name the person an agent acts as. Gateweave Cloud's privacy policy states these periods, so a change here is a change to it.
+  sent to. OAuth refresh tokens, access tokens and client assertions past their time go too, since they name the person an agent acts as, and so do audit log entries older than a year. Gateweave Cloud's privacy policy states these periods, so a change here is a change to it.
 - **Headers** go on every answer (`apps/web/src/server/security-headers.ts`): `nosniff`, a referrer
   rule and, over HTTPS, `Strict-Transport-Security`. A page also gets `X-Frame-Options`,
   `Cache-Control: private, no-store` and a Content-Security-Policy with a nonce made for that
@@ -216,7 +216,8 @@ remove a member from a workspace, which leaves their conversations.
   that is being deleted. That needs the organization row to go first, so
   `beforeDeleteOrganization` deletes it and its members follow by cascade.
 - **D1 goes in one batch.** It notes every workspace that has to forget the person in
-  `pending_erasure` (ids only), deletes the user, and takes invitations addressed to them. Foreign
+  `pending_erasure` (ids only), deletes the user, and takes invitations addressed to them, along
+  with the address in every audit log entry for an invitation sent to it. Foreign
   keys take the sessions, sign-ins, memberships and the invitations they sent. It is one
   transaction, so no account goes without that note, and a trigger's refusal leaves everything in
   place.
@@ -257,6 +258,37 @@ What stays, and the page says so before anyone confirms:
 - Point-in-time recovery, which Cloudflare provides and Agents does not control: 30 days back for a
   Durable Object, and for D1 30 days on Workers Paid or 7 on Workers Free. Restoring a state from
   before the deletion brings the person back with it.
+
+### Audit log
+
+Owners and admins see who changed the workspace, and when, in Settings > Audit log, newest first,
+50 at a time. It covers how the workspace is set up, not the work done in it
+(`apps/web/src/lib/audit-events.ts` lists every action):
+
+- **People**: invitations sent and revoked, with the address; people joining, leaving and removed;
+  role changes, from and to; the workspace renamed or moved.
+- **Keys and secrets**: provider keys saved and removed, environment sets created and edited,
+  secrets set and removed, telemetry turned on and off. Names only, never a value; a telemetry
+  endpoint by its host.
+- **Connections**: GitHub and GitLab connected and disconnected, a GitLab webhook's new secret,
+  MCP servers added, edited, signed in and out (by host), triggers created, changed, deleted and
+  given a new secret, and Track triage or Track work set up.
+- **Agents, teams and setups**: created, changed (which fields) and deleted, and a setup's pull
+  request opened or updated in a repository.
+- **Deletions**: projects and library assets.
+
+Chats, scans, runs, replays and wikis are not in it. The registry is never told who asks, so the
+log is a D1 table, `audit_event`, written by the Worker once a change has been made: by the server
+function that made it (`auditFor` in `apps/web/src/server/audit.ts`), or for Better Auth's changes
+to people, by its after hook (`apps/web/src/server/auth/audit.ts`), which reads what a change
+replaced, a role or a name, in the before hook. A change that fails records nothing. A row that
+cannot be written is logged and the change stands.
+
+Each entry holds the member who made the change by id, and a label taken at the time, as what it
+was done to may be gone later: a name, an invited address, a host. People are named when the log
+is read, from the user table, so someone who deleted their account reads as "Deleted member".
+Entries go with the workspace (they reference it), after a year (the daily cron), and an invited
+address goes when the person it was sent to deletes their account (see above).
 
 ### Changing a name or password
 

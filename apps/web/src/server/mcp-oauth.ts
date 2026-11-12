@@ -93,6 +93,19 @@ export async function finishConnect(request: Request): Promise<Response> {
 		return redirect(mcpPath(slug, "failed"));
 	}
 	await registry.mcpOAuthConnected(assetId, session.user.id);
+	const [{ auditFor }, { hostOf }] = await Promise.all([
+		import("./audit"),
+		import("../lib/audit-events"),
+	]);
+	await auditFor({ user: session.user, membership: { workspaceId } })({
+		action: "mcpServer.connected",
+		target: {
+			type: "mcpServer",
+			id: assetId,
+			label: (await registry.getAsset(assetId))?.asset.name ?? null,
+		},
+		detail: { host: hostOf(opened.serverUrl) },
+	});
 	return redirect(mcpPath(slug, "connected"));
 }
 

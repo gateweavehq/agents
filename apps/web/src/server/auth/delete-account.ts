@@ -3,6 +3,7 @@ import { APIError, createAuthEndpoint, freshSessionMiddleware } from "better-aut
 import { deleteSessionCookie } from "better-auth/cookies";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { forgetInAudit } from "../audit";
 import type { Database } from "../db";
 import { schema } from "../db";
 import type { Mailer } from "../email/mailer";
@@ -113,6 +114,7 @@ export function deleteAccount({ db, mailer, onAccountDeleted }: DeleteAccountCon
 								.returning({ id: schema.user.id }),
 							db.delete(schema.formerMember).where(eq(schema.formerMember.userId, user.id)),
 							db.delete(schema.invitation).where(eq(schema.invitation.email, user.email)),
+							forgetInAudit(db, user.email),
 						]);
 						gone = results[1];
 					} catch (error) {
