@@ -8,6 +8,25 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.20.0] - 2026-11-12
+
+AI agents can ask a repository's wiki a question over MCP, at no cost to the workspace. There is no
+migration in this release.
+
+### Added
+
+- **`ask_wiki_question`.** It takes DeepWiki's arguments: a repository, or a list of up to 10, and a
+  question. It answers with the pages of their wikis that bear on the question, best first. No model
+  runs on the server: the agent that asks reads the pages and answers, so a question needs no key
+  and costs the workspace nothing. ([#212](https://github.com/gateweavehq/agents/pull/212))
+- **`list_wiki_repos`.** It lists the repositories with a wiki in your workspaces, with how many
+  pages each has and the commit it was written from.
+  ([#212](https://github.com/gateweavehq/agents/pull/212))
+
+### If you run your own
+
+- **Nothing to do for this release.**
+
 ## [0.19.0] - 2026-11-12
 
 A wiki of each repository, written with the workspace's own model key, and an MCP endpoint that AI
