@@ -1,8 +1,10 @@
 import {
+	rankWikiPages,
 	WIKI_PAGE_NUMBER,
 	type WikiPage,
 	wikiContentsText,
 	wikiNotFoundText,
+	wikiPageText,
 	wikiStructureText,
 } from "@gateweave/agents-model";
 import { type CallToolResult, McpServer } from "@modelcontextprotocol/server";
@@ -28,7 +30,22 @@ export interface AgentsAccess {
 	 * `workspace` if they belong to it. A workspace they are not in matches nothing.
 	 */
 	wikis(repoName: string, workspace: string | undefined): Promise<WikiMatch[]>;
+	/** Every repository with a wiki in the person's workspaces, or in the one named. */
+	wikiRepos(workspace: string | undefined): Promise<WikiRepo[]>;
 }
+
+/** A repository with a wiki, as list_wiki_repos lists it. */
+export interface WikiRepo {
+	workspace: string;
+	repoName: string;
+	private: boolean;
+	pages: number;
+	commit: string | null;
+	writtenAt: number | null;
+}
+
+/** How much of the pages' text one answer to a question holds, in characters. */
+export const ASK_TEXT_BUDGET = 40_000;
 
 /** Wraps a tool's result as structured content, with the same data as text for clients without it. */
 async function run<Result extends Record<string, unknown>>(
@@ -90,6 +107,72 @@ function chosenWiki(
 		};
 	}
 	return { problem: wikiNotFoundText(repoName) };
+}
+
+/**
+ * ask_wiki_question's answer, from the pages alone: those that bear on the question, whole, as many
+ * as fit in `budget`, then the names of the others worth reading. DeepWiki has a model of its own
+ * write the answer. Here the caller is an AI agent with a model, which answers from these pages,
+ * so a question costs the workspace nothing and the answer is the caller's to word.
+ */
+export function wikiAnswerText(
+	question: string,
+	wikis: readonly { repoName: string; pages: readonly WikiPage[] }[],
+	budget = ASK_TEXT_BUDGET,
+): string {
+	const several = wikis.length > 1;
+	const names = wikis.map((wiki) => wiki.repoName).join(", ");
+	const ranked = rankWikiPages(
+		question,
+		wikis.flatMap((wiki) => wiki.pages.map((page) => ({ ...page, repoName: wiki.repoName }))),
+	);
+	if (ranked.length === 0) {
+		return [
+			`No page of the wiki of ${names} uses the words of the question. Its pages, to read with read_wiki_contents:`,
+			...wikis.map((wiki) => wikiStructureText(wiki.repoName, wiki.pages)),
+		].join("\n\n");
+	}
+	const shown: string[] = [];
+	let used = 0;
+	for (const page of ranked) {
+		const whole = `${several ? `Repository: ${page.repoName}\n\n` : ""}${wikiPageText(page)}`;
+		if (shown.length > 0 && used + whole.length > budget) break;
+		const room = budget - used;
+		const kept =
+			whole.length > room
+				? `${whole.slice(0, room)}\n\n(Cut here: read_wiki_contents with page "${page.number}" gives the rest.)`
+				: whole;
+		shown.push(kept);
+		used += kept.length;
+	}
+	const others = ranked.slice(shown.length, shown.length + 5);
+	return [
+		`From the wiki of ${names}, the pages that bear on the question, best first. Answer from them, citing their sources.`,
+		shown.join("\n\n---\n\n"),
+		others.length > 0
+			? `Other pages that may help, to read with read_wiki_contents:\n${others
+					.map((page) => `- ${page.number} ${page.title}${several ? ` (${page.repoName})` : ""}`)
+					.join("\n")}`
+			: "",
+	]
+		.filter(Boolean)
+		.join("\n\n");
+}
+
+/** list_wiki_repos's answer. */
+export function wikiReposText(repos: readonly WikiRepo[]): string {
+	if (repos.length === 0) {
+		return "No repository in your workspaces has a wiki yet. An owner or admin can have one written on a workspace's Wiki page in Gateweave Agents.";
+	}
+	const lines = repos.map((repo) => {
+		const where = `workspace ${repo.workspace}${repo.private ? ", private" : ""}`;
+		const commit = repo.commit ? `, at commit ${repo.commit.slice(0, 7)}` : "";
+		const written = repo.writtenAt
+			? `, written ${new Date(repo.writtenAt).toISOString().slice(0, 10)}`
+			: "";
+		return `- ${repo.repoName} (${where}): ${repo.pages} pages${commit}${written}`;
+	});
+	return `Repositories with a wiki:\n\n${lines.join("\n")}`;
 }
 
 /**
@@ -160,6 +243,50 @@ export function createAgentsServer(access: AgentsAccess): McpServer {
 			}
 			return text(wikiContentsText([asked]));
 		},
+	);
+
+	server.registerTool(
+		"ask_wiki_question",
+		{
+			title: "Ask a wiki",
+			description:
+				"Finds the pages of a repository's wiki, or of up to 10 repositories' wikis, that bear on a question, and gives them, best first, for you to answer from. No model answers on the server: you read the pages and answer, citing their sources.",
+			inputSchema: z.object({
+				repoName: z
+					.union([wikiInput.shape.repoName, z.array(wikiInput.shape.repoName).min(1).max(10)])
+					.describe(
+						'The repository as owner/name (e.g. "acme/app"), or a list of up to 10. For GitLab, its full path.',
+					),
+				question: z.string().trim().min(1).max(2000).describe("The question about the code."),
+				workspace: wikiInput.shape.workspace,
+			}),
+			annotations: { readOnlyHint: true, openWorldHint: false },
+		},
+		async ({ repoName, question, workspace }) => {
+			const names = [...new Set(Array.isArray(repoName) ? repoName : [repoName])];
+			const chosen = await Promise.all(
+				names.map(async (name) => chosenWiki(name, await access.wikis(name, workspace))),
+			);
+			const wikis = chosen.filter(
+				(wiki): wiki is { repoName: string; pages: WikiPage[] } => !("problem" in wiki),
+			);
+			const problems = chosen.flatMap((wiki) => ("problem" in wiki ? [wiki.problem] : []));
+			if (wikis.length === 0) return text(problems.join("\n"), true);
+			const answer = wikiAnswerText(question, wikis);
+			return text(problems.length > 0 ? `${answer}\n\nNot read:\n${problems.join("\n")}` : answer);
+		},
+	);
+
+	server.registerTool(
+		"list_wiki_repos",
+		{
+			title: "List wikis",
+			description:
+				"Lists the repositories that have a wiki in your workspaces, or in the one named, with how many pages each has and the commit it was written from.",
+			inputSchema: z.object({ workspace: wikiInput.shape.workspace }),
+			annotations: { readOnlyHint: true, openWorldHint: false },
+		},
+		async ({ workspace }) => text(wikiReposText(await access.wikiRepos(workspace))),
 	);
 
 	return server;

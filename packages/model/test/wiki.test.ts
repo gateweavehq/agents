@@ -3,6 +3,7 @@ import {
 	checkCitations,
 	numberWikiPages,
 	parseWikiSteering,
+	rankWikiPages,
 	WIKI_MAX_DEPTH,
 	WIKI_MAX_PAGE_LENGTH,
 	WIKI_MAX_PAGES,
@@ -167,5 +168,34 @@ describe("DeepWiki's answers", () => {
 		expect(wikiNotFoundText("acme/app")).toBe(
 			"Error fetching wiki for acme/app: Repository not found.",
 		);
+	});
+});
+
+describe("finding the pages a question is about", () => {
+	const page = (title: string, purpose: string, body: string) => ({ title, purpose, body });
+	const pages = [
+		page("Overview", "What the app is", "The app keeps a list and syncs it to every tab."),
+		page("Sync engine", "How changes reach other tabs", "Each mutation gets the next version."),
+		page("Storage", "Where rows live", "Rows live in SQLite, and every mutation is logged."),
+		page("Deploying", "Shipping a release", "Run the deploy script."),
+	];
+	const titles = (question: string) => rankWikiPages(question, pages).map((found) => found.title);
+
+	it("puts a page whose title has the question's words first", () => {
+		expect(titles("How does syncing work?")).toEqual(["Sync engine", "Overview"]);
+	});
+
+	it("weighs a word few pages have above one most have", () => {
+		// "mutation" is on two pages and "SQLite" on one, so Storage leads.
+		expect(titles("Which mutations go to SQLite?")).toEqual(["Storage", "Sync engine"]);
+	});
+
+	it("counts a word in a page's purpose above one in its text", () => {
+		expect(titles("Which mutations reach SQLite?")[0]).toBe("Sync engine");
+	});
+
+	it("finds nothing when no page has the question's words", () => {
+		expect(titles("How does it do what it does?")).toEqual([]);
+		expect(titles("Billing?")).toEqual([]);
 	});
 });

@@ -786,6 +786,16 @@ The tools, in `apps/web/src/server/mcp/tools.ts`, only read:
   for, and `page`, to read one page of `read_wiki_contents` instead of all of them. A repository
   in the person's workspaces without a wiki yet says so; anything else, a workspace they are not in
   among it, is "not found".
+- `ask_wiki_question` takes DeepWiki's `repoName` (one, or a list of up to 10) and `question`, but
+  no model answers it. DeepWiki's server has its model write the answer; the caller here is an AI
+  agent with a model of its own, so the tool gives it the pages that bear on the question, whole,
+  best first and up to 40,000 characters, then names the others worth reading, and the agent
+  answers from them. A question so costs the workspace nothing and needs no key.
+  `rankWikiPages` (`packages/model/src/wiki.ts`) ranks pages by the words they share with the
+  question: a word in a title counts most, then in the purpose, then in the text, each weighted by
+  how few pages have it, with English endings such as plurals taken off.
+- `list_wiki_repos` lists the repositories with a wiki in the person's workspaces, as Devin's
+  server lists its own, with each wiki's pages and commit.
 
 Tools reach Agents only through the `AgentsAccess` object `createAgentsServer` is given, which
 offers what the signed-in person may see. A tool that reads a workspace resolves it to the
@@ -1508,8 +1518,10 @@ read them, through the workspace's GitHub or GitLab connection.
 - **Each wiki says where it came from**: the commit, the model, its tokens and the cost at the
   model's list prices, where they are known. The pages link each citation to those
   lines at that commit on GitHub or GitLab.
-- **AI agents read it over MCP** at `/mcp`, with DeepWiki's `read_wiki_structure` and
-  `read_wiki_contents`, as the person who connected them; see [AI agents (MCP)](#ai-agents-mcp).
+- **AI agents read it over MCP** at `/mcp`, with DeepWiki's `read_wiki_structure`,
+  `read_wiki_contents` and `ask_wiki_question`, as the person who connected them; see
+  [AI agents (MCP)](#ai-agents-mcp). Reading and asking use no model, so only writing a wiki costs
+  the workspace anything.
 - **What a provider receives** is the repository's paths and the text of the files a page reads,
   with the workspace's own key, as an agent's run would send them. A wiki stays when the person who
   started it deletes their account: it is the team's, and keeps only their id, as a run does.

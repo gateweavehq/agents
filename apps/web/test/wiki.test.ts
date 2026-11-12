@@ -292,6 +292,23 @@ it("lets a member's AI agent read the wiki over MCP with DeepWiki's tools, and n
 	});
 	expect(textOf(page)).toContain("`sync` posts the ops.");
 	expect(textOf(page)).toContain("- [src/sync.ts](src/sync.ts)");
+
+	// A question finds the page that answers it, and asks no model: the caller has its own.
+	const asked = models.requests.length;
+	const answer = await client.callTool({
+		name: "ask_wiki_question",
+		arguments: { repoName: "acme/app", question: "What does sync post?" },
+	});
+	expect(textOf(answer)).toMatch(
+		/^From the wiki of acme\/app, the pages that bear on the question/,
+	);
+	expect(textOf(answer)).toContain("`sync` posts the ops.");
+	expect(models.requests.length).toBe(asked);
+
+	const listed = await client.callTool({ name: "list_wiki_repos", arguments: {} });
+	expect(textOf(listed)).toMatch(
+		/^Repositories with a wiki:\n\n- acme\/app \(workspace wiki-mcp, private\): 2 pages, at commit [0-9a-f]{7}, written \d{4}-\d{2}-\d{2}$/,
+	);
 	await client.close();
 
 	const { headers: eve } = await signUp(agents, origin, "eve-wiki-mcp");
@@ -301,5 +318,12 @@ it("lets a member's AI agent read the wiki over MCP with DeepWiki's tools, and n
 		expect(refused.isError).toBe(true);
 		expect(textOf(refused)).toBe("Error fetching wiki for acme/app: Repository not found.");
 	}
+	const theirs = await stranger.callTool({
+		name: "ask_wiki_question",
+		arguments: { repoName: "acme/app", question: "What does sync post?" },
+	});
+	expect(textOf(theirs)).toBe("Error fetching wiki for acme/app: Repository not found.");
+	const none = await stranger.callTool({ name: "list_wiki_repos", arguments: {} });
+	expect(textOf(none)).toMatch(/^No repository in your workspaces has a wiki yet/);
 	await stranger.close();
 });

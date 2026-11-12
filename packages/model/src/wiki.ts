@@ -236,6 +236,95 @@ export function wikiNotFoundText(repoName: string): string {
 	return `Error fetching wiki for ${repoName}: Repository not found.`;
 }
 
+/** Words too common in questions to tell one page from another. */
+const QUESTION_STOPWORDS = new Set(
+	(
+		"a about all an and any are as at be been but by can could do does doing done each for from " +
+		"get gets got has have how i if in into is it its me more most my no not of on one or our " +
+		"out over should so some such than that the their them then there these they this those to " +
+		"up us use used uses using was we were what when where which while who whom why will with " +
+		"would you your code repository repo wiki page pages"
+	)
+		.split(" ")
+		// Compared with a question's words once both are stemmed: "does" is "doe" by then.
+		.map(stem),
+);
+
+/** A text's words, lower-cased and stemmed: letters, digits and underscores, in any script. */
+function wordsOf(text: string): string[] {
+	return (text.toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []).map(stem);
+}
+
+/**
+ * An English word without the endings that most often tell it from its question's form: "syncs",
+ * "syncing" and "synced" are "sync", "matches" is "match". It is rough on purpose: a word it
+ * spoils is spoilt in the question and the pages alike.
+ */
+function stem(word: string): string {
+	const strip = (suffix: string) =>
+		word.endsWith(suffix) && word.length - suffix.length >= 3
+			? word.slice(0, -suffix.length)
+			: null;
+	return (
+		strip("ing") ??
+		strip("ed") ??
+		(/(ch|sh|x|z|ss)es$/.test(word) ? strip("es") : null) ??
+		(/[^s]s$/.test(word) ? strip("s") : null) ??
+		word
+	);
+}
+
+/**
+ * The pages that bear on `question`, best first, by the words they share with it: a word in a
+ * page's title counts most, then in its purpose, then in its text, and a word few pages have
+ * counts more than one most have. There is no model here: whoever asks is an AI agent with one of
+ * its own, which reads these pages and answers, so a question costs the workspace nothing.
+ */
+export function rankWikiPages<T extends { title: string; purpose: string; body: string }>(
+	question: string,
+	pages: readonly T[],
+): T[] {
+	const terms = [...new Set(wordsOf(question))].filter(
+		(word) => word.length > 1 && !QUESTION_STOPWORDS.has(word),
+	);
+	if (terms.length === 0) return [];
+	const indexed = pages.map((page, index) => {
+		const counts = new Map<string, number>();
+		for (const word of wordsOf(page.body)) counts.set(word, (counts.get(word) ?? 0) + 1);
+		return {
+			page,
+			index,
+			title: new Set(wordsOf(page.title)),
+			purpose: new Set(wordsOf(page.purpose)),
+			counts,
+		};
+	});
+	const weights = new Map(
+		terms.map((term) => {
+			const having = indexed.filter(
+				(entry) => entry.title.has(term) || entry.purpose.has(term) || entry.counts.has(term),
+			).length;
+			return [term, having === 0 ? 0 : Math.log(1 + pages.length / having)];
+		}),
+	);
+	return indexed
+		.map((entry) => {
+			let score = 0;
+			for (const term of terms) {
+				const weight = weights.get(term) ?? 0;
+				const found =
+					(entry.title.has(term) ? 6 : 0) +
+					(entry.purpose.has(term) ? 3 : 0) +
+					Math.log(1 + (entry.counts.get(term) ?? 0));
+				score += weight * found;
+			}
+			return { ...entry, score };
+		})
+		.filter((entry) => entry.score > 0)
+		.sort((a, b) => b.score - a.score || a.index - b.index)
+		.map((entry) => entry.page);
+}
+
 /** What a member asks for when they have a wiki written: which model writes it. */
 export const wikiStartInput = z.object({
 	provider: z.enum(KEYED_PROVIDERS),
