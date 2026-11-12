@@ -8,6 +8,29 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.22.0] - 2026-11-13
+
+Admins can now see who changed their workspace, and when. This release has one D1 migration.
+
+### Added
+
+- **Audit log.** Settings has a new Audit log page for owners and admins. It lists who invited,
+  removed or promoted whom and who joined or left; who saved or removed a model key, set or removed
+  a secret (by name, never its value) or changed an environment set or telemetry; who connected or
+  disconnected GitHub, GitLab or an MCP server, and who changed a trigger or set up Track triage
+  or Track work; who created, changed or deleted an agent, a team or a setup, and who had a setup
+  open a pull request; and who deleted a project or a library asset. The newest come first. It
+  names people as the server knows them now, so someone who deleted their account appears as
+  "Deleted member". Entries are kept for a year. Chats, scans and runs are not in it.
+  ([#218](https://github.com/gateweavehq/agents/pull/218))
+
+### If you run your own
+
+- **`pnpm run deploy` applies the migration** (`0011_audit_log`) before the new code goes live.
+- The log holds the addresses invitations went to, for a year, and forgets one when that person
+  deletes their account. If your privacy policy lists what Agents keeps, add it; see Audit log in
+  `docs/architecture.md`.
+
 ## [0.21.0] - 2026-11-12
 
 A backup Worker in the same Cloudflare account can now back up every workspace's registry and
