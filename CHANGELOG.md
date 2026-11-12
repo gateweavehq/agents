@@ -8,6 +8,30 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.21.0] - 2026-11-12
+
+A backup Worker in the same Cloudflare account can now back up every workspace's registry and
+conversations. There is no migration in this release, and nothing changes until such a Worker binds
+to it.
+
+### Added
+
+- **A way in for backups.** D1 can be backed up from outside the Worker, but a workspace's registry
+  and its conversations live in Durable Objects only the Worker's own code can read. The Worker now
+  exports a named entrypoint, `Backup`, for a backup Worker such as Gateweave Backup's. It lists each
+  workspace's registry and conversations, and runs a SQLite dump's reads in one, inside a
+  transaction it always rolls back, so a backup sees one moment and can change nothing. It reads
+  only what D1 and the registry still list, so a deleted conversation is never woken. It has no
+  route: only a Worker in the same account with a service binding to it can call it.
+  ([#216](https://github.com/gateweavehq/agents/pull/216))
+
+### If you run your own
+
+- **To back up your workspaces,** bind a backup Worker to the entrypoint
+  (`"services": [{ "binding": "AGENTS_APP", "service": "<your Worker>", "entrypoint": "Backup" }]`);
+  see Backups in `docs/self-hosting.md`. The copies hold people's conversations with agents: keep
+  them as you keep the database.
+
 ## [0.20.0] - 2026-11-12
 
 AI agents can ask a repository's wiki a question over MCP, at no cost to the workspace. There is no
