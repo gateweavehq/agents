@@ -37,8 +37,10 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   anything, so nothing can frame a page, a script runs only from this Worker's own address or with
   the nonce, and a page connects only to this Worker. A member's picture is the one thing a page
   shows from elsewhere, and only from GitHub or the sign-in provider. Vite's dev server gets none of
-  this, because its hot reload adds scripts without a nonce. There are no browser tests here to
-  catch a refusal, so a change to what a page loads needs a look in a browser.
+  this, because its hot reload adds scripts without a nonce. The browser tests run against the
+  production build, so they get the policy, and `e2e/fixtures.ts` fails a test on any refusal it
+  reports. They only see the pages they open, so a change to what a page loads still needs a look
+  in a browser.
 
 ### Signing in through a provider
 
