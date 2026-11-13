@@ -71,10 +71,14 @@
 	// Cloudflare starts them wherever it has capacity, and a container that a Durable Object starts
 	// takes no placement (docs/self-hosting.md).
 	// Bindings are not inherited, so each environment repeats them.
+	// Each runs its Worker near Frankfurt, where their EU databases answer (`served_by_colo` was FRA
+	// for all three on 2026-11-13). Otherwise a request from far away makes every query across an
+	// ocean, one after another. Static files are still served from the nearest place.
 	"env": {
 		"cloud": {
 			"name": "gateweave-agents",
 			"routes": [{ "pattern": "agents.gateweave.com", "custom_domain": true }],
+			"placement": { "region": "aws:eu-central-1" },
 			"d1_databases": [
 				{
 					"binding": "DB",
@@ -133,6 +137,7 @@
 		},
 		"staging": {
 			"name": "gateweave-agents-staging",
+			"placement": { "region": "aws:eu-central-1" },
 			// Created with the `eu` jurisdiction, so the data stays in the EU.
 			"d1_databases": [
 				{
@@ -190,6 +195,7 @@
 			// Only Gateweave deploys this environment, so its address can live here. With a route,
 			// workers.dev stays off and the demo has one address.
 			"routes": [{ "pattern": "agents-demo.gateweave.com", "custom_domain": true }],
+			"placement": { "region": "aws:eu-central-1" },
 			"vars": { "AGENTS_DEMO": "1", "DURABLE_OBJECT_JURISDICTION": "eu" },
 			"triggers": { "crons": ["*/10 * * * *"] },
 			// Created with the `eu` jurisdiction, so visitors' sandboxes stay in the EU.
