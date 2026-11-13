@@ -151,7 +151,52 @@ describe("moving a registry", () => {
 		await source.createLibraryAsset({ kind: "instructions", name: "after", text: "Fine.\n" });
 		expect((await target.listConversations("user-ada")).length).toBe(1);
 	});
+
+	// Cloudflare evicts an idle object, as the registry is while its conversations are copied: on
+	// staging it restarted after half a minute, and the move failed when its freeze ended there.
+	it("holds a freeze through a restart, until it lapses", async () => {
+		const name = crypto.randomUUID();
+		let registry = env.REGISTRY.getByName(name);
+		await registry.createLibraryAsset({ kind: "instructions", name: "rules", text: "Be brief.\n" });
+		const token = crypto.randomUUID();
+		expect(await registry.moveOut(token, "eu")).toMatchObject({ frozen: true });
+
+		registry = await restart(registry);
+		// The move reads on, and nothing writes behind its back.
+		expect(
+			(await registry.moveRead(token, { table: 0, after: null })).tables.length,
+		).toBeGreaterThan(0);
+		expect(
+			await failure(
+				registry.createLibraryAsset({ kind: "instructions", name: "late", text: "Late.\n" }),
+			),
+		).toContain(MOVING_MESSAGE);
+
+		// A freeze whose move died lapses, and the next start ends it.
+		await runInDurableObject(registry, (_instance: RegistryDO, state) => {
+			const freeze = state.storage.kv.get<{ until: number }>("move.freeze");
+			if (!freeze) throw new Error("Not frozen");
+			state.storage.kv.put("move.freeze", { ...freeze, until: Date.now() - 1 });
+		});
+		registry = await restart(registry);
+		await registry.createLibraryAsset({ kind: "instructions", name: "after", text: "Fine.\n" });
+		expect(await failure(registry.moveRead(token, { table: 0, after: null }))).toBe(
+			"The move was interrupted: the workspace is no longer frozen for it.",
+		);
+	});
 });
+
+type Registry = ReturnType<typeof env.REGISTRY.getByName>;
+
+/** Starts the registry afresh, as an eviction does. Returns a stub of the new instance. */
+async function restart(stub: Registry): Promise<Registry> {
+	await runInDurableObject(stub, (_instance: RegistryDO, state) => state.abort("restart")).catch(
+		() => {},
+	);
+	const fresh = env.REGISTRY.get(stub.id);
+	await fresh.listProjects();
+	return fresh;
+}
 
 describe("moving the sandbox meter", () => {
 	it("keeps each workspace's larger figure and every share either meter told of", async () => {

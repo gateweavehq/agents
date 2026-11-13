@@ -8,8 +8,10 @@
  * 1. The old registry freezes first, so no turn begins and no conversation opens; a workspace with
  *    a turn under way waits for another day. Each conversation then freezes as it is copied.
  *    Triggers refuse every write to a frozen object's tables, and it takes no sockets and runs no
- *    alarm. A freeze lapses after {@link MOVE_FREEZE_MS}, or when the object restarts, so a move
- *    that dies half way leaves the workspace where it was, working.
+ *    alarm. A freeze lapses after {@link MOVE_FREEZE_MS}, so a move that dies half way leaves the
+ *    workspace where it was, working again by then. It holds through a restart: an object left
+ *    idle while the rest of its workspace is copied may be evicted, and must not take writes the
+ *    copy has missed when it wakes.
  * 2. Each new object is emptied, makes the tables it lacks as the old one made them, and takes the
  *    old one's rows a page at a time, rowids too, then its key-value pairs.
  * 3. Both count their rows and keys and hash them, and the two must agree.
@@ -110,7 +112,7 @@ export interface MoveKeys {
 }
 
 /** Where a move leaves an object, as it starts up. */
-export type MoveState = "sealed" | "importing" | null;
+export type MoveState = "sealed" | "importing" | "frozen" | null;
 
 interface CopiedTable {
 	name: string;
@@ -576,13 +578,15 @@ export function movedFrom(storage: DurableObjectStorage): string | null {
 }
 
 /**
- * Settles where a move left the object as it starts: a freeze ends, as a move doesn't outlive
- * a restart, and a sealed or half-filled object says so.
+ * Settles where a move left the object as it starts: sealed, half filled, or frozen, as a freeze
+ * outlives a restart until it lapses. One that lapsed ends here.
  */
-export function moveStateAtStart(storage: DurableObjectStorage): MoveState {
+export function moveStateAtStart(storage: DurableObjectStorage, now: number): MoveState {
 	if (storage.kv.get(SEALED) !== undefined) return "sealed";
+	if (storage.kv.get(IMPORT) !== undefined) return "importing";
+	if (isFrozen(storage, now)) return "frozen";
 	thaw(storage);
-	return storage.kv.get(IMPORT) !== undefined ? "importing" : null;
+	return null;
 }
 
 /** Where a move has an object, read from its storage. */

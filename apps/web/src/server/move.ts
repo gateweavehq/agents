@@ -35,7 +35,7 @@ export async function moveWorkspaces(db: Database): Promise<void> {
 	try {
 		await moveMeter(target);
 	} catch (error) {
-		console.error(`move: the sandbox meter didn't move to ${target}`, error);
+		console.error(`move: the sandbox meter didn't move to ${target}: ${messageOf(error)}`);
 	}
 	const elsewhere = await db
 		.select({
@@ -73,7 +73,10 @@ export async function moveWorkspaces(db: Database): Promise<void> {
 				`move: workspace ${workspace.workspaceId} is in ${target} now, ${what}, in ${Date.now() - started} ms`,
 			);
 		} catch (error) {
-			console.error(`move: workspace ${workspace.workspaceId} didn't move to ${target}`, error);
+			// The message itself: an error that came over RPC logs only the stack of this side.
+			console.error(
+				`move: workspace ${workspace.workspaceId} didn't move to ${target}: ${messageOf(error)}`,
+			);
 		}
 	}
 }
@@ -125,6 +128,10 @@ function restarting(conversation: MoveTarget): MoveTarget {
 			}
 		},
 	};
+}
+
+function messageOf(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 async function recordMove(db: Database, from: WorkspaceRef, to: string): Promise<void> {

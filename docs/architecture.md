@@ -232,8 +232,10 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
   same name in another jurisdiction has another id. So a registry that moves stores the id it
   began with among its key-value pairs, which go with it, and seals and opens under that.
 - **When a move fails** before the seal, the old objects thaw and the workspace stays where it
-  was, and the next day's run tries again. A freeze also lapses after ten minutes, or when the
-  object restarts, so a move that dies half way can't leave a workspace frozen. A move that dies
+  was, and the next day's run tries again. A freeze also lapses after ten minutes, so a move
+  that dies half way leaves a workspace frozen for ten minutes at most. It holds through a
+  restart: Cloudflare evicts an idle object, and on staging the registry restarted after half a
+  minute of waiting while its conversations were copied. A move that dies
   after the seal leaves it out of reach until the next run, which finds the registry sealed and
   only finishes; its last steps are tried five times first. An object never takes a move's rows
   while it holds a workspace of its own.

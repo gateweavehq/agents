@@ -452,11 +452,14 @@ export class RegistryDO extends DurableObject {
 		void ctx.blockConcurrencyWhile(async () => {
 			// A registry sealed by a move holds what the workspace held then, until it is destroyed,
 			// and runs nothing; its tables may be older than the code (`move.ts`).
-			const moving = moveStateAtStart(ctx.storage);
+			const moving = moveStateAtStart(ctx.storage, Date.now());
 			if (moving === "sealed") return;
+			// A frozen registry migrates too, so that it reads as the code expects. A migration that
+			// writes rows would fail until the freeze ends; none is deployed while a move runs.
 			await migrate(this.#db, migrations);
-			// A half-filled copy runs nothing either, until the move that fills it starts it.
-			if (moving === "importing") return;
+			// A half-filled copy runs nothing either, until the move that fills it starts it, and a
+			// frozen one waits for its move: its alarm is set for when the freeze lapses.
+			if (moving === "importing" || moving === "frozen") return;
 			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
 			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`). This
 			// one's failure closes the values it would have tied, which go nowhere until they are
