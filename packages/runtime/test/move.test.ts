@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
 	MOVING_MESSAGE,
@@ -230,5 +231,22 @@ describe("moving a workspace", () => {
 		// Nothing froze: the registry still takes writes.
 		await registry.createLibraryAsset({ kind: "instructions", name: "meanwhile", text: "Ok.\n" });
 		socket.close();
+	});
+
+	// A conversation copied early waits, idle, for the rest of the workspace, and may be evicted.
+	it("keeps a conversation frozen through a restart", async () => {
+		const { stub } = await workspaceWithTalk();
+		const token = crypto.randomUUID();
+		expect(await stub.moveOut(token, "eu")).toMatchObject({ frozen: true });
+
+		await runInDurableObject(stub, (_instance: unknown, state) => state.abort("restart")).catch(
+			() => {},
+		);
+		const fresh = env.CONVERSATIONS.get(stub.id);
+		expect((await messagesOf(fresh)).status).toBe(503);
+		const page = await fresh.moveRead(token, { table: 0, after: null });
+		expect(page.tables.length).toBeGreaterThan(0);
+		expect(await fresh.moveThaw(token)).toBe("thawed");
+		expect((await messagesOf(fresh)).body).toHaveLength(2);
 	});
 });

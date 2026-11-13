@@ -250,8 +250,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 
 	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
 		super(ctx, env);
-		// A move doesn't outlive a restart: its freeze ends here (`move.ts` in the registry package).
-		moveStateAtStart(ctx.storage);
+		// A freeze that lapsed ends here; one under way holds (`move.ts` in the registry package).
+		moveStateAtStart(ctx.storage, Date.now());
 		// AIChatAgent takes chat messages in the onMessage its constructor sets, so the session is
 		// checked in front of that, for every message a socket sends.
 		const take = this.onMessage;
