@@ -23,4 +23,10 @@ updates:
       dependencies:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # Under vitest 5.1.0 a timer set inside a Durable Object in the Workers pool never fires, so a
+      # moved conversation never restarts and test/move.test.ts in packages/runtime fails. Nothing
+      # changes outside tests. Try the next release.
+      - dependency-name: vitest
+        versions: ["5.1.0"]
     open-pull-requests-limit: 5
