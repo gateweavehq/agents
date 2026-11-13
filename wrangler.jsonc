@@ -63,8 +63,9 @@
 	// limits (see apps/web/src/server/env.d.ts).
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
 	// The top level is what self-hosters deploy. Gateweave Cloud deploys the environments below:
-	// `cloud` is https://agents.gateweave.com, the same Worker and database the top level names, and
-	// `staging` a separate Worker with its own. Bindings are not inherited, so each repeats them.
+	// `cloud` is https://agents.gateweave.com, the Worker the top level names, and `staging` a separate
+	// Worker. Both keep their databases in the EU: they were created with the `eu` jurisdiction.
+	// Bindings are not inherited, so each environment repeats them.
 	"env": {
 		"cloud": {
 			"name": "gateweave-agents",
@@ -72,7 +73,8 @@
 			"d1_databases": [
 				{
 					"binding": "DB",
-					"database_name": "gateweave-agents",
+					"database_name": "gateweave-agents-eu",
+					"database_id": "fd44c2ef-4ed9-4a19-9bf0-b4a055980096",
 					"migrations_dir": "apps/web/migrations"
 				}
 			],
