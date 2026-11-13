@@ -294,7 +294,7 @@ function Preview({ files, problems }: Pick<SetupDetail, "files" | "problems">) {
 }
 
 function SetupActions() {
-	const { slug } = useWorkspace();
+	const { slug, demo } = useWorkspace();
 	const router = useRouter();
 	const navigate = useNavigate();
 	const data = Route.useLoaderData();
@@ -341,6 +341,7 @@ function SetupActions() {
 					setup={setup}
 					repositories={connected}
 					openIn={openIn}
+					demo={demo}
 					onApply={async (repositoryId) => {
 						const outcome = await applySetup({ data: { slug, setupId: setup.id, repositoryId } });
 						await router.invalidate();

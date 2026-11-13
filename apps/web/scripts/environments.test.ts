@@ -16,8 +16,8 @@ const builds = Object.entries(manifest.scripts).flatMap(([script, command]) => {
 });
 
 describe("environment builds", () => {
-	it("covers staging", () => {
-		expect(builds.map(({ mode }) => mode)).toEqual(expect.arrayContaining(["staging"]));
+	it("covers staging and the demo", () => {
+		expect(builds.map(({ mode }) => mode)).toEqual(expect.arrayContaining(["staging", "demo"]));
 	});
 
 	it.each(builds)("$script builds the $mode Worker, not production", ({ mode }) => {

@@ -261,6 +261,7 @@ export function ApplySetupDialog({
 	setup,
 	repositories,
 	openIn,
+	demo = false,
 	onApply,
 	onClose,
 }: {
@@ -269,6 +270,8 @@ export function ApplySetupDialog({
 	repositories: Repository[];
 	/** Repositories with a pull request for this setup still open, by id. */
 	openIn: ReadonlySet<string>;
+	/** The public demo, whose repositories are made up and which opens no pull request. */
+	demo?: boolean;
 	onApply: (repositoryId: string) => Promise<ApplyOutcome>;
 	onClose: () => void;
 }) {
@@ -303,7 +306,12 @@ export function ApplySetupDialog({
 							until someone merges it, and files the setup does not write stay as they are.
 						</DialogDescription>
 					</DialogHeader>
-					{repositories.length === 0 ? (
+					{demo ? (
+						<p className="text-sm text-muted-foreground">
+							The demo's repositories are made up, so it opens no pull request. The files it would
+							write are on this page. Deploy your own Gateweave Agents to apply it.
+						</p>
+					) : repositories.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
 							No repository is connected through the GitHub App yet.
 						</p>

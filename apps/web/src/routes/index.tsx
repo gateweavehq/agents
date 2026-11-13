@@ -1,10 +1,12 @@
 import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
+import { DemoStart } from "#/components/demo/demo-start";
 import { LegalLinks } from "#/components/legal-links";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
+import { getDemoHome } from "#/lib/demo";
 import { getLegalLinks, getSession } from "#/lib/session";
 import { slugify, slugProblem } from "#/lib/slug";
 
@@ -12,11 +14,21 @@ export const Route = createFileRoute("/")({
 	beforeLoad: async () => {
 		const session = await getSession();
 		if (!session) throw redirect({ to: "/login" });
-		return { session };
+		// A demo visitor's home is their sandbox, and they have no other.
+		const demo = await getDemoHome();
+		if (demo?.slug) throw redirect({ to: "/$workspace", params: { workspace: demo.slug } });
+		return { session, demo: demo !== null };
 	},
 	loader: () => getLegalLinks(),
-	component: WorkspacesPage,
+	component: HomePage,
 });
+
+function HomePage() {
+	const { demo } = Route.useRouteContext();
+	const legal = Route.useLoaderData();
+	// Workspaces cannot be made on the demo, so a visitor who deleted theirs opens another.
+	return demo ? <DemoStart legal={legal} again /> : <WorkspacesPage />;
+}
 
 function WorkspacesPage() {
 	const { session } = Route.useRouteContext();

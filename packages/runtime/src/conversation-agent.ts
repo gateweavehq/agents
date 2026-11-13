@@ -80,6 +80,7 @@ import { type MeteredRequest, meteredRequest } from "./meter";
 import {
 	describeFailure,
 	failureForLogs,
+	type GatewayMetadata,
 	type GatewaySettings,
 	gatewayOf,
 	languageModel,
@@ -283,6 +284,15 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 */
 	protected async sessionHolds(session: ChatSession, _workspaceId: string): Promise<boolean> {
 		return session.expiresAt > Date.now();
+	}
+
+	/**
+	 * The model a turn of an agent run by Gateweave calls: the agent's provider, with the key the
+	 * registry opened, through the gateway when there is one. The app's public demo puts a scripted
+	 * stand-in here, which its registry allows by opening no key (`standInTurns`).
+	 */
+	protected modelFor(agent: AgentSnapshot, key: string | null, metadata: GatewayMetadata) {
+		return languageModel(agent, key, this.env as unknown as RuntimeEnv, metadata);
 	}
 
 	async #sessionEnded(connection: Connection): Promise<boolean> {
@@ -620,7 +630,6 @@ ${runPageNote(runs, turn.runId)}`
 		_onFinish: unknown,
 		options?: OnChatMessageOptions,
 	): Promise<Response> {
-		const env = this.env as unknown as RuntimeEnv;
 		const { workspaceId, conversationId, registry } = this.#parties();
 		const begun = this.#begun;
 		this.#begun = null;
@@ -675,7 +684,7 @@ ${runPageNote(runs, turn.runId)}`
 
 		try {
 			const result = streamText({
-				model: languageModel(agent, key, env, {
+				model: this.modelFor(agent, key, {
 					workspace: workspaceId,
 					agent: agent.agentId,
 					conversation: conversationId,

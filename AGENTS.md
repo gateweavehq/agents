@@ -50,6 +50,7 @@ root unless noted.
 | `pnpm typecheck`  | Type-check every package (regenerates Wrangler and route types first)        |
 | `pnpm test`       | Run every test suite                                                         |
 | `pnpm test:e2e`   | Build, then run the browser tests (Playwright, Chromium) on port 4722        |
+| `pnpm test:smoke` | Check a live deployment from outside (`AGENTS_SMOKE_URL=https://…`)          |
 | `pnpm build`      | Production build                                                             |
 | `pnpm verify`     | Everything CI runs: check, typecheck, test, build                            |
 | `pnpm run deploy` | Build, apply D1 migrations, deploy                                           |
@@ -57,6 +58,12 @@ root unless noted.
 
 Scope a command to one package with `pnpm --filter <name> <script>`, for example
 `pnpm --filter @gateweave/agents-web test`. Run `pnpm verify` before you consider a change done.
+
+Gateweave's public demo is the `demo` environment in `wrangler.jsonc`: `pnpm --filter
+@gateweave/agents-web deploy:demo` and `db:migrate:demo` mirror the staging scripts, and a release
+runs them after production. Its code (`apps/web/src/server/demo/`) must stay inert unless
+`AGENTS_DEMO` is `"1"`, and anything new that keeps a secret, sends email or reaches outside must
+be refused there; see "The public demo" in `docs/architecture.md`.
 
 ## Invariants
 
@@ -162,6 +169,11 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
   ends in Anthropic's refusal, or in a failed request without a network. What someone wrote is
   stored by then, and that is what these tests read. To run them in two checkouts at once, give
   each its own port with `AGENTS_E2E_PORT`.
+- `apps/web/smoke` holds the smoke tests, for a live deployment rather than a local build:
+  `AGENTS_SMOKE_URL=https://agents.example.com pnpm test:smoke`. They load the sign-in page, and
+  check that accounts are looked up and that the chat gateway and `/mcp` turn away strangers. On
+  the demo, they also open a sandbox and chat with one of its agents. They sign in to nothing and
+  change nothing outside the demo. Gateweave Cloud's deploys run them after the demo's.
 - Every bug fix gets a test that fails without the fix. Never weaken or skip a test to make a
   change pass.
 

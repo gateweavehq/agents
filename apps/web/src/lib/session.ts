@@ -24,6 +24,7 @@ export const getSession = createServerFn({ method: "GET" }).handler(async () => 
 export const getAccount = createServerFn({ method: "GET" }).handler(async () => {
 	const { getAuth, db, oidcProviderName } = await import("#/server/auth");
 	const { ownsServer } = await import("#/server/auth/deployment");
+	const { demoEnabled } = await import("#/server/demo/mode");
 	const { legalLinks } = await import("#/server/legal");
 	const auth = getAuth();
 	const legal = legalLinks();
@@ -35,9 +36,11 @@ export const getAccount = createServerFn({ method: "GET" }).handler(async () => 
 		({ providerId, password }) => providerId === "credential" && Boolean(password),
 	);
 	const { name, email } = found.user;
-	const ownsThisServer = await ownsServer(db, found.user.id);
+	// A demo visitor runs nothing: the server's settings are refused to them however they ask.
+	const demo = demoEnabled();
+	const ownsThisServer = !demo && (await ownsServer(db, found.user.id));
 	return {
-		account: { name, email, hasPassword, ownsServer: ownsThisServer },
+		account: { name, email, hasPassword, ownsServer: ownsThisServer, demo },
 		legal,
 		provider: ownsThisServer ? oidcProviderName : null,
 	};
@@ -48,8 +51,11 @@ export const getAuthOptions = createServerFn({ method: "GET" }).handler(async ()
 	const { signUpState } = await import("#/server/auth/deployment");
 	const { legalLinks } = await import("#/server/legal");
 	const { signUpRequestUrl } = await import("#/server/sign-up");
+	const { demoEnabled } = await import("#/server/demo/mode");
 	const closed = (await signUpState(db)) === "by-invitation";
 	return {
+		/** The public demo, where "Open the demo" is the only way in. */
+		demo: demoEnabled(),
 		github: githubEnabled,
 		oidc: oidcProviderName,
 		email: emailEnabled,

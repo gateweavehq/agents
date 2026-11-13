@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "./auth";
 import { schema } from "./db";
+import { demoEnabled } from "./demo/mode";
 import { limitTriggerRequests } from "./rate-limit";
 import { findRegistry } from "./registry";
 import { whoSentIt } from "./workers-address";
@@ -22,6 +23,8 @@ export async function receiveGitLabWebhook(
 	workspaceId: string,
 	connectionId: string,
 ): Promise<Response> {
+	// The public demo connects no GitLab, so nothing posts here for it.
+	if (demoEnabled()) return reply(404, "Not found");
 	// Inbound webhooks share one budget per sender.
 	const { allowed, retryAfter } = limitTriggerRequests(whoSentIt(request));
 	if (!allowed) {

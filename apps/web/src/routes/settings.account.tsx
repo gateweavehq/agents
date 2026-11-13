@@ -69,15 +69,24 @@ function AccountPage() {
 				</Button>
 			</header>
 
-			<ChangeName name={account.name} />
-			<ChangePassword email={account.email} hasPassword={account.hasPassword} />
-			{account.ownsServer && <ServerSettings provider={provider} />}
-			<SignOutEverywhere onSignedOut={() => setSignedOut(true)} />
-			<DeleteAccount
-				email={account.email}
-				hasPassword={account.hasPassword}
-				onDeleted={() => setDeleted(true)}
-			/>
+			{account.demo ? (
+				<p className="text-sm text-muted-foreground">
+					This account exists for the demo: it has no password, nobody else can sign in to it, and
+					it is deleted with your sandbox a day after you opened it.
+				</p>
+			) : (
+				<>
+					<ChangeName name={account.name} />
+					<ChangePassword email={account.email} hasPassword={account.hasPassword} />
+					{account.ownsServer && <ServerSettings provider={provider} />}
+					<SignOutEverywhere onSignedOut={() => setSignedOut(true)} />
+					<DeleteAccount
+						email={account.email}
+						hasPassword={account.hasPassword}
+						onDeleted={() => setDeleted(true)}
+					/>
+				</>
+			)}
 
 			<LegalLinks links={legal} />
 		</main>

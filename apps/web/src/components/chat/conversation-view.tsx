@@ -18,6 +18,7 @@ import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 
 import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
+import { useWorkspace } from "#/components/workspace/context";
 import {
 	type CallState,
 	describeEdgeCall,
@@ -157,6 +158,7 @@ function LiveConversation({
 	onSocketRefused: (reason: Ended, unsent: string) => void;
 	probePath: string;
 }) {
+	const { demo } = useWorkspace();
 	// The words last sent, until a reply starts: a socket closing over them means they were refused.
 	const sending = useRef("");
 	// Read by callbacks that run before the state below reaches a render.
@@ -338,6 +340,11 @@ function LiveConversation({
 						</Button>
 					)}
 				</div>
+				{demo && (
+					<p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground">
+						This is the demo: agents answer from a script, and nothing you write reaches a model.
+					</p>
+				)}
 			</form>
 		</>
 	);

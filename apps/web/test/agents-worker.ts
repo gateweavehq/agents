@@ -17,6 +17,7 @@ import type {
 	GitLabConnection,
 	GitLabConnectionInput,
 	LibraryEditInput,
+	LibraryEntry,
 	LibraryTarget,
 	McpCheck,
 	McpCheckResult,
@@ -29,6 +30,7 @@ import type {
 	ProjectInput,
 	ProviderKey,
 	ProviderKeyInput,
+	ProviderModel,
 	ProviderRefusal,
 	Repository,
 	RepositoryDetail,
@@ -39,12 +41,16 @@ import type {
 	ScanResult,
 	Setup,
 	SetupDetail,
+	SetupEntry,
 	SetupInput,
 	SetupPins,
 	Team,
+	TeamEntry,
 	TeamGraphInput,
+	TelemetryInput,
 	TotaledRun,
 	TrackTriagePlan,
+	TrackWorkPlan,
 	Trigger,
 	TriggerEntry,
 	TriggerInput,
@@ -91,6 +97,7 @@ export interface SentEmail {
  */
 export interface RegistryStub {
 	createProject(input: ProjectInput): Promise<Project>;
+	listProjects(): Promise<Project[]>;
 	overview(): Promise<Overview>;
 	listRepositories(): Promise<Repository[]>;
 	getRepository(repositoryId: string): Promise<RepositoryDetail | null>;
@@ -102,11 +109,14 @@ export interface RegistryStub {
 	addToLibrary(sourceAssetId: string, target: LibraryTarget): Promise<string>;
 	createLibraryAsset(input: WrittenAssetInput): Promise<string>;
 	editLibraryAsset(input: LibraryEditInput): Promise<number>;
+	listLibrary(): Promise<LibraryEntry[]>;
 	createSetup(input: SetupInput): Promise<Setup>;
+	listSetups(): Promise<SetupEntry[]>;
 	setSetupAssets(setupId: string, pins: SetupPins): Promise<Setup | null>;
 	getSetup(setupId: string): Promise<SetupDetail | null>;
 	deleteSetup(setupId: string): Promise<boolean>;
 	createTeam(input: NewTeamInput): Promise<Team>;
+	listTeams(): Promise<TeamEntry[]>;
 	setTeamGraph(teamId: string, graph: TeamGraphInput): Promise<Team | null>;
 	applySetup(
 		setupId: string,
@@ -116,6 +126,8 @@ export interface RegistryStub {
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
 	listProviderKeys(): Promise<ProviderKey[]>;
+	removeProviderKey(provider: string): Promise<boolean>;
+	listModels(provider: string): Promise<ProviderModel[] | ProviderRefusal>;
 	gitlabConnect(
 		input: GitLabConnectionInput,
 		by: string,
@@ -127,12 +139,17 @@ export interface RegistryStub {
 	listMcpServers(): Promise<McpServerEntry[]>;
 	mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null>;
 	mcpOAuthOpen(assetId: string): Promise<{ serverUrl: string; tokens: unknown } | null>;
+	mcpOAuthBegin(
+		assetId: string,
+		by: string,
+	): Promise<{ state: string; serverUrl: string } | ProviderRefusal>;
 	recordMcpCheck(assetId: string, result: McpCheckResult): Promise<McpCheck | null>;
 	createEnvSet(input: EnvSetInput): Promise<string>;
 	editEnvSet(input: EnvSetEditInput): Promise<number>;
 	listEnvSets(): Promise<EnvSetEntry[]>;
 	secretTiesFailedAt(): Promise<number | null>;
 	setEnvSecret(input: EnvSecretInput, setBy: string): Promise<EnvSecret | EnvRefusal>;
+	listConversations(startedBy: string): Promise<Conversation[]>;
 	startConversation(agentId: string, startedBy: string): Promise<Conversation | null>;
 	startTeamConversation(teamId: string, startedBy: string): Promise<Conversation | null>;
 	getConversation(conversationId: string, startedBy: string): Promise<Conversation | null>;
@@ -167,6 +184,12 @@ export interface RegistryStub {
 		createdBy: string,
 		setBy: string,
 	): Promise<{ agent: Agent; trigger: Trigger; mcpServerId: string } | TriggerRefusal>;
+	setUpTrackWork(
+		input: TrackWorkPlan,
+		createdBy: string,
+		setBy: string,
+	): Promise<{ agent: Agent; trigger: Trigger; mcpServerId: string } | TriggerRefusal>;
+	setTelemetry(input: TelemetryInput, setBy: string): Promise<unknown>;
 }
 
 /** The address Agents sends from in tests. */

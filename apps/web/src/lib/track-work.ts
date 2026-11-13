@@ -27,6 +27,9 @@ export interface TrackWorkSetUp {
 export const setUpTrackWork = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), work: trackWorkInput }))
 	.handler(async ({ data }): Promise<TrackWorkSetUp> => {
+		// On the demo, before the check below sends the visitor's key to the visitor's address.
+		const { demoEnabled, OFF_IN_DEMO } = await import("#/server/demo/mode");
+		if (demoEnabled()) throw new Error(OFF_IN_DEMO);
 		const [{ currentMember }, { isAdmin }, { registryFor }, { appOrigin }, runtime] =
 			await Promise.all([
 				import("#/server/access"),

@@ -36,7 +36,16 @@ export {
 	writeKeysForMove,
 } from "./move";
 export { RegistryDO } from "./registry-do";
+export type { RunParent } from "./runs";
+export type {
+	SampleApplication,
+	SampleConversation,
+	SampleInput,
+	SampleRun,
+	SampleWiki,
+} from "./sample";
 export { METER_NAME, SandboxMeterDO } from "./sandbox-meter";
+export type { SourceFile } from "./scanner";
 export { MAX_KEPT_FILE_BYTES, type ScanOutcome } from "./scans";
 export { USAGE_BLOBS, USAGE_DOUBLES, type UsageSettings, usagePoint, writeUsage } from "./usage";
 export {
@@ -46,4 +55,5 @@ export {
 	type WikiParams,
 	type WikiPlanContext,
 	type WikiPlanInput,
+	type WikiUsage,
 } from "./wiki";

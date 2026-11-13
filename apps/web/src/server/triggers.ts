@@ -3,6 +3,7 @@ import type { TriggerTurnOutcome } from "@gateweave/agents-runtime";
 import { eq } from "drizzle-orm";
 import { db } from "./auth";
 import { schema } from "./db";
+import { demoEnabled } from "./demo/mode";
 import { limitTriggerRequests } from "./rate-limit";
 import { conversationFor, registryFor } from "./registry";
 import { runsPage } from "./runs-page";
@@ -29,6 +30,8 @@ export async function receiveTrigger(
 	workspaceId: string,
 	triggerId: string,
 ): Promise<Response> {
+	// The public demo has no triggers: a visitor's sandbox takes nothing from outside.
+	if (demoEnabled()) return reply(404, "Trigger not found");
 	const { allowed, retryAfter } = limitTriggerRequests(whoSentIt(request));
 	if (!allowed) {
 		return reply(429, "Too many deliveries", { "Retry-After": String(retryAfter ?? 10) });
