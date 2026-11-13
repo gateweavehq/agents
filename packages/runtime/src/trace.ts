@@ -301,6 +301,25 @@ export class RunRecorder {
 	}
 }
 
+/**
+ * Writes a run that has already ended, with its spans, as a recorder would have left them: for the
+ * app's public demo, whose sample runs were never run. Nothing calls it on any other deployment.
+ */
+export function recordPastRun(
+	sql: Sql,
+	run: { id: string; status: Exclude<RunStatus, "running">; startedAt: number; endedAt: number },
+	spans: readonly RunSpan[],
+): void {
+	sql`INSERT INTO trace_runs (id, status, started_at, ended_at)
+		VALUES (${run.id}, ${run.status}, ${run.startedAt}, ${run.endedAt})`;
+	for (const span of spans) {
+		const { id, kind, step, status, startedAt, endedAt, ...attributes } = span;
+		sql`INSERT INTO trace_spans (id, run_id, kind, step, status, started_at, ended_at, attributes)
+			VALUES (${id}, ${run.id}, ${kind}, ${step}, ${status}, ${startedAt}, ${endedAt},
+				${JSON.stringify(attributes)})`;
+	}
+}
+
 /** Closes a run and its open spans, and sums it up for the registry. */
 function closeRun(
 	sql: Sql,

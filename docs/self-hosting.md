@@ -175,6 +175,10 @@ after updating.
 | `INVITATION_CONTACT`          | Where a workspace asks for an invitation to Workers AI or sandboxes: an email address or an https URL. Settings > Models links to it. Keep an address as a secret. |
 | `DURABLE_OBJECT_JURISDICTION` | Keeps workspaces in a jurisdiction, such as `eu`. See [above](#keeping-data-in-one-jurisdiction).                                                                  |
 
+Leave `AGENTS_DEMO` unset. It turns a deployment into Gateweave's public demo, where anyone gets a
+sandbox of made-up data that is deleted after a day, agents answer from a script, and nobody can
+sign up or sign in (see "The public demo" in [architecture.md](architecture.md#the-public-demo)).
+
 ### Your own domain
 
 In the dashboard, open the Worker and add a custom domain under Settings › Domains & Routes. Or

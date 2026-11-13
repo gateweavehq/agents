@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { GitHubApp, type OAuthClient } from "@gateweave/agents-github";
+import { demoEnabled } from "../demo/mode";
 
 export interface GitHubConfig {
 	app: GitHubApp;
@@ -17,6 +18,11 @@ let config: GitHubConfig | null | undefined;
  */
 export function github(): GitHubConfig | null {
 	if (config !== undefined) return config;
+	// The public demo's repositories are made up; connecting a real GitHub is for your own deployment.
+	if (demoEnabled()) {
+		config = null;
+		return config;
+	}
 	const {
 		GITHUB_APP_ID: appId,
 		GITHUB_APP_SLUG: slug,

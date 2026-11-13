@@ -24,6 +24,7 @@ import {
 	UserRound,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { DemoBanner } from "#/components/demo/demo-banner";
 import { MemberAvatar } from "#/components/members/member-avatar";
 import { Button } from "#/components/ui/button";
 import {
@@ -40,7 +41,7 @@ import { cn } from "#/lib/utils";
 import { isAdmin, useMyRole, useWorkspace } from "./context";
 
 export function AppShell({ children }: { children: ReactNode }) {
-	const { name } = useWorkspace();
+	const { name, demo } = useWorkspace();
 	const [menuOpen, setMenuOpen] = useState(false);
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 
@@ -78,6 +79,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 					</Button>
 					<span className="truncate text-sm font-medium">{name}</span>
 				</div>
+				{demo && <DemoBanner />}
 				<main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
 			</div>
 		</div>
@@ -227,7 +229,7 @@ function Sidebar() {
 const LEGAL_ICONS = { notice: Scale, privacy: Shield, terms: FileText };
 
 function WorkspaceMenu() {
-	const { name, slug, legal } = useWorkspace();
+	const { name, slug, legal, demo } = useWorkspace();
 	const legalPages = legalEntries(legal);
 	const admin = isAdmin(useMyRole());
 	const navigate = useNavigate();
@@ -255,7 +257,7 @@ function WorkspaceMenu() {
 				<DropdownMenuLabel className="truncate text-xs text-muted-foreground">
 					{name}
 				</DropdownMenuLabel>
-				{admin && (
+				{admin && !demo && (
 					<DropdownMenuItem asChild>
 						<Link
 							to="/$workspace/settings/members"
@@ -273,12 +275,14 @@ function WorkspaceMenu() {
 						Settings
 					</Link>
 				</DropdownMenuItem>
-				<DropdownMenuItem asChild>
-					<Link to="/">
-						<ArrowLeftRight />
-						Switch workspace
-					</Link>
-				</DropdownMenuItem>
+				{!demo && (
+					<DropdownMenuItem asChild>
+						<Link to="/">
+							<ArrowLeftRight />
+							Switch workspace
+						</Link>
+					</DropdownMenuItem>
+				)}
 				<DropdownMenuItem asChild>
 					<Link to="/settings/account">
 						<UserRound />

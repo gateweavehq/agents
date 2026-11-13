@@ -1,5 +1,6 @@
 import { env, waitUntil } from "cloudflare:workers";
 import { createDb } from "../db";
+import { demoEnabled } from "../demo/mode";
 import { mailer } from "../email";
 import { forgetInWorkspaces } from "../erasure";
 import { allowPasswordTry, allowSpentTriesEmail, authRateLimits } from "../rate-limit";
@@ -18,13 +19,21 @@ const baseURL = env.BETTER_AUTH_URL || undefined;
  */
 export const mcpResource = baseURL ? new URL("/mcp", baseURL).href : undefined;
 
+/** On the public demo, visitors get in only through "Open the demo" (`../demo/start.ts`). */
+const demo = demoEnabled();
+
 const oidc =
-	env.OIDC_ISSUER && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET
+	!demo && env.OIDC_ISSUER && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET
 		? {
 				issuer: env.OIDC_ISSUER,
 				clientId: env.OIDC_CLIENT_ID,
 				clientSecret: env.OIDC_CLIENT_SECRET,
 			}
+		: undefined;
+
+const githubSignIn =
+	!demo && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
+		? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET }
 		: undefined;
 
 let instance: ReturnType<typeof buildAuth> | undefined;
@@ -77,10 +86,7 @@ function buildAuth() {
 		// A deployed Worker answers over HTTPS. Local dev has no certificate.
 		secureCookies: !baseURL && !import.meta.env.DEV,
 		mcpResource,
-		github:
-			env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
-				? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET }
-				: undefined,
+		github: githubSignIn,
 		oidc,
 		mailer,
 		runInBackground: waitUntil,
@@ -99,6 +105,7 @@ function buildAuth() {
 		// A workspace that does not answer is asked again by the daily cron.
 		onAccountDeleted: (userId) =>
 			logFailure(forgetInWorkspaces(db, userId), "forgetting a deleted account"),
+		demo,
 	});
 }
 
@@ -110,7 +117,7 @@ async function logFailure(work: Promise<unknown>, what: string) {
 	}
 }
 
-export const githubEnabled = Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
+export const githubEnabled = Boolean(githubSignIn);
 
 export const emailEnabled = Boolean(mailer);
 

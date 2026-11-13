@@ -3,6 +3,7 @@ import handler from "@tanstack/react-start/server-entry";
 import { db, handleAuthRequest } from "./server/auth";
 import { handleChatRequest, isChatRequest } from "./server/chat";
 import { pruneExpired } from "./server/db/prune";
+import { demoEnabled } from "./server/demo/mode";
 import { retryErasures } from "./server/erasure";
 import { handleMcpRequest, isMcpRequest } from "./server/mcp";
 import { moveWorkspaces } from "./server/move";
@@ -51,8 +52,13 @@ export default {
 		return withSecurityHeaders(request, response, { nonce, oidcIssuer: env.OIDC_ISSUER });
 	},
 	// Clears what is past its time, once a day, and moves a few workspaces into the deployment's
-	// jurisdiction while any are elsewhere.
+	// jurisdiction while any are elsewhere. On the public demo it runs every ten minutes, and first
+	// deletes the sandboxes and visitors a day old.
 	async scheduled() {
+		if (demoEnabled()) {
+			const { cleanUpDemo } = await import("./server/demo/cleanup");
+			await cleanUpDemo();
+		}
 		await retryErasures(db);
 		await pruneExpired(db);
 		await moveWorkspaces(db);

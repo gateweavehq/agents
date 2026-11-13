@@ -15,7 +15,7 @@ import type { Mailer } from "../email/mailer";
 import { invitationEmail, passwordResetEmail, verificationEmail } from "../email/templates";
 import { tellOfChangedPassword, validName, validRename } from "./account-changes";
 import { type AuditedPath, auditRecordOf, isAuditedPath, type Replaced } from "./audit";
-import { deleteAccount } from "./delete-account";
+import { DELETE_ACCOUNT, deleteAccount } from "./delete-account";
 import {
 	deploymentPlugin,
 	grantProviderPass,
@@ -64,6 +64,11 @@ export interface AuthConfig {
 	onWorkspaceDeleted?: ((workspaceId: string) => Promise<void>) | undefined;
 	/** Called after an account is deleted, to have its workspaces forget the person. */
 	onAccountDeleted?: ((userId: string) => Promise<void>) | undefined;
+	/**
+	 * The public demo: visitors get in only through "Open the demo", which makes their account on
+	 * the server, so every other way in and every change to an account is refused.
+	 */
+	demo?: boolean | undefined;
 }
 
 /**
@@ -225,7 +230,11 @@ export function createAuth(config: AuthConfig) {
 		},
 		hooks: {
 			before: createAuthMiddleware(async (ctx) => {
-				// `ctx.request` is set for HTTP requests and absent for direct `auth.api` calls.
+				// `ctx.request` is set for HTTP requests and absent for direct `auth.api` calls, which is
+				// how the demo makes its visitors' accounts.
+				if (config.demo && ctx.request && isDemoBlocked(ctx.path)) {
+					throw new APIError("FORBIDDEN", { message: "Not available in the demo" });
+				}
 				if (ctx.request) {
 					const replaced = await replacedFor(config.db, ctx.path, ctx.body);
 					if (replaced) replacedBy.set(ctx.request, replaced);
@@ -389,6 +398,32 @@ export function createAuth(config: AuthConfig) {
 }
 
 export type Auth = ReturnType<typeof createAuth>;
+
+/**
+ * What the public demo refuses from a browser: every way to make an account or sign in, every
+ * change to one, inviting anyone (an invitation names a real address), making more workspaces,
+ * and the server's own settings, which no visitor runs.
+ */
+export const DEMO_BLOCKED_PATHS: ReadonlySet<string> = new Set([
+	"/sign-up/email",
+	"/sign-in/email",
+	"/sign-in/social",
+	"/sign-in/oauth2",
+	"/request-password-reset",
+	"/reset-password",
+	"/send-verification-email",
+	"/change-email",
+	"/change-password",
+	"/update-user",
+	"/delete-user",
+	DELETE_ACCOUNT,
+	"/organization/create",
+	"/organization/invite-member",
+]);
+
+function isDemoBlocked(path: string): boolean {
+	return DEMO_BLOCKED_PATHS.has(path) || path.startsWith("/deployment/");
+}
 
 /** What a client may send to an auth path that has no rule of its own: Better Auth's default. */
 export const DEFAULT_AUTH_LIMIT = { window: 10, max: 100 };

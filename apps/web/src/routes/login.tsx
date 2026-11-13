@@ -2,6 +2,7 @@ import { createFileRoute, Link, redirect, useRouter } from "@tanstack/react-rout
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { DemoStart } from "#/components/demo/demo-start";
 import { LegalLinks } from "#/components/legal-links";
 import { LiveButton } from "#/components/live-button";
 import { Input } from "#/components/ui/input";
@@ -31,8 +32,13 @@ export const Route = createFileRoute("/login")({
 		if (await getSession()) throw redirect({ href: safeRedirect(search.redirect) ?? "/" });
 	},
 	loader: () => getAuthOptions(),
-	component: SignInForm,
+	component: LoginPage,
 });
+
+function LoginPage() {
+	const options = Route.useLoaderData();
+	return options.demo ? <DemoStart legal={options.legal} /> : <SignInForm />;
+}
 
 /** The provider's id in Better Auth. The server's constant is out of the browser's reach. */
 const OIDC_PROVIDER = "oidc";

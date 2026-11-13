@@ -1768,6 +1768,56 @@ code reads their SQLite. So the Worker exports a named entrypoint, `Backup`
 - **Restoring** an object from a backup isn't built in. The backup's SQL restores into a SQLite
   database, to read or to load by hand.
 
+## The public demo
+
+Gateweave runs a public demo at https://agents-demo.gateweave.com: the `demo` environment of
+`wrangler.jsonc`, a Worker of its own (`gateweave-agents-demo`) with its own D1 database, both in
+the EU. The same code ships to every deployment, and everything the demo does is off unless
+`AGENTS_DEMO` is `"1"` (`apps/web/src/server/demo/mode.ts`), which only that environment sets.
+
+- **A sandbox per visitor.** The sign-in page has one button, "Open the demo". It calls
+  `startDemo` (`apps/web/src/lib/demo.ts`), which counts the visitor's network (20 sandboxes an
+  hour and 100 a day per IPv4 address or IPv6 /64, in `RateLimiter`), then makes an account
+  through Better Auth's server API, with a random address under `visitors.example.com` and a
+  random password nobody sees, a workspace named Acme, and signs the visitor in. The registry then
+  fills itself in one call (`fillDemo`): it is where the workspace lives, which may be an ocean
+  away from the Worker that took the request. A sandbox that fails halfway is deleted, account and
+  all, and the page says why.
+- **Sample data that adds up** (`apps/web/src/server/demo/sample-data.ts` and `sample.ts`). Three
+  repositories on `gitlab.example.com`, a host reserved for examples, scanned by the real adapters
+  from the files in the sample, so each shows which coding agents it has. A library, and a setup
+  merged into storefront by a pull request, which storefront has since fallen behind and changed
+  by hand, so the drift is real. Storefront's wiki, whose citations are checked against the
+  sample's files. A team of three agents, with three past conversations whose runs and traces are
+  written as the runtime records them: each run's tokens are its trace's, and its cost is list
+  prices. The registry takes made-up history only through `importSample`, which refuses unless
+  the app's `sampleAllowed` says it is the demo.
+- **Agents answer from a script** (`scripted-model.ts`). On the demo, `ConversationAgent` puts a
+  stand-in model where the provider's would be, and the registry prepares turns without a key or
+  an MCP server (`standInTurns`). The script depends only on which agent answers and which of its
+  team's edges it can take: a lead hands work to each member once, and sums up once they answer,
+  so a team's turn runs through the real edges, nested runs and traces. Nothing a visitor writes
+  steers it, and no request reaches a model. Every provider seems to have a key, so any agent a
+  visitor makes can be chatted with.
+- **What the demo refuses.** The registry refuses, with the same message, saving or checking a
+  model key, environment secrets, MCP servers and their OAuth, triggers, Track triage and issue
+  work, telemetry, connecting GitLab, writing a wiki and applying a setup, and requests no scans.
+  The Track set-up server functions refuse before they try the visitor's key on the visitor's
+  address. Trigger and GitLab deliveries get a 404, GitHub is off, and email is off (visitors'
+  addresses are made up). Over HTTP, Better Auth refuses every way to make an account or sign in,
+  every change to an account, making workspaces, inviting anyone, and the server's own settings
+  (`/deployment/*`): the first visitor is the server's owner (see
+  [Who owns a server](#who-owns-a-server)), and an owner could close sign-up, which would stop
+  every sandbox. The environment binds no email, Workflow, sandbox container, Workers AI or
+  Analytics Engine, which `test/wrangler-config.test.ts` checks.
+- **Cleanup.** The demo's Cron Trigger runs every ten minutes and deletes visitors a day old, up to
+  100 a run (`cleanup.ts`): each one's workspace through the path deleting a workspace takes (its
+  conversations' objects, then its registry), then the workspace's row, then the visitor's. A
+  workspace that fails to go keeps its visitor, so the next run finds it again.
+
+`apps/web/test/demo.test.ts` checks each refusal, and that none of it happens anywhere else; the
+smoke tests (`apps/web/smoke`) open a sandbox on the live demo after each deploy.
+
 ## What comes next
 
 - **More agents in Gateweave products** (phase 4 in `docs/spec.md`, AGT-8), after
@@ -1784,5 +1834,6 @@ code reads their SQLite. So the Worker exports a named entrypoint, `Backup`
 ## Deploys
 
 `main` deploys to staging after CI passes, and a published GitHub release deploys production, the
-`cloud` environment of `wrangler.jsonc` (`.github/workflows/deploy.yml`). D1 migrations are
-applied before the new code goes live.
+`cloud` environment of `wrangler.jsonc`, then the public demo, the `demo` environment
+(`.github/workflows/deploy.yml`). D1 migrations are applied before the new code goes live. After
+the demo's deploy, the smoke tests (`pnpm test:smoke`) open a sandbox there from outside.

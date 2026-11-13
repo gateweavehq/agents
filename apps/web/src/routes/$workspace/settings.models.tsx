@@ -24,7 +24,7 @@ import {
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
-import { isAdmin, useMyRole } from "#/components/workspace/context";
+import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
 import {
@@ -63,7 +63,18 @@ function message(error: unknown) {
 function ModelsPage() {
 	const data = Route.useLoaderData();
 	const admin = isAdmin(useMyRole());
+	const { demo } = useWorkspace();
 	useDocumentTitle("Models");
+
+	if (demo) {
+		return (
+			<Notice title="The demo's agents answer from a script">
+				Whatever provider and model an agent names here, a script answers for it, so no key is
+				needed and nothing reaches a model. On your own deployment, you add the workspace's keys for
+				Anthropic, OpenAI and Google here, or turn on Workers AI.
+			</Notice>
+		);
+	}
 
 	if (!data) {
 		return (

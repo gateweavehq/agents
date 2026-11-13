@@ -1,7 +1,8 @@
 name: Deploy
 
 # Gateweave Cloud's deploys. Every green build of main goes to staging, and publishing a release
-# deploys that tag to production. Forks skip both jobs: they have no Cloudflare credentials.
+# deploys that tag to production, then to the public demo. Forks skip every job: they have no
+# Cloudflare credentials.
 on:
   workflow_run:
     workflows: [CI]
@@ -67,3 +68,43 @@ jobs:
         env:
           CLOUDFLARE_ENV: cloud
         run: pnpm --filter @gateweave/agents-web run deploy
+
+  # The public demo (https://agents-demo.gateweave.com), a Worker of its own, follows production:
+  # a release that fails there never reaches it.
+  demo:
+    if: github.repository == 'gateweavehq/agents' && github.event_name == 'release'
+    needs: production
+    runs-on: ubuntu-latest
+    environment:
+      name: demo
+      url: https://agents-demo.gateweave.com
+    concurrency: deploy-demo
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Migrations first, so the new code never meets an old schema.
+      - name: Apply D1 migrations
+        run: pnpm --filter @gateweave/agents-web db:migrate:demo
+      - name: Deploy
+        run: pnpm --filter @gateweave/agents-web deploy:demo
+      # The deployment as a visitor finds it (apps/web/smoke): a sandbox opens, and an agent answers.
+      - name: Install Chromium
+        run: |
+          timeout 180 pnpm --filter @gateweave/agents-web exec playwright install --with-deps chromium ||
+            pnpm --filter @gateweave/agents-web exec playwright install chromium
+      - name: Smoke test
+        run: pnpm test:smoke
+        env:
+          AGENTS_SMOKE_URL: https://agents-demo.gateweave.com
+      - name: Upload the trace of a failed smoke test
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-demo
+          path: apps/web/test-results-smoke
+          retention-days: 7

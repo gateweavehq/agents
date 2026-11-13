@@ -16,6 +16,7 @@
 </p>
 
 <p align="center">
+  <a href="https://agents-demo.gateweave.com"><strong>Try the demo</strong></a> ·
   <a href="https://gateweave.com/agents"><strong>See what it does</strong></a> ·
   <a href="#self-hosting"><strong>Deploy your own</strong></a> ·
   <a href="setups/">Ready-made setups</a>

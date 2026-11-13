@@ -181,6 +181,36 @@
 			],
 			"send_email": [{ "name": "EMAIL" }],
 			"secrets": { "required": ["BETTER_AUTH_SECRET"] }
+		},
+		// Gateweave's public demo. Every visitor gets a private sandbox workspace, deleted after a
+		// day by the Cron Trigger. A separate Worker with its own database and Durable Objects; it
+		// shares nothing with production. Self-hosters do not need it (see docs/self-hosting.md).
+		"demo": {
+			"name": "gateweave-agents-demo",
+			// Only Gateweave deploys this environment, so its address can live here. With a route,
+			// workers.dev stays off and the demo has one address.
+			"routes": [{ "pattern": "agents-demo.gateweave.com", "custom_domain": true }],
+			"vars": { "AGENTS_DEMO": "1", "DURABLE_OBJECT_JURISDICTION": "eu" },
+			"triggers": { "crons": ["*/10 * * * *"] },
+			// Created with the `eu` jurisdiction, so visitors' sandboxes stay in the EU.
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "gateweave-agents-demo-eu",
+					"database_id": "042a7601-8e34-4856-8a7b-50882cd95bda",
+					"migrations_dir": "apps/web/migrations"
+				}
+			],
+			"durable_objects": {
+				"bindings": [
+					{ "name": "REGISTRY", "class_name": "RegistryDO" },
+					{ "name": "CONVERSATIONS", "class_name": "ConversationAgent" },
+					{ "name": "RATE_LIMITER", "class_name": "RateLimiter" }
+				]
+			},
+			// No send_email, Workflow, sandbox container or Analytics Engine binding: the demo sends no
+			// email, writes no wiki, runs no sandbox and asks no model (its agents answer from a script).
+			"secrets": { "required": ["BETTER_AUTH_SECRET"] }
 		}
 	}
 }

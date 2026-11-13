@@ -7,6 +7,7 @@ export const getWorkspace = createServerFn({ method: "GET" })
 	.handler(async ({ data: slug }) => {
 		const { currentMember } = await import("#/server/access");
 		const { legalLinks } = await import("#/server/legal");
+		const { demoEnabled } = await import("#/server/demo/mode");
 		const member = await currentMember(slug);
 		if (!member) return null;
 		const { user, membership } = member;
@@ -18,6 +19,8 @@ export const getWorkspace = createServerFn({ method: "GET" })
 			userId: user.id,
 			user: { id: user.id, name: user.name, email: user.email, image: user.image ?? null },
 			legal: legalLinks(),
+			/** A sandbox of the public demo, which says so on every page. */
+			demo: demoEnabled(),
 		};
 	});
 

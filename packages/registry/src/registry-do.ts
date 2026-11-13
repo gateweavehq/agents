@@ -313,6 +313,7 @@ import {
 	sandboxesInUse,
 	sandboxSeconds,
 } from "./runs";
+import { importSample, type SampleInput } from "./sample";
 import {
 	METER_NAME,
 	type MeterReading,
@@ -1199,29 +1200,10 @@ export class RegistryDO extends DurableObject {
 		tools: boolean,
 	): Promise<Omit<ConversationTurn, "runId"> | ProviderRefusal> {
 		const { provider } = agent;
-		if (isKeyedProvider(provider)) {
-			if (sealedKeyOf(this.#db, provider) === null) {
-				return refused(
-					`${providerMissing(provider)}, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
-				);
-			}
-		} else if (!workersAiOffered(this.env as WorkersAiSettings)) {
-			return refused(
-				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
-			);
-		} else {
-			const settings = this.env as WorkersAiSettings;
-			// Each registry is named for its workspace (`registryFor` in the app).
-			if (workersAiOfferTo(settings, this.ctx.id.name ?? "") !== "offered") {
-				return refused(`${WORKERS_AI_NOT_INVITED}, so ${agent.name} cannot answer.`);
-			}
-			const limit = workersAiDailyLimit(settings);
-			if (limit !== null && this.workersAiSpentToday() >= limit) {
-				return refused(
-					`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
-				);
-			}
-		}
+		const standIn = this.standInTurns();
+		// The runtime's stand-in answers a stand-in turn, so it needs no provider's key or offer.
+		const unanswered = standIn ? null : this.#providerRefusal(agent);
+		if (unanswered) return unanswered;
 		// An ask has no tools, so it needs no sandbox either, but an engine such as Claude Code runs
 		// only in one.
 		const sandbox = agent.sandbox && (tools || agent.engine !== "gateweave");
@@ -1256,7 +1238,8 @@ export class RegistryDO extends DurableObject {
 				`${GITHUB_NOT_SET_UP}, so ${agent.name} cannot check out ${repository.owner}/${repository.name}. Whoever runs this server can set it up; see the README.`,
 			);
 		}
-		const servers = tools ? agentServers(this.#db, agent.agentId) : [];
+		// A stand-in turn reaches nothing outside, so none of the agent's MCP servers either.
+		const servers = tools && !standIn ? agentServers(this.#db, agent.agentId) : [];
 		const edges = tools && position ? turnEdges(this.#db, position) : [];
 		if (sandbox && limits.monthlyBudget !== null) {
 			const reading = await this.#meterSandboxes(limits.monthlyBudget);
@@ -1274,12 +1257,66 @@ export class RegistryDO extends DurableObject {
 		const [opened, environment] = await Promise.all([
 			// Workers AI has no key of the workspace's: the runtime uses the deployment's token, which
 			// never passes through here.
-			isKeyedProvider(provider) ? this.#openKey(provider) : { key: null },
+			isKeyedProvider(provider) && !standIn ? this.#openKey(provider) : { key: null },
 			servers.length > 0 ? this.#openEnvironment(agent.agentId) : null,
 		]);
 		if ("status" in opened) return opened;
 		const mcpServers = this.#write(() => turnServers(this.#db, servers, environment, sandbox));
 		return { agent, key: opened.key, mcpServers, edges, sandbox, repository };
+	}
+
+	/** Why no model of `agent`'s provider can answer here, or null when one can. */
+	#providerRefusal(agent: AgentSnapshot): ProviderRefusal | null {
+		const { provider } = agent;
+		if (isKeyedProvider(provider)) {
+			if (sealedKeyOf(this.#db, provider) === null) {
+				return refused(
+					`${providerMissing(provider)}, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
+				);
+			}
+			return null;
+		}
+		if (!workersAiOffered(this.env as WorkersAiSettings)) {
+			return refused(
+				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
+			);
+		}
+		const settings = this.env as WorkersAiSettings;
+		// Each registry is named for its workspace (`registryFor` in the app).
+		if (workersAiOfferTo(settings, this.ctx.id.name ?? "") !== "offered") {
+			return refused(`${WORKERS_AI_NOT_INVITED}, so ${agent.name} cannot answer.`);
+		}
+		const limit = workersAiDailyLimit(settings);
+		if (limit !== null && this.workersAiSpentToday() >= limit) {
+			return refused(
+				`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
+			);
+		}
+		return null;
+	}
+
+	/**
+	 * Writes the history a sample workspace opens with: past conversations and runs, a merged setup
+	 * and a wiki (`./sample.ts`). For the app's public demo alone; anywhere else it throws, since
+	 * nothing else may write runs that never ran or pull requests nobody merged.
+	 */
+	importSample(sample: SampleInput): void {
+		if (!this.sampleAllowed()) throw new Error("This server does not take sample data");
+		this.#write(() => importSample(this.#db, sample));
+	}
+
+	/** Whether `importSample` may write. Only the app's public demo says yes. */
+	protected sampleAllowed(): boolean {
+		return false;
+	}
+
+	/**
+	 * Whether turns answer with the runtime's stand-in for the model, reaching nothing outside: no
+	 * key is opened and no MCP server connected. Only the app's public demo says yes, where its
+	 * ConversationAgent puts a scripted model in the provider's place.
+	 */
+	protected standInTurns(): boolean {
+		return false;
 	}
 
 	/**

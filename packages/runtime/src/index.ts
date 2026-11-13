@@ -16,6 +16,7 @@ export {
 export {
 	describeFailure,
 	failureForLogs,
+	type GatewayMetadata,
 	type GatewaySettings,
 	languageModel,
 } from "./models";
@@ -26,4 +27,5 @@ export {
 	type OAuthProviders,
 	type TrackAgentIdentity,
 } from "./tools";
+export { createTraceTables, recordPastRun, type Sql } from "./trace";
 export { listWorkersAiModels, type WorkersAiModels } from "./workers-ai";
