@@ -425,7 +425,9 @@ describe("on the demo deployment", () => {
 			expect(call.failed, call.text).toBe(true);
 			expect(call.text).toContain(OFF_IN_DEMO);
 		}
-		expect(agents.outbound.filter((url) => url.includes("track.example.net"))).toEqual([]);
+		expect(agents.outbound.filter((url) => new URL(url).hostname === "track.example.net")).toEqual(
+			[],
+		);
 	});
 
 	it("gives each visitor a workspace nobody else can open", async () => {
