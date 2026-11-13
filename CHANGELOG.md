@@ -8,6 +8,25 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.22.1] - 2026-11-13
+
+Gateweave Cloud's Agents now keeps its database in the EU. Nothing changes for a copy you run
+yourself, and this release has no migration.
+
+### Changed
+
+- **Gateweave Cloud's database is in the EU.** agents.gateweave.com's D1 database (accounts,
+  sessions, the list of workspaces) moved to one created with Cloudflare's `eu` jurisdiction, which
+  guarantees where it runs and stores data. The old one was in Eastern North America. Everything was
+  copied over, including what was written while the release deployed. Staging moved first.
+  Workspaces' registries and conversations live in Durable Objects, which move separately.
+  ([#220](https://github.com/gateweavehq/agents/pull/220), [#221](https://github.com/gateweavehq/agents/pull/221))
+
+### If you run your own
+
+- **Nothing to do.** The top level of `wrangler.jsonc`, which is what you deploy, is as it was; only
+  the `cloud` and `staging` environments changed.
+
 ## [0.22.0] - 2026-11-13
 
 Admins can now see who changed their workspace, and when. This release has one D1 migration.
