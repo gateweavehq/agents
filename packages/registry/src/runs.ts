@@ -442,6 +442,18 @@ export function detachRuns(db: Db, conversationId: string): void {
 }
 
 /**
+ * How many runs are under way, which a move of the workspace waits for: those older than any turn
+ * lasts were cut short and don't count.
+ */
+export function runningRuns(db: Db, now: number): number {
+	return db
+		.select({ id: runs.id })
+		.from(runs)
+		.where(and(eq(runs.status, "running"), gte(runs.startedAt, now - RUN_TIMEOUT)))
+		.all().length;
+}
+
+/**
  * Marks runs that have gone on for longer than any turn does as interrupted. The runtime closes
  * the runs a restart cut short when its conversation wakes again, but a conversation nobody opens
  * again never wakes. If one does, its report still fills in what the run used (`finishRun`).

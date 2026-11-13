@@ -51,7 +51,7 @@ async function registryOf(slug: string) {
 	const member = await currentMember(slug);
 	if (!member) return null;
 	const { registryFor } = await import("#/server/registry");
-	return registryFor(member.membership.workspaceId);
+	return registryFor(member.membership);
 }
 
 /**
@@ -67,7 +67,7 @@ async function managedOf(slug: string) {
 		import("#/server/registry"),
 		import("#/server/audit"),
 	]);
-	return { registry: registryFor(member.membership.workspaceId), audit: auditFor(member) };
+	return { registry: registryFor(member.membership), audit: auditFor(member) };
 }
 
 /** The registry of the workspace `slug`, for changes only owners and admins may make. */
@@ -708,7 +708,7 @@ export const getMcpServers = createServerFn({ method: "GET" })
 		]);
 		const { workspaceId } = member.membership;
 		const [servers, names] = await Promise.all([
-			registryFor(workspaceId).listMcpServers(),
+			registryFor(member.membership).listMcpServers(),
 			memberNames(db, workspaceId),
 		]);
 		// An OAuth connection is shown by the name of whoever made it, not their user id.

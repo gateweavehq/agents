@@ -1,5 +1,5 @@
 import type { SandboxBudgetPassed, TriggerTurnOutcome } from "@gateweave/agents-model";
-import { RegistryDO as Registry } from "@gateweave/agents-registry";
+import { objectsIn, RegistryDO as Registry } from "@gateweave/agents-registry";
 import { conversationName, destroyConversationObject } from "@gateweave/agents-runtime";
 import { getAgentByName } from "agents";
 import { eq } from "drizzle-orm";
@@ -33,8 +33,9 @@ export class RegistryDO extends Registry {
 		// Each registry is named for its workspace (`registryFor`).
 		const workspaceId = this.ctx.id.name;
 		if (!workspaceId) return { runId: null, error: "This registry does not know its workspace" };
+		// The workspace's conversations are where its registry is.
 		const conversation = await getAgentByName(
-			this.env.CONVERSATIONS,
+			objectsIn(this.env.CONVERSATIONS, this.ctx.id.jurisdiction),
 			conversationName(workspaceId, conversationId),
 		);
 		const workspace = await db
@@ -45,14 +46,21 @@ export class RegistryDO extends Registry {
 		return conversation.triggerTurn(text, workspace ? runsPage(workspace.slug) : null);
 	}
 
+	/**
+	 * Destroys the conversation where the registry is and, if the workspace moved here, the sealed
+	 * copy it left where it was.
+	 */
 	protected override async destroyConversation(conversationId: string): Promise<void> {
 		const workspaceId = this.ctx.id.name;
 		if (!workspaceId) throw new Error("This registry does not know its workspace");
-		const conversation = await getAgentByName(
-			this.env.CONVERSATIONS,
-			conversationName(workspaceId, conversationId),
-		);
-		await destroyConversationObject(conversation);
+		const name = conversationName(workspaceId, conversationId);
+		const places = [this.ctx.id.jurisdiction ?? ""];
+		const from = this.movedFrom();
+		if (from !== null && from !== places[0]) places.push(from);
+		for (const place of places) {
+			const conversation = await getAgentByName(objectsIn(this.env.CONVERSATIONS, place), name);
+			await destroyConversationObject(conversation);
+		}
 	}
 }
 

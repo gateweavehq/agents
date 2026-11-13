@@ -39,6 +39,9 @@ export interface MeterReading {
 	passed: SandboxBudgetShare[];
 }
 
+/** What a meter keeps: each month's figures by workspace, and the shares of the budget told of. */
+export type MeterReadings = [string, Map<string, number> | SandboxBudgetShare[]][];
+
 /** The name of the deployment's one meter. */
 export const METER_NAME = "deployment";
 
@@ -81,5 +84,41 @@ export class SandboxMeterDO extends DurableObject {
 					);
 		if (passed.length > 0) kv.put(`alerts:${input.month}`, [...heard, ...passed]);
 		return { spent, passed };
+	}
+
+	/**
+	 * Everything the meter holds, for the app to take to the meter of a jurisdiction the deployment
+	 * keeps its workspaces in ("Where a workspace lives" in docs/architecture.md).
+	 */
+	readings(): MeterReadings {
+		return [...this.ctx.storage.kv.list<Map<string, number> | SandboxBudgetShare[]>()];
+	}
+
+	/**
+	 * Adds another meter's readings to this one's: each workspace's figure is the larger of the two,
+	 * as a figure only grows within a month, and a share either meter told of is told.
+	 */
+	takeReadings(readings: MeterReadings): void {
+		const { kv } = this.ctx.storage;
+		this.ctx.storage.transactionSync(() => {
+			for (const [key, value] of readings) {
+				if (key.startsWith("usage:") && value instanceof Map) {
+					const usage = kv.get<Map<string, number>>(key) ?? new Map<string, number>();
+					for (const [workspace, seconds] of value) {
+						usage.set(workspace, Math.max(usage.get(workspace) ?? 0, seconds));
+					}
+					kv.put(key, usage);
+				} else if (key.startsWith("alerts:") && Array.isArray(value)) {
+					const heard = kv.get<SandboxBudgetShare[]>(key) ?? [];
+					const told = value.filter((share) => !heard.includes(share));
+					kv.put(key, [...heard, ...told]);
+				}
+			}
+		});
+	}
+
+	/** Forgets everything, once another meter has taken the readings. */
+	async clear(): Promise<void> {
+		await this.ctx.storage.deleteAll();
 	}
 }

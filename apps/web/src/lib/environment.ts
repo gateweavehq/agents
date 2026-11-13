@@ -25,7 +25,7 @@ async function memberOf(slug: string, admin: boolean) {
 		import("#/server/registry"),
 		import("#/server/audit"),
 	]);
-	return { member, registry: registryFor(member.membership.workspaceId), audit: auditFor(member) };
+	return { member, registry: registryFor(member.membership), audit: auditFor(member) };
 }
 
 /**

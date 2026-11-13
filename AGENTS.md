@@ -66,7 +66,9 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    the caller's membership in D1 first (`currentMember` in `apps/web/src/server/access.ts`).
    Non-members get the same "not found" as a missing workspace.
 2. **The registry has no public route.** `RegistryDO` trusts its caller, so the Worker reaches
-   it (`registryFor`) only after that membership check. It still validates every input against
+   it (`registryFor`) only after that membership check, in the jurisdiction D1 notes for the
+   workspace: the same name elsewhere is another, empty object, so never `getByName` on the
+   binding itself ("Where a workspace lives" in `docs/architecture.md`). It still validates every input against
    the schemas in `packages/model`. Conversations (`ConversationAgent`) have no public route
    either: `apps/web/src/server/chat.ts` checks the session, the membership and that the
    conversation is the caller's, then passes the request on without its cookies. The Runs
@@ -74,7 +76,9 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    Gateweave Backup's, reaches both only through the named `Backup` entrypoint
    (`apps/web/src/server/backup.ts`), which has no route: a service binding from a Worker in the
    same account is its access. It reads only what D1 and the registry list, and sends only reads,
-   which the object checks and always rolls back (`packages/registry/src/backup.ts`).
+   which the object checks and always rolls back (`packages/registry/src/backup.ts`). The daily
+   run moves a workspace into the deployment's jurisdiction through the objects' `move…` methods
+   (`apps/web/src/server/move.ts`); nothing else calls them.
 3. **Registry writes stay synchronous.** Each runs inside `ctx.storage.transactionSync` with
    Drizzle's sync API (`.get()`, `.all()`, `.run()`), so it applies whole or not at all. Never
    `await` in the middle of a write. A scan awaits GitHub first and writes after, in a

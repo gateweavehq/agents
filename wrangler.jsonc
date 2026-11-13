@@ -15,7 +15,8 @@
 	"previews": {},
 	"observability": { "enabled": true },
 	"upload_source_maps": true,
-	// Once a day, deletes sessions and invitations past their time. Environments inherit this.
+	// Once a day, deletes sessions and invitations past their time, and moves workspaces into the
+	// deployment's jurisdiction while any are elsewhere. Environments inherit this.
 	"triggers": { "crons": ["29 3 * * *"] },
 	// Accounts and the list of workspaces. The database is provisioned on first deploy.
 	"d1_databases": [
@@ -64,7 +65,10 @@
 	"secrets": { "required": ["BETTER_AUTH_SECRET"] },
 	// The top level is what self-hosters deploy. Gateweave Cloud deploys the environments below:
 	// `cloud` is https://agents.gateweave.com, the Worker the top level names, and `staging` a separate
-	// Worker. Both keep their databases in the EU: they were created with the `eu` jurisdiction.
+	// Worker. Both keep their data in the EU: the databases were created with the `eu` jurisdiction,
+	// and DURABLE_OBJECT_JURISDICTION keeps the Durable Objects there, the sandboxes' among them, as
+	// the Workflow's jurisdiction does its instances. A Durable Object-managed container takes no
+	// placement of its own in Wrangler (docs/self-hosting.md).
 	// Bindings are not inherited, so each environment repeats them.
 	"env": {
 		"cloud": {
@@ -87,14 +91,24 @@
 					{ "name": "SANDBOX_METER", "class_name": "SandboxMeterDO" }
 				]
 			},
+			// A Workflow's jurisdiction is fixed when it is made, hence the new name: the first one was
+			// made with none.
 			"workflows": [
-				{ "name": "gateweave-agents-wiki", "binding": "WIKI", "class_name": "WikiWorkflow" }
+				{
+					"name": "gateweave-agents-wiki-eu",
+					"binding": "WIKI",
+					"class_name": "WikiWorkflow",
+					"jurisdiction": "eu"
+				}
 			],
 			// Cloud's sandboxes are for the workspaces it invites (SANDBOX_WORKSPACES), within these
 			// limits. Both secrets are required, so a deploy fails rather than offer sandboxes to every
 			// workspace or spend the budget with nobody told. Workers AI, once WORKERS_AI_TOKEN is set,
 			// is for the same workspaces, up to $20 each a day.
 			"vars": {
+				// Each workspace's registry and conversations stay in the EU ("Where a workspace
+				// lives" in docs/architecture.md), and so do the meter and the rate limits.
+				"DURABLE_OBJECT_JURISDICTION": "eu",
 				"SANDBOX_DAILY_MINUTES": "120",
 				"SANDBOX_MONTHLY_BUDGET": "100",
 				"WORKERS_AI_WORKSPACES": "sandbox",
@@ -138,14 +152,19 @@
 			},
 			"workflows": [
 				{
-					"name": "gateweave-agents-staging-wiki",
+					"name": "gateweave-agents-staging-wiki-eu",
 					"binding": "WIKI",
-					"class_name": "WikiWorkflow"
+					"class_name": "WikiWorkflow",
+					"jurisdiction": "eu"
 				}
 			],
 			// Staging's sandboxes are open to every workspace, within these limits. Its operator hears
 			// of the budget at SANDBOX_ALERT_EMAIL, a secret.
-			"vars": { "SANDBOX_DAILY_MINUTES": "180", "SANDBOX_MONTHLY_BUDGET": "20" },
+			"vars": {
+				"DURABLE_OBJECT_JURISDICTION": "eu",
+				"SANDBOX_DAILY_MINUTES": "180",
+				"SANDBOX_MONTHLY_BUDGET": "20"
+			},
 			"analytics_engine_datasets": [
 				{ "binding": "USAGE", "dataset": "gateweave_agents_usage_staging" }
 			],

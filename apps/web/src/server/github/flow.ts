@@ -28,7 +28,7 @@ import {
 } from "@gateweave/agents-github";
 import { isAdmin } from "#/lib/roles";
 import { db, getAuth } from "../auth";
-import { registryFor } from "../registry";
+import { findRegistry } from "../registry";
 import { findMembership, findMembershipById } from "../workspaces";
 import { github } from "./config";
 import {
@@ -230,7 +230,7 @@ async function handleEvent(
 			if (!repository || ref !== `refs/heads/${repository.default_branch}` || after === NO_COMMIT) {
 				return new Response(null, { status: 202 });
 			}
-			await registryFor(linked.workspaceId).requestScanOf("github", repository.id);
+			await (await findRegistry(db, linked.workspaceId)).requestScanOf("github", repository.id);
 			return new Response(null, { status: 204 });
 		case "pull_request": {
 			// Only whether it is open matters, so the other actions are not worth a registry call.
@@ -239,7 +239,7 @@ async function handleEvent(
 				return new Response(null, { status: 202 });
 			}
 			const state = pull.state === "open" ? "open" : pull.merged ? "merged" : "closed";
-			const known = await registryFor(linked.workspaceId).recordPullRequest(
+			const known = await (await findRegistry(db, linked.workspaceId)).recordPullRequest(
 				"github",
 				repository.id,
 				pull.number,

@@ -93,19 +93,20 @@ function accessFor(userId: string): AgentsAccess {
 			const memberships = await membershipsIn(workspace);
 			const listed = await Promise.all(
 				memberships.map(async (membership) =>
-					(await registryFor(membership.id).listWikis()).flatMap((entry) =>
-						entry.live
-							? [
-									{
-										workspace: membership.slug,
-										repoName: `${entry.owner}/${entry.name}`,
-										private: entry.private,
-										pages: entry.live.pagesTotal,
-										commit: entry.live.commit,
-										writtenAt: entry.live.finishedAt,
-									},
-								]
-							: [],
+					(await registryFor({ workspaceId: membership.id, ...membership }).listWikis()).flatMap(
+						(entry) =>
+							entry.live
+								? [
+										{
+											workspace: membership.slug,
+											repoName: `${entry.owner}/${entry.name}`,
+											private: entry.private,
+											pages: entry.live.pagesTotal,
+											commit: entry.live.commit,
+											writtenAt: entry.live.finishedAt,
+										},
+									]
+								: [],
 					),
 				),
 			);
@@ -115,7 +116,7 @@ function accessFor(userId: string): AgentsAccess {
 			const memberships = await membershipsIn(workspace);
 			const matches = await Promise.all(
 				memberships.map(async (membership) => {
-					const registry = registryFor(membership.id);
+					const registry = registryFor({ workspaceId: membership.id, ...membership });
 					const repositoryId = await registry.wikiRepositoryNamed(repoName);
 					if (!repositoryId) return null;
 					const wiki = await registry.readWiki(repositoryId);

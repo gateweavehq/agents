@@ -1,12 +1,10 @@
-import { env, WorkerEntrypoint } from "cloudflare:workers";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import type { BackupRow } from "@gateweave/agents-registry";
-import { conversationName } from "@gateweave/agents-runtime";
-import { getAgentByName } from "agents";
 import { asc, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "./auth";
 import { schema } from "./db";
-import { registryFor } from "./registry";
+import { conversationFor, registryFor } from "./registry";
 
 /** How many workspaces a page of `objects` covers: each asks its registry for its conversations. */
 const PAGE = 20;
@@ -47,20 +45,27 @@ export class Backup extends WorkerEntrypoint<Cloudflare.Env> {
 	async objects(cursor?: string): Promise<{ names: string[]; cursor?: string }> {
 		const after = cursor === undefined ? undefined : cursorOf.parse(cursor);
 		const rows = await db
-			.select({ id: schema.organization.id })
+			.select({
+				workspaceId: schema.organization.id,
+				jurisdiction: schema.workspaceLocation.jurisdiction,
+			})
 			.from(schema.organization)
+			.leftJoin(
+				schema.workspaceLocation,
+				eq(schema.workspaceLocation.workspaceId, schema.organization.id),
+			)
 			.where(after === undefined ? undefined : gt(schema.organization.id, after))
 			.orderBy(asc(schema.organization.id))
 			.limit(PAGE + 1);
-		const page = rows.slice(0, PAGE).map((row) => row.id);
+		const page = rows.slice(0, PAGE);
 		const names: string[] = [];
 		for (const workspace of page) {
-			names.push(`registry.${workspace}`);
+			names.push(`registry.${workspace.workspaceId}`);
 			for (const id of await registryFor(workspace).backupConversations()) {
-				names.push(`conversation.${workspace}.${id}`);
+				names.push(`conversation.${workspace.workspaceId}.${id}`);
 			}
 		}
-		const last = page[page.length - 1];
+		const last = page[page.length - 1]?.workspaceId;
 		return rows.length > PAGE && last ? { names, cursor: last } : { names };
 	}
 
@@ -69,18 +74,23 @@ export class Backup extends WorkerEntrypoint<Cloudflare.Env> {
 		const object = objectOf(name);
 		if (!object) return null;
 		const found = await db
-			.select({ id: schema.organization.id })
+			.select({
+				workspaceId: schema.organization.id,
+				jurisdiction: schema.workspaceLocation.jurisdiction,
+			})
 			.from(schema.organization)
+			.leftJoin(
+				schema.workspaceLocation,
+				eq(schema.workspaceLocation.workspaceId, schema.organization.id),
+			)
 			.where(eq(schema.organization.id, object.workspace))
 			.get();
 		if (!found) return null;
-		const registry = registryFor(object.workspace);
+		// Where the workspace is now: a move leaves its old objects sealed, which a backup skips.
+		const registry = registryFor(found);
 		if (object.conversation === undefined) return registry.backupRead(statements);
 		if (!(await registry.backupHasConversation(object.conversation))) return null;
-		const conversation = await getAgentByName(
-			env.CONVERSATIONS,
-			conversationName(object.workspace, object.conversation),
-		);
+		const conversation = await conversationFor(found, object.conversation);
 		return conversation.backupRead(statements);
 	}
 }

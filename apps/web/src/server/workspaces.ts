@@ -2,11 +2,46 @@ import { and, eq, gt } from "drizzle-orm";
 import type { MemberRole } from "#/lib/roles";
 import type { Database } from "./db";
 import { schema } from "./db";
+import { deploymentJurisdiction } from "./jurisdiction";
 
-export interface Membership {
+/**
+ * A workspace, and the jurisdiction its Durable Objects are in, null for none ("Where a workspace
+ * lives" in docs/architecture.md). The same name in another jurisdiction is another object, so
+ * whatever reaches the workspace's objects needs both.
+ */
+export interface WorkspaceRef {
 	workspaceId: string;
+	jurisdiction: string | null;
+}
+
+export interface Membership extends WorkspaceRef {
 	workspaceName: string;
 	role: MemberRole;
+}
+
+/** Where the workspace with this id keeps its objects. */
+export async function findWorkspaceRef(db: Database, workspaceId: string): Promise<WorkspaceRef> {
+	const row = await db
+		.select({ jurisdiction: schema.workspaceLocation.jurisdiction })
+		.from(schema.workspaceLocation)
+		.where(eq(schema.workspaceLocation.workspaceId, workspaceId))
+		.get();
+	return { workspaceId, jurisdiction: row?.jurisdiction ?? null };
+}
+
+/**
+ * Notes where a new workspace's objects go: in the deployment's jurisdiction, if it has one.
+ * Before anything reaches them, which reaching them makes. If this fails, they are made outside
+ * any, and the daily run moves them.
+ */
+export async function placeNewWorkspace(db: Database, workspaceId: string): Promise<void> {
+	const jurisdiction = deploymentJurisdiction();
+	if (!jurisdiction) return;
+	await db
+		.insert(schema.workspaceLocation)
+		.values({ workspaceId, jurisdiction })
+		.onConflictDoNothing()
+		.run();
 }
 
 /** Resolves a workspace slug to the caller's membership, or null if they are not a member. */
@@ -20,9 +55,14 @@ export async function findMembership(
 			workspaceId: schema.member.organizationId,
 			workspaceName: schema.organization.name,
 			role: schema.member.role,
+			jurisdiction: schema.workspaceLocation.jurisdiction,
 		})
 		.from(schema.member)
 		.innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+		.leftJoin(
+			schema.workspaceLocation,
+			eq(schema.workspaceLocation.workspaceId, schema.member.organizationId),
+		)
 		.where(and(eq(schema.organization.slug, slug), eq(schema.member.userId, userId)))
 		.get();
 	return row ? { ...row, role: toRole(row.role) } : null;
@@ -40,9 +80,14 @@ export async function findMembershipById(
 			workspaceName: schema.organization.name,
 			slug: schema.organization.slug,
 			role: schema.member.role,
+			jurisdiction: schema.workspaceLocation.jurisdiction,
 		})
 		.from(schema.member)
 		.innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+		.leftJoin(
+			schema.workspaceLocation,
+			eq(schema.workspaceLocation.workspaceId, schema.member.organizationId),
+		)
 		.where(and(eq(schema.organization.id, workspaceId), eq(schema.member.userId, userId)))
 		.get();
 	return row ? { ...row, role: toRole(row.role) } : null;
@@ -74,11 +119,19 @@ export async function listWorkspaces(db: Database, userId: string): Promise<Work
 export async function workspaceIdsOf(
 	db: Database,
 	userId: string,
-): Promise<{ id: string; slug: string }[]> {
+): Promise<{ id: string; slug: string; jurisdiction: string | null }[]> {
 	return db
-		.select({ id: schema.organization.id, slug: schema.organization.slug })
+		.select({
+			id: schema.organization.id,
+			slug: schema.organization.slug,
+			jurisdiction: schema.workspaceLocation.jurisdiction,
+		})
 		.from(schema.member)
 		.innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+		.leftJoin(
+			schema.workspaceLocation,
+			eq(schema.workspaceLocation.workspaceId, schema.member.organizationId),
+		)
 		.where(eq(schema.member.userId, userId))
 		.orderBy(schema.organization.slug)
 		.all();

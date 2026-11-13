@@ -4,3 +4,4 @@ export * from "./auth-schema";
 export * from "./deployment-schema";
 export * from "./erasure-schema";
 export * from "./github-schema";
+export * from "./location-schema";

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./auth";
 import { schema } from "./db";
 import { limitTriggerRequests } from "./rate-limit";
-import { registryFor } from "./registry";
+import { findRegistry } from "./registry";
 import { whoSentIt } from "./workers-address";
 
 const ID = /^[\w-]{1,64}$/;
@@ -44,7 +44,8 @@ export async function receiveGitLabWebhook(
 		.where(eq(schema.organization.id, workspaceId))
 		.get();
 	if (!workspace) return reply(404, "Not found");
-	const outcome = await registryFor(workspaceId).gitlabDelivery(connectionId, secretToken, event);
+	const registry = await findRegistry(db, workspaceId);
+	const outcome = await registry.gitlabDelivery(connectionId, secretToken, event);
 	switch (outcome) {
 		case "unknown":
 		case "unauthorized":

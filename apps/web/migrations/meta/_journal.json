@@ -85,6 +85,13 @@
       "when": 1794526733931,
       "tag": "0011_audit_log",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794566603224,
+      "tag": "0012_workspace_location",
+      "breakpoints": true
     }
   ]
 }

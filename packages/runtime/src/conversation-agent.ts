@@ -19,9 +19,34 @@ import {
 } from "@gateweave/agents-model";
 import {
 	type BackupRow,
+	beginImport,
 	type ConversationTurn,
+	checkCopy,
+	digestForMove,
+	endImport,
+	freezeEnds,
+	freezeForMove,
+	MOVING_MESSAGE,
+	type MoveCursor,
+	type MoveKeys,
+	type MoveManifest,
+	type MoveOut,
+	type MovePage,
+	type MoveRows,
+	mayImport,
+	moveStateAtStart,
+	moveStateNow,
+	objectsIn,
 	type RegistryDO,
 	readForBackup,
+	readForMove,
+	readKeysForMove,
+	sealForMove,
+	type Thawed,
+	thaw,
+	thawAfterMove,
+	writeForMove,
+	writeKeysForMove,
 } from "@gateweave/agents-registry";
 import { type Agent, type Connection, type ConnectionContext, getAgentByName } from "agents";
 import {
@@ -138,6 +163,12 @@ interface NestedConversation {
 	destroy(): Promise<void>;
 }
 
+/**
+ * Why a conversation that took in a moving one restarts, as an error its caller may see in place
+ * of the answer. It means the move into it ended.
+ */
+export const MOVED_IN = "moved in";
+
 /** The name of a conversation's Durable Object: its workspace and its id. */
 export function conversationName(workspaceId: string, conversationId: string): string {
 	return `${workspaceId}${SEPARATOR}${conversationId}`;
@@ -219,6 +250,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 
 	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
 		super(ctx, env);
+		// A move doesn't outlive a restart: its freeze ends here (`move.ts` in the registry package).
+		moveStateAtStart(ctx.storage);
 		// AIChatAgent takes chat messages in the onMessage its constructor sets, so the session is
 		// checked in front of that, for every message a socket sends.
 		const take = this.onMessage;
@@ -260,6 +293,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 
 	override async onStart(): Promise<void> {
+		// A conversation moving away, gone away or half copied in keeps its runs as they are.
+		if (moveStateNow(this.ctx.storage, Date.now()) !== null) return;
 		// A restart cut these runs short: they will not end on their own.
 		const interrupted = closeInterruptedRuns(this.#sql);
 		if (interrupted.length === 0) return;
@@ -267,6 +302,137 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		await Promise.all(
 			interrupted.map(({ runId, finish }) => this.#report(registry, runId, finish)),
 		);
+	}
+
+	/**
+	 * Sockets and requests get nowhere while a move has the conversation, or once it moved away:
+	 * they come back to wherever the app sends them by then.
+	 */
+	override async fetch(request: Request): Promise<Response> {
+		if (this.#away()) {
+			return new Response(MOVING_MESSAGE, { status: 503, headers: { "retry-after": "30" } });
+		}
+		return super.fetch(request);
+	}
+
+	/** The SDK's alarm, which waits for a move under way and never runs once the conversation moved. */
+	override async alarm(): Promise<void> {
+		const moving = moveStateNow(this.ctx.storage, Date.now());
+		if (moving === "sealed" || moving === "importing") return;
+		if (moving === "frozen") {
+			// One that died lets the freeze lapse, and the work resumes then.
+			const until = freezeEnds(this.ctx.storage);
+			if (until !== null) await this.ctx.storage.setAlarm(until);
+			return;
+		}
+		thaw(this.ctx.storage);
+		return super.alarm();
+	}
+
+	/** Whether a move has the conversation now. A freeze that lapsed ends here. */
+	#away(): boolean {
+		const moving = moveStateNow(this.ctx.storage, Date.now());
+		if (moving !== null) return true;
+		thaw(this.ctx.storage);
+		return false;
+	}
+
+	// RPC for moving the workspace's objects somewhere else (`move.ts` in the registry package),
+	// which the app does from its daily run. Nothing else calls these.
+
+	/**
+	 * Freezes the conversation for a move to `to` and says what it holds, or that it moved before.
+	 * Its sockets close, and tabs reconnect to wherever the app sends them by then.
+	 */
+	async moveOut(token: string, to: string): Promise<MoveOut> {
+		const out = await freezeForMove(this.ctx.storage, token, to, Date.now());
+		if (!out.frozen) return out;
+		for (const ws of this.ctx.getWebSockets()) {
+			try {
+				ws.close(1012, "Conversation moving");
+			} catch {
+				// Already closing.
+			}
+		}
+		// The alarm's work waits for the move. If the move dies, the alarm ends the freeze.
+		const until = freezeEnds(this.ctx.storage);
+		if (until !== null) await this.ctx.storage.setAlarm(until);
+		return out;
+	}
+
+	/** The next page of the frozen conversation's rows. */
+	moveRead(token: string, cursor: MoveCursor, chars?: number): MovePage {
+		return readForMove(this.ctx.storage, token, cursor, Date.now(), chars);
+	}
+
+	/** The next page of the frozen conversation's key-value pairs, the SDK's among them. */
+	moveReadKeys(token: string, after: string | null): MoveKeys {
+		return readKeysForMove(this.ctx.storage, token, after, Date.now());
+	}
+
+	/**
+	 * Seals the conversation, whose copy holds it from now on. Its tables take writes again, so
+	 * that the SDK can still start it, to be destroyed; nothing reaches it to write.
+	 */
+	async moveSeal(token: string | null, to: string): Promise<void> {
+		await sealForMove(this.ctx.storage, token, to, Date.now(), { keepBlocks: false });
+	}
+
+	/** Ends the freeze of a move that gave up, so the conversation works where it is. */
+	async moveThaw(token: string): Promise<Thawed> {
+		const thawed = thawAfterMove(this.ctx.storage, token);
+		// Its alarm was moved to the freeze's end; the SDK plans the next from its queue.
+		if (thawed === "thawed") await this.ctx.storage.setAlarm(Date.now());
+		return thawed;
+	}
+
+	/** Empties this conversation, if it holds none, to take the rows of a move. */
+	async moveIn(token: string, manifest: MoveManifest): Promise<void> {
+		const tables = new Set(
+			this.ctx.storage.sql
+				.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
+				.toArray()
+				.map((row) => row.name),
+		);
+		const fresh = ["cf_ai_chat_agent_messages", "trace_runs"].every(
+			(table) =>
+				!tables.has(table) ||
+				this.ctx.storage.sql.exec(`SELECT 1 FROM ${table} LIMIT 1`).toArray().length === 0,
+		);
+		if (!mayImport(this.ctx.storage, fresh)) {
+			throw new Error("This conversation holds one, so it can't take another's rows.");
+		}
+		await beginImport(this.ctx.storage, token, manifest);
+	}
+
+	/** Writes a page of the moving conversation's rows. */
+	moveWrite(token: string, page: MoveRows[]): void {
+		writeForMove(this.ctx.storage, token, page);
+	}
+
+	/** Writes a page of the moving conversation's key-value pairs. */
+	moveWriteKeys(token: string, entries: [string, unknown][]): void {
+		writeKeysForMove(this.ctx.storage, token, entries);
+	}
+
+	/** Checks the copy against what the conversation held. */
+	moveCheck(token: string, manifest: MoveManifest): void {
+		checkCopy(this.ctx.storage, token, manifest);
+	}
+
+	/** A hash of each table's rows and of the key-value pairs, for a move's two ends to compare. */
+	moveDigest(): Promise<Record<string, string>> {
+		return digestForMove(this.ctx.storage);
+	}
+
+	/**
+	 * Ends a move into this conversation, which holds it from now on, then restarts it: what the SDK
+	 * read into memory as it started was of the empty object this was. The restart can reach the
+	 * caller before the answer, as an error saying {@link MOVED_IN}.
+	 */
+	async moveStart(from: string): Promise<void> {
+		await endImport(this.ctx.storage, from, Date.now());
+		setTimeout(() => this.ctx.abort(MOVED_IN), 0);
 	}
 
 	/**
@@ -717,7 +883,8 @@ ${runPageNote(runs, turn.runId)}`
 		signal?.addEventListener("abort", stop, { once: true });
 		try {
 			const name = conversationName(workspaceId, crypto.randomUUID());
-			nested = (await getAgentByName(env.CONVERSATIONS, name)) as unknown as NestedConversation;
+			const here = objectsIn(env.CONVERSATIONS, this.ctx.id.jurisdiction);
+			nested = (await getAgentByName(here, name)) as unknown as NestedConversation;
 			const { kind, team, to } = edge;
 			outcome = await nested.nestedTurn({
 				text,
@@ -802,7 +969,8 @@ ${runPageNote(runs, turn.runId)}`
 	 */
 	#sandbox(): Sandbox | null {
 		const env = this.env as unknown as RuntimeEnv;
-		return (env.SANDBOX?.getByName(this.name) as unknown as Sandbox | undefined) ?? null;
+		const sandboxes = env.SANDBOX && objectsIn(env.SANDBOX, this.ctx.id.jurisdiction);
+		return (sandboxes?.getByName(this.name) as unknown as Sandbox | undefined) ?? null;
 	}
 
 	/** The conversation's SQLite, with the trace's tables made on first use. */
@@ -829,7 +997,9 @@ ${runPageNote(runs, turn.runId)}`
 	#parties() {
 		const env = this.env as unknown as RuntimeEnv;
 		const [workspaceId = "", conversationId = ""] = this.name.split(SEPARATOR);
-		return { workspaceId, conversationId, registry: env.REGISTRY.getByName(workspaceId) };
+		// The workspace's objects are all where this one is (`move.ts` in the registry package).
+		const registry = objectsIn(env.REGISTRY, this.ctx.id.jurisdiction).getByName(workspaceId);
+		return { workspaceId, conversationId, registry };
 	}
 
 	/** Tells the registry how a run ended. A failure to tell it is logged; the turn goes on. */

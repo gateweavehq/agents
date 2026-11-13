@@ -96,5 +96,11 @@ declare namespace Cloudflare {
 		 * them by invitation: an email address or an https URL. Settings > Models links to it.
 		 */
 		INVITATION_CONTACT?: string;
+		/**
+		 * The jurisdiction Cloudflare keeps each workspace's Durable Objects in, such as `eu`: new
+		 * workspaces are made there and the daily run moves older ones ("Where a workspace lives" in
+		 * docs/architecture.md). None when unset. Gateweave Cloud keeps them in the EU.
+		 */
+		DURABLE_OBJECT_JURISDICTION?: string;
 	}
 }

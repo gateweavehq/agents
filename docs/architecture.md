@@ -189,7 +189,74 @@ not synced to the browser yet (see "Decisions" in the spec).
   the registry's storage with its
   sealed keys and secrets. A conversation that fails is logged and the rest go on; nothing is
   reachable either way, since no member is left. The GitHub App installation stays on GitHub
-  until someone uninstalls it there.
+  until someone uninstalls it there. A workspace that moved ([below](#where-a-workspace-lives))
+  has objects in more than one place, and each is emptied.
+
+### Where a workspace lives
+
+A Durable Object stays where it was made: near its first request, or in one of Cloudflare's
+jurisdictions (`eu`, `us`, `fedramp`) if it was made through `namespace.jurisdiction(…)`. The same
+name in another jurisdiction is another, empty object. So a deployment that keeps its data in one,
+`DURABLE_OBJECT_JURISDICTION`, notes where each workspace's objects are, and moves the ones that
+aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-115.
+
+- **Where.** D1's `workspace_location` has a row for each workspace whose objects are in a
+  jurisdiction. One with no row has them outside any, as every workspace did before the setting.
+  Reaching a workspace takes its id and that jurisdiction (`WorkspaceRef`,
+  `apps/web/src/server/workspaces.ts`): the membership lookup joins it, and `registryFor` and
+  `conversationFor` (`apps/web/src/server/registry.ts`) reach the objects there. A path that knows
+  only the id, such as a webhook, the wiki Workflow or an erasure, looks it up first
+  (`findRegistry`). Inside, each object reaches the others in its own jurisdiction (`objectsIn`,
+  `packages/registry/src/jurisdiction.ts`): a registry its conversations, a conversation its
+  sandbox, its registry and the conversations it starts, a sandbox's outbound proxy its
+  conversation.
+- **New workspaces** get their row in `afterCreateOrganization`, before anything reaches their
+  objects. If writing it fails, the objects are made outside, and the next move puts it right.
+- **Moving.** The daily Cron Trigger moves up to three workspaces whose row says otherwise into
+  the deployment's jurisdiction, the oldest first (`apps/web/src/server/move.ts`). A workspace
+  with a turn or a wiki under way waits for another day. The objects do the copying, with one
+  module for the registry and the conversations (`packages/registry/src/move.ts`): the registry
+  freezes first, with triggers that refuse every write to its tables and its alarm waiting, and
+  names its conversations. Each conversation freezes too, closing its sockets, and is copied,
+  four at a time, with what its sandbox keeps (the repository it cloned, what it pushed, the
+  CLIs' sessions); then the registry is. A copy is emptied and takes the source's tables, made
+  from the source's own SQL where the code makes them on first use, as the Agents SDK does; then
+  their rows a page at a time, tables others refer to first, with their rowids (a table made
+  `WITHOUT ROWID` in primary key order); then the object's key-value pairs. Both ends count and
+  hash every table's rows, each value as SQLite quotes it, and the key-value pairs, and the
+  hashes must agree. Sealing the old registry commits the move. Then the old conversations seal,
+  the new objects start, a conversation by restarting so that the Agents SDK starts it from what
+  came over, and D1 notes the new place. A workspace is paused for the seconds this takes, and
+  chats reconnect as after any closed socket.
+- **Secrets.** The registry seals keys and secrets under its object's id (`secrets.ts`), and the
+  same name in another jurisdiction has another id. So a registry that moves stores the id it
+  began with among its key-value pairs, which go with it, and seals and opens under that.
+- **When a move fails** before the seal, the old objects thaw and the workspace stays where it
+  was, and the next day's run tries again. A freeze also lapses after ten minutes, or when the
+  object restarts, so a move that dies half way can't leave a workspace frozen. A move that dies
+  after the seal leaves it out of reach until the next run, which finds the registry sealed and
+  only finishes; its last steps are tried five times first. An object never takes a move's rows
+  while it holds a workspace of its own.
+- **The sealed objects** refuse sockets and writes and run no alarm. They keep what the workspace
+  held when it moved until it is deleted, which destroys them in each place, as deleting a
+  conversation does where its registry is and where it moved from. Clearing them sooner is not
+  built yet. A backup reads only where the workspace is now.
+- **The sandbox meter** moves first: the new one takes the old one's readings, each workspace's
+  larger figure and every share of the budget either one told of, then the old one is cleared.
+  Rate limits are counted in the same jurisdiction; their objects don't move, so counts start
+  again there.
+- **The wiki Workflow** keeps its instances in a jurisdiction of its own setting in
+  `wrangler.jsonc`, fixed when the Workflow is made. Gateweave Cloud's moved to new Workflows
+  named `…-wiki-eu`.
+- **Sandboxes' containers** run where Cloudflare places them for their Durable Object. Wrangler
+  takes no placement for a container that a Durable Object manages.
+- **Cost.** Each conversation takes about a dozen calls to its two objects, of the thousand a
+  Worker on the Free plan may make to Cloudflare's services in one invocation (ten thousand on
+  Paid); hence three workspaces a run.
+
+Local runtimes have no jurisdictions (workerd says "not implemented"), so the tests move a
+workspace between two names instead (`packages/runtime/test/move.test.ts` and
+`packages/registry/test/move.test.ts`): to the move, the other objects are just other stubs.
 
 ### Deleting an account
 

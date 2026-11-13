@@ -5,6 +5,7 @@ import { forgetInWorkspaces } from "../erasure";
 import { allowPasswordTry, allowSpentTriesEmail, authRateLimits } from "../rate-limit";
 import { countedByWhoSentIt } from "../workers-address";
 import { deleteWorkspaceData } from "../workspace-deletion";
+import { placeNewWorkspace } from "../workspaces";
 import { createAuth } from "./config";
 
 export const db = createDb(env.DB);
@@ -86,11 +87,15 @@ function buildAuth() {
 		rateLimitStorage: authRateLimits,
 		allowPasswordTry,
 		allowSpentTriesEmail,
+		// A new workspace's objects go where the deployment keeps workspaces. If noting that fails,
+		// they are made outside any jurisdiction, and the daily run moves them.
+		onWorkspaceCreated: (workspaceId) =>
+			logFailure(placeNewWorkspace(db, workspaceId), "placing a new workspace"),
 		// The conversations and the registry are deleted with their workspace. A failure is logged
 		// for the operator; until then the data stays unreachable, since only members get through
 		// and none are left.
 		onWorkspaceDeleted: (workspaceId) =>
-			logFailure(deleteWorkspaceData(workspaceId), "workspace deletion"),
+			logFailure(deleteWorkspaceData(db, workspaceId), "workspace deletion"),
 		// A workspace that does not answer is asked again by the daily cron.
 		onAccountDeleted: (userId) =>
 			logFailure(forgetInWorkspaces(db, userId), "forgetting a deleted account"),

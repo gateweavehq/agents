@@ -178,6 +178,23 @@ export function startWikiGeneration(
 }
 
 /**
+ * How many wikis are being written, which a move of the workspace waits for: their workflow writes
+ * here between model requests. One that stopped getting further doesn't count.
+ */
+export function wikisUnderway(db: Db, now: number): number {
+	return db
+		.select({ id: wikiGenerations.id })
+		.from(wikiGenerations)
+		.where(
+			and(
+				inArray(wikiGenerations.status, UNDERWAY),
+				sql`${wikiGenerations.heartbeatAt} >= ${now - WIKI_STALLED_MS}`,
+			),
+		)
+		.all().length;
+}
+
+/**
  * Fails the generations that stopped getting further, as any failure is failed, pages and all, so
  * another can start.
  */
