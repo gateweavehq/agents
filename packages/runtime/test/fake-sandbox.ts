@@ -112,7 +112,7 @@ function localServer(
 		if (command.command === "missing") {
 			await input.cancel();
 			record.exited = true;
-			await writer.close();
+			await closed(writer);
 			return;
 		}
 		await writer.write(encoder.encode("Starting the echo server…\n"));
@@ -165,9 +165,17 @@ function localServer(
 		}
 		// Its input ended, as the turn closed it: it exits.
 		record.exited = true;
-		await writer.close();
+		await closed(writer);
 	})();
 	return readable;
+}
+
+/**
+ * Closes a fake command's output. The conversation may have stopped reading it already, as the
+ * real sandbox's caller does when a turn ends, and the close then fails, as a real one would.
+ */
+async function closed(writer: { close(): Promise<void> }): Promise<void> {
+	await writer.close().catch(() => {});
 }
 
 export class FakeSandbox
