@@ -8,6 +8,35 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.23.0] - 2026-11-13
+
+A server can now keep every workspace in one of Cloudflare's jurisdictions, and Gateweave Cloud
+keeps its workspaces in the EU. This release has one D1 migration.
+
+### Added
+
+- **Workspaces in a jurisdiction.** Set `DURABLE_OBJECT_JURISDICTION` (such as `eu`) and each
+  workspace's registry and conversations, with their chats, runs, traces and sealed keys, are kept
+  in that jurisdiction, as are the sandboxes' Durable Objects, the sandbox meter and the rate
+  limits. New workspaces are made there. The daily run moves older ones, three at a time: each is
+  paused for a few seconds while its objects are copied and checked (ten minutes at most, should a
+  move die half way), and one with a turn or a wiki under way waits for the next day. The copies it leaves behind are sealed and kept until the
+  workspace is deleted. Sandboxes' containers are not bound by it: Cloudflare starts them wherever
+  it has capacity. See "Keeping data in one jurisdiction" in `docs/self-hosting.md`.
+  ([#223](https://github.com/gateweavehq/agents/pull/223), [#224](https://github.com/gateweavehq/agents/pull/224))
+
+### Changed
+
+- **Gateweave Cloud's workspaces are in the EU.** agents.gateweave.com keeps its workspaces in the
+  `eu` jurisdiction, like its database since 0.22.1, and its repository wikis are written by a new
+  Workflow made in the EU. Staging moved first.
+
+### If you run your own
+
+- **Nothing to do** unless you want a jurisdiction. The migration adds an empty table, and without
+  the setting nothing moves. To keep repository wikis in the jurisdiction too, give the Workflow in
+  `wrangler.jsonc` a `"jurisdiction"` and a new `name`.
+
 ## [0.22.1] - 2026-11-13
 
 Gateweave Cloud's Agents now keeps its database in the EU. Nothing changes for a copy you run
