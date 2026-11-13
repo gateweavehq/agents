@@ -2,7 +2,7 @@ import type { Installation } from "@gateweave/agents-github";
 import { eq } from "drizzle-orm";
 import { db } from "../auth";
 import { schema } from "../db";
-import { registryFor } from "../registry";
+import { findRegistry } from "../registry";
 import { github } from "./config";
 
 export type LinkedInstallation = typeof schema.githubInstallation.$inferSelect;
@@ -57,12 +57,13 @@ export async function syncInstallation(installation: LinkedInstallation): Promis
 	const config = github();
 	if (!config) return;
 	const repositories = await config.app.repositories(installation.id);
-	await registryFor(installation.workspaceId).reconcileInstallation(installation.id, repositories);
+	const registry = await findRegistry(db, installation.workspaceId);
+	await registry.reconcileInstallation(installation.id, repositories);
 }
 
 /** Forgets the installation and its repositories. On GitHub, the app stays installed. */
 export async function unlinkInstallation(installation: LinkedInstallation): Promise<void> {
-	await registryFor(installation.workspaceId).removeInstallation(installation.id);
+	await (await findRegistry(db, installation.workspaceId)).removeInstallation(installation.id);
 	await db
 		.delete(schema.githubInstallation)
 		.where(eq(schema.githubInstallation.id, installation.id))

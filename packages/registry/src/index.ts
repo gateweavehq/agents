@@ -1,7 +1,42 @@
 export { type BackupRow, readForBackup } from "./backup";
 export type { ConversationTurn } from "./conversations";
+export { configuredJurisdiction, objectsIn } from "./jurisdiction";
+export {
+	beginImport,
+	checkCopy,
+	digestForMove,
+	endImport,
+	freezeEnds,
+	freezeForMove,
+	MOVING_MESSAGE,
+	type MoveCursor,
+	type MoveKeys,
+	type MoveManifest,
+	type MoveOut,
+	type MovePage,
+	type MoveRows,
+	type MoveSource,
+	type MoveTarget,
+	mayImport,
+	movedFrom,
+	moveStateAtStart,
+	moveStateNow,
+	moveWorkspace,
+	type RegistryMoveOut,
+	readForMove,
+	readKeysForMove,
+	sealedTo,
+	sealForMove,
+	type Thawed,
+	thaw,
+	thawAfterMove,
+	type WorkspaceMove,
+	type WorkspaceMoveReport,
+	writeForMove,
+	writeKeysForMove,
+} from "./move";
 export { RegistryDO } from "./registry-do";
-export { SandboxMeterDO } from "./sandbox-meter";
+export { METER_NAME, SandboxMeterDO } from "./sandbox-meter";
 export { MAX_KEPT_FILE_BYTES, type ScanOutcome } from "./scans";
 export { USAGE_BLOBS, USAGE_DOUBLES, type UsageSettings, usagePoint, writeUsage } from "./usage";
 export {

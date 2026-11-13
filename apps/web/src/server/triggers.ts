@@ -1,14 +1,13 @@
-import { env } from "cloudflare:workers";
 import { TRIGGER_LIMITS, type TriggerReceipt } from "@gateweave/agents-model";
-import { conversationName, type TriggerTurnOutcome } from "@gateweave/agents-runtime";
-import { getAgentByName } from "agents";
+import type { TriggerTurnOutcome } from "@gateweave/agents-runtime";
 import { eq } from "drizzle-orm";
 import { db } from "./auth";
 import { schema } from "./db";
 import { limitTriggerRequests } from "./rate-limit";
-import { registryFor } from "./registry";
+import { conversationFor, registryFor } from "./registry";
 import { runsPage } from "./runs-page";
 import { whoSentIt } from "./workers-address";
+import { findWorkspaceRef, type WorkspaceRef } from "./workspaces";
 
 const ID = /^[\w-]{1,64}$/;
 
@@ -48,23 +47,24 @@ export async function receiveTrigger(
 		.where(eq(schema.organization.id, workspaceId))
 		.get();
 	if (!workspace) return reply(404, "Trigger not found");
-	const receipt = await registryFor(workspaceId).receiveTrigger(
+	const ref = await findWorkspaceRef(db, workspaceId);
+	const receipt = await registryFor(ref).receiveTrigger(
 		triggerId,
 		{ id, timestamp, signature },
 		body,
 	);
 	const runs = runsPage(workspace.slug, new URL(request.url).origin);
-	return answer(workspaceId, runs, receipt);
+	return answer(ref, runs, receipt);
 }
 
 async function answer(
-	workspaceId: string,
+	workspace: WorkspaceRef,
 	runs: string | null,
 	receipt: TriggerReceipt,
 ): Promise<Response> {
 	switch (receipt.status) {
 		case "start":
-			return start(workspaceId, receipt.conversationId, receipt.text, runs);
+			return start(workspace, receipt.conversationId, receipt.text, runs);
 		case "duplicate":
 			return Response.json({ runId: receipt.runId, duplicate: true }, { status: 202 });
 		case "starting":
@@ -86,17 +86,14 @@ async function answer(
 
 /** Begins the run in the conversation the registry opened for the delivery. */
 async function start(
-	workspaceId: string,
+	workspace: WorkspaceRef,
 	conversationId: string,
 	text: string,
 	runs: string | null,
 ) {
 	let outcome: TriggerTurnOutcome;
 	try {
-		const conversation = await getAgentByName(
-			env.CONVERSATIONS,
-			conversationName(workspaceId, conversationId),
-		);
+		const conversation = await conversationFor(workspace, conversationId);
 		outcome = await conversation.triggerTurn(text, runs);
 	} catch (error) {
 		// The delivery stays taken for a minute, then a retry starts it again.

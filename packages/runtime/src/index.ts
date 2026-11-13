@@ -3,6 +3,7 @@ export {
 	ConversationAgent,
 	conversationName,
 	destroyConversationObject,
+	MOVED_IN,
 	type TriggerTurnOutcome,
 } from "./conversation-agent";
 export {

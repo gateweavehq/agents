@@ -24,6 +24,7 @@ import {
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
 } from "@gateweave/agents-model";
+import { objectsIn } from "@gateweave/agents-registry";
 import type { CheckoutResult } from "./checkout";
 import { claudeCodeCommand } from "./claude-code";
 import { CODEX_SESSIONS, codexCommand } from "./codex";
@@ -127,6 +128,13 @@ const PUSHED_KEY = "pushed";
 const SESSION_KEY = "claude-code-session";
 /** The conversation's OpenCode session, which its turns continue while the container has it. */
 const OPENCODE_SESSION_KEY = "opencode-session";
+/** What a sandbox keeps of its conversation, which goes with it when its workspace moves. */
+const KEPT_KEYS: readonly string[] = [
+	REPOSITORY_KEY,
+	PUSHED_KEY,
+	SESSION_KEY,
+	OPENCODE_SESSION_KEY,
+];
 
 /** How long `OPENCODE_SERVER_SCRIPT` may take, which waits up to 10 s for an old server to stop. */
 const OPENCODE_SCRIPT_SECONDS = 60;
@@ -727,6 +735,27 @@ export class RunnerSandbox
 		if (this.#container?.running) await this.#container.destroy();
 	}
 
+	/**
+	 * What the sandbox keeps of its conversation, for a move of the workspace to take to the
+	 * sandbox of the same name where it goes (`move.ts` in the registry package). The container's
+	 * files stay: a container starts without them after it sleeps anyway.
+	 */
+	moveKeys(): [string, unknown][] {
+		return KEPT_KEYS.flatMap((key) => {
+			const value = this.ctx.storage.kv.get(key);
+			return value === undefined ? [] : [[key, value] as [string, unknown]];
+		});
+	}
+
+	/** Takes what the old sandbox kept, in place of anything an earlier try of the move left. */
+	takeKeys(entries: [string, unknown][]): void {
+		const { kv } = this.ctx.storage;
+		this.ctx.storage.transactionSync(() => {
+			for (const key of KEPT_KEYS) kv.delete(key);
+			for (const [key, value] of entries) if (KEPT_KEYS.includes(key)) kv.put(key, value);
+		});
+	}
+
 	#repository(): SandboxRepository | null {
 		return this.ctx.storage.kv.get<SandboxRepository>(REPOSITORY_KEY) ?? null;
 	}
@@ -851,7 +880,7 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		const env = this.env as unknown as OutboundEnv;
 		const toModel = decision.credentials;
 		if ((toModel === "anthropic" || toModel === "openai" || toModel === "google") && running) {
-			const conversation = env.CONVERSATIONS.getByName(running.access.meter.conversation);
+			const conversation = this.#conversations().getByName(running.access.meter.conversation);
 			return sendModelRequest(request, toModel, running, {
 				settings: env,
 				meter: conversation as unknown as EngineMeter,
@@ -859,7 +888,7 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 			});
 		}
 		if (decision.credentials === "tools" && tools) {
-			const conversation = env.CONVERSATIONS.getByName(tools.conversation);
+			const conversation = this.#conversations().getByName(tools.conversation);
 			return (conversation as unknown as ToolsConversation).engineTools(
 				tools.token,
 				toolsRequest(request),
@@ -895,6 +924,14 @@ export class SandboxOutbound extends WorkerEntrypoint<Cloudflare.Env, OutboundPr
 		}
 		// A redirect is the client's to follow, so that each address it leads to is asked about too.
 		return fetch(outgoing, { redirect: "manual" });
+	}
+
+	/** The conversations where the sandbox is, as a workspace's objects are all in one place. */
+	#conversations(): DurableObjectNamespace {
+		const env = this.env as unknown as OutboundEnv;
+		const { sandbox } = this.ctx.props;
+		const id = sandbox && env.SANDBOX ? env.SANDBOX.idFromString(sandbox) : null;
+		return objectsIn(env.CONVERSATIONS, id?.jurisdiction);
 	}
 
 	async #access() {

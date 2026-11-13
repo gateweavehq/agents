@@ -56,7 +56,7 @@ export const setUpTrackTriage = createServerFn({ method: "POST" })
 		}
 
 		const { workspaceId } = member.membership;
-		const registry = registryFor(workspaceId);
+		const registry = registryFor(member.membership);
 		const { default: instructions } = await import("#/server/track-triage.md?raw");
 		const { name, email, id } = member.user;
 		const made = await registry.setUpTrackTriage(

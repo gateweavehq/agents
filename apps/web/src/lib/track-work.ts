@@ -57,7 +57,7 @@ export const setUpTrackWork = createServerFn({ method: "POST" })
 		if ("problem" in identity) throw new Error(identity.problem);
 
 		const { workspaceId } = member.membership;
-		const registry = registryFor(workspaceId);
+		const registry = registryFor(member.membership);
 		const { default: instructions } = await import("#/server/track-work.md?raw");
 		const { name, email, id } = member.user;
 		const made = await registry.setUpTrackWork(

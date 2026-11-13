@@ -5,6 +5,7 @@ import { handleChatRequest, isChatRequest } from "./server/chat";
 import { pruneExpired } from "./server/db/prune";
 import { retryErasures } from "./server/erasure";
 import { handleMcpRequest, isMcpRequest } from "./server/mcp";
+import { moveWorkspaces } from "./server/move";
 import { newNonce, withSecurityHeaders } from "./server/security-headers";
 
 export { SandboxMeterDO } from "@gateweave/agents-registry";
@@ -49,9 +50,11 @@ export default {
 		if (import.meta.env.DEV) return response;
 		return withSecurityHeaders(request, response, { nonce, oidcIssuer: env.OIDC_ISSUER });
 	},
-	// Clears what is past its time, once a day.
+	// Clears what is past its time, once a day, and moves a few workspaces into the deployment's
+	// jurisdiction while any are elsewhere.
 	async scheduled() {
 		await retryErasures(db);
 		await pruneExpired(db);
+		await moveWorkspaces(db);
 	},
 } satisfies ExportedHandler<Cloudflare.Env>;

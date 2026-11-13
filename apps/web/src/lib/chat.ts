@@ -44,7 +44,8 @@ async function memberOf(slug: string) {
 	return {
 		userId: member.user.id,
 		workspaceId: member.membership.workspaceId,
-		registry: registryFor(member.membership.workspaceId),
+		workspace: member.membership,
+		registry: registryFor(member.membership),
 	};
 }
 
@@ -201,18 +202,13 @@ export const removeChat = createServerFn({ method: "POST" })
 		if (!member) throw new Error("Workspace not found");
 		const removed = await member.registry.removeConversation(data.conversationId, member.userId);
 		if (removed.length === 0) throw new Error("Conversation not found");
-		const [{ env }, { getAgentByName }, { conversationName, destroyConversationObject }] =
-			await Promise.all([
-				import("cloudflare:workers"),
-				import("agents"),
-				import("@gateweave/agents-runtime"),
-			]);
+		const [{ conversationFor }, { destroyConversationObject }] = await Promise.all([
+			import("#/server/registry"),
+			import("@gateweave/agents-runtime"),
+		]);
 		await Promise.all(
 			removed.map(async (conversationId) => {
-				const conversation = await getAgentByName(
-					env.CONVERSATIONS,
-					conversationName(member.workspaceId, conversationId),
-				);
+				const conversation = await conversationFor(member.workspace, conversationId);
 				await destroyConversationObject(conversation);
 			}),
 		);

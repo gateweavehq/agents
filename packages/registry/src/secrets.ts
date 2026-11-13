@@ -1,7 +1,8 @@
 /**
  * Secrets the registry keeps for its workspace, such as model provider keys. Each is encrypted
  * with AES-256-GCM under a key that HKDF derives from the server's `SECRETS_KEY` and the
- * workspace's Durable Object id, so one workspace's rows cannot be opened with another's key.
+ * workspace's Durable Object id, so one workspace's rows cannot be opened with another's key. A
+ * workspace that moves to another object keeps the id of the one it began in (`moveOut`).
  * The additional data names the secret's place, so a sealed value copied into another row does
  * not open there.
  *

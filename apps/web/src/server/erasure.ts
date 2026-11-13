@@ -1,7 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { Database } from "./db";
 import { schema } from "./db";
-import { registryFor } from "./registry";
+import { findRegistry } from "./registry";
 
 // "Deleting an account" in docs/architecture.md.
 
@@ -29,7 +29,7 @@ async function forget(db: Database, erasures: Erasure[]): Promise<void> {
 				eq(schema.pendingErasure.organizationId, organizationId),
 			);
 			try {
-				await registryFor(organizationId).forgetPerson(userId);
+				await (await findRegistry(db, organizationId)).forgetPerson(userId);
 			} catch (error) {
 				await db.update(schema.pendingErasure).set({ lastTriedAt: Date.now() }).where(row).run();
 				throw error;

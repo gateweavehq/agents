@@ -58,6 +58,8 @@ export interface AuthConfig {
 	allowPasswordTry?: ((userId: string) => Promise<boolean>) | undefined;
 	/** Whether this person may be emailed about those tries running out. Never without it. */
 	allowSpentTriesEmail?: ((userId: string) => Promise<boolean>) | undefined;
+	/** Called after a workspace is made, to note where its Durable Objects go. */
+	onWorkspaceCreated?: ((workspaceId: string) => Promise<void>) | undefined;
 	/** Called after a workspace is deleted, to delete what it held outside D1. */
 	onWorkspaceDeleted?: ((workspaceId: string) => Promise<void>) | undefined;
 	/** Called after an account is deleted, to have its workspaces forget the person. */
@@ -334,6 +336,9 @@ export function createAuth(config: AuthConfig) {
 				organizationHooks: {
 					beforeCreateOrganization: async ({ organization }) => {
 						assertSlug(organization.slug ?? "");
+					},
+					afterCreateOrganization: async ({ organization }) => {
+						await config.onWorkspaceCreated?.(organization.id);
 					},
 					beforeUpdateOrganization: async ({ organization }) => {
 						if (organization.slug) assertSlug(organization.slug);

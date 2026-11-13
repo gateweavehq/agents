@@ -39,7 +39,7 @@ async function adminOf(slug: string) {
 	return {
 		member,
 		admin: isAdmin(role),
-		registry: registryFor(workspaceId),
+		registry: registryFor(member.membership),
 		urlOf: (triggerId: string) => `${origin}/api/triggers/${workspaceId}/${triggerId}`,
 	};
 }

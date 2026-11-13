@@ -25,7 +25,8 @@ import {
 	languageModel,
 } from "@gateweave/agents-runtime";
 import { APICallError } from "ai";
-import { registryFor } from "../registry";
+import { db } from "../auth";
+import { findRegistry } from "../registry";
 import { planWiki, WikiAnswerError, writeWikiPage } from "./write";
 
 /** A model request takes a while; a retry waits for a provider that was limiting or down. */
@@ -43,7 +44,8 @@ const QUICK: WorkflowStepConfig = {
 export class WikiWorkflow extends WorkflowEntrypoint<Env, WikiParams> {
 	override async run(event: WorkflowEvent<WikiParams>, step: WorkflowStep): Promise<void> {
 		const { workspaceId, generation } = event.payload;
-		const registry = registryFor(workspaceId);
+		// Read again each time the workflow wakes, as the workspace may have moved since.
+		const registry = await findRegistry(db, workspaceId);
 		const settings = this.env as unknown as GatewaySettings;
 		const modelOf = (chosen: { provider: KeyedProvider; model: string; key: string }) =>
 			languageModel(chosen, chosen.key, settings, {

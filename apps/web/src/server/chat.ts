@@ -1,8 +1,6 @@
-import { env } from "cloudflare:workers";
-import { CHAT_SESSION_HEADER, type ChatSession, conversationName } from "@gateweave/agents-runtime";
-import { getAgentByName } from "agents";
+import { CHAT_SESSION_HEADER, type ChatSession } from "@gateweave/agents-runtime";
 import { db, getAuth } from "./auth";
-import { registryFor } from "./registry";
+import { conversationFor, registryFor } from "./registry";
 import { findMembership } from "./workspaces";
 
 const CHAT_ROUTE = /^\/api\/chat\/([^/]+)\/([\w-]{1,64})(\/get-messages)?$/;
@@ -45,17 +43,14 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 	if (!session) return error(401, "Not signed in");
 	const membership = await findMembership(db, decodeURIComponent(slug), session.user.id);
 	if (!membership) return error(404, "Conversation not found");
-	const conversation = await registryFor(membership.workspaceId).getConversation(
+	const conversation = await registryFor(membership).getConversation(
 		conversationId,
 		session.user.id,
 	);
 	if (!conversation) return error(404, "Conversation not found");
 	if (isProbe) return new Response(null, { status: 204 });
 
-	const agent = await getAgentByName(
-		env.CONVERSATIONS,
-		conversationName(membership.workspaceId, conversation.id),
-	);
+	const agent = await conversationFor(membership, conversation.id);
 	// Only what the conversation needs goes on: the cookies stay here, and a socket takes the
 	// session's id instead, which the conversation checks before each message. The query carries
 	// the client's connection id, which resuming a stream after a reconnect relies on.

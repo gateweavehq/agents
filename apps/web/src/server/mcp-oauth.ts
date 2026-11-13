@@ -33,7 +33,7 @@ export async function startConnect(request: Request): Promise<Response> {
 	const membership = await findMembership(db, slug, session.user.id);
 	if (!membership || !ID.test(assetId)) return new Response("Not found", { status: 404 });
 	if (!isAdmin(membership.role)) return redirect(mcpPath(slug, "forbidden"));
-	const registry = registryFor(membership.workspaceId);
+	const registry = registryFor(membership);
 	const begun = await registry.mcpOAuthBegin(assetId, session.user.id);
 	if ("status" in begun) return redirect(mcpPath(slug, "failed"));
 	// The state names the workspace and the server, so the callback knows where it belongs.
@@ -68,7 +68,7 @@ export async function finishConnect(request: Request): Promise<Response> {
 	if (!membership) return new Response("Not found", { status: 404 });
 	const { slug } = membership;
 	if (!isAdmin(membership.role)) return redirect(mcpPath(slug, "forbidden"));
-	const registry = registryFor(workspaceId);
+	const registry = registryFor(membership);
 	// Used up whatever comes next, so a code cannot be replayed with it.
 	if (!(await registry.mcpOAuthTakeState(assetId, token, session.user.id))) {
 		return redirect(mcpPath(slug, "expired"));

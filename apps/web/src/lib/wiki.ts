@@ -17,7 +17,7 @@ async function registryOf(slug: string) {
 	const member = await currentMember(slug);
 	if (!member) return null;
 	const { registryFor } = await import("#/server/registry");
-	return registryFor(member.membership.workspaceId);
+	return registryFor(member.membership);
 }
 
 /** Every repository with its wiki. */
@@ -60,7 +60,7 @@ export const startWiki = createServerFn({ method: "POST" })
 			throw new Error("Only owners and admins can have a wiki written");
 		}
 		const { registryFor } = await import("#/server/registry");
-		const registry = registryFor(member.membership.workspaceId);
+		const registry = registryFor(member.membership);
 		const started = await registry.startWiki(data.repositoryId, data.choice, member.user.id);
 		if ("status" in started) throw new Error(started.message);
 		return started;

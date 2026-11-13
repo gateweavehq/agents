@@ -22,7 +22,7 @@ async function memberOf(slug: string) {
 	return {
 		member,
 		admin: isAdmin(role),
-		registry: registryFor(workspaceId),
+		registry: registryFor(member.membership),
 		webhookUrl: (connectionId: string) =>
 			`${origin}/api/gitlab/webhooks/${workspaceId}/${connectionId}`,
 	};

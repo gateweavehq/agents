@@ -111,6 +111,26 @@ pnpm wrangler d1 create gateweave-agents --location apac
 Then pick it instead of **+ Create new** on the button's form, or put its id in `wrangler.jsonc` as
 `database_id`.
 
+### Keeping data in one jurisdiction
+
+Cloudflare can keep data inside the EU, the US or FedRAMP data centers. Each part of Agents is set
+on its own:
+
+- **The database**: `pnpm wrangler d1 create gateweave-agents --jurisdiction eu`, before the first
+  deploy, then use it as above. A database's jurisdiction can't change once it exists.
+- **Workspaces**: set `DURABLE_OBJECT_JURISDICTION` to `eu`. Each workspace's registry and
+  conversations, their sandboxes, the sandbox meter and the rate limits are kept there. New
+  workspaces are made there. Ones made before move there in the daily run at 03:29 UTC, three at a
+  time, each paused for a few seconds while it is copied; one with a turn under way waits for the
+  next day. The copy each leaves behind is kept until the workspace is deleted. Unsetting it later
+  moves nothing back. Leave it unset in `.dev.vars`: local runtimes have no jurisdictions.
+- **Repository wikis**: add `"jurisdiction": "eu"` to the Workflow in `wrangler.jsonc`. A Workflow's
+  jurisdiction is fixed when it is made, so an existing one needs a new `name` as well.
+- **Sandboxes' containers** can't be kept there yet: Cloudflare starts a sandbox's container
+  wherever it has capacity, not necessarily where its Durable Object is, and offers no placement
+  for containers that a Durable Object starts. A turn's repository and commands may run outside
+  the jurisdiction.
+
 ## Settings
 
 Everything except `BETTER_AUTH_SECRET` is optional. Set them in the Cloudflare dashboard (Workers &
@@ -125,34 +145,35 @@ through a deploy, because `wrangler.jsonc` sets `keep_vars`. A server older than
 plain variables on every deploy, and a limit that is not set is no limit, so look through them
 after updating.
 
-| Name                       | What it does                                                                                                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `BETTER_AUTH_SECRET`       | Signs sessions. Required.                                                                                                                                          |
-| `BETTER_AUTH_URL`          | The address people use, such as `https://agents.example.com`. Inferred from each request when unset, and then `/mcp` is off.                                       |
-| `SECRETS_KEY`              | Encrypts model provider keys and environment secrets (32 random bytes, base64). Model keys are off without it.                                                     |
-| `GITHUB_CLIENT_ID`         | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                       |
-| `GITHUB_CLIENT_SECRET`     | The client secret of the same GitHub OAuth app.                                                                                                                    |
-| `OIDC_ISSUER`              | Turns on an OpenID Connect provider, with the two below. See [below](#sign-in-through-an-openid-connect-provider).                                                 |
-| `OIDC_CLIENT_ID`           | This deployment's client ID at the provider.                                                                                                                       |
-| `OIDC_CLIENT_SECRET`       | Its client secret there.                                                                                                                                           |
-| `OIDC_PROVIDER_NAME`       | What the sign-in button calls it. Unset: "single sign-on".                                                                                                         |
-| `GITHUB_APP_*`             | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md).                                                   |
-| `EMAIL_FROM`               | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                                                                     |
-| `LEGAL_NOTICE_URL`         | The address of your legal notice. See [below](#your-legal-pages).                                                                                                  |
-| `PRIVACY_POLICY_URL`       | The address of your privacy policy.                                                                                                                                |
-| `TERMS_URL`                | The address of your terms.                                                                                                                                         |
-| `SIGN_UP_REQUEST_URL`      | Where "Ask for access" leads while sign-up is by invitation: an https address. See [below](#who-may-sign-up).                                                      |
-| `AI_GATEWAY_URL`           | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                     |
-| `AI_GATEWAY_TOKEN`         | The gateway's token, when it is authenticated.                                                                                                                     |
-| `WORKERS_AI_TOKEN`         | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.                                                         |
-| `CLOUDFLARE_ACCOUNT_ID`    | The account that pays for Workers AI. Taken from `AI_GATEWAY_URL` when unset.                                                                                      |
-| `WORKERS_AI_WORKSPACES`    | The ids of the workspaces that may use Workers AI, separated by commas; `sandbox` for those `SANDBOX_WORKSPACES` invites. Every workspace when unset.              |
-| `WORKERS_AI_DAILY_DOLLARS` | US dollars each workspace may spend on Workers AI in a day (UTC), at its list prices.                                                                              |
-| `SANDBOX_WORKSPACES`       | The ids of the workspaces that may use sandboxes, separated by commas. Every workspace when unset.                                                                 |
-| `SANDBOX_DAILY_MINUTES`    | Minutes of sandbox time each workspace may use in a day (UTC).                                                                                                     |
-| `SANDBOX_MONTHLY_BUDGET`   | US dollars the server may spend on sandboxes in a month (UTC).                                                                                                     |
-| `SANDBOX_ALERT_EMAIL`      | Who hears when sandboxes have spent 80% and then all of the monthly budget. Needs email.                                                                           |
-| `INVITATION_CONTACT`       | Where a workspace asks for an invitation to Workers AI or sandboxes: an email address or an https URL. Settings > Models links to it. Keep an address as a secret. |
+| Name                          | What it does                                                                                                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `BETTER_AUTH_SECRET`          | Signs sessions. Required.                                                                                                                                          |
+| `BETTER_AUTH_URL`             | The address people use, such as `https://agents.example.com`. Inferred from each request when unset, and then `/mcp` is off.                                       |
+| `SECRETS_KEY`                 | Encrypts model provider keys and environment secrets (32 random bytes, base64). Model keys are off without it.                                                     |
+| `GITHUB_CLIENT_ID`            | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                       |
+| `GITHUB_CLIENT_SECRET`        | The client secret of the same GitHub OAuth app.                                                                                                                    |
+| `OIDC_ISSUER`                 | Turns on an OpenID Connect provider, with the two below. See [below](#sign-in-through-an-openid-connect-provider).                                                 |
+| `OIDC_CLIENT_ID`              | This deployment's client ID at the provider.                                                                                                                       |
+| `OIDC_CLIENT_SECRET`          | Its client secret there.                                                                                                                                           |
+| `OIDC_PROVIDER_NAME`          | What the sign-in button calls it. Unset: "single sign-on".                                                                                                         |
+| `GITHUB_APP_*`                | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md).                                                   |
+| `EMAIL_FROM`                  | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                                                                     |
+| `LEGAL_NOTICE_URL`            | The address of your legal notice. See [below](#your-legal-pages).                                                                                                  |
+| `PRIVACY_POLICY_URL`          | The address of your privacy policy.                                                                                                                                |
+| `TERMS_URL`                   | The address of your terms.                                                                                                                                         |
+| `SIGN_UP_REQUEST_URL`         | Where "Ask for access" leads while sign-up is by invitation: an https address. See [below](#who-may-sign-up).                                                      |
+| `AI_GATEWAY_URL`              | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                     |
+| `AI_GATEWAY_TOKEN`            | The gateway's token, when it is authenticated.                                                                                                                     |
+| `WORKERS_AI_TOKEN`            | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.                                                         |
+| `CLOUDFLARE_ACCOUNT_ID`       | The account that pays for Workers AI. Taken from `AI_GATEWAY_URL` when unset.                                                                                      |
+| `WORKERS_AI_WORKSPACES`       | The ids of the workspaces that may use Workers AI, separated by commas; `sandbox` for those `SANDBOX_WORKSPACES` invites. Every workspace when unset.              |
+| `WORKERS_AI_DAILY_DOLLARS`    | US dollars each workspace may spend on Workers AI in a day (UTC), at its list prices.                                                                              |
+| `SANDBOX_WORKSPACES`          | The ids of the workspaces that may use sandboxes, separated by commas. Every workspace when unset.                                                                 |
+| `SANDBOX_DAILY_MINUTES`       | Minutes of sandbox time each workspace may use in a day (UTC).                                                                                                     |
+| `SANDBOX_MONTHLY_BUDGET`      | US dollars the server may spend on sandboxes in a month (UTC).                                                                                                     |
+| `SANDBOX_ALERT_EMAIL`         | Who hears when sandboxes have spent 80% and then all of the monthly budget. Needs email.                                                                           |
+| `INVITATION_CONTACT`          | Where a workspace asks for an invitation to Workers AI or sandboxes: an email address or an https URL. Settings > Models links to it. Keep an address as a secret. |
+| `DURABLE_OBJECT_JURISDICTION` | Keeps workspaces in a jurisdiction, such as `eu`. See [above](#keeping-data-in-one-jurisdiction).                                                                  |
 
 ### Your own domain
 

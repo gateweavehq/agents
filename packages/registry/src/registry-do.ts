@@ -217,6 +217,7 @@ import {
 	recordDelivery,
 	recordSync,
 } from "./gitlab/connections";
+import { configuredJurisdiction, objectsIn } from "./jurisdiction";
 import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary } from "./library";
 import {
 	beginOAuth,
@@ -240,6 +241,32 @@ import {
 	remoteLibraryServer,
 	turnServers,
 } from "./mcp-servers";
+import {
+	beginImport,
+	checkCopy,
+	digestForMove,
+	endImport,
+	freezeEnds,
+	freezeForMove,
+	type MoveCursor,
+	type MoveKeys,
+	type MoveManifest,
+	type MovePage,
+	type MoveRows,
+	mayImport,
+	movedFrom,
+	moveStateAtStart,
+	moveStateNow,
+	type RegistryMoveOut,
+	readForMove,
+	readKeysForMove,
+	sealForMove,
+	type Thawed,
+	thaw,
+	thawAfterMove,
+	writeForMove,
+	writeKeysForMove,
+} from "./move";
 import { passFailedAt, runPassOnce } from "./passes";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
@@ -281,6 +308,7 @@ import {
 	providerCost,
 	recordRunPullRequest,
 	runHadSandbox,
+	runningRuns,
 	runUsage,
 	sandboxesInUse,
 	sandboxSeconds,
@@ -375,6 +403,7 @@ import {
 	wikiPagesOf,
 	wikiPageToWrite,
 	wikiPlanInput,
+	wikisUnderway,
 	wikiUsage,
 } from "./wiki";
 
@@ -421,7 +450,13 @@ export class RegistryDO extends DurableObject {
 		super(ctx, env);
 		this.#db = drizzle(ctx.storage, { schema });
 		void ctx.blockConcurrencyWhile(async () => {
+			// A registry sealed by a move holds what the workspace held then, until it is destroyed,
+			// and runs nothing; its tables may be older than the code (`move.ts`).
+			const moving = moveStateAtStart(ctx.storage);
+			if (moving === "sealed") return;
 			await migrate(this.#db, migrations);
+			// A half-filled copy runs nothing either, until the move that fills it starts it.
+			if (moving === "importing") return;
 			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
 			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`). This
 			// one's failure closes the values it would have tied, which go nowhere until they are
@@ -2243,6 +2278,16 @@ export class RegistryDO extends DurableObject {
 	}
 
 	override async alarm(): Promise<void> {
+		const moving = moveStateNow(this.ctx.storage, Date.now());
+		if (moving === "sealed" || moving === "importing") return;
+		if (moving === "frozen") {
+			// A move under way: the work waits. One that died lets the freeze lapse, and work resumes.
+			const until = freezeEnds(this.ctx.storage);
+			if (until !== null) await this.ctx.storage.setAlarm(until);
+			return;
+		}
+		// A freeze that lapsed ends here, if a restart hasn't ended it.
+		thaw(this.ctx.storage);
 		await this.#runSchedules();
 		const due = dueScans(this.#db, Date.now(), SCANS_PER_ALARM);
 		for (const request of due) await this.#scan(request);
@@ -2281,6 +2326,109 @@ export class RegistryDO extends DurableObject {
 			.all()
 			.map((row) => row.id);
 		return [...listed, ...queuedConversations(this.#db)];
+	}
+
+	// RPC for moving the workspace's objects somewhere else (`move.ts`), which the app does from its
+	// daily run when the deployment keeps workspaces in a jurisdiction. Nothing else calls these.
+
+	/**
+	 * Freezes the registry for a move to `to` and says what it holds, with the conversations that
+	 * move with it; or that it moved before; or that turns are under way, which the move waits for.
+	 */
+	async moveOut(token: string, to: string): Promise<RegistryMoveOut> {
+		const now = Date.now();
+		const conversations = this.conversationIds();
+		if (moveStateNow(this.ctx.storage, now) !== "sealed") {
+			const busy = runningRuns(this.#db, now) + wikisUnderway(this.#db, now);
+			if (busy > 0) return { busy };
+		}
+		// The workspace's secrets stay sealed under this object's id wherever it moves, so the id
+		// travels with its keys (`#sealerOf`).
+		if (this.ctx.storage.kv.get(SECRETS_SCOPE) === undefined) {
+			this.ctx.storage.kv.put(SECRETS_SCOPE, this.ctx.id.toString());
+		}
+		const out = await freezeForMove(this.ctx.storage, token, to, now);
+		if (!out.frozen) return { ...out, conversations };
+		// The alarm's work waits for the move. If the move dies, the alarm ends the freeze.
+		const until = freezeEnds(this.ctx.storage);
+		if (until !== null) await this.ctx.storage.setAlarm(until);
+		return { ...out, conversations };
+	}
+
+	/** The next page of the frozen registry's rows, about `chars` of them at most. */
+	moveRead(token: string, cursor: MoveCursor, chars?: number): MovePage {
+		return readForMove(this.ctx.storage, token, cursor, Date.now(), chars);
+	}
+
+	/** The next page of the frozen registry's key-value pairs. */
+	moveReadKeys(token: string, after: string | null): MoveKeys {
+		return readKeysForMove(this.ctx.storage, token, after, Date.now());
+	}
+
+	/**
+	 * Seals the registry once the workspace's copy is checked, which commits the move: from then
+	 * on its tables refuse every write.
+	 */
+	async moveSeal(token: string | null, to: string): Promise<void> {
+		await sealForMove(this.ctx.storage, token, to, Date.now());
+	}
+
+	/** Ends the freeze of a move that gave up, so the workspace works where it is. */
+	async moveThaw(token: string): Promise<Thawed> {
+		const thawed = thawAfterMove(this.ctx.storage, token);
+		if (thawed === "thawed") await this.ctx.storage.setAlarm(Date.now());
+		return thawed;
+	}
+
+	/** Empties this registry, if it holds no live workspace, to take the rows of a move. */
+	async moveIn(token: string, manifest: MoveManifest): Promise<void> {
+		const fresh = [schema.projects, schema.repositories, schema.conversations, schema.runs].every(
+			(table) => this.#db.select().from(table).limit(1).all().length === 0,
+		);
+		if (!mayImport(this.ctx.storage, fresh)) {
+			throw new Error("This registry holds a workspace, so it can't take another's rows.");
+		}
+		await beginImport(this.ctx.storage, token, manifest);
+		this.#sealer = undefined;
+	}
+
+	/** Writes a page of the moving workspace's rows. */
+	moveWrite(token: string, page: MoveRows[]): void {
+		writeForMove(this.ctx.storage, token, page);
+	}
+
+	/** Writes a page of the moving registry's key-value pairs. */
+	moveWriteKeys(token: string, entries: [string, unknown][]): void {
+		writeKeysForMove(this.ctx.storage, token, entries);
+	}
+
+	/** Checks the copied rows against what the registry held. */
+	moveCheck(token: string, manifest: MoveManifest): void {
+		checkCopy(this.ctx.storage, token, manifest);
+	}
+
+	/** A hash of each table's rows and of the key-value pairs, for a move's two ends to compare. */
+	moveDigest(): Promise<Record<string, string>> {
+		return digestForMove(this.ctx.storage);
+	}
+
+	/**
+	 * Ends a move into this registry, which holds the workspace from now on, and runs its alarm,
+	 * which plans the next one from what came over.
+	 */
+	async moveStart(from: string): Promise<void> {
+		await endImport(this.ctx.storage, from, Date.now());
+		// Its secrets open under the scope that came over with the keys.
+		this.#sealer = undefined;
+		await this.ctx.storage.setAlarm(Date.now());
+	}
+
+	/**
+	 * Where the workspace was before it moved here: "" for outside any jurisdiction, null if it
+	 * never moved. Its conversations' old objects are there, sealed, until they are destroyed.
+	 */
+	protected movedFrom(): string | null {
+		return movedFrom(this.ctx.storage);
 	}
 
 	/** Deletes everything, when the workspace is deleted. */
@@ -2443,7 +2591,11 @@ export class RegistryDO extends DurableObject {
 		const seconds = sandboxSeconds(this.#db, month.start, month.end, now);
 		// Each registry is named for its workspace (`registryFor` in the app).
 		const workspace = this.ctx.id.name ?? this.ctx.id.toString();
-		const reading = await meter
+		// One meter for the deployment, kept where it keeps its workspaces.
+		const jurisdiction = configuredJurisdiction(
+			(this.env as { DURABLE_OBJECT_JURISDICTION?: string }).DURABLE_OBJECT_JURISDICTION,
+		);
+		const reading = await objectsIn(meter, jurisdiction)
 			.getByName(METER_NAME)
 			.record(month.name, workspace, seconds, budget);
 		for (const share of reading.passed) {
@@ -2478,7 +2630,10 @@ export class RegistryDO extends DurableObject {
 	}
 
 	#sealerOf(): Promise<Sealer | { unavailable: string }> {
-		this.#sealer ??= sealerFor(this.env as SecretsEnv, this.ctx.id.toString());
+		// A workspace that moved keeps the id of the object it began in, which its secrets were
+		// sealed under; one that never moved has none stored.
+		const scope = this.ctx.storage.kv.get<string>(SECRETS_SCOPE) ?? this.ctx.id.toString();
+		this.#sealer ??= sealerFor(this.env as SecretsEnv, scope);
 		return this.#sealer;
 	}
 
@@ -2488,6 +2643,9 @@ export class RegistryDO extends DurableObject {
 		return this.ctx.storage.transactionSync(fn);
 	}
 }
+
+/** The key under which a registry that moved keeps the scope its secrets are sealed with. */
+const SECRETS_SCOPE = "secrets.scope";
 
 function refused(message: string): ProviderRefusal {
 	return { status: "refused", message };

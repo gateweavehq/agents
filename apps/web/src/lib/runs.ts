@@ -43,8 +43,9 @@ async function viewerOf(slug: string) {
 	return {
 		userId: member.user.id,
 		workspaceId,
+		workspace: member.membership,
 		everyone: isAdmin(role),
-		registry: registryFor(workspaceId),
+		registry: registryFor(member.membership),
 		names: () => memberNames(db, workspaceId),
 	};
 }
@@ -110,7 +111,7 @@ export const getRun = createServerFn({ method: "GET" })
 			if (!run || (!viewer.everyone && run.startedBy !== viewer.userId)) return null;
 			const { conversationId } = run;
 			const conversation =
-				conversationId === null ? null : await conversationOf(viewer.workspaceId, conversationId);
+				conversationId === null ? null : await conversationOf(viewer.workspace, conversationId);
 			const triggered = run.triggerId !== null && run.parentRunId === null;
 			const [names, trace, nested, transcript, replays] = await Promise.all([
 				viewer.names(),
@@ -165,7 +166,7 @@ export const replayRun = createServerFn({ method: "POST" })
 			throw new Error("Its conversation was deleted, so there is nothing to replay");
 		}
 		// Read the words first: a run from before replays kept its message makes no conversation.
-		const original = await conversationOf(viewer.workspaceId, run.conversationId);
+		const original = await conversationOf(viewer.workspace, run.conversationId);
 		const history = await original.replaySource(run.id, data.step);
 		if (history === null) {
 			throw new Error(
@@ -179,18 +180,17 @@ export const replayRun = createServerFn({ method: "POST" })
 			viewer.everyone,
 		);
 		if ("status" in started) throw new Error(started.message);
-		const replay = await conversationOf(viewer.workspaceId, started.conversationId);
+		const replay = await conversationOf(viewer.workspace, started.conversationId);
 		const outcome = await replay.replayTurn(history);
 		if (outcome.runId === null)
 			throw new Error("error" in outcome ? outcome.error : "It did not start");
 		return { runId: outcome.runId };
 	});
 
-async function conversationOf(workspaceId: string, conversationId: string) {
-	const [{ env }, { getAgentByName }, { conversationName }] = await Promise.all([
-		import("cloudflare:workers"),
-		import("agents"),
-		import("@gateweave/agents-runtime"),
-	]);
-	return getAgentByName(env.CONVERSATIONS, conversationName(workspaceId, conversationId));
+async function conversationOf(
+	workspace: { workspaceId: string; jurisdiction: string | null },
+	conversationId: string,
+) {
+	const { conversationFor } = await import("#/server/registry");
+	return conversationFor(workspace, conversationId);
 }
