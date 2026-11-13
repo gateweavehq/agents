@@ -8,6 +8,36 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.24.0] - 2026-11-13
+
+Gateweave Agents has a public demo, and Gateweave Cloud's Worker runs near its databases in the
+EU. There is no migration in this release.
+
+### Added
+
+- **A public demo** at [agents-demo.gateweave.com](https://agents-demo.gateweave.com). "Open the
+  demo" gives each visitor a private workspace named Acme: three sample repositories with the
+  coding agents a scan finds in them, a library, a setup with real drift, a wiki, a team of three
+  agents and past runs with their traces. Agents answer from a script, never a model, and the chat
+  says so. Email, keys, secrets, sandboxes, webhooks, triggers and sign-in are off. A sandbox is
+  deleted after a day, and starts are limited per network. All of it stays off unless
+  `AGENTS_DEMO` is `"1"`, which only Gateweave's `demo` environment sets.
+  ([#226](https://github.com/gateweavehq/agents/pull/226))
+
+### Changed
+
+- **Gateweave Cloud runs its Worker near its databases.** They are in the EU and answer from
+  Frankfurt, and a page from far away made its queries across an ocean, one after another. The
+  Worker now runs near Frankfurt; static files still come from the nearest data center. Track did
+  the same in its 0.35.3, where opening its demo from the US took 14 seconds instead of 23.
+  ([#228](https://github.com/gateweavehq/agents/pull/228))
+
+### If you run your own
+
+- **Nothing to do.** Leave `AGENTS_DEMO` unset. If your database is far from your team,
+  `docs/self-hosting.md` ("Keeping data in one jurisdiction") now says how to run the Worker near
+  it.
+
 ## [0.23.0] - 2026-11-13
 
 A server can now keep every workspace in one of Cloudflare's jurisdictions, and Gateweave Cloud
