@@ -116,10 +116,12 @@
 		},
 		"staging": {
 			"name": "gateweave-agents-staging",
+			// Created with the `eu` jurisdiction, so the data stays in the EU.
 			"d1_databases": [
 				{
 					"binding": "DB",
-					"database_name": "gateweave-agents-staging",
+					"database_name": "gateweave-agents-staging-eu",
+					"database_id": "0edd994b-b6e0-4583-aa73-7d364837b4be",
 					"migrations_dir": "apps/web/migrations"
 				}
 			],
