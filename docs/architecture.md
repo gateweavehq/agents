@@ -248,8 +248,12 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
 - **The wiki Workflow** keeps its instances in a jurisdiction of its own setting in
   `wrangler.jsonc`, fixed when the Workflow is made. Gateweave Cloud's moved to new Workflows
   named `…-wiki-eu`.
-- **Sandboxes' containers** run where Cloudflare places them for their Durable Object. Wrangler
-  takes no placement for a container that a Durable Object manages.
+- **Sandboxes' containers are not bound by it.** A sandbox's Durable Object, with what it keeps,
+  is in the jurisdiction, but Cloudflare starts its container wherever it has capacity, which
+  [need not be where the object is](https://developers.cloudflare.com/containers/concepts/architecture/#starting-a-container).
+  Placement constraints exist only for containers on the `default` scheduling policy, which
+  Wrangler refuses beside `durable_object`, and `start()` takes none. So a turn's repository and
+  commands may run outside it.
 - **Cost.** Each conversation takes about a dozen calls to its two objects, of the thousand a
   Worker on the Free plan may make to Cloudflare's services in one invocation (ten thousand on
   Paid); hence three workspaces a run.

@@ -126,8 +126,10 @@ on its own:
   moves nothing back. Leave it unset in `.dev.vars`: local runtimes have no jurisdictions.
 - **Repository wikis**: add `"jurisdiction": "eu"` to the Workflow in `wrangler.jsonc`. A Workflow's
   jurisdiction is fixed when it is made, so an existing one needs a new `name` as well.
-- **Sandboxes' containers** run where Cloudflare places them for their Durable Object; Wrangler has
-  no setting of their own for it.
+- **Sandboxes' containers** can't be kept there yet: Cloudflare starts a sandbox's container
+  wherever it has capacity, not necessarily where its Durable Object is, and offers no placement
+  for containers that a Durable Object starts. A turn's repository and commands may run outside
+  the jurisdiction.
 
 ## Settings
 

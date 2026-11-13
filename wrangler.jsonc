@@ -67,8 +67,9 @@
 	// `cloud` is https://agents.gateweave.com, the Worker the top level names, and `staging` a separate
 	// Worker. Both keep their data in the EU: the databases were created with the `eu` jurisdiction,
 	// and DURABLE_OBJECT_JURISDICTION keeps the Durable Objects there, the sandboxes' among them, as
-	// the Workflow's jurisdiction does its instances. A Durable Object-managed container takes no
-	// placement of its own in Wrangler (docs/self-hosting.md).
+	// the Workflow's jurisdiction does its instances. The sandboxes' containers are the exception:
+	// Cloudflare starts them wherever it has capacity, and a container that a Durable Object starts
+	// takes no placement (docs/self-hosting.md).
 	// Bindings are not inherited, so each environment repeats them.
 	"env": {
 		"cloud": {
