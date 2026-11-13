@@ -131,6 +131,14 @@ on its own:
   for containers that a Durable Object starts. A turn's repository and commands may run outside
   the jurisdiction.
 
+If your team works far from the database, the Worker can run near it instead of near each
+visitor, so the queries a page makes one after another don't each cross an ocean. Find where the
+database answers with `pnpm wrangler d1 execute DB --remote --command "select 1" --json`, whose
+`served_by_colo` is an airport code, then set `"placement": { "region": "…" }` in
+`wrangler.jsonc` to a cloud region near it. Gateweave Cloud's databases answer from Frankfurt, so
+it uses `aws:eu-central-1`. Static files are still served from near each visitor. See
+[Cloudflare's placement docs](https://developers.cloudflare.com/workers/configuration/placement/).
+
 ## Settings
 
 Everything except `BETTER_AUTH_SECRET` is optional. Set them in the Cloudflare dashboard (Workers &
