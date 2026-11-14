@@ -8,6 +8,30 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.25.1] - 2026-11-14
+
+A run that a trigger started is readable: the event it came from is a card, not a wall of JSON.
+There is no migration in this release.
+
+### Fixed
+
+- **A trigger's message is shown as an event.** A run started by a webhook or a schedule used to
+  open with the trigger's prompt as if a person had written it: the whole event on one line, a
+  code fence as plain characters, and long values running out of the bubble and off the page. It
+  is now a card that says what was sent and by whom, with the issue as a link for a Gateweave
+  Track event, and the event itself formatted in a closed section that scrolls. What the agent is
+  told has not changed. Conversations from before this release are shown the same way.
+  ([#233](https://github.com/gateweavehq/agents/pull/233))
+- **Tool calls say what they acted on:** `read_file docs/roadmap.md`, not `read_file` six times.
+  An argument that looks like a credential is never shown, and a command that carries one shows
+  only its program. ([#233](https://github.com/gateweavehq/agents/pull/233))
+- **Links in messages** open only `http` and `https` addresses, and nothing in a message can
+  widen the page. ([#233](https://github.com/gateweavehq/agents/pull/233))
+
+### If you run your own
+
+- **Nothing to do.**
+
 ## [0.25.0] - 2026-11-14
 
 The public demo opens with a progress screen instead of a still login page, and its banner is now
