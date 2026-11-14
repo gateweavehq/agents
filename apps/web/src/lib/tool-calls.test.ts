@@ -4,6 +4,7 @@ import {
 	describeEdgeCall,
 	describePullRequestCall,
 	describeToolCall,
+	describeToolTarget,
 	toolCallsOf,
 } from "./tool-calls";
 
@@ -121,4 +122,74 @@ it("shows a call of open_pull_request by the pull request it made, linking only 
 	expect(
 		describePullRequestCall({ ...call, toolName: "search", state: "output-available", output: "" }),
 	).toBeNull();
+});
+
+const used = (toolName: string, input: unknown) =>
+	({
+		type: `tool-${toolName}`,
+		toolCallId: "c",
+		toolName,
+		state: "output-available",
+		input,
+		output: {},
+	}) as ToolUIPart;
+
+it("says what a call acted on, by the arguments that name it", () => {
+	expect(describeToolTarget(used("read_file", { path: "docs/roadmap.md" }))).toEqual({
+		label: "docs/roadmap.md",
+		full: "docs/roadmap.md",
+	});
+	expect(
+		describeToolTarget(
+			used("edit_file", { path: "docs/roadmap.md", old_text: "a", new_text: "b" }),
+		),
+	).toMatchObject({ label: "docs/roadmap.md" });
+	expect(describeToolTarget(used("run_command", { command: "pnpm  check\n" }))?.label).toBe(
+		"pnpm check",
+	);
+	expect(
+		describeToolTarget(used("track__get_issue", { workspace: "w", key: "TRK-137" }))?.label,
+	).toBe("TRK-137");
+	expect(describeToolTarget(used("track__search_issues", { query: "flaky login" }))?.label).toBe(
+		"flaky login",
+	);
+	expect(describeToolTarget(used("find_files", { pattern: "**/*.md" }))?.label).toBe("**/*.md");
+});
+
+it("shows nothing for a call with no known argument, or none at all", () => {
+	expect(describeToolTarget(used("get_workspace", { workspace: "gateweave" }))).toBeNull();
+	expect(describeToolTarget(used("x", null))).toBeNull();
+	expect(describeToolTarget(used("x", "str"))).toBeNull();
+	// `key` names an issue only when its value looks like an issue's key.
+	expect(describeToolTarget(used("x", { key: "plain-text-value" }))).toBeNull();
+});
+
+it("clips a long target and keeps the whole of it for the title", () => {
+	const command = `pnpm --filter @gateweave/agents-web test -- ${"a".repeat(100)}`;
+	const target = describeToolTarget(used("run_command", { command }));
+	expect(target?.label).toHaveLength(60);
+	expect(target?.label.endsWith("…")).toBe(true);
+	expect(target?.full).toBe(command);
+});
+
+it("never shows an argument that looks like a secret", () => {
+	// By name: nothing from `token`, `apiKey` or `password`, and never a whole input.
+	const input = { token: "abc123", apiKey: "k", password: "p", authorization: "Bearer z" };
+	expect(describeToolTarget(used("x", input))).toBeNull();
+	expect(JSON.stringify(describeToolTarget(used("x", { ...input, path: "a.txt" })))).not.toMatch(
+		/abc123|Bearer/,
+	);
+	// By value: a command with a credential shows its program only.
+	const curl = describeToolTarget(
+		used("run_command", {
+			command: "curl -H 'Authorization: Bearer sk-live-0123456789' https://x",
+		}),
+	);
+	expect(curl).toEqual({ label: "curl", full: "curl" });
+	expect(
+		describeToolTarget(
+			used("run_command", { command: "GITHUB_TOKEN=ghp_abcdefghij1234 gh pr list" }),
+		),
+	).toBeNull();
+	expect(describeToolTarget(used("search", { pattern: "api_key=abcdef" }))).toBeNull();
 });

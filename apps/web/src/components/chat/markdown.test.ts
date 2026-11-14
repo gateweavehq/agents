@@ -63,4 +63,25 @@ describe("Markdown", () => {
 		expect(html).toContain("<em>em</em>");
 		expect(html).toContain("<blockquote");
 	});
+
+	it("makes a bare address a link that opens safely, and keeps only http(s) links", () => {
+		const html = render(
+			"Done: https://track.example.com/gateweave/issue/TRK-137 and [m](mailto:a@b.c)",
+		);
+		expect(html).toContain('href="https://track.example.com/gateweave/issue/TRK-137"');
+		expect(html).toContain('target="_blank"');
+		expect(html).toContain("noopener noreferrer");
+		expect(html).not.toContain("mailto:");
+		expect(render("[x](data:text/html;base64,AAAA)")).not.toContain("data:");
+	});
+
+	it("lets long words wrap and keeps code in a block that scrolls", () => {
+		const html = render(`${"a".repeat(5000)}
+
+\`\`\`json
+{"k":"${"b".repeat(5000)}"}
+\`\`\``);
+		expect(html).toContain("overflow-wrap:anywhere");
+		expect(html).toMatch(/<pre[^>]*overflow-x-auto/);
+	});
 });

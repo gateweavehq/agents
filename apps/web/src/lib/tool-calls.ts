@@ -104,3 +104,70 @@ export function describePullRequestCall(part: ToolCallPart): {
 		error: null,
 	};
 }
+
+/** The longest a chip's target gets before it is cut; the whole of it stays in the chip's title. */
+export const TARGET_CLIP = 60;
+
+/**
+ * Arguments that say what a call acted on, in the order they are tried. Only these are ever
+ * shown, never a whole input: a tool's arguments can carry a key, a token or a file's content.
+ */
+const TARGET_ARGUMENTS = [
+	"path",
+	"file_path",
+	"filePath",
+	"command",
+	"issueKey",
+	"issue_key",
+	"issue",
+	"key",
+	"query",
+	"pattern",
+];
+
+/** Arguments that name an issue: shown only when the value looks like one, such as `TRK-137`. */
+const ISSUE_ARGUMENTS = new Set(["issueKey", "issue_key", "issue", "key"]);
+const ISSUE_KEY = /^[A-Za-z][A-Za-z0-9]{0,15}-\d{1,9}$/;
+
+/** A name that holds a credential, wherever it is spelled out (`apiKey`, `access_token`). */
+const SECRET_NAME = /secret|token|passw|credential|api[-_]?key|private[-_]?key|auth|bearer|cookie/i;
+
+/** A value that carries a credential, such as a command with a header or an assignment. */
+const SECRET_VALUE =
+	/bearer\s+\S|authorization|passw|secret|token|api[-_]?key|\b(?:sk|pk|ghp|gho|ghs|ghu|xox[a-z]|whsec|glpat|AKIA)[-_]?[A-Za-z0-9]{8,}|github_pat_/i;
+
+/**
+ * What a call acted on, as a chip shows it: `docs/roadmap.md`, `pnpm check`, `TRK-137`. `label` is
+ * clipped; `full` is for the title. Null when the stored call has nothing safe to show. A command
+ * that carries a credential shows only its program.
+ */
+export function describeToolTarget(part: ToolCallPart): { label: string; full: string } | null {
+	const input: unknown = part.input;
+	if (typeof input !== "object" || input === null) return null;
+	const args = input as Record<string, unknown>;
+	for (const name of TARGET_ARGUMENTS) {
+		const raw = args[name];
+		if (typeof raw !== "string") continue;
+		const value = raw.replace(/\s+/g, " ").trim();
+		if (value === "") continue;
+		if (ISSUE_ARGUMENTS.has(name)) {
+			if (!ISSUE_KEY.test(value)) continue;
+		} else if (SECRET_NAME.test(name)) {
+			continue;
+		}
+		if (SECRET_VALUE.test(value)) {
+			if (name !== "command") continue;
+			const program = value.split(" ")[0] ?? "";
+			return program === "" || SECRET_VALUE.test(program)
+				? null
+				: { label: program, full: program };
+		}
+		const full = value.slice(0, 500);
+		return { label: clip(full, TARGET_CLIP), full };
+	}
+	return null;
+}
+
+function clip(value: string, max: number): string {
+	return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}

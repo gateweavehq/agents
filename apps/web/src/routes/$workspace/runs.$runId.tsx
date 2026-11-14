@@ -207,15 +207,22 @@ function TriggerTranscript({
 		[run.teamPath, nested],
 	);
 	return (
-		<section className="space-y-3">
-			<h2 className="text-sm font-medium">Conversation</h2>
+		<section aria-labelledby="conversation-heading" className="min-w-0 space-y-3">
+			<h2 id="conversation-heading" className="text-sm font-medium">
+				Conversation
+			</h2>
 			{messages.length === 0 ? (
 				<p className="rounded-lg border p-6 text-sm text-muted-foreground">
 					Nothing was said: the run ended before its first message was kept.
 				</p>
 			) : (
-				<div className="rounded-lg border p-4">
-					<Transcript messages={messages} agentName={run.agentName} members={members} />
+				<div className="min-w-0 rounded-lg border p-4">
+					<Transcript
+						messages={messages}
+						agentName={run.agentName}
+						members={members}
+						triggerName={run.triggerName}
+					/>
 				</div>
 			)}
 		</section>

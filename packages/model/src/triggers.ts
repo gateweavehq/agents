@@ -364,6 +364,13 @@ export function triggerMessage(promptText: string, body: string): string {
 }
 
 /**
+ * The metadata a trigger's message is stored with, so a page knows it came from a delivery and not
+ * from a person. It is not part of the text the model reads. Messages from before it existed carry
+ * none, and pages still recognise their text.
+ */
+export const TRIGGER_MESSAGE_METADATA = { source: "trigger" } as const;
+
+/**
  * The first time after `after` that the schedule starts a run, in milliseconds; null if it never
  * does again.
  */

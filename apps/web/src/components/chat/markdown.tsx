@@ -10,6 +10,7 @@ import {
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { httpUrl } from "#/lib/safe-url";
 import { cn } from "#/lib/utils";
 
 /**
@@ -17,16 +18,23 @@ import { cn } from "#/lib/utils";
  *
  * The text comes from a model, so it is untrusted. react-markdown turns Markdown into React
  * elements and shows any raw HTML as text; do not add `rehype-raw`, which would let the model
- * inject elements. Keep the default `urlTransform` too: it drops `javascript:` and other unsafe
- * URLs from links.
+ * inject elements. Links go through `httpUrl`, which keeps only `http:` and `https:`: the default
+ * `urlTransform` would also let `mailto:` and `irc:` through. GFM turns a bare address into a link.
+ *
+ * Nothing in it may widen its container: long words and addresses wrap anywhere, and code blocks
+ * and tables scroll on their own.
  *
  * Images become links instead of loading. A model can be talked into writing an image whose URL
  * carries what it read, and the browser would send it off the moment the reply showed.
  */
 export const Markdown = memo(function Markdown({ children }: { children: string }) {
 	return (
-		<div className="space-y-3 break-words [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-			<ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+		<div className="min-w-0 max-w-full space-y-3 [overflow-wrap:anywhere] [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+			<ReactMarkdown
+				remarkPlugins={[remarkGfm]}
+				components={components}
+				urlTransform={(url) => httpUrl(url) ?? ""}
+			>
 				{children}
 			</ReactMarkdown>
 		</div>
@@ -34,14 +42,18 @@ export const Markdown = memo(function Markdown({ children }: { children: string 
 });
 
 const components: Components = {
-	a: ({ node: _node, className, ...props }) => (
-		<a
-			{...props}
-			target="_blank"
-			rel="noopener noreferrer nofollow"
-			className={cn("font-medium underline underline-offset-2 hover:opacity-80", className)}
-		/>
-	),
+	a: ({ node: _node, className, href, ...props }) =>
+		href ? (
+			<a
+				{...props}
+				href={href}
+				target="_blank"
+				rel="noopener noreferrer nofollow"
+				className={cn("font-medium underline underline-offset-2 hover:opacity-80", className)}
+			/>
+		) : (
+			<span className={className}>{props.children}</span>
+		),
 	img: ({ src, alt }) =>
 		typeof src === "string" && src ? (
 			<a
@@ -80,7 +92,7 @@ const components: Components = {
 	),
 	hr: () => <hr className="my-4 border-border" />,
 	table: ({ node: _node, ...props }) => (
-		<div className="overflow-x-auto rounded-lg border">
+		<div className="max-w-full overflow-x-auto rounded-lg border">
 			<table className="w-full border-collapse text-left text-sm" {...props} />
 		</div>
 	),
@@ -126,9 +138,9 @@ function CodeBlock({
 	}
 
 	return (
-		<div className="group relative">
+		<div className="group relative min-w-0 max-w-full">
 			<pre
-				className="overflow-x-auto rounded-lg border bg-muted/60 p-3 font-mono text-[0.85em] leading-normal"
+				className="max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 font-mono text-[0.85em] leading-normal [overflow-wrap:normal]"
 				{...props}
 			>
 				{children}

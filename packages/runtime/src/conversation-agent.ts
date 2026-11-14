@@ -12,6 +12,7 @@ import {
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
 	SESSION_ENDED,
+	TRIGGER_MESSAGE_METADATA,
 	type TriggerTurnOutcome,
 	type TurnEdge,
 	type TurnVia,
@@ -555,6 +556,9 @@ ${runPageNote(runs, turn.runId)}`
 		const message: UIMessage = {
 			id: crypto.randomUUID(),
 			role: "user",
+			// The marker is for the pages: they show a trigger's message as an event, not as
+			// something a person wrote. Models never see message metadata.
+			metadata: TRIGGER_MESSAGE_METADATA,
 			parts: [{ type: "text", text: told }],
 		};
 		const done = this.saveMessages((messages) => [...messages, message]);

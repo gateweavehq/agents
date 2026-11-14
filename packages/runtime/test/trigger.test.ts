@@ -78,9 +78,13 @@ describe("a trigger's turn", () => {
 
 		const transcript = JSON.parse(await stub.transcript()) as {
 			role: string;
+			metadata?: unknown;
 			parts: unknown[];
 		}[];
 		expect(transcript.map((message) => message.role)).toEqual(["user", "assistant"]);
+		// The page shows the first message as an event because of this marker, which the model never gets.
+		expect(transcript[0]?.metadata).toEqual({ source: "trigger" });
+		expect(sent).not.toContain('"source":"trigger"');
 		expect(JSON.stringify(transcript[1]?.parts)).toContain("Triaged: a login bug.");
 
 		// The delivery had its run; the conversation takes no other.

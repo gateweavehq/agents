@@ -1571,6 +1571,11 @@ server).
   `open_pull_request` (titled with the issue's key, and ending `Fixes <key>`, so Track's GitHub
   connection links it), comments with its link and moves the issue to In Review. When the issue
   is unclear it asks in a comment, mentioning who assigned it, and stops.
+- **The page shows a delivery's message as an event** (AGT-120). `triggerTurn` stores it with
+  `TRIGGER_MESSAGE_METADATA` (`{ source: "trigger" }`), which the model never receives, and the run page and
+  Chat show it as a card: Track's event in words, the issue as a link, who did it, and the JSON in a closed
+  disclosure (`apps/web/src/lib/trigger-message.ts`). A first message stored before the marker is
+  recognised by its text; the text the model gets is unchanged.
 - **A comment continues the work** (AGT-58). A person's comment on the issue takes the next turn
   of the issue's conversation: the agent answers a question, goes on once its own is answered, or
   makes the change asked for and pushes it to the same pull request, then comments once. Being

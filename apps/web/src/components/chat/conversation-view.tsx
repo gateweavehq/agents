@@ -24,11 +24,14 @@ import {
 	describeEdgeCall,
 	describePullRequestCall,
 	describeToolCall,
+	describeToolTarget,
 	type ToolCallPart,
 	toolCallsOf,
 } from "#/lib/tool-calls";
+import { isMarkedTriggerMessage, readTriggerMessage } from "#/lib/trigger-message";
 import { cn } from "#/lib/utils";
 import { Markdown } from "./markdown";
+import { TriggerCard, TriggerText } from "./trigger-card";
 
 interface ConversationProps {
 	slug: string;
@@ -252,8 +255,14 @@ function LiveConversation({
 							Write to {agentName} below.
 						</p>
 					)}
-					{shown.map((message) => (
-						<Message key={message.id} message={message} agentName={agentName} members={members} />
+					{shown.map((message, index) => (
+						<Message
+							key={message.id}
+							message={message}
+							agentName={agentName}
+							members={members}
+							first={index === 0}
+						/>
 					))}
 					{status === "submitted" && !closed && (
 						<p className="text-sm text-muted-foreground" aria-live="polite">
@@ -358,15 +367,25 @@ export function Transcript({
 	messages,
 	agentName,
 	members,
+	triggerName = null,
 }: {
 	messages: readonly UIMessage[];
 	agentName: string;
 	members: readonly string[] | null;
+	/** The trigger that began the conversation, for the card of a message that is not Track's. */
+	triggerName?: string | null;
 }) {
 	return (
 		<div className="space-y-6">
-			{messages.map((message) => (
-				<Message key={message.id} message={message} agentName={agentName} members={members} />
+			{messages.map((message, index) => (
+				<Message
+					key={message.id}
+					message={message}
+					agentName={agentName}
+					members={members}
+					first={index === 0}
+					triggerName={index === 0 ? triggerName : null}
+				/>
 			))}
 		</div>
 	);
@@ -376,10 +395,15 @@ function Message({
 	message,
 	agentName,
 	members,
+	first = false,
+	triggerName = null,
 }: {
 	message: UIMessage;
 	agentName: string;
 	members: readonly string[] | null;
+	/** The conversation's first message, the only one a delivery's text is recognised in unmarked. */
+	first?: boolean;
+	triggerName?: string | null;
 }) {
 	const mine = message.role === "user";
 	const text = message.parts
@@ -387,12 +411,24 @@ function Message({
 		.join("\n\n");
 	const calls = toolCallsOf(message);
 	if (!text && calls.length === 0) return null;
+	if (mine) {
+		// A delivery's message is an event, not something a person wrote. Ones stored before the
+		// marker existed are recognised by their text.
+		const marked = isMarkedTriggerMessage(message);
+		const event = readTriggerMessage(text);
+		if (event && (marked || first)) {
+			return <TriggerCard message={event} triggerName={triggerName} />;
+		}
+		if (marked) return <TriggerText text={text} />;
+	}
 	return (
-		<div className={cn("flex", mine && "justify-end")}>
+		<div className={cn("flex min-w-0", mine && "justify-end")}>
 			<div
 				className={cn(
-					"max-w-[85%] text-sm leading-relaxed",
-					mine ? "rounded-2xl bg-muted px-4 py-2 whitespace-pre-wrap" : "w-full min-w-0",
+					"min-w-0 max-w-[85%] text-sm leading-relaxed",
+					mine
+						? "rounded-2xl bg-muted px-4 py-2 whitespace-pre-wrap [overflow-wrap:anywhere]"
+						: "w-full",
 				)}
 			>
 				{!mine && <p className="mb-1 text-xs font-medium text-muted-foreground">{agentName}</p>}
@@ -419,10 +455,14 @@ const CHIP =
 /** A tool the agent called. What it took and gave back stays out of view. */
 function ToolCall({ part }: { part: ToolCallPart }) {
 	const { server, tool, state } = describeToolCall(part);
+	const target = describeToolTarget(part);
 	const Icon = { running: LoaderCircle, done: Wrench, failed: CircleAlert }[state];
 
 	return (
-		<li className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}>
+		<li
+			className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
+			title={target?.full}
+		>
 			<Icon
 				aria-hidden="true"
 				className={cn("size-3 shrink-0", state === "running" && "animate-spin")}
@@ -433,7 +473,8 @@ function ToolCall({ part }: { part: ToolCallPart }) {
 					<span aria-hidden="true">·</span>
 				</>
 			)}
-			<span className="truncate font-mono">{tool}</span>
+			<span className={cn("shrink-0 font-mono", !target && "truncate")}>{tool}</span>
+			{target && <span className="truncate font-mono text-foreground">{target.label}</span>}
 			{state === "failed" && <span className="sr-only">(failed)</span>}
 		</li>
 	);
