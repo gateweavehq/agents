@@ -155,17 +155,35 @@ export function describeToolTarget(part: ToolCallPart): { label: string; full: s
 		} else if (SECRET_NAME.test(name)) {
 			continue;
 		}
-		if (SECRET_VALUE.test(value)) {
-			if (name !== "command") continue;
-			const program = value.split(" ")[0] ?? "";
-			return program === "" || SECRET_VALUE.test(program)
-				? null
-				: { label: program, full: program };
+		if (name === "command") {
+			const summary = commandSummary(value);
+			if (summary === null) continue;
+			return { label: clip(summary, TARGET_CLIP), full: summary };
 		}
+		if (SECRET_VALUE.test(value)) continue;
 		const full = value.slice(0, 500);
 		return { label: clip(full, TARGET_CLIP), full };
 	}
 	return null;
+}
+
+/** A word of a command that is safe to show: a name or a path, with nothing that carries a value. */
+const PLAIN_WORD = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,79}$/;
+
+/**
+ * What a command is, without what it was given: its program and the plain words right after it,
+ * `pnpm check` or `git status`. It stops at the first flag, quote, assignment or address, since
+ * that is where a password or a token goes (`curl -u name:password …`), and no pattern can know
+ * every way to write one. Null when even the program is not a plain word.
+ */
+function commandSummary(command: string): string | null {
+	const words: string[] = [];
+	for (const word of command.split(" ")) {
+		if (!PLAIN_WORD.test(word) || SECRET_VALUE.test(word)) break;
+		words.push(word);
+		if (words.length === 3) break;
+	}
+	return words.length > 0 ? words.join(" ") : null;
 }
 
 function clip(value: string, max: number): string {
