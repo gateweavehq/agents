@@ -8,6 +8,34 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.26.0] - 2026-11-15
+
+Gateweave Track is connected in one step: choose what the agent is, approve it in Track, and it
+is ready. No key or secret is copied by hand. This release has one migration, in each
+workspace's own registry, which applies itself.
+
+### Added
+
+- **Connect Track in one step.** "Triage Track issues" and "Work on Track issues" used to take
+  seven steps across the two products, with an agent's key and a webhook's secret copied between
+  tabs. Now you choose the model (and, for work, the repository and the engine), press Connect
+  Track, and approve in Track, where you pick the workspace and the team. Track makes the agent
+  member and its webhook and hands their key and secret to this server alone, so neither is ever
+  shown, typed or in an address. The agent, its Track tools and its trigger are then made
+  together. Saying no in Track makes nothing. If anything fails after Track has made its part,
+  this server asks Track to take it back, and when it cannot, it says exactly what may be left
+  there and where to remove it. Only an owner or admin can connect, the approval is good for ten
+  minutes and for the person who started it, and the audit log records the connection. It needs
+  Gateweave Track 0.39.0 or later; for an older Track, "Set it up by hand" is the way it was.
+  ([#236](https://github.com/gateweavehq/agents/pull/236))
+
+### If you run your own
+
+- **Nothing to do** beyond updating. The registry's migration (`0038`, an empty table for
+  connections waiting to be approved) applies itself when a workspace is next used. The dialog
+  starts with Gateweave Cloud's Track; for a Track you run, open "Another Track" and give its
+  address.
+
 ## [0.25.1] - 2026-11-14
 
 A run that a trigger started is readable: the event it came from is a card, not a wall of JSON.
