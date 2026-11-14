@@ -21,6 +21,8 @@ export const getWorkspace = createServerFn({ method: "GET" })
 			legal: legalLinks(),
 			/** A sandbox of the public demo, which says so on every page. */
 			demo: demoEnabled(),
+			/** On the demo, when the visitor was made (ms), which is what cleanup counts a day from. */
+			demoCreatedAt: demoEnabled() ? new Date(user.createdAt).getTime() : undefined,
 		};
 	});
 

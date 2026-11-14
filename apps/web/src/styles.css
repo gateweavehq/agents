@@ -88,3 +88,22 @@
 		font-feature-settings: "cv11", "ss01";
 	}
 }
+
+/* The demo's opening screen: an active step's ring fills over about the time the step takes. Left
+   half-full and still for people who ask for less motion. */
+.demo-ring {
+	stroke-dasharray: 100;
+	stroke-dashoffset: 100;
+	animation: demo-ring-fill 2.4s ease-out forwards;
+}
+@keyframes demo-ring-fill {
+	to {
+		stroke-dashoffset: 25;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.demo-ring {
+		animation: none;
+		stroke-dashoffset: 60;
+	}
+}

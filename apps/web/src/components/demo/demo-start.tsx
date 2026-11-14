@@ -1,9 +1,7 @@
-import { useRouter } from "@tanstack/react-router";
-import { useState } from "react";
 import { AuthPage } from "#/components/auth-page";
 import { LiveButton } from "#/components/live-button";
-import { startDemo } from "#/lib/demo";
 import type { LegalLinks } from "#/lib/legal";
+import { useOpenDemo } from "#/lib/use-open-demo";
 
 /**
  * The way into the public demo, which has no accounts to sign in to: each visitor gets a private
@@ -19,22 +17,7 @@ export function DemoStart({
 	/** The visitor's sandbox is gone, and they are opening another. */
 	again?: boolean;
 }) {
-	const router = useRouter();
-	const [error, setError] = useState<string | null>(null);
-	const [pending, setPending] = useState(false);
-
-	async function open() {
-		setPending(true);
-		setError(null);
-		try {
-			const { slug } = await startDemo();
-			await router.invalidate();
-			await router.navigate({ to: "/$workspace", params: { workspace: slug } });
-		} catch (caught) {
-			setError(caught instanceof Error ? caught.message : "Could not open the demo");
-			setPending(false);
-		}
-	}
+	const open = useOpenDemo();
 
 	return (
 		<AuthPage
@@ -54,13 +37,8 @@ export function DemoStart({
 					your workspace, and it is deleted a day after you open it.
 				</p>
 			</div>
-			{error && (
-				<p role="alert" className="text-sm text-destructive">
-					{error}
-				</p>
-			)}
-			<LiveButton className="w-full" disabled={pending} onClick={open}>
-				{pending ? "Opening your workspace…" : "Open the demo"}
+			<LiveButton className="w-full" onClick={open}>
+				Open the demo
 			</LiveButton>
 			<p className="text-center text-xs text-muted-foreground">
 				Or{" "}
