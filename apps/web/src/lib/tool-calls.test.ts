@@ -186,6 +186,12 @@ it("never shows an argument that looks like a secret", () => {
 		}),
 	);
 	expect(curl).toEqual({ label: "curl", full: "curl" });
+	// A session cookie is a credential too.
+	expect(
+		describeToolTarget(
+			used("run_command", { command: "curl -H 'Cookie: session=abc123' https://example.com" }),
+		),
+	).toEqual({ label: "curl", full: "curl" });
 	expect(
 		describeToolTarget(
 			used("run_command", { command: "GITHUB_TOKEN=ghp_abcdefghij1234 gh pr list" }),

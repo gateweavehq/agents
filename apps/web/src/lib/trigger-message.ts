@@ -25,20 +25,51 @@ const EVENT_INTRO = "\n\nThe event, as it was sent:\n\n```";
  * a message.
  */
 export function readTriggerMessage(text: string): TriggerMessage | null {
-	const intro = text.indexOf(EVENT_INTRO);
-	if (intro < 0) return null;
+	// The prompt is filled in from the event, so a title can hold the introduction too. The real
+	// one is the first whose fence says `json` and holds JSON; failing that, the first that reads.
+	let fallback: TriggerMessage | null = null;
+	for (
+		let intro = text.indexOf(EVENT_INTRO);
+		intro >= 0;
+		intro = text.indexOf(EVENT_INTRO, intro + 1)
+	) {
+		const read = readTriggerMessageAt(text, intro);
+		if (!read) continue;
+		if (read.json && isJson(read.message.body)) return read.message;
+		fallback ??= read.message;
+	}
+	return fallback;
+}
+
+function isJson(body: string): boolean {
+	try {
+		JSON.parse(body);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+function readTriggerMessageAt(
+	text: string,
+	intro: number,
+): { message: TriggerMessage; json: boolean } | null {
 	const afterIntro = text.slice(intro + EVENT_INTRO.length);
 	const lineEnd = afterIntro.indexOf("\n");
 	if (lineEnd < 0) return null;
 	// The info string is `json` for a JSON event and `text` for anything else.
-	if (!["json", "text"].includes(afterIntro.slice(0, lineEnd))) return null;
+	const info = afterIntro.slice(0, lineEnd);
+	if (!["json", "text"].includes(info)) return null;
 	const inside = afterIntro.slice(lineEnd + 1);
 	// The body may hold a fence of its own, so the closing one is the last. The note after it has none.
 	const close = inside.lastIndexOf("\n```");
 	if (close < 0) return null;
 	const after = inside.slice(close + "\n```".length);
 	if (after !== "" && !after.startsWith("\n\n")) return null;
-	return { prompt: text.slice(0, intro), body: inside.slice(0, close), after: after.trim() };
+	return {
+		message: { prompt: text.slice(0, intro), body: inside.slice(0, close), after: after.trim() },
+		json: info === "json",
+	};
 }
 
 /** Whether the message is stored with the marker a delivery's message gets. */
@@ -157,11 +188,15 @@ function text(value: unknown, max: number): string | null {
 	return trimmed === "" ? null : trimmed.slice(0, max);
 }
 
+/** The latest time a `Date` can hold, in milliseconds. */
+const MAX_DATE_MS = 8.64e15;
+
 /** An ISO time, or a number of milliseconds or of seconds; null for anything else. */
 function timeOf(value: unknown): number | null {
 	let ms: number;
 	if (typeof value === "number" && Number.isFinite(value)) ms = value < 1e11 ? value * 1000 : value;
 	else if (typeof value === "string") ms = Date.parse(value);
 	else return null;
-	return Number.isFinite(ms) && ms > 0 ? ms : null;
+	// A sender can put any number here, and one past what a Date holds would throw when shown.
+	return Number.isFinite(ms) && ms > 0 && ms <= MAX_DATE_MS ? ms : null;
 }

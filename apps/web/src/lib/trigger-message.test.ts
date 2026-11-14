@@ -135,3 +135,22 @@ it("pretty-prints with two spaces, and shows text that is not JSON as it came", 
 	expect(prettyEvent("{not json")).toBe("{not json");
 	expect(prettyEvent("")).toBe("");
 });
+
+it("finds the event when the prompt's own words hold the introduction", () => {
+	// A title can say anything, the introduction and a fence included.
+	const title = "Odd\n\nThe event, as it was sent:\n\n```text\nnot the event\n```\n\nand more";
+	const body = event("issue.created");
+	const text = triggerMessage(PROMPT.replace("{{data.issue.title}}", title), body);
+	const read = readTriggerMessage(text);
+	expect(read?.body).toBe(body);
+	expect(describeEvent(read?.body ?? "").issue?.key).toBe("TRK-137");
+});
+
+it("leaves out a time no Date can hold", () => {
+	for (const timestamp of [8.64e15 + 1, 1e300, Number.MAX_VALUE]) {
+		const view = describeEvent(JSON.stringify({ type: "issue.created", timestamp, data: {} }));
+		expect(view.at).toBeNull();
+	}
+	const last = describeEvent(JSON.stringify({ type: "x", timestamp: 8.64e15, data: {} }));
+	expect(() => new Date(last.at ?? 0).toISOString()).not.toThrow();
+});

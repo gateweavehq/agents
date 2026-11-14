@@ -134,7 +134,7 @@ const SECRET_NAME = /secret|token|passw|credential|api[-_]?key|private[-_]?key|a
 
 /** A value that carries a credential, such as a command with a header or an assignment. */
 const SECRET_VALUE =
-	/bearer\s+\S|authorization|passw|secret|token|api[-_]?key|\b(?:sk|pk|ghp|gho|ghs|ghu|xox[a-z]|whsec|glpat|AKIA)[-_]?[A-Za-z0-9]{8,}|github_pat_/i;
+	/bearer\s+\S|authorization|cookie|passw|secret|token|api[-_]?key|\b(?:sk|pk|ghp|gho|ghs|ghu|xox[a-z]|whsec|glpat|AKIA)[-_]?[A-Za-z0-9]{8,}|github_pat_/i;
 
 /**
  * What a call acted on, as a chip shows it: `docs/roadmap.md`, `pnpm check`, `TRK-137`. `label` is
