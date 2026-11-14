@@ -80,6 +80,13 @@ export class FakeTrack {
 		const back = new URL(query.get("return") ?? "");
 		// Track refuses a webhook and a return address on two origins.
 		if (webhook.origin !== back.origin) throw new Error("webhook and return differ in origin");
+		// And a state or a challenge outside these, as `checkConnectRequest` in Track does.
+		if (!/^[A-Za-z0-9_-]{1,200}$/.test(query.get("state") ?? "")) {
+			throw new Error("The request's state is missing or malformed.");
+		}
+		if (!/^[A-Za-z0-9_-]{43}$/.test(query.get("challenge") ?? "")) {
+			throw new Error("The request's challenge is missing or malformed.");
+		}
 		const code = randomBytes(32).toString("base64url");
 		const issued: Issued = {
 			agentKey: `gwt_${randomBytes(32).toString("base64url")}`.slice(0, 47),

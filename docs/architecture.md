@@ -1610,8 +1610,9 @@ stays in the dialogs for a Track that has no such page or cannot be reached from
 2. **Approve.** In Track the person chooses a workspace and team and presses Allow. Track makes the
    agent member and the webhook, both or neither, and sends the browser to
    `/api/track/connected?code&state`, or `?error=denied&state` for Cancel.
-3. **Finish.** `GET /api/track/connected` needs a session. The state names the workspace
-   (`<workspaceId>.<token>`); the caller must be an owner or admin of it now, and `trackConnectTake`
+3. **Finish.** `GET /api/track/connected` needs a session. The return address names the workspace
+   (`?workspace=<id>`, which Track keeps; its state takes only letters, digits, `_` and `-`); the
+   caller must be an owner or admin of it now, and `trackConnectTake`
    gives the pending connection only to the person who started it and only once: any other call
    spends it and gets a plain page that makes no outbound call. After Cancel, the person lands on
    the Agents page with a notice that nothing was made. Otherwise the server posts `{ code,

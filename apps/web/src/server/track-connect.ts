@@ -66,8 +66,7 @@ export async function beginConnect(
 		origin,
 		workspaceId,
 		triggerId: begun.triggerId,
-		// The state names the workspace, so the callback knows whose pending connection it is.
-		state: `${workspaceId}.${begun.state}`,
+		state: begun.state,
 		verifier: begun.verifier,
 	});
 }
@@ -78,7 +77,9 @@ export async function finishConnect(request: Request): Promise<Response> {
 	const url = new URL(request.url);
 	const session = await getAuth().api.getSession({ headers: request.headers });
 	if (!session) return redirect(`/login?redirect=${encodeURIComponent(url.pathname + url.search)}`);
-	const [workspaceId = "", token = ""] = (url.searchParams.get("state") ?? "").split(".");
+	// The return address named the workspace; the state is the pending connection's alone.
+	const workspaceId = url.searchParams.get("workspace") ?? "";
+	const token = url.searchParams.get("state") ?? "";
 	if (!ID.test(workspaceId) || !TOKEN.test(token)) {
 		return page(400, "Not connected", "This is not a connection this server started.");
 	}

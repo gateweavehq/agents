@@ -9,7 +9,7 @@ const options = {
 	origin: "https://agents.example.com",
 	workspaceId: "ws1",
 	triggerId: "tr1",
-	state: "ws1.abc",
+	state: "abc",
 	verifier: "v".repeat(64),
 };
 
@@ -24,7 +24,10 @@ describe("the address Track is sent to", () => {
 		expect(back.origin).toBe(webhook.origin);
 		expect(webhook.pathname).toBe("/api/triggers/ws1/tr1");
 		expect(back.pathname).toBe("/api/track/connected");
-		expect(url.searchParams.get("state")).toBe("ws1.abc");
+		// The workspace travels in the return address: Track's state takes no dot or other mark.
+		expect(back.searchParams.get("workspace")).toBe("ws1");
+		expect(url.searchParams.get("state")).toBe("abc");
+		expect(url.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]{1,200}$/);
 		expect(url.searchParams.get("name")).toBe("Coder");
 		expect(url.searchParams.get("purpose")).toBe("work");
 	});

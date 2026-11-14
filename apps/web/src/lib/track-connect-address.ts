@@ -22,9 +22,13 @@ export function triggerUrl(origin: string, workspaceId: string, triggerId: strin
 	return `${origin}/api/triggers/${workspaceId}/${triggerId}`;
 }
 
-/** Where Track sends the browser back to. */
-export function returnUrl(origin: string): string {
-	return `${origin}/api/track/connected`;
+/**
+ * Where Track sends the browser back to. It names the workspace, so the callback knows whose
+ * pending connection the state is; Track keeps a return address's own query and adds to it. The
+ * state cannot carry it: Track takes only letters, digits, `_` and `-` there.
+ */
+export function returnUrl(origin: string, workspaceId: string): string {
+	return `${origin}/api/track/connected?workspace=${encodeURIComponent(workspaceId)}`;
 }
 
 /**
@@ -48,7 +52,7 @@ export async function trackConnectAddress(options: {
 	query.set("name", options.name);
 	query.set("webhook", triggerUrl(options.origin, options.workspaceId, options.triggerId));
 	query.set("events", TRACK_CONNECT_EVENTS[options.purpose].join(","));
-	query.set("return", returnUrl(options.origin));
+	query.set("return", returnUrl(options.origin, options.workspaceId));
 	query.set("state", options.state);
 	query.set("challenge", await challengeOf(options.verifier));
 	return address.href;
