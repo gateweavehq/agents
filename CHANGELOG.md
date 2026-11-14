@@ -8,6 +8,41 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.25.0] - 2026-11-14
+
+The public demo opens with a progress screen instead of a still login page, and its banner is now
+a bar at the bottom. There is no migration in this release.
+
+### Added
+
+- **The demo shows what it is doing while it opens.** It takes about seven seconds to make a
+  visitor's workspace, and the login page used to stay still the whole time. A screen now lists the
+  real steps in order: a private account, the Acme workspace, three sample repositories, a team of
+  three agents, their past conversations, and opening it on this device. The last two finish only
+  when the server answers and the overview has rendered. It has a "Try again" when something
+  fails, and honours reduced motion.
+- **A demo bar and a welcome card.** The bar at the bottom says how long until the sandbox is
+  deleted, starts over, and links to Gateweave Cloud, the repository and the self-hosting guide;
+  it can be hidden for the tab. A card on the first visit suggests three things to try. Like the
+  rest of the demo, both appear only when `AGENTS_DEMO` is `"1"`.
+  ([#231](https://github.com/gateweavehq/agents/pull/231))
+
+### Fixed
+
+- **The overview no longer scrolls sideways on a phone.** The screen-reader text in the runtime
+  table's cells widened the page to 849 px.
+  ([#231](https://github.com/gateweavehq/agents/pull/231))
+
+### Changed
+
+- Dependencies updated, with Vitest held at 5.0.5.
+  ([#227](https://github.com/gateweavehq/agents/pull/227),
+  [#230](https://github.com/gateweavehq/agents/pull/230))
+
+### If you run your own
+
+- **Nothing to do.**
+
 ## [0.24.0] - 2026-11-13
 
 Gateweave Agents has a public demo, and Gateweave Cloud's Worker runs near its databases in the
