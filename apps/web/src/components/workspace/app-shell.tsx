@@ -24,7 +24,8 @@ import {
 	UserRound,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { DemoBanner } from "#/components/demo/demo-banner";
+import { DemoBar, useDemoBar } from "#/components/demo/demo-bar";
+import { DemoWelcome } from "#/components/demo/demo-welcome";
 import { MemberAvatar } from "#/components/members/member-avatar";
 import { Button } from "#/components/ui/button";
 import {
@@ -43,6 +44,7 @@ import { isAdmin, useMyRole, useWorkspace } from "./context";
 export function AppShell({ children }: { children: ReactNode }) {
 	const { name, demo } = useWorkspace();
 	const [menuOpen, setMenuOpen] = useState(false);
+	const demoBar = useDemoBar(demo);
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 
 	// On small screens the sidebar is an overlay; close it once the user has gone somewhere.
@@ -79,9 +81,20 @@ export function AppShell({ children }: { children: ReactNode }) {
 					</Button>
 					<span className="truncate text-sm font-medium">{name}</span>
 				</div>
-				{demo && <DemoBanner />}
-				<main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
+				{/* Room under the demo bar, so it never covers a last row, the message box or a button. */}
+				<main
+					className={cn(
+						"min-h-0 flex-1 overflow-y-auto",
+						// On a phone the bar wraps to two rows.
+						demoBar.visible &&
+							"pb-[calc(7.5rem+env(safe-area-inset-bottom))] md:pb-[calc(4.5rem+env(safe-area-inset-bottom))]",
+					)}
+				>
+					{children}
+				</main>
 			</div>
+			{demo && <DemoBar bar={demoBar} />}
+			{demo && <DemoWelcome />}
 		</div>
 	);
 }

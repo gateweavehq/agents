@@ -22,7 +22,8 @@ export function RuntimeMatrix({
 			<h2 id={headingId} className="text-sm font-medium">
 				{heading}
 			</h2>
-			<div className="overflow-x-auto rounded-lg border">
+			{/* `relative` so the cells' sr-only text is clipped here, not left to widen the page. */}
+			<div className="relative overflow-x-auto rounded-lg border">
 				<table className="w-full text-sm">
 					<thead className="border-b bg-muted/40 text-xs text-muted-foreground">
 						<tr>

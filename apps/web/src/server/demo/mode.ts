@@ -22,8 +22,8 @@ export function assertDemo(): void {
  */
 export const VISITOR_DOMAIN = "visitors.example.com";
 
-/** How long a sandbox lives before cleanup deletes it. */
-export const SANDBOX_LIFETIME_MS = 24 * 60 * 60 * 1000;
+/** How long a sandbox lives before cleanup deletes it; the demo bar counts down the same value. */
+export { SANDBOX_LIFETIME_MS } from "../../lib/demo-lifetime";
 
 /** What the server answers when a visitor tries something the demo has off. */
 export const OFF_IN_DEMO = "This is off in the demo. Deploy your own Gateweave Agents to use it.";

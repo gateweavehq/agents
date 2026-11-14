@@ -2,6 +2,7 @@ import { TanStackDevtools } from "@tanstack/react-devtools";
 import { createRootRoute, HeadContent, Link, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import type { ReactNode } from "react";
+import { DemoOpening, useOpeningActive } from "#/components/demo/demo-opening";
 import { Button } from "#/components/ui/button";
 import { Toaster } from "#/components/ui/sonner";
 import { Notice } from "#/components/workspace/notice";
@@ -30,13 +31,19 @@ export const Route = createRootRoute({
 });
 
 function RootDocument({ children }: { children: ReactNode }) {
+	// Behind the demo's opening screen, nothing should take focus or clicks.
+	const opening = useOpeningActive();
+
 	return (
 		<html lang="en">
 			<head>
 				<HeadContent />
 			</head>
 			<body>
-				{children}
+				<div className="contents" inert={opening}>
+					{children}
+				</div>
+				<DemoOpening />
 				<Toaster />
 				{import.meta.env.DEV && (
 					<TanStackDevtools

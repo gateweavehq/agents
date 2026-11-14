@@ -1,8 +1,10 @@
 import type { Overview, RunUsage } from "@gateweave/agents-model";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { RuntimeMatrix } from "#/components/registry/runtime-matrix";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
+import { noteWorkspaceShown } from "#/lib/demo-opening";
 import { useRefreshWhile } from "#/lib/refresh";
 import { getOverview } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
@@ -25,11 +27,13 @@ const COUNTS: { key: keyof Overview; label: string }[] = [
 const EMPTY: Overview = { projects: 0, repositories: 0, agents: 0, assets: 0 };
 
 function OverviewPage() {
-	const { name } = useWorkspace();
+	const { name, slug } = useWorkspace();
 	const data = Route.useLoaderData();
 	const counts = data?.counts ?? EMPTY;
 	const repositories = data?.repositories ?? [];
 	useDocumentTitle("Overview");
+	// The demo's opening screen waits for this page, the first one a new sandbox shows.
+	useEffect(() => noteWorkspaceShown(slug), [slug]);
 	useRefreshWhile(repositories.some((repository) => repository.scanPending));
 
 	return (

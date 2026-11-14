@@ -13,8 +13,13 @@ test("a visitor opens a demo workspace and chats with one of its agents", async 
 
 	await expect(start).toBeEnabled();
 	await start.click();
+	// The opening screen covers the page while the sandbox is made, then hands over to the app.
+	await expect(page.getByRole("list", { name: "Progress" })).toBeVisible();
 	await expect(page).toHaveURL(/\/acme-[a-z0-9]{6}$/);
-	await expect(page.getByText("Acme is made up")).toBeVisible();
+	// The welcome card shows once per sandbox; the demo bar stays.
+	await page.getByRole("button", { name: "Start exploring" }).click();
+	await expect(page.getByRole("link", { name: "Gateweave Cloud" })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Deploy your own" })).toBeVisible();
 
 	await page.getByRole("link", { name: "Repositories" }).click();
 	for (const name of ["storefront", "payments-api", "mobile-app"]) {

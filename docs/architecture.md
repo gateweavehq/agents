@@ -1783,6 +1783,14 @@ the EU. The same code ships to every deployment, and everything the demo does is
   fills itself in one call (`fillDemo`): it is where the workspace lives, which may be an ocean
   away from the Worker that took the request. A sandbox that fails halfway is deleted, account and
   all, and the page says why.
+- **An opening screen and a bar.** While `startDemo` runs, the browser shows an opening screen
+  (`src/components/demo/demo-opening.tsx`, state in `src/lib/demo-opening.ts`, held in the root so
+  it survives the move to the workspace). Its steps follow the server's real phases: four on
+  timers tuned to a sandbox taking about 7.4 s, the fifth only when the server answers, the sixth
+  when the workspace's overview has shown. Inside a sandbox, a bar at the bottom (`demo-bar.tsx`)
+  counts down to cleanup from the visitor's creation time, which `getWorkspace` returns as
+  `demoCreatedAt`, and points to Gateweave Cloud and the repository (`src/lib/demo-links.ts`); a
+  welcome card shows once per sandbox.
 - **Sample data that adds up** (`apps/web/src/server/demo/sample-data.ts` and `sample.ts`). Three
   repositories on `gitlab.example.com`, a host reserved for examples, scanned by the real adapters
   from the files in the sample, so each shows which coding agents it has. A library, and a setup
