@@ -195,7 +195,9 @@ const SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
 function commandSummary(command: string): string | null {
 	const [program = "", next = ""] = command.split(" ");
 	if (!PROGRAM.test(program) || SECRET_VALUE.test(program)) return null;
-	return SUBCOMMANDS[program]?.has(next) ? `${program} ${next}` : program;
+	// Own entries only: `constructor` and `toString` are programs' names like any other.
+	const known = Object.hasOwn(SUBCOMMANDS, program) ? SUBCOMMANDS[program] : undefined;
+	return known?.has(next) ? `${program} ${next}` : program;
 }
 
 function clip(value: string, max: number): string {

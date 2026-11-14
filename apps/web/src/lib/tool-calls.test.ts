@@ -194,6 +194,10 @@ it("shows what a command is, never what it was given", () => {
 	}
 	expect(shown("PASSWORD=hunter2 ./deploy.sh")).toBeNull();
 	expect(shown("./deploy.sh hunter2")).toBeNull();
+	// A program named like something every object has is still only a name.
+	for (const program of ["constructor", "toString", "hasOwnProperty", "__proto__"]) {
+		expect(shown(`${program} status`)?.full).toBe(program);
+	}
 });
 
 it("never shows an argument that looks like a secret", () => {
