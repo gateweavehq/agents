@@ -155,6 +155,15 @@ export function TrackConnectStep({
 		return () => window.removeEventListener("pageshow", reset);
 	}, []);
 
+	// Closing the dialog while the server is asked calls the trip to Track off.
+	const shown = useRef(true);
+	useEffect(() => {
+		shown.current = true;
+		return () => {
+			shown.current = false;
+		};
+	}, []);
+
 	function chooseEngine(next: AgentEngine) {
 		setEngine(next);
 		const allowed = usableFirst(providersOf(next), available);
@@ -174,9 +183,11 @@ export function TrackConnectStep({
 						: { purpose, trackUrl, provider, model },
 				},
 			});
+			if (!shown.current) return;
 			// Away to Track, which brings the person back to this server when they have decided.
 			window.location.assign(address);
 		} catch (failure) {
+			if (!shown.current) return;
 			setError(message(failure));
 			setPending(false);
 		}
