@@ -23,8 +23,11 @@ There is no migration in this release.
   told has not changed. Conversations from before this release are shown the same way.
   ([#233](https://github.com/gateweavehq/agents/pull/233))
 - **Tool calls say what they acted on:** `read_file docs/roadmap.md`, not `read_file` six times.
-  An argument that looks like a credential is never shown, and a command that carries one shows
-  only its program. ([#233](https://github.com/gateweavehq/agents/pull/233))
+  An argument that looks like a credential is never shown. A command shows only its program and,
+  for a build tool or git, the one known word after it (`pnpm check`, `git status`), never what
+  it was given: no pattern can tell a password from any other word.
+  ([#233](https://github.com/gateweavehq/agents/pull/233),
+  [#235](https://github.com/gateweavehq/agents/pull/235))
 - **Links in messages** open only `http` and `https` addresses, and nothing in a message can
   widen the page. ([#233](https://github.com/gateweavehq/agents/pull/233))
 
