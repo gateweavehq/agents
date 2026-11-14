@@ -177,21 +177,23 @@ it("shows what a command is, never what it was given", () => {
 	expect(shown("pnpm check")).toEqual({ label: "pnpm check", full: "pnpm check" });
 	expect(shown("git status --short")?.full).toBe("git status");
 	expect(shown("pnpm --filter @gateweave/agents-web test")?.full).toBe("pnpm");
-	expect(shown("cat docs/roadmap.md")?.full).toBe("cat docs/roadmap.md");
-	// Where a password goes, no pattern knows every spelling: it stops at the first flag,
-	// quote, assignment or address, in the label and in the title alike.
+	// Only a build tool's or git's own word follows the program; a path or any other word doesn't.
+	expect(shown("cat docs/roadmap.md")?.full).toBe("cat");
+	expect(shown("pnpm hunter2")?.full).toBe("pnpm");
+	// A password can sit anywhere, as a flag's value, in an address, or as a plain word.
 	for (const command of [
 		"curl -u alice:hunter2 https://example.com",
 		"mysql -u root -phunter2 shop",
 		"psql postgres://alice:hunter2@db.example.com/shop",
 		'git commit -m "hunter2"',
 		"docker login registry.example.com --password hunter2",
+		"echo hunter2 | docker login --username alice --password-stdin registry.example.com",
+		"printf hunter2",
 	]) {
 		expect(JSON.stringify(shown(command)), command).not.toContain("hunter2");
 	}
 	expect(shown("PASSWORD=hunter2 ./deploy.sh")).toBeNull();
-	// Three words at most.
-	expect(shown("a b c d e")?.full).toBe("a b c");
+	expect(shown("./deploy.sh hunter2")).toBeNull();
 });
 
 it("never shows an argument that looks like a secret", () => {
