@@ -25,9 +25,11 @@ const EVENT_INTRO = "\n\nThe event, as it was sent:\n\n```";
  * a message.
  */
 export function readTriggerMessage(text: string): TriggerMessage | null {
-	// The prompt is filled in from the event, so a title can hold the introduction too. The real
-	// one is the first whose fence says `json` and holds JSON; failing that, the first that reads.
-	let fallback: TriggerMessage | null = null;
+	// The prompt is filled in from the event, and the event is the sender's, so either can hold
+	// the introduction and a fence of its own. Nothing in the text says which one is real, and a
+	// card built from the wrong one would show an event that was never sent. So when more than one
+	// place reads as the event, none is taken, and the page shows the text as it is.
+	let found: TriggerMessage | null = null;
 	for (
 		let intro = text.indexOf(EVENT_INTRO);
 		intro >= 0;
@@ -35,41 +37,25 @@ export function readTriggerMessage(text: string): TriggerMessage | null {
 	) {
 		const read = readTriggerMessageAt(text, intro);
 		if (!read) continue;
-		if (read.json && isJson(read.message.body)) return read.message;
-		fallback ??= read.message;
+		if (found) return null;
+		found = read;
 	}
-	return fallback;
+	return found;
 }
 
-function isJson(body: string): boolean {
-	try {
-		JSON.parse(body);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function readTriggerMessageAt(
-	text: string,
-	intro: number,
-): { message: TriggerMessage; json: boolean } | null {
+function readTriggerMessageAt(text: string, intro: number): TriggerMessage | null {
 	const afterIntro = text.slice(intro + EVENT_INTRO.length);
 	const lineEnd = afterIntro.indexOf("\n");
 	if (lineEnd < 0) return null;
 	// The info string is `json` for a JSON event and `text` for anything else.
-	const info = afterIntro.slice(0, lineEnd);
-	if (!["json", "text"].includes(info)) return null;
+	if (!["json", "text"].includes(afterIntro.slice(0, lineEnd))) return null;
 	const inside = afterIntro.slice(lineEnd + 1);
 	// The body may hold a fence of its own, so the closing one is the last. The note after it has none.
 	const close = inside.lastIndexOf("\n```");
 	if (close < 0) return null;
 	const after = inside.slice(close + "\n```".length);
 	if (after !== "" && !after.startsWith("\n\n")) return null;
-	return {
-		message: { prompt: text.slice(0, intro), body: inside.slice(0, close), after: after.trim() },
-		json: info === "json",
-	};
+	return { prompt: text.slice(0, intro), body: inside.slice(0, close), after: after.trim() };
 }
 
 /** Whether the message is stored with the marker a delivery's message gets. */

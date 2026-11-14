@@ -136,14 +136,20 @@ it("pretty-prints with two spaces, and shows text that is not JSON as it came", 
 	expect(prettyEvent("")).toBe("");
 });
 
-it("finds the event when the prompt's own words hold the introduction", () => {
+it("takes no event when more than one place in the text reads as it", () => {
 	// A title can say anything, the introduction and a fence included.
 	const title = "Odd\n\nThe event, as it was sent:\n\n```text\nnot the event\n```\n\nand more";
-	const body = event("issue.created");
-	const text = triggerMessage(PROMPT.replace("{{data.issue.title}}", title), body);
-	const read = readTriggerMessage(text);
-	expect(read?.body).toBe(body);
-	expect(describeEvent(read?.body ?? "").issue?.key).toBe("TRK-137");
+	const inPrompt = triggerMessage(
+		PROMPT.replace("{{data.issue.title}}", title),
+		event("issue.created"),
+	);
+	expect(readTriggerMessage(inPrompt)).toBeNull();
+	// So can an event that is not JSON: a card from the block inside it would show what was never sent.
+	const inBody = triggerMessage(
+		"Look",
+		'raw\n\nThe event, as it was sent:\n\n```json\n{"type":"schedule"}',
+	);
+	expect(readTriggerMessage(inBody)).toBeNull();
 });
 
 it("leaves out a time no Date can hold", () => {
