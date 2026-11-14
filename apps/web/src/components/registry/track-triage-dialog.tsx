@@ -7,6 +7,7 @@ import {
 	providerPickerNote,
 } from "@gateweave/agents-model";
 import { type FormEvent, useState } from "react";
+import { GATEWEAVE_TRACK, TrackConnectStep } from "#/components/registry/track-connect-step";
 import { TrackWebhookStep } from "#/components/registry/track-webhook-step";
 import { Button } from "#/components/ui/button";
 import {
@@ -22,9 +23,6 @@ import { Label } from "#/components/ui/label";
 import { useWorkspace } from "#/components/workspace/context";
 import { setUpTrackTriage, type TrackTriageSetUp } from "#/lib/track-triage";
 
-/** Where Gateweave Cloud's Track is, which most people triage. */
-const GATEWEAVE_TRACK = "https://track.gateweave.com";
-
 /** A model to start from for each provider: triage is short work, so a fast one. */
 const SUGGESTED_MODELS: Partial<Record<ModelProvider, string>> = {
 	anthropic: "claude-haiku-5-5",
@@ -38,8 +36,10 @@ function message(error: unknown) {
 }
 
 /**
- * Sets up Track triage: first the Track URL, the agent member's key and the model, which make the
- * agent and its trigger; then the webhook to add in Track, whose secret comes back here.
+ * Connects Track triage: the model here, then Track, where the person approves and Track makes
+ * the agent member and its webhook (`TrackConnectStep`). The old way, with Track's key and a
+ * webhook made by hand, stays behind "Set it up by hand" for a Track that does not know the new
+ * one.
  */
 export function TrackTriageDialog({
 	available,
@@ -49,6 +49,7 @@ export function TrackTriageDialog({
 	onClose: () => void;
 }) {
 	const [made, setMade] = useState<TrackTriageSetUp | null>(null);
+	const [byHand, setByHand] = useState(false);
 	return (
 		<Dialog open onOpenChange={(open) => !open && onClose()}>
 			<DialogContent className="max-w-lg">
@@ -62,8 +63,25 @@ export function TrackTriageDialog({
 						this URL. Under Events, Issue created is all triage needs; the trigger skips the others.
 						Under For agent, choose your agent, so that its own changes do not come back to it.
 					</TrackWebhookStep>
-				) : (
+				) : byHand ? (
 					<SetUpStep available={available} onMade={setMade} onClose={onClose} />
+				) : (
+					<div className="space-y-4">
+						<DialogHeader>
+							<DialogTitle>Triage Track issues</DialogTitle>
+							<DialogDescription>
+								An agent that labels, prioritizes and comments on each new issue, as an agent member
+								of your Track workspace. It gets only the tools triage needs: reading the workspace
+								and its issues, changing an issue's labels and priority, and commenting.
+							</DialogDescription>
+						</DialogHeader>
+						<TrackConnectStep
+							purpose="triage"
+							available={available}
+							onByHand={() => setByHand(true)}
+							onClose={onClose}
+						/>
+					</div>
 				)}
 			</DialogContent>
 		</Dialog>
@@ -81,7 +99,7 @@ function SetUpStep({
 }) {
 	const { slug } = useWorkspace();
 	const first = MODEL_PROVIDERS.find((provider) => available.includes(provider)) ?? "anthropic";
-	const [trackUrl, setTrackUrl] = useState(GATEWEAVE_TRACK);
+	const [trackUrl, setTrackUrl] = useState<string>(GATEWEAVE_TRACK);
 	const [agentKey, setAgentKey] = useState("");
 	const [provider, setProvider] = useState<ModelProvider>(first);
 	const [model, setModel] = useState(SUGGESTED_MODELS[first] ?? "");

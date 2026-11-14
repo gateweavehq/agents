@@ -103,6 +103,8 @@ import {
 	type TotaledRun,
 	TRACK_KEY_VARIABLE,
 	TRIGGER_LIMITS,
+	type TrackConnectChoices,
+	type TrackConnectInput,
 	type TrackTriagePlan,
 	type TrackWorkPlan,
 	type Trigger,
@@ -120,6 +122,7 @@ import {
 	teamInput,
 	telemetryExportResult,
 	telemetryInput,
+	trackConnectInput,
 	trackTriagePlan,
 	trackWorkPlan,
 	triggerInput,
@@ -171,8 +174,10 @@ import {
 } from "./conversations";
 import * as schema from "./db/schema";
 import {
+	AgentError,
 	agentRepository,
 	agentSnapshot,
+	checkSandboxChoices,
 	createAgent,
 	removeAgent,
 	updateAgent,
@@ -354,6 +359,7 @@ import {
 	TELEMETRY_PLACE,
 	tracesUrl,
 } from "./telemetry";
+import { beginConnection, newVerifier, takeConnection, trackVerifierPlace } from "./track-connect";
 import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
 import { setUpTrackWork, type TrackWorkMade } from "./track-work";
 import {
@@ -370,6 +376,7 @@ import {
 	replaceSecret,
 	secretStartOf,
 	settleDelivery,
+	triggerCapRefusal,
 	triggerPlace,
 	triggerRow,
 	updateTrigger,
@@ -804,6 +811,69 @@ export class RegistryDO extends DurableObject {
 		const given = z.string().min(1).max(200).parse(state);
 		const member = id.parse(by);
 		return this.#write(() => takeState(this.#db, asset, given, member, Date.now()));
+	}
+
+	// Connecting Track in one step (AGT-119, `./track-connect.ts`). For the app's server code
+	// alone: what comes back is never for a page.
+
+	/**
+	 * Keeps what `by` chose before their browser leaves for Track, after the rules the setup will
+	 * apply have been tried on it. Hands back the state to send, the verifier whose hash goes with
+	 * it, and the id the trigger will have, so its URL can be named first.
+	 */
+	async trackConnectBegin(
+		input: TrackConnectInput,
+		by: string,
+	): Promise<{ state: string; verifier: string; triggerId: string } | ProviderRefusal> {
+		const choices = trackConnectInput.parse(input);
+		const member = id.parse(by);
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return refused(sealer.unavailable);
+		const state = randomToken();
+		const verifier = newVerifier();
+		const triggerId = crypto.randomUUID();
+		const sealedVerifier = await sealer.seal(trackVerifierPlace(state), verifier);
+		try {
+			const kept = this.#write(() => {
+				if (choices.purpose === "work") checkSandboxChoices(this.#db, choices);
+				const full = triggerCapRefusal(this.#db);
+				if (full) return full;
+				return beginConnection(
+					this.#db,
+					{ state, startedBy: member, choices, triggerId, sealedVerifier },
+					Date.now(),
+				)
+					? null
+					: "Too many connections to Track are waiting to be approved. Try again in a few minutes.";
+			});
+			if (kept !== null) return refused(kept);
+		} catch (error) {
+			if (error instanceof AgentError) return refused(error.message);
+			throw error;
+		}
+		return { state, verifier, triggerId };
+	}
+
+	/**
+	 * Takes the connection a state names, used up whatever comes of it: null unless `by` started
+	 * it and it is still good. The verifier comes back opened, for the one exchange.
+	 */
+	async trackConnectTake(
+		state: string,
+		by: string,
+	): Promise<{ choices: TrackConnectChoices; triggerId: string; verifier: string } | null> {
+		const given = z.string().min(1).max(200).parse(state);
+		const member = id.parse(by);
+		const taken = this.#write(() => takeConnection(this.#db, given, member, Date.now()));
+		if (!taken) return null;
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return null;
+		try {
+			const verifier = await sealer.open(trackVerifierPlace(given), taken.sealedVerifier);
+			return { choices: taken.choices, triggerId: taken.triggerId, verifier };
+		} catch {
+			return null;
+		}
 	}
 
 	/**
@@ -1500,6 +1570,7 @@ export class RegistryDO extends DurableObject {
 		input: TrackTriagePlan,
 		createdBy: string,
 		setBy: string,
+		connected?: ConnectedTrigger,
 	): Promise<TrackTriageMade | TriggerRefusal> {
 		const { agentKey, ...plan } = trackTriagePlan.parse(input);
 		const member = id.parse(createdBy);
@@ -1507,8 +1578,7 @@ export class RegistryDO extends DurableObject {
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
 		const envSetId = crypto.randomUUID();
-		const triggerId = crypto.randomUUID();
-		const secret = newTriggerSecret();
+		const { triggerId, secret } = triggerOf(connected);
 		const [sealedKey, sealedSecret] = await Promise.all([
 			sealer.seal(secretPlace(envSetId, TRACK_KEY_VARIABLE), agentKey),
 			sealer.seal(triggerPlace(triggerId), secret),
@@ -1540,6 +1610,7 @@ export class RegistryDO extends DurableObject {
 		input: TrackWorkPlan,
 		createdBy: string,
 		setBy: string,
+		connected?: ConnectedTrigger,
 	): Promise<TrackWorkMade | TriggerRefusal> {
 		const { agentKey, ...plan } = trackWorkPlan.parse(input);
 		const member = id.parse(createdBy);
@@ -1547,8 +1618,7 @@ export class RegistryDO extends DurableObject {
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
 		const envSetId = crypto.randomUUID();
-		const triggerId = crypto.randomUUID();
-		const secret = newTriggerSecret();
+		const { triggerId, secret } = triggerOf(connected);
 		const [sealedKey, sealedSecret] = await Promise.all([
 			sealer.seal(secretPlace(envSetId, TRACK_KEY_VARIABLE), agentKey),
 			sealer.seal(triggerPlace(triggerId), secret),
@@ -2744,6 +2814,21 @@ export interface McpOAuthParts {
 	verifier?: string | null;
 	tokens?: unknown;
 	authorizationServer?: Record<string, unknown> | null;
+}
+
+/** A trigger's id and secret for a setup: the sender's when Track made them, else new ones. */
+export interface ConnectedTrigger {
+	triggerId: string;
+	/** The webhook's secret, as Track made it, which the trigger checks deliveries with. */
+	webhookSecret: string;
+}
+
+function triggerOf(connected?: ConnectedTrigger): { triggerId: string; secret: string } {
+	if (!connected) return { triggerId: crypto.randomUUID(), secret: newTriggerSecret() };
+	return {
+		triggerId: id.parse(connected.triggerId),
+		secret: triggerSecret.parse(connected.webhookSecret),
+	};
 }
 
 /** 32 random bytes in base64url, for an OAuth state. */

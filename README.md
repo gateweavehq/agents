@@ -75,7 +75,8 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
   [triage Gateweave Track issues](docs/track-triage.md) and
   [work on the ones assigned to them](docs/track-work.md), from a comment on the issue to a pull request,
   and go on in the same conversation and pull request when someone comments on the issue, such as to
-  answer the agent's question or ask for a change.
+  answer the agent's question or ask for a change. Choose **Connect Track**, approve in Track, and
+  come back connected: no key or secret is copied by hand.
 
 ## Tech stack
 

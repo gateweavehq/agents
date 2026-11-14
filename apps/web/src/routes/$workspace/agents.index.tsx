@@ -5,6 +5,10 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { AgentDialog } from "#/components/registry/agent-dialogs";
 import { AgentList } from "#/components/registry/agent-list";
+import {
+	trackConnectSearch,
+	useTrackConnectNotice,
+} from "#/components/registry/track-connect-notice";
 import { TrackTriageDialog } from "#/components/registry/track-triage-dialog";
 import { TrackWorkDialog } from "#/components/registry/track-work-dialog";
 import { Button } from "#/components/ui/button";
@@ -15,6 +19,7 @@ import { createAgent, getAgents, getLibrary } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/agents/")({
+	validateSearch: trackConnectSearch,
 	loader: ({ params }) => getAgents({ data: params.workspace }),
 	component: AgentsPage,
 });
@@ -23,6 +28,7 @@ function AgentsPage() {
 	const data = Route.useLoaderData();
 	const admin = isAdmin(useMyRole());
 	useDocumentTitle("Agents");
+	useTrackConnectNotice(Route.useSearch().trackConnect);
 	const agents = data?.agents ?? [];
 
 	return (

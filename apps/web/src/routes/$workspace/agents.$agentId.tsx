@@ -16,6 +16,10 @@ import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { AgentDialog } from "#/components/registry/agent-dialogs";
 import { KindLabel, RuntimeBadge } from "#/components/registry/labels";
+import {
+	trackConnectedSearch,
+	useTrackConnectedNotice,
+} from "#/components/registry/track-connect-notice";
 import { Triggers } from "#/components/registry/triggers";
 import { Button } from "#/components/ui/button";
 import { ConfirmDialog } from "#/components/workspace/confirm-dialog";
@@ -29,6 +33,7 @@ import { useDocumentTitle } from "#/lib/title";
 import { getTriggers } from "#/lib/triggers";
 
 export const Route = createFileRoute("/$workspace/agents/$agentId")({
+	validateSearch: trackConnectedSearch,
 	loader: async ({ params }) => {
 		const [detail, library, keys, triggers] = await Promise.all([
 			getAgent({ data: { slug: params.workspace, agentId: params.agentId } }),
@@ -56,6 +61,10 @@ function AgentPage() {
 	const data = Route.useLoaderData();
 	const admin = isAdmin(useMyRole());
 	useDocumentTitle(data ? data.agent.name : "Agent");
+	const track = data?.definition?.mcpServers
+		.map(({ connection }) => ("url" in connection ? connection.url : null))
+		.find((url) => url !== null);
+	useTrackConnectedNotice(Route.useSearch(), track ?? null);
 
 	if (!data) {
 		return <Notice title="Agent not found">It may have been removed.</Notice>;

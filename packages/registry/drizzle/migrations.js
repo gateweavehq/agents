@@ -36,6 +36,7 @@ import m0034 from "./0034_square_rafael_vega.sql";
 import m0035 from "./0035_jazzy_banshee.sql";
 import m0036 from "./0036_conversations_to_destroy.sql";
 import m0037 from "./0037_wiki.sql";
+import m0038 from "./0038_parched_lady_ursula.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -79,5 +80,6 @@ export default {
 		m0035,
 		m0036,
 		m0037,
+		m0038,
 	},
 };

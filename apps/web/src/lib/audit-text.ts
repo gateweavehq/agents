@@ -1,5 +1,5 @@
 import { MODEL_PROVIDER_NAMES, type ModelProvider } from "@gateweave/agents-model";
-import type { AuditEvent, AuditPerson, AuditValue } from "#/lib/audit-events";
+import { type AuditEvent, type AuditPerson, type AuditValue, hostOf } from "#/lib/audit-events";
 
 /** The audit log's events in words, for the Settings page. */
 
@@ -157,6 +157,11 @@ export function auditSentence(event: AuditEvent, people: People): string {
 			return `set up Track triage with the agent ${label}${trackHost(detail.track)}`;
 		case "trackWork.setUp":
 			return `set up Track work with the agent ${label}${trackHost(detail.track)}`;
+		case "track.connected": {
+			const workspace = text(detail.workspace);
+			const host = hostOf(text(detail.origin) ?? "");
+			return `connected the agent ${label} to ${workspace ? `the Track workspace ${workspace}` : "Track"}${trackHost(host ?? undefined)}`;
+		}
 		case "agent.created":
 			return `created the agent ${label}`;
 		case "agent.updated":

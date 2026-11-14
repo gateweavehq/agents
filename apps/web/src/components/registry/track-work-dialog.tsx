@@ -2,10 +2,8 @@ import {
 	AGENT_ENGINES,
 	type AgentEngine,
 	ENGINE_NAMES,
-	ENGINE_PROVIDERS,
 	isKeyedProvider,
 	MODEL_PROVIDER_NAMES,
-	MODEL_PROVIDERS,
 	type ModelProvider,
 	providerMissing,
 	providerPickerNote,
@@ -13,6 +11,12 @@ import {
 	type SandboxOffer,
 } from "@gateweave/agents-model";
 import { type FormEvent, useEffect, useState } from "react";
+import {
+	firstEngine,
+	GATEWEAVE_TRACK,
+	providersOf,
+	TrackConnectStep,
+} from "#/components/registry/track-connect-step";
 import { TrackWebhookStep } from "#/components/registry/track-webhook-step";
 import { Button } from "#/components/ui/button";
 import {
@@ -29,9 +33,6 @@ import { useWorkspace } from "#/components/workspace/context";
 import { getRepositories } from "#/lib/registry";
 import { setUpTrackWork, type TrackWorkSetUp } from "#/lib/track-work";
 
-/** Where Gateweave Cloud's Track is, which most people use. */
-const GATEWEAVE_TRACK = "https://track.gateweave.com";
-
 /** A model to start from for each provider: coding takes a capable one. */
 const SUGGESTED_MODELS: Partial<Record<ModelProvider, string>> = {
 	anthropic: "claude-sonnet-5-5",
@@ -44,23 +45,11 @@ function message(error: unknown) {
 	return error instanceof Error ? error.message : "Something went wrong";
 }
 
-/** The engine to start from: a vendor's coding agent the workspace has a key for, if any. */
-function firstEngine(available: ModelProvider[]): AgentEngine {
-	for (const engine of ["claude-code", "codex", "opencode"] as const) {
-		if (ENGINE_PROVIDERS[engine].some((provider) => available.includes(provider))) return engine;
-	}
-	return "gateweave";
-}
-
-/** The providers an engine calls; Gateweave's own loop calls any. */
-function providersOf(engine: AgentEngine): readonly ModelProvider[] {
-	return engine === "gateweave" ? MODEL_PROVIDERS : ENGINE_PROVIDERS[engine];
-}
-
 /**
- * Sets up an agent that works on the Track issues assigned to it: first Track's URL, the agent
- * member's key, the repository and how it works, which make the agent and its trigger; then the
- * webhook to add in Track, whose secret comes back here.
+ * Connects an agent that works on the Track issues assigned to it: the repository and how it
+ * works here, then Track, where the person approves and Track makes the agent member and its
+ * webhook (`TrackConnectStep`). The old way, with Track's key and a webhook made by hand, stays
+ * behind "Set it up by hand" for a Track that does not know the new one.
  */
 export function TrackWorkDialog({
 	available,
@@ -72,10 +61,13 @@ export function TrackWorkDialog({
 	onClose: () => void;
 }) {
 	const [made, setMade] = useState<TrackWorkSetUp | null>(null);
+	const [byHand, setByHand] = useState(false);
 	return (
 		<Dialog open onOpenChange={(open) => !open && onClose()}>
 			<DialogContent className="max-w-lg">
-				{made ? (
+				{sandboxOffer !== "offered" ? (
+					<NoSandbox sandboxOffer={sandboxOffer} onClose={onClose} />
+				) : made ? (
 					<TrackWebhookStep
 						made={made}
 						done={`${made.agentName} will work on the issues assigned to ${made.memberName}`}
@@ -88,27 +80,59 @@ export function TrackWorkDialog({
 						choose {made.memberName}, so that its own changes do not come back to it. Then assign it
 						an issue.
 					</TrackWebhookStep>
+				) : byHand ? (
+					<SetUpStep available={available} onMade={setMade} onClose={onClose} />
 				) : (
-					<SetUpStep
-						available={available}
-						sandboxOffer={sandboxOffer}
-						onMade={setMade}
-						onClose={onClose}
-					/>
+					<div className="space-y-4">
+						<DialogHeader>
+							<DialogTitle>Work on Track issues</DialogTitle>
+							<DialogDescription>
+								An agent member of your Track workspace that takes the issues assigned to it: it
+								works on each in a sandbox with your repository checked out, opens a pull request,
+								and comments on the issue as it starts and when it is done. In Track it can read the
+								workspace and its issues, comment, and move an issue along, nothing more.
+							</DialogDescription>
+						</DialogHeader>
+						<TrackConnectStep
+							purpose="work"
+							available={available}
+							onByHand={() => setByHand(true)}
+							onClose={onClose}
+						/>
+					</div>
 				)}
 			</DialogContent>
 		</Dialog>
 	);
 }
 
+function NoSandbox({ sandboxOffer, onClose }: { sandboxOffer: SandboxOffer; onClose: () => void }) {
+	return (
+		<div className="space-y-4">
+			<DialogHeader>
+				<DialogTitle>Work on Track issues</DialogTitle>
+				<DialogDescription>
+					This agent works in a sandbox, which{" "}
+					{sandboxOffer === "by-invitation"
+						? "this server offers only to the workspaces it invites."
+						: "this server does not run."}
+				</DialogDescription>
+			</DialogHeader>
+			<DialogFooter>
+				<Button type="button" variant="outline" onClick={onClose}>
+					Close
+				</Button>
+			</DialogFooter>
+		</div>
+	);
+}
+
 function SetUpStep({
 	available,
-	sandboxOffer,
 	onMade,
 	onClose,
 }: {
 	available: ModelProvider[];
-	sandboxOffer: SandboxOffer;
 	onMade: (made: TrackWorkSetUp) => void;
 	onClose: () => void;
 }) {
@@ -116,7 +140,7 @@ function SetUpStep({
 	const startEngine = firstEngine(available);
 	const startProvider =
 		providersOf(startEngine).find((provider) => available.includes(provider)) ?? "anthropic";
-	const [trackUrl, setTrackUrl] = useState(GATEWEAVE_TRACK);
+	const [trackUrl, setTrackUrl] = useState<string>(GATEWEAVE_TRACK);
 	const [agentKey, setAgentKey] = useState("");
 	const [engine, setEngine] = useState<AgentEngine>(startEngine);
 	const [provider, setProvider] = useState<ModelProvider>(startProvider);
@@ -181,27 +205,6 @@ function SetUpStep({
 		} finally {
 			setPending(false);
 		}
-	}
-
-	if (sandboxOffer !== "offered") {
-		return (
-			<div className="space-y-4">
-				<DialogHeader>
-					<DialogTitle>Work on Track issues</DialogTitle>
-					<DialogDescription>
-						This agent works in a sandbox, which{" "}
-						{sandboxOffer === "by-invitation"
-							? "this server offers only to the workspaces it invites."
-							: "this server does not run."}
-					</DialogDescription>
-				</DialogHeader>
-				<DialogFooter>
-					<Button type="button" variant="outline" onClick={onClose}>
-						Close
-					</Button>
-				</DialogFooter>
-			</div>
-		);
 	}
 
 	return (

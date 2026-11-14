@@ -4,6 +4,7 @@ export * from "./inputs";
 export * from "./paths";
 export * from "./prices";
 export * from "./sandbox";
+export * from "./track-connect";
 export * from "./track-triage";
 export * from "./track-work";
 export * from "./triggers";

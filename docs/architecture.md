@@ -1585,6 +1585,70 @@ server).
   pull request is where a person reviews what an issue talked it into. Agents' proposal settings
   in Track still apply to the agent member.
 
+### Connecting Track in one step
+
+Both ready-made Track setups start from "Connect Track" (AGT-119), which replaces copying the agent
+member's key into Agents and the webhook's secret back into Track. Track's half is its
+`/connect/agent` page and `/api/connect/exchange` and `/undo`; the contract between the two is in
+AGT-119. The address, the verifier and Track's answer are described in
+`packages/model/src/track-connect.ts`, the pending connection in
+`packages/registry/src/track-connect.ts`, and the flow in `apps/web/src/server/track-connect.ts`
+(the exchange and undo calls are in `track-exchange.ts`). "Set it up by hand", the two steps above,
+stays in the dialogs for a Track that has no such page or cannot be reached from the browser.
+
+1. **Start.** `beginTrackConnect` (an owner's or admin's server function) checks what it can before
+   the browser leaves: the provider has a key (or is Workers AI and offered), sandboxes are offered
+   for work, and the registry applies the rules the setup applies (the repository is one the GitHub
+   App reaches, the engine calls the provider's models), by `checkSandboxChoices`. It keeps a
+   pending connection in the registry (`track_connections`): a random `state`, bound to the person,
+   good for ten minutes and taken once; with it the choices, Track's origin, a random `verifier`
+   (64 characters, sealed) and the id the trigger will have, so the webhook's URL exists before the
+   trigger does. It answers with `<track>/connect/agent?purpose&name&webhook&events&return&state&challenge`.
+   `webhook` and `return` are on this deployment's own origin (`BETTER_AUTH_URL`'s when set),
+   which Track insists they share. `challenge` is the SHA-256 of the verifier; the verifier and the
+   choices never go to the browser.
+2. **Approve.** In Track the person chooses a workspace and team and presses Allow. Track makes the
+   agent member and the webhook, both or neither, and sends the browser to
+   `/api/track/connected?code&state`, or `?error=denied&state` for Cancel.
+3. **Finish.** `GET /api/track/connected` needs a session. The state names the workspace
+   (`<workspaceId>.<token>`); the caller must be an owner or admin of it now, and `trackConnectTake`
+   gives the pending connection only to the person who started it and only once: any other call
+   spends it and gets a plain page that makes no outbound call. After Cancel, the person lands on
+   the Agents page with a notice that nothing was made. Otherwise the server posts `{ code,
+   verifier }` to Track's `/api/connect/exchange` (no redirect followed, ten seconds, the answer
+   read up to 16 KB and checked with `trackExchangeAnswer`), checks the key with Track as the manual
+   setup does, and makes everything in one registry write: the same `setUpTrackWork` or
+   `setUpTrackTriage`, now with the trigger's fixed id and Track's webhook secret as its secret.
+4. **The trigger's assignee** is what `get_workspace` returns as `you` for the key (`checkTrackAgent`),
+   which is the Track user id, the form an issue's `assigneeId` has in a delivery. Track's answer
+   names the same id as `agent.id` (`memberId` is Track's member row, which nothing here uses); the
+   two must agree, or a trigger that would never match is not made.
+5. **If anything fails after the exchange** (the check, the registry write), the server calls
+   `/api/connect/undo` with the token Track gave, up to three times for a `try_again`, and says
+   nothing was left behind. If the undo fails too, the page names what is left in Track, the agent
+   member and its webhook, and where to remove them. The same undo runs for an answer that cannot
+   be used but names an `undo` token.
+6. **Audit.** `track.connected` records Track's origin, the Track workspace's slug and the agent's
+   id, beside `trackWork.setUp` or `trackTriage.setUp`.
+
+Threat model, briefly:
+
+- The `state` is single use and bound to the person, so a link someone else follows, or follows
+  twice, makes nothing.
+- The `code` is useless without the verifier, which never leaves the server, so reading the code
+  from the address (a history, a log, a Referer) gets nothing. It lives a minute in Track.
+- The key, the webhook's secret and the undo token travel once, server to server. They are never in
+  a page, an address, a log line, an error message or the audit log: failures are named, not quoted.
+- Track's answer is validated and size-capped because the address is whatever the person typed, and
+  a hostile server could answer with anything, or never stop.
+- A hostile "Track" address can do what a typed address could already do in the manual setup, and
+  no more: receive this deployment's webhook URL and a challenge, which are not secret, and
+  answer. It can make nothing here unless the person is sent back with a state that is theirs, it
+  sees the verifier only in the exchange, once, for a state already spent, and what it hands back
+  is checked against Track's MCP server before anything is made. The dialog says to use an
+  address you trust.
+- The route is off in the demo, as the manual setup is.
+
 ## Repository wiki
 
 A repository's wiki is pages a model writes about its code (AGT-108), each citing the lines it

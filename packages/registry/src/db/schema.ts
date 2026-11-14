@@ -687,6 +687,23 @@ export const mcpOAuth = sqliteTable("mcp_oauth", {
 });
 
 /**
+ * A Track connection under way (AGT-119): what the person chose before the browser left for
+ * Track, kept until it comes back. `state` is what Track hands back; the verifier that proves
+ * this server started the flow stays sealed here and never leaves it. A row lives until its
+ * `expires_at` and is taken, deleted, by the first call that names it.
+ */
+export const trackConnections = sqliteTable("track_connections", {
+	state: text("state").primaryKey(),
+	startedBy: text("started_by").notNull(),
+	expiresAt: integer("expires_at").notNull(),
+	/** The choices validated at the start (`trackConnectInput`), as the setup will take them. */
+	choices: text("choices", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+	/** The id the trigger will have, which the webhook's URL names before it exists. */
+	triggerId: text("trigger_id").notNull(),
+	sealedVerifier: text("sealed_verifier").notNull(),
+});
+
+/**
  * A GitLab reached with an access token (AGT-79). The token and the webhook's secret token are
  * sealed (`secrets.ts`); the token is opened only to read the repositories, and the secret only to
  * check a delivery.

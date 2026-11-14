@@ -54,6 +54,7 @@ import { Route as ApiGithubSetupRouteImport } from './routes/api/github/setup'
 import { Route as ApiGithubWebhooksRouteImport } from './routes/api/github/webhooks'
 import { Route as ApiMcpOauthCallbackRouteImport } from './routes/api/mcp-oauth/callback'
 import { Route as ApiMcpOauthConnectRouteImport } from './routes/api/mcp-oauth/connect'
+import { Route as ApiTrackConnectedRouteImport } from './routes/api/track/connected'
 import { Route as WorkspaceWikiRepositoryIdChar123PageChar125RouteImport } from './routes/$workspace/wiki.$repositoryId.{-$page}'
 import { Route as ApiTriggersWorkspaceIdTriggerIdRouteImport } from './routes/api/triggers/$workspaceId.$triggerId'
 import { Route as ApiGitlabWebhooksWorkspaceIdConnectionIdRouteImport } from './routes/api/gitlab/webhooks.$workspaceId.$connectionId'
@@ -290,6 +291,11 @@ const ApiMcpOauthConnectRoute = ApiMcpOauthConnectRouteImport.update({
   path: '/api/mcp-oauth/connect',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTrackConnectedRoute = ApiTrackConnectedRouteImport.update({
+  id: '/api/track/connected',
+  path: '/api/track/connected',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WorkspaceWikiRepositoryIdChar123PageChar125Route =
   WorkspaceWikiRepositoryIdChar123PageChar125RouteImport.update({
     id: '/wiki/$repositoryId/{-$page}',
@@ -346,6 +352,7 @@ export interface FileRoutesByFullPath {
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/api/mcp-oauth/callback': typeof ApiMcpOauthCallbackRoute
   '/api/mcp-oauth/connect': typeof ApiMcpOauthConnectRoute
+  '/api/track/connected': typeof ApiTrackConnectedRoute
   '/$workspace/agents/': typeof WorkspaceAgentsIndexRoute
   '/$workspace/chat/': typeof WorkspaceChatIndexRoute
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
@@ -393,6 +400,7 @@ export interface FileRoutesByTo {
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/api/mcp-oauth/callback': typeof ApiMcpOauthCallbackRoute
   '/api/mcp-oauth/connect': typeof ApiMcpOauthConnectRoute
+  '/api/track/connected': typeof ApiTrackConnectedRoute
   '/$workspace/agents': typeof WorkspaceAgentsIndexRoute
   '/$workspace/chat': typeof WorkspaceChatIndexRoute
   '/$workspace/projects': typeof WorkspaceProjectsIndexRoute
@@ -444,6 +452,7 @@ export interface FileRoutesById {
   '/api/github/webhooks': typeof ApiGithubWebhooksRoute
   '/api/mcp-oauth/callback': typeof ApiMcpOauthCallbackRoute
   '/api/mcp-oauth/connect': typeof ApiMcpOauthConnectRoute
+  '/api/track/connected': typeof ApiTrackConnectedRoute
   '/$workspace/agents/': typeof WorkspaceAgentsIndexRoute
   '/$workspace/chat/': typeof WorkspaceChatIndexRoute
   '/$workspace/projects/': typeof WorkspaceProjectsIndexRoute
@@ -496,6 +505,7 @@ export interface FileRouteTypes {
     | '/api/github/webhooks'
     | '/api/mcp-oauth/callback'
     | '/api/mcp-oauth/connect'
+    | '/api/track/connected'
     | '/$workspace/agents/'
     | '/$workspace/chat/'
     | '/$workspace/projects/'
@@ -543,6 +553,7 @@ export interface FileRouteTypes {
     | '/api/github/webhooks'
     | '/api/mcp-oauth/callback'
     | '/api/mcp-oauth/connect'
+    | '/api/track/connected'
     | '/$workspace/agents'
     | '/$workspace/chat'
     | '/$workspace/projects'
@@ -593,6 +604,7 @@ export interface FileRouteTypes {
     | '/api/github/webhooks'
     | '/api/mcp-oauth/callback'
     | '/api/mcp-oauth/connect'
+    | '/api/track/connected'
     | '/$workspace/agents/'
     | '/$workspace/chat/'
     | '/$workspace/projects/'
@@ -623,6 +635,7 @@ export interface RootRouteChildren {
   ApiGithubWebhooksRoute: typeof ApiGithubWebhooksRoute
   ApiMcpOauthCallbackRoute: typeof ApiMcpOauthCallbackRoute
   ApiMcpOauthConnectRoute: typeof ApiMcpOauthConnectRoute
+  ApiTrackConnectedRoute: typeof ApiTrackConnectedRoute
   ApiTriggersWorkspaceIdTriggerIdRoute: typeof ApiTriggersWorkspaceIdTriggerIdRoute
   ApiGitlabWebhooksWorkspaceIdConnectionIdRoute: typeof ApiGitlabWebhooksWorkspaceIdConnectionIdRoute
 }
@@ -944,6 +957,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiMcpOauthConnectRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/track/connected': {
+      id: '/api/track/connected'
+      path: '/api/track/connected'
+      fullPath: '/api/track/connected'
+      preLoaderRoute: typeof ApiTrackConnectedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/$workspace/wiki/$repositoryId/{-$page}': {
       id: '/$workspace/wiki/$repositoryId/{-$page}'
       path: '/wiki/$repositoryId/{-$page}'
@@ -1077,6 +1097,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiGithubWebhooksRoute: ApiGithubWebhooksRoute,
   ApiMcpOauthCallbackRoute: ApiMcpOauthCallbackRoute,
   ApiMcpOauthConnectRoute: ApiMcpOauthConnectRoute,
+  ApiTrackConnectedRoute: ApiTrackConnectedRoute,
   ApiTriggersWorkspaceIdTriggerIdRoute: ApiTriggersWorkspaceIdTriggerIdRoute,
   ApiGitlabWebhooksWorkspaceIdConnectionIdRoute:
     ApiGitlabWebhooksWorkspaceIdConnectionIdRoute,

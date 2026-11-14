@@ -210,7 +210,11 @@ function checkEnvironment(
  * sandbox to check it out in. Like an asset, a repository the app no longer reaches stays chosen
  * if it was, and the agent's turns say why they cannot go on, but it cannot be chosen anew.
  */
-function checkRepository(db: Db, input: Definition, chosenId: string | null): void {
+function checkRepository(
+	db: Db,
+	input: Pick<Definition, "repositoryId" | "sandbox">,
+	chosenId: string | null,
+): void {
 	if (input.repositoryId === null) return;
 	if (!input.sandbox) {
 		throw new AgentError(
@@ -246,7 +250,7 @@ function repositoryProblem(repository: typeof repositories.$inferSelect): string
  * and a model of its provider, such as Anthropic's for Claude Code. Gateweave's loop has no rules
  * of its own.
  */
-function checkEngine(input: Definition): void {
+function checkEngine(input: Pick<Definition, "engine" | "provider" | "sandbox">): void {
 	if (input.engine === "gateweave") return;
 	const name = ENGINE_NAMES[input.engine];
 	if (!input.sandbox) {
@@ -259,6 +263,20 @@ function checkEngine(input: Definition): void {
 		const list = names.length > 0 ? `${names.join(", ")} or ${last}` : last;
 		throw new AgentError(`${name} calls ${list} models: choose one of them`);
 	}
+}
+
+/**
+ * What `createAgent` would refuse about an agent that works in a sandbox on a repository, said
+ * before anything is made: Connect Track checks it before the browser leaves, by the very rules
+ * the write applies after it comes back. Throws an `AgentError`.
+ */
+export function checkSandboxChoices(
+	db: Db,
+	choices: Pick<Definition, "repositoryId" | "engine" | "provider">,
+): void {
+	const input = { ...choices, sandbox: true };
+	checkRepository(db, input, null);
+	checkEngine(input);
 }
 
 /**

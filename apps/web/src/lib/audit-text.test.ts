@@ -82,6 +82,13 @@ describe("audit events in words", () => {
 		expect(
 			say({ action: "project.deleted", target: { type: "project", id: "p-1", label: null } }),
 		).toBe("deleted the project (no name)");
+		expect(
+			say({
+				action: "track.connected",
+				target: { type: "agent", id: "a-1", label: "Coder" },
+				detail: { origin: "https://track.example.com", workspace: "acme", trackAgent: "u-1" },
+			}),
+		).toBe("connected the agent Coder to the Track workspace acme on track.example.com");
 	});
 
 	it("keeps a URL's host only, and finds which fields changed", () => {

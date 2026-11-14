@@ -12,16 +12,38 @@ agent member, and for each new issue it:
 It never changes an issue's title, description, status or assignee. When it is unsure, finds a
 likely duplicate, or the issue lacks what someone would need to act on it, it comments instead.
 
-Setting it up takes two steps, one in each product. You need to be an owner or admin in both.
+You need to be an owner or admin in both products.
 
-## 1. In Track: an agent member and its key
+## Connect Track
+
+1. Open **Agents** in your Gateweave Agents workspace. Under **Ready-made**, choose **Set up** next to
+   **Triage Track issues**.
+2. Choose the provider and model. Providers the workspace can use come first, and the model is
+   picked from the provider's list (**Other…** lets you type one). Under **Another Track**, change
+   the address if you run your own Track; on Gateweave Cloud it is `https://track.gateweave.com`.
+3. Choose **Connect Track**. Your browser goes to Track, which says which address is asking and
+   what it will make: an agent member and a webhook for new issues. Choose the workspace and the
+   team, and choose **Allow**.
+4. You come back to the agent's page in Agents, with a message that Track is connected.
+
+No key or secret is typed, shown or copied: Track hands them to Agents directly, for a one-time code
+that works for a minute, once, and Agents seals them. If anything fails after Track made the agent
+member and the webhook, Agents asks Track to remove them again, and says if it could not. Choose
+**Cancel** in Track, or leave, and nothing is made.
+
+If your Track is older than this (it has no **Connect an agent** page), or cannot be reached from
+your browser, choose **Set it up by hand** in the dialog and follow the steps below.
+
+## By hand: two steps, one in each product
+
+### 1. In Track: an agent member and its key
 
 1. Open **Settings → Agents** in your Track workspace and create an agent, named for instance
    "Triage". It shows in Track as a member, and everything it does there carries its name.
 2. Copy the key Track shows. It starts with `gwt_`, and Track shows it once; for another one
    later, choose **New key** next to the agent.
 
-## 2. In Agents: the ready-made triage agent
+### 2. In Agents: the ready-made triage agent
 
 1. Open **Agents** in your Gateweave Agents workspace. Under **Ready-made**, choose **Set up**
    next to **Triage Track issues**.
@@ -38,7 +60,7 @@ Setting it up takes two steps, one in each product. You need to be an owner or a
    in one go.
 4. Copy the URL it shows, and leave the dialog open.
 
-## 3. In Track: the webhook
+### 3. In Track: the webhook
 
 1. Open **Settings → Webhooks** and choose **Add webhook**.
 2. Paste the URL. Under **Events**, **Issue created** is all triage needs. Track checks a few
