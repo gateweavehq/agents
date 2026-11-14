@@ -165,11 +165,41 @@ it("shows nothing for a call with no known argument, or none at all", () => {
 });
 
 it("clips a long target and keeps the whole of it for the title", () => {
-	const command = `pnpm --filter @gateweave/agents-web test -- ${"a".repeat(100)}`;
-	const target = describeToolTarget(used("run_command", { command }));
+	const path = `docs/${"a".repeat(100)}.md`;
+	const target = describeToolTarget(used("read_file", { path }));
 	expect(target?.label).toHaveLength(60);
 	expect(target?.label.endsWith("…")).toBe(true);
-	expect(target?.full).toBe(command);
+	expect(target?.full).toBe(path);
+});
+
+it("shows what a command is, never what it was given", () => {
+	const shown = (command: string) => describeToolTarget(used("run_command", { command }));
+	expect(shown("pnpm check")).toEqual({ label: "pnpm check", full: "pnpm check" });
+	expect(shown("git status --short")?.full).toBe("git status");
+	expect(shown("pnpm --filter @gateweave/agents-web test")?.full).toBe("pnpm");
+	// Only a build tool's or git's own word follows the program; a path or any other word doesn't.
+	expect(shown("cat docs/roadmap.md")?.full).toBe("cat");
+	expect(shown("pnpm hunter2")?.full).toBe("pnpm");
+	// A password can sit anywhere, as a flag's value, in an address, or as a plain word.
+	for (const command of [
+		"curl -u alice:hunter2 https://example.com",
+		"mysql -u root -phunter2 shop",
+		"psql postgres://alice:hunter2@db.example.com/shop",
+		'git commit -m "hunter2"',
+		"docker login registry.example.com --password hunter2",
+		"echo hunter2 | docker login --username alice --password-stdin registry.example.com",
+		"printf hunter2",
+	]) {
+		expect(JSON.stringify(shown(command)), command).not.toContain("hunter2");
+	}
+	expect(shown("PASSWORD=hunter2 ./deploy.sh")).toBeNull();
+	expect(shown("./deploy.sh hunter2")).toBeNull();
+	// A program named like something every object has is still only a name.
+	for (const program of ["constructor", "toString", "hasOwnProperty"]) {
+		expect(shown(`${program} status`)?.full).toBe(program);
+	}
+	// And one that does not start like a program's name is not shown at all.
+	expect(shown("__proto__ status")).toBeNull();
 });
 
 it("never shows an argument that looks like a secret", () => {

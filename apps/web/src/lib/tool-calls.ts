@@ -155,17 +155,49 @@ export function describeToolTarget(part: ToolCallPart): { label: string; full: s
 		} else if (SECRET_NAME.test(name)) {
 			continue;
 		}
-		if (SECRET_VALUE.test(value)) {
-			if (name !== "command") continue;
-			const program = value.split(" ")[0] ?? "";
-			return program === "" || SECRET_VALUE.test(program)
-				? null
-				: { label: program, full: program };
+		if (name === "command") {
+			const summary = commandSummary(value);
+			if (summary === null) continue;
+			return { label: clip(summary, TARGET_CLIP), full: summary };
 		}
+		if (SECRET_VALUE.test(value)) continue;
 		const full = value.slice(0, 500);
 		return { label: clip(full, TARGET_CLIP), full };
 	}
 	return null;
+}
+
+/** A program's name: a plain word, with nothing that carries a value. */
+const PROGRAM = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+
+/**
+ * The words that say what a build tool or git was asked to do. Only these are shown after a
+ * program's name: any other word could be a value, a password among them.
+ */
+const SUBCOMMANDS: Record<string, ReadonlySet<string>> = {
+	pnpm: new Set(["install", "check", "test", "typecheck", "build", "format", "lint", "verify"]),
+	npm: new Set(["install", "ci", "test", "run", "build"]),
+	yarn: new Set(["install", "test", "build", "lint"]),
+	bun: new Set(["install", "test", "build"]),
+	git: new Set(["status", "diff", "log", "add", "commit", "fetch", "pull", "checkout", "switch"]),
+	cargo: new Set(["build", "test", "check", "fmt", "clippy"]),
+	go: new Set(["build", "test", "vet", "fmt"]),
+	make: new Set(["build", "test", "check", "lint"]),
+};
+
+/**
+ * What a command is, without what it was given: its program, and for a build tool or git the
+ * one word that says what it was asked to do, `pnpm check` or `git status`. Nothing else of a
+ * command is ever shown. A flag, a quoted text, an address and a plain word can each be a
+ * password (`curl -u name:password`, `echo password | docker login …`), and no pattern can tell.
+ * Null when the command does not start with a plain program name.
+ */
+function commandSummary(command: string): string | null {
+	const [program = "", next = ""] = command.split(" ");
+	if (!PROGRAM.test(program) || SECRET_VALUE.test(program)) return null;
+	// Own entries only: `constructor` and `toString` are programs' names like any other.
+	const known = Object.hasOwn(SUBCOMMANDS, program) ? SUBCOMMANDS[program] : undefined;
+	return known?.has(next) ? `${program} ${next}` : program;
 }
 
 function clip(value: string, max: number): string {
