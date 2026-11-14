@@ -5,16 +5,26 @@ import { z } from "zod";
 
 /** How a connection to Track ended without making anything, as the callback names it. */
 export const trackConnectSearch = z.object({
-	trackConnect: z.enum(["denied", "failed", "expired", "busy", "unreachable"]).optional(),
+	trackConnect: z
+		.enum(["denied", "failed", "unreadable", "expired", "busy", "unreachable"])
+		.optional(),
 });
+
+/**
+ * Track makes the agent member and its webhook when the person allows, before this server trades
+ * the code. When the trade did not go through, they may still be there, and nothing here can
+ * take them back: there is no undo token without an answer.
+ */
+const LEFT_IN_TRACK =
+	"Nothing was made here, but Track may still hold the agent member and its webhook from this attempt: remove them in Track under Settings, Agents and Settings, Webhooks, then try again.";
 
 const WORDS = {
 	denied: "Nothing was made: you did not allow it in Track.",
 	failed: "Track could not be connected. Nothing was made.",
-	expired:
-		"Track did not accept the approval, perhaps because it took too long. Nothing was made; try again.",
-	busy: "Track asked to wait a little. Nothing was made; try again in a minute.",
-	unreachable: "Track could not be reached from this server. Nothing was made.",
+	unreadable: `Track's answer could not be read. ${LEFT_IN_TRACK}`,
+	expired: `Track did not accept the approval, perhaps because it took too long. ${LEFT_IN_TRACK}`,
+	busy: `Track asked to wait a little. ${LEFT_IN_TRACK}`,
+	unreachable: `Track could not be reached from this server. ${LEFT_IN_TRACK}`,
 } as const;
 
 /** Says once why a connection to Track made nothing, then takes the notice out of the address. */
@@ -22,7 +32,7 @@ export function useTrackConnectNotice(notice: keyof typeof WORDS | undefined) {
 	const navigate = useNavigate();
 	useEffect(() => {
 		if (!notice) return;
-		toast.message(WORDS[notice], { duration: 12_000 });
+		toast.message(WORDS[notice], { duration: 30_000 });
 		void navigate({ to: ".", search: {}, replace: true });
 	}, [notice, navigate]);
 }

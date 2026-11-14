@@ -471,6 +471,25 @@ it("asks Track to undo an answer it cannot use, with the token the answer carrie
 	expect(await holdings(registry)).toEqual(NOTHING);
 });
 
+it("does not say nothing was made when Track's answer cannot be read and names no undo", async () => {
+	const { owner, slug, registry } = await workspace();
+	const begun = await start(owner, slug, TRIAGE);
+	if (!begun.address) throw new Error(begun.text);
+	const undos = track.undos.length;
+	track.exchangeMode = "garbage";
+	try {
+		// Track made the member and the webhook on Allow, and there is no token to take them back
+		// with: the notice is the one that says they may be left there.
+		const { response, location } = await arrive(owner, track.approve(begun.address));
+		expect(response.status).toBe(302);
+		expect(location).toBe(`/${slug}/agents?trackConnect=unreadable`);
+	} finally {
+		track.exchangeMode = "ok";
+	}
+	expect(track.undos).toHaveLength(undos);
+	expect(await holdings(registry)).toEqual(NOTHING);
+});
+
 it("says exactly what is left in Track when the undo fails too, without a secret", async () => {
 	const { owner, slug, workspaceId, registry, repositoryId } = await workspace();
 	const begun = await start(owner, slug, WORK(repositoryId));

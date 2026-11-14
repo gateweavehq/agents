@@ -1628,7 +1628,10 @@ stays in the dialogs for a Track that has no such page or cannot be reached from
    `/api/connect/undo` with the token Track gave, up to three times for a `try_again`, and says
    nothing was left behind. If the undo fails too, the page names what is left in Track, the agent
    member and its webhook, and where to remove them. The same undo runs for an answer that cannot
-   be used but names an `undo` token.
+   be used but names an `undo` token. Track makes both when the person allows, before the
+   exchange, so an exchange that got no usable answer and no token (refused, busy, unreachable,
+   unreadable) leaves nothing to undo with: the notice then says they may still be in Track and
+   where to remove them, never that nothing was made.
 6. **Audit.** `track.connected` records Track's origin, the Track workspace's slug and the agent's
    id, beside `trackWork.setUp` or `trackTriage.setUp`.
 

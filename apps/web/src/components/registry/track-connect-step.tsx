@@ -13,7 +13,7 @@ import {
 	type Repository,
 	type TrackConnectPurpose,
 } from "@gateweave/agents-model";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { DialogFooter } from "#/components/ui/dialog";
 import { Input } from "#/components/ui/input";
@@ -88,6 +88,8 @@ export function TrackConnectStep({
 	// The provider's models, or why there are none; null while they are asked for.
 	const [models, setModels] = useState<ProviderModel[] | string | null>(null);
 	const [typing, setTyping] = useState(false);
+	// Whether the person typed a model while the list was asked for: what they typed stays.
+	const typed = useRef(false);
 	const [repositories, setRepositories] = useState<Repository[] | null>(null);
 	const [repositoryId, setRepositoryId] = useState("");
 	const [pending, setPending] = useState(false);
@@ -116,6 +118,7 @@ export function TrackConnectStep({
 		setModels(null);
 		setModel("");
 		setTyping(false);
+		typed.current = false;
 		if (!usable) {
 			setModels("No models to list without a key");
 			return;
@@ -125,6 +128,10 @@ export function TrackConnectStep({
 			.then((found) => {
 				if (!live) return;
 				setModels(found);
+				if (typed.current) {
+					setTyping(true);
+					return;
+				}
 				const wanted = SUGGESTED_MODELS[purpose][provider];
 				const chosen = found.find((option) => option.id === wanted) ?? found[0];
 				if (chosen) setModel(chosen.id);
@@ -133,7 +140,7 @@ export function TrackConnectStep({
 			.catch((failure) => {
 				if (!live) return;
 				setModels(message(failure));
-				setModel(SUGGESTED_MODELS[purpose][provider] ?? "");
+				if (!typed.current) setModel(SUGGESTED_MODELS[purpose][provider] ?? "");
 				setTyping(true);
 			});
 		return () => {
@@ -248,7 +255,10 @@ export function TrackConnectStep({
 						<Input
 							id="connect-model"
 							value={model}
-							onChange={(event) => setModel(event.target.value)}
+							onChange={(event) => {
+								typed.current = true;
+								setModel(event.target.value);
+							}}
 							placeholder={models === null ? "Asking for the models…" : "A model's id"}
 							spellCheck={false}
 							maxLength={200}

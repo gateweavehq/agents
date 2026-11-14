@@ -40,7 +40,7 @@ import { exchangeCode, undoConnection } from "./track-exchange";
 import { findMembershipById } from "./workspaces";
 
 /** How the connection ended, shown on the Agents page when nothing was made. */
-export type ConnectNotice = "denied" | "failed" | "expired" | "busy" | "unreachable";
+export type ConnectNotice = "denied" | "failed" | "unreadable" | "expired" | "busy" | "unreachable";
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const TOKEN = /^[A-Za-z0-9_-]{20,100}$/;
@@ -111,8 +111,9 @@ export async function finishConnect(request: Request): Promise<Response> {
 	const trackOrigin = pending.choices.trackUrl;
 	const exchanged = await exchangeCode(trackOrigin, code, pending.verifier);
 	if (!exchanged.ok) {
-		// An answer that could not be read may still have made things in Track: its undo token, if
-		// it named one, is used.
+		// Track made the agent member and the webhook when the person allowed. An answer that could
+		// not be used but names its undo token has them taken back; without one the notice says what
+		// may be left in Track, since nothing here can remove it.
 		if (exchanged.undo && !(await undoConnection(trackOrigin, exchanged.undo))) {
 			return leftBehind(slug, trackOrigin, null);
 		}
@@ -120,7 +121,10 @@ export async function finishConnect(request: Request): Promise<Response> {
 			exchanged.why === "refused"
 				? "expired"
 				: exchanged.why === "unexpected"
-					? "failed"
+					? // Undone by its token, nothing is left; without one, something may be.
+						exchanged.undo
+						? "failed"
+						: "unreadable"
 					: exchanged.why === "busy"
 						? "busy"
 						: "unreachable";
