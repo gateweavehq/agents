@@ -8,6 +8,28 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.27.2] - 2026-11-15
+
+A run that is still going opens on the first click, and a database read that fails in passing is
+asked again instead of becoming an error page. There is no migration in this release.
+
+### Fixed
+
+- **Opening a run while it is still going.** A run that has not ended shows how long it has taken
+  so far, read from the clock. The server and the browser read it at different moments, the page
+  took the difference for a fault and drew itself again, and a click on a run in that moment
+  opened nothing. The Runs page and a run's own page now keep what the server sent.
+  ([#247](https://github.com/gateweavehq/agents/pull/247))
+- **A page failing because one database read did.** When a single read from D1 failed, the page
+  was an error although asking again would have worked. A read that fails with one of the errors
+  Cloudflare documents as passing is now sent up to three times, a moment apart. Writes are sent
+  once, as before, and so is any other error. Each resend is logged by the kind of failure, never
+  with the database's own message. ([#245](https://github.com/gateweavehq/agents/pull/245))
+
+### If you run your own
+
+- **Nothing to do.**
+
 ## [0.27.1] - 2026-11-15
 
 An invitation's buttons no longer do nothing when pressed early. There is no migration in this
