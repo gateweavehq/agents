@@ -17,8 +17,8 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Transcript } from "#/components/chat/conversation-view";
 import {
+	RunDuration,
 	RunStatusBadge,
-	runDuration,
 	SandboxCost,
 	TotalCost,
 	tokensUsed,
@@ -231,7 +231,7 @@ function TriggerTranscript({
 
 function Summary({ run }: { run: RunEntry }) {
 	const items: { label: string; value: ReactNode }[] = [
-		{ label: "Duration", value: runDuration(run) },
+		{ label: "Duration", value: <RunDuration run={run} /> },
 		{ label: "Model requests", value: run.steps },
 		{
 			label: "Input tokens",
@@ -387,7 +387,8 @@ function Timeline({
 						<div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
 							<span className="min-w-0 text-sm">{title}</span>
 							<span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
-								{meta}
+								{/* A span still open is timed by the clock, as RunDuration is. */}
+								<span suppressHydrationWarning>{meta}</span>
 								{onReplay && span.kind === "model" && (
 									<Button
 										size="sm"
@@ -578,7 +579,7 @@ function NestedRun({ id, run }: { id: string; run: RunEntry | null }) {
 				</Button>
 				<RunStatusBadge status={run.status} />
 				<span className="text-muted-foreground tabular-nums">
-					{runDuration(run)} · {tokensUsed(run.total)}
+					<RunDuration run={run} /> · {tokensUsed(run.total)}
 					{run.total.runs > 1 && ` · with ${run.total.runs - 1} under it`}
 				</span>
 				<span className="tabular-nums">

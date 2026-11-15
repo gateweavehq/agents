@@ -11,7 +11,13 @@ function clientHeaders(): Record<string, string> {
 	return { "cf-connecting-ip": `10.${octet()}.${octet()}.${1 + (octet() % 254)}` };
 }
 
-export const test = base.extend<{ nothingRefused: undefined }>({
+/**
+ * What React throws when the browser's first render does not match the server's HTML: the errors
+ * 418 to 425 of a production build, which names them only by number, or their words in another.
+ */
+const HYDRATION_ERROR = /Minified React error #(418|419|421|422|423|425)\b|hydrat/i;
+
+export const test = base.extend<{ nothingRefused: undefined; everyPageHydrated: undefined }>({
 	// biome-ignore lint/correctness/noEmptyPattern: Playwright needs the pattern to see that no fixture is used
 	extraHTTPHeaders: async ({}, use) => {
 		await use(clientHeaders());
@@ -26,6 +32,22 @@ export const test = base.extend<{ nothingRefused: undefined }>({
 			});
 			await use(undefined);
 			expect(refused).toEqual([]);
+		},
+		{ auto: true },
+	],
+	// A page whose first render in the browser differs from the server's is thrown away and rendered
+	// again. It looks the same afterwards, but a click that lands meanwhile goes to an element that is
+	// gone and does nothing, so whether a test passes is left to timing. A mismatch is a failure
+	// itself, in every test here.
+	everyPageHydrated: [
+		async ({ context }, use) => {
+			const mismatches: string[] = [];
+			context.on("weberror", (webError) => {
+				const { message } = webError.error();
+				if (HYDRATION_ERROR.test(message)) mismatches.push(`${webError.page()?.url()}: ${message}`);
+			});
+			await use(undefined);
+			expect(mismatches).toEqual([]);
 		},
 		{ auto: true },
 	],
