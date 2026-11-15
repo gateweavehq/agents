@@ -8,6 +8,24 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.27.1] - 2026-11-15
+
+An invitation's buttons no longer do nothing when pressed early. There is no migration in this
+release.
+
+### Fixed
+
+- **Joining by an invitation on a slow connection.** Join, Decline and Switch account on the
+  invitation page, and "Email me a link", work only once the page's script has run, but they
+  looked ready before that. Pressed then, they did nothing and said nothing, and the person
+  stayed on the invitation. They are now disabled until the page is ready, as the buttons on the
+  sign-in page already were.
+  ([#241](https://github.com/gateweavehq/agents/pull/241))
+
+### If you run your own
+
+- **Nothing to do.**
+
 ## [0.27.0] - 2026-11-15
 
 Agents can keep notes between runs. A workspace has a memory that its people can read and
