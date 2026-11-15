@@ -32,7 +32,7 @@ async function without<Result>(table: string, work: () => Promise<Result>): Prom
 /** What the Worker logged about failed queries since `from`: a kind and a reference each. */
 function failuresSince(from: number) {
 	return agents.logs.slice(from).flatMap((log) => {
-		const found = /d1: a query failed \((.+)\), reference ([0-9a-f]{8})/.exec(log.message);
+		const found = /d1: a query failed \((.+?)\), reference ([0-9a-f]{8})/.exec(log.message);
 		return found ? [{ kind: found[1], reference: found[2] }] : [];
 	});
 }
@@ -107,5 +107,15 @@ describe("a session read that failed", () => {
 		expect(failuresSince(from).map(({ kind }) => kind)).toContain(
 			"D1_ERROR, SQLITE_ERROR, no such table: session",
 		);
+		// The log has the statement that failed, with a `?` where the token was.
+		expect(logged).toContain('where "session"."token" = ? limit ?');
+
+		// Better Auth throws its own error for this, with the database's as the cause. The page
+		// shows that one's reference, and the browser is sent the same, so it shows it too.
+		const references = failuresSince(from).map(({ reference }) => reference);
+		const shown = /<code>([0-9a-f]{8})<\/code>/.exec(html)?.[1];
+		expect(shown).toBeDefined();
+		expect(references).toContain(shown);
+		expect(html).toContain(`new Error("Failed to get session (reference ${shown})")`);
 	});
 });

@@ -8,8 +8,11 @@ import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 export const LOCAL =
 	"D1_ERROR: Failed to get session commit token: internal error; reference = test";
 
-/** A local D1 with the app's migrations applied. Dispose of it after the tests. */
-export async function migratedD1(name: string) {
+/**
+ * A local D1 with the app's migrations applied, or without them, as a deployment's is before its
+ * first migration. Dispose of it after the tests.
+ */
+export async function migratedD1(name: string, { migrate = true } = {}) {
 	const mf = new Miniflare(
 		convertV4MiniflareOptions({
 			modules: true,
@@ -18,6 +21,7 @@ export async function migratedD1(name: string) {
 		}),
 	);
 	const d1 = (await mf.getD1Database("DB")) as unknown as D1Database;
+	if (!migrate) return { d1, dispose: () => mf.dispose() };
 	const migrations = resolve(import.meta.dirname, "../../../migrations");
 	for (const file of readdirSync(migrations)
 		.filter((each) => each.endsWith(".sql"))

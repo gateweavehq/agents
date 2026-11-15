@@ -1,10 +1,10 @@
 import { inspect } from "node:util";
-import { eq } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../auth/config";
 import { createDb, schema } from ".";
 import { faulty, LOCAL, migratedD1 } from "./faulty-d1";
-import { DatabaseError } from "./query-failure";
+import { DatabaseError, withoutStatements } from "./query-failure";
 import { READ_ATTEMPTS } from "./retry-reads";
 
 // A query of D1 that failed for good (AGT-133). Drizzle's error for it is `Failed query: select …
@@ -42,11 +42,13 @@ afterEach(() => {
 
 const logged = () => printed.join("\n");
 
-/** The lines this module logs: a kind and a reference each. */
+/** The lines this module logs: a kind and a reference each, and the statement if there was one. */
 const failures = () =>
 	printed.flatMap((line) => {
-		const found = /^error: d1: a query failed \((.+)\), reference ([0-9a-f]{8})$/.exec(line);
-		return found ? [{ kind: found[1], reference: found[2] }] : [];
+		const found = /^error: d1: a query failed \((.+?)\), reference ([0-9a-f]{8})(?:: (.+))?$/.exec(
+			line,
+		);
+		return found ? [{ kind: found[1], reference: found[2], statement: found[3] }] : [];
 	});
 
 /** What threw, or nothing. */
@@ -60,7 +62,7 @@ async function thrownBy(work: () => Promise<unknown>): Promise<unknown> {
 }
 
 describe("a session read that failed for good", () => {
-	it("logs no token, no statement and no values", async () => {
+	it("logs the statement and none of its values, so no token", async () => {
 		const { database, state } = faulty(real);
 		const auth = createAuth({
 			db: createDb(database),
@@ -90,7 +92,9 @@ describe("a session read that failed for good", () => {
 		expect(logged()).not.toContain(token);
 		expect(logged()).not.toContain("Failed query");
 		expect(logged()).not.toContain("params");
-		expect(logged()).not.toMatch(/select/i);
+		// What Better Auth logs is the error, which has nothing of the statement.
+		const theirs = printed.filter((line) => line.includes("[Better Auth]")).join("\n");
+		expect(theirs).not.toMatch(/select/i);
 		expect(inspect(error, { depth: 8 })).not.toContain(token);
 		expect(inspect(error, { depth: 8 })).not.toMatch(/select/i);
 
@@ -99,7 +103,13 @@ describe("a session read that failed for good", () => {
 		expect(cause).toBeInstanceOf(DatabaseError);
 		const { kind, reference } = cause as DatabaseError;
 		expect(kind).toBe("D1_ERROR, local-commit-token");
-		expect(failures()).toEqual([{ kind, reference }]);
+		const [failure, ...others] = failures();
+		expect(others).toEqual([]);
+		expect(failure).toMatchObject({ kind, reference });
+		// The statement as it was sent, with a `?` where the token was.
+		expect(failure?.statement).toMatch(/^select "id", .* where "session"\."token" = \? limit \?$/);
+		// The cause says the kind and nothing else, for code that reads causes.
+		expect(((cause as Error).cause as Error).message).toBe(kind);
 		expect((cause as DatabaseError).message).toBe(
 			`A database query failed (reference ${reference})`,
 		);
@@ -123,11 +133,109 @@ describe("a query that failed", () => {
 		const shown = inspect(error, { depth: 8 });
 		expect(shown).not.toContain(SECRET);
 		expect(shown).not.toMatch(/select|params|user_id/i);
-		expect((error as DatabaseError).kind).toBe("D1_ERROR");
-		expect(failures()).toEqual([
-			{ kind: "D1_ERROR", reference: (error as DatabaseError).reference },
+		expect((error as DatabaseError).kind).toBe("D1_ERROR, queued-too-long");
+		expect(failures()).toMatchObject([
+			{ kind: "D1_ERROR, queued-too-long", reference: (error as DatabaseError).reference },
 		]);
+		// The log has the statement, with a `?` where the value was.
+		expect(failures()[0]?.statement).toMatch(/ from "member" where "member"\."user_id" = \?$/);
 		expect(logged()).not.toContain(SECRET);
+		expect(logged()).not.toContain("params");
+	});
+
+	it("logs a statement with a token among its values, and not the token", async () => {
+		const { database, state } = faulty(real);
+		const db = createDb(database);
+		const token = "kJ8sT0kEnT0kEnT0kEnT0kEnT0kEn";
+		state.failures = 1;
+		state.message = "D1_ERROR: something nobody has seen before";
+
+		await thrownBy(() =>
+			db.select().from(schema.session).where(eq(schema.session.token, token)).all(),
+		);
+
+		expect(failures()[0]?.statement).toMatch(/ from "session" where "session"\."token" = \?$/);
+		expect(logged()).not.toContain(token);
+	});
+
+	it("cuts a long statement short", async () => {
+		const { database, state } = faulty(real);
+		const db = createDb(database);
+		state.failures = 1;
+		const ids = Array.from({ length: 400 }, (_, index) => `id-${index}`);
+
+		await thrownBy(() =>
+			db.select().from(schema.member).where(inArray(schema.member.userId, ids)).all(),
+		);
+
+		const statement = failures()[0]?.statement ?? "";
+		expect(statement.length).toBe(601);
+		expect(statement.endsWith("…")).toBe(true);
+	});
+
+	// What Cloudflare's D1 error list and SQLite say in fixed words, by a name each.
+	it.each([
+		["overloaded", "D1_ERROR: D1 DB is overloaded."],
+		["queue-full", "D1_ERROR: D1 DB is overloaded. Too many requests queued."],
+		["cpu-reset", "D1_ERROR: D1 DB exceeded its CPU time limit and was reset."],
+		["memory-reset", "D1_ERROR: D1 DB's isolate exceeded its memory limit and was reset."],
+		[
+			"storage-timeout",
+			"D1_ERROR: D1 DB storage operation exceeded timeout which caused object to be reset.",
+		],
+		[
+			"response-too-large",
+			"D1_ERROR: D1 query result exceeded the maximum response size limit of 50 MB",
+		],
+		["too-many-variables", "D1_ERROR: too many SQL variables at offset 412: SQLITE_ERROR"],
+		["syntax-error", 'D1_ERROR: near "form": syntax error at offset 9: SQLITE_ERROR'],
+	])("names what D1 says in fixed words: %s", async (label, message) => {
+		const { database, state } = faulty(real);
+		const db = createDb(database);
+		state.failures = 1;
+		state.message = message;
+
+		const error = await thrownBy(() => db.select().from(schema.member).all());
+
+		const sqlite = message.endsWith(": SQLITE_ERROR") ? "SQLITE_ERROR, " : "";
+		expect((error as DatabaseError).kind).toBe(`D1_ERROR, ${sqlite}${label}`);
+	});
+
+	it("names a failure without D1's code by its fixed words alone", async () => {
+		const { database, state } = faulty(real);
+		const db = createDb(database);
+		state.failures = 1;
+		state.message = "Too many API requests by single worker invocation.";
+
+		const error = await thrownBy(() => db.select().from(schema.member).all());
+
+		expect((error as DatabaseError).kind).toBe("too-many-api-requests");
+	});
+
+	// Words that name a table or a code may be what a row held, wherever D1 quotes one.
+	it.each([
+		[
+			"a table's name inside a body it could not read",
+			'D1_ERROR: Failed to parse body as JSON, got: {"note":"no such table: SECRETWORD"}',
+			"SECRETWORD",
+		],
+		["a code in the middle of its words", "D1_ERROR: row said SQLITE_SECRET_WORD", "SECRET_WORD"],
+		[
+			"a constraint's name after a colon further in",
+			"D1_ERROR: Failed to parse body as JSON, got: UNIQUE constraint failed: SECRETWORD",
+			"SECRETWORD",
+		],
+	])("quotes D1 only where it speaks for itself, not %s", async (_what, message, word) => {
+		const { database, state } = faulty(real);
+		const db = createDb(database);
+		state.failures = 1;
+		state.message = message;
+
+		const error = await thrownBy(() => db.select().from(schema.member).all());
+
+		expect((error as DatabaseError).kind).toBe("D1_ERROR");
+		expect(inspect(error, { depth: 8 })).not.toContain(word);
+		expect(logged()).not.toContain(word);
 	});
 
 	it.each([
@@ -223,11 +331,100 @@ describe("a query that failed", () => {
 		expect(logged()).not.toContain(SECRET);
 	});
 
+	it("leaves alone what fails while a batch is put together, before the database is asked", async () => {
+		const db = createDb(real);
+		const broken = new TypeError("not a query");
+		const notAQuery = {
+			_prepare() {
+				throw broken;
+			},
+		};
+
+		const error = await thrownBy(() =>
+			db.batch([notAQuery] as unknown as Parameters<typeof db.batch>[0]),
+		);
+
+		expect(error).toBe(broken);
+		expect(printed).toEqual([]);
+	});
+
 	it("leaves a query that worked alone", async () => {
 		const db = createDb(real);
 		expect(await db.select().from(schema.member).where(eq(schema.member.userId, "nobody"))).toEqual(
 			[],
 		);
 		expect(printed).toEqual([]);
+	});
+});
+
+// None of what `withoutStatements` reaches for is in Drizzle's public types, so a version may
+// take it away. Then the statements would be in the errors again, and nothing would say so.
+describe("a Drizzle that is not as expected", () => {
+	const client = { batch: async () => [] };
+
+	it.each([
+		["no session", {}],
+		["a session that prepares no query", { session: { client } }],
+		["a session without its client", { session: { prepareQuery: () => ({}) } }],
+		["a client that sends no batch", { session: { prepareQuery: () => ({}), client: {} } }],
+	])("is refused when the database is made: %s", (_what, db) => {
+		expect(() => withoutStatements(db)).toThrow("Drizzle's session cannot be reached");
+	});
+
+	it("is refused at the first query when a prepared query is sent by another name", () => {
+		const session = { prepareQuery: () => ({ execute: async () => [] }), client };
+		withoutStatements({ session });
+
+		expect(() => session.prepareQuery()).toThrow("Drizzle's prepared query is sent some other way");
+	});
+
+	it("is accepted when a prepared query has any of the four", async () => {
+		const session = { prepareQuery: () => ({ all: async () => ["a row"] }), client };
+		withoutStatements({ session });
+
+		expect(await session.prepareQuery().all()).toEqual(["a row"]);
+	});
+});
+
+// Better Auth's oauth-provider, which `mcp({ resource })` is built on, writes the resource into
+// `oauth_resource` as it starts. Before the migrations have run there is no such table, which it
+// expects and notes at debug level; anything else it logs as an error. It tells the two apart by
+// reading the failure's causes for SQLite's words.
+describe("a database that has not been migrated yet", () => {
+	it("is still what the oauth-provider takes a missing table for", async () => {
+		const { d1, dispose: disposeEmpty } = await migratedD1("query-failure-empty", {
+			migrate: false,
+		});
+		try {
+			const auth = createAuth({
+				db: createDb(d1),
+				secret: "a-test-secret-that-is-long-enough-for-better-auth",
+				baseURL: "https://agents.test",
+				mcpResource: "https://agents.test/mcp",
+			});
+			await auth.$context;
+
+			// It did ask, and the table was not there.
+			expect(failures().map(({ kind }) => kind)).toContain(
+				"D1_ERROR, SQLITE_ERROR, no such table: oauth_resource",
+			);
+			expect(logged()).not.toContain("could not seed");
+		} finally {
+			await disposeEmpty();
+		}
+	});
+});
+
+describe("what SQLite refused, in the local runtime's own words", () => {
+	it.each([
+		["a table that is not there", "select * from nope", "SQLITE_ERROR, no such table: nope"],
+		["a column that is not there", "select nope from member", "SQLITE_ERROR, no such column: nope"],
+		["a statement it cannot read", "selec 1", "SQLITE_ERROR, syntax-error"],
+	])("names %s", async (_what, statement, kind) => {
+		const db = createDb(real);
+
+		const error = await thrownBy(() => db.run(sql.raw(statement)));
+
+		expect((error as DatabaseError).kind).toBe(`D1_ERROR, ${kind}`);
 	});
 });
