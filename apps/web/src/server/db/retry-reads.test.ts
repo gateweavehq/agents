@@ -169,10 +169,6 @@ describe("which failures are sent again", () => {
 		["code-updated", "D1_ERROR: D1 DB reset because its code was updated."],
 		["replica-disconnected", "D1_ERROR: Replica disconnected from primary."],
 		["cannot-resolve", "D1_ERROR: Cannot resolve D1 DB due to transient issue on remote node."],
-		[
-			"client-disconnected",
-			"D1_ERROR: Can't read from request stream because client disconnected.",
-		],
 		["local-commit-token", LOCAL],
 	])("a passing one (%s), logged by that name", async (label, message) => {
 		const { database, state } = faulty(real);
@@ -201,6 +197,8 @@ describe("which failures are sent again", () => {
 			"D1_ERROR: D1 query result exceeded the maximum response size limit of 50 MB",
 		],
 		["too many requests", "Too many API requests by single worker invocation."],
+		// The list says to retry this one, but a resend cannot help a caller who left.
+		["a caller who left", "D1_ERROR: Can't read from request stream because client disconnected."],
 		["the wrong number of values", "D1_ERROR: Wrong number of parameter bindings for SQL query."],
 		["a column that is not there", "D1_COLUMN_NOTFOUND: Column not found (missing)"],
 		["one nobody knows", "D1_ERROR: something nobody has seen before"],

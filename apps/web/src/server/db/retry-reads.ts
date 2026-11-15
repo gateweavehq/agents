@@ -26,7 +26,9 @@ const SENDS: ReadonlySet<PropertyKey> = new Set(["all", "raw", "first", "run"]);
  * queries" page matches them, and the one the local runtime gives under load (AGT-131). Anything
  * else is the caller's at once: an overloaded database is not helped by more requests, a statement
  * that used too much CPU or memory or returned too much would again, and what is not known here
- * is not known to be safe to repeat.
+ * is not known to be safe to repeat. `Can't read from request stream because client disconnected`
+ * is left out although the list says to retry it: it may be the caller's own doing, and a resend
+ * cannot help a caller who left.
  */
 const PASSING: readonly (readonly [label: string, text: string])[] = [
 	["connection-lost", "Network connection lost"],
@@ -34,7 +36,6 @@ const PASSING: readonly (readonly [label: string, text: string])[] = [
 	["code-updated", "reset because its code was updated"],
 	["replica-disconnected", "Replica disconnected from primary"],
 	["cannot-resolve", "Cannot resolve D1 DB due to transient issue on remote node"],
-	["client-disconnected", "Can't read from request stream because client disconnected"],
 	["local-commit-token", "Failed to get session commit token"],
 ];
 
