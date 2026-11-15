@@ -3,6 +3,7 @@ import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { LegalLinks } from "#/components/legal-links";
+import { LiveButton } from "#/components/live-button";
 import { Button } from "#/components/ui/button";
 import { VerifyEmailButton } from "#/components/verify-email";
 import { authClient } from "#/lib/auth-client";
@@ -135,9 +136,9 @@ function ValidInvitation({
 					You are signed in as <span className="font-medium">{viewer.email}</span>. Sign in with{" "}
 					{invitation.email} to accept.
 				</p>
-				<Button className="w-full" onClick={switchAccount} disabled={pending}>
+				<LiveButton className="w-full" onClick={switchAccount} disabled={pending}>
 					Switch account
-				</Button>
+				</LiveButton>
 			</Card>
 		);
 	}
@@ -160,12 +161,12 @@ function ValidInvitation({
 		<Card title={title}>
 			{intro}
 			<div className="space-y-2">
-				<Button className="w-full" onClick={accept} disabled={pending}>
+				<LiveButton className="w-full" onClick={accept} disabled={pending}>
 					Join {invitation.workspaceName}
-				</Button>
-				<Button variant="ghost" className="w-full" onClick={decline} disabled={pending}>
+				</LiveButton>
+				<LiveButton variant="ghost" className="w-full" onClick={decline} disabled={pending}>
 					Decline
-				</Button>
+				</LiveButton>
 			</div>
 		</Card>
 	);

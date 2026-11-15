@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button } from "#/components/ui/button";
+import { LiveButton } from "#/components/live-button";
 import { authClient } from "#/lib/auth-client";
 
 /**
@@ -44,7 +44,7 @@ export function VerifyEmailButton({
 		);
 	}
 	return (
-		<Button
+		<LiveButton
 			className={className}
 			variant={variant}
 			size={size}
@@ -52,6 +52,6 @@ export function VerifyEmailButton({
 			disabled={state === "sending"}
 		>
 			Email me a link
-		</Button>
+		</LiveButton>
 	);
 }

@@ -85,6 +85,46 @@ test("someone joins by an invitation", async ({ page, browser }) => {
 	}
 });
 
+test("an invitation cannot be answered before its page's script has run", async ({
+	page,
+	browser,
+}) => {
+	const { name, slug } = await startWorkspace(page);
+	await page.goto(`/${slug}/settings/members`);
+	await waitForHydration(page);
+	const guest = newPerson("guest");
+	await page.getByLabel("Email address").fill(guest.email);
+	await page.getByRole("button", { name: "Create invite link" }).click();
+	const invitation = await page.getByLabel("Invite link").first().inputValue();
+
+	const guestContext = await newBrowserContext(browser);
+	let release = () => {};
+	try {
+		const guestPage = await guestContext.newPage();
+		await signUp(guestPage, guest);
+		// A slow connection: the page is there to read and press well before its script is. Pressed
+		// then, a button that looked ready did nothing, and the guest stayed on the invitation.
+		const arrived = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await guestPage.route(/\/assets\/[^/]+\.js$/, async (route) => {
+			await arrived;
+			await route.continue();
+		});
+		await guestPage.goto(invitation, { waitUntil: "commit" });
+		const join = guestPage.getByRole("button", { name: `Join ${name}` });
+		await expect(join).toBeDisabled();
+		await expect(guestPage.getByRole("button", { name: "Decline" })).toBeDisabled();
+
+		release();
+		await join.click();
+		await expect(guestPage).toHaveURL(new RegExp(`/${slug}(/|$)`));
+	} finally {
+		release();
+		await guestContext.close();
+	}
+});
+
 test("someone adds a ready-made setup that asks for its server's address", async ({ page }) => {
 	const { slug } = await startWorkspace(page);
 	await page.goto(`/${slug}/setups`);
