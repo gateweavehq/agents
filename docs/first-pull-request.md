@@ -4,35 +4,48 @@ Every step between an empty Cloudflare account and an agent on your own server t
 request, in order, with what each one needs. [self-hosting.md](self-hosting.md) has the details
 of each setting; this page is the route through them.
 
-Times are from one rehearsal on 2026-11-15 in an empty Cloudflare account. Steps marked **not
-timed** were not part of it.
+**What was tried.** One rehearsal, on 2026-11-15, in an empty Cloudflare account whose plan was
+not noted: the button's deploy, signing up, a workspace, a model key, an agent and one chat. The
+two times below are from it. Everything else on this page is from the code, these docs and
+Cloudflare's documentation, and is marked **not tried**: nobody has yet walked steps 3 to 6 on a
+fresh self-hosted server and written down what happened.
 
-| Step                                          | Needs                                                        | Plan         | Time           |
-| --------------------------------------------- | ------------------------------------------------------------ | ------------ | -------------- |
-| [1. Deploy](#1-deploy)                        | A Cloudflare account, a GitHub or GitLab account             | Workers Free | About 67 s     |
-| [2. A first chat](#2-a-first-chat)            | A model provider's API key                                   | Workers Free | Under a minute |
-| [3. Connect GitHub](#3-connect-github)        | A GitHub account or organization where you may create an App | Workers Free | Not timed      |
-| [4. Turn sandboxes on](#4-turn-sandboxes-on)  | A machine with Docker, Node.js and pnpm                      | Workers Paid | Not timed      |
-| [5. A pull request](#5-a-pull-request)        | Steps 1 to 4                                                 | Workers Paid | Not timed      |
-| [6. From an issue](#6-from-an-issue-optional) | A Gateweave Track server, steps 1 to 4                       | Workers Paid | Not timed      |
+| Step                                          | Needs                                                        | Tried     | Time           |
+| --------------------------------------------- | ------------------------------------------------------------ | --------- | -------------- |
+| [1. Deploy](#1-deploy)                        | A Cloudflare account, a GitHub or GitLab account             | Yes       | About 67 s     |
+| [2. A first chat](#2-a-first-chat)            | A model provider's API key                                   | Yes       | Under a minute |
+| [3. Connect GitHub](#3-connect-github)        | A GitHub account or organization where you may create an App | Not tried | Not timed      |
+| [4. Turn sandboxes on](#4-turn-sandboxes-on)  | Workers Paid; a machine with Docker, Node.js and pnpm        | Not tried | Not timed      |
+| [5. A pull request](#5-a-pull-request)        | Steps 1 to 4                                                 | Not tried | Not timed      |
+| [6. From an issue](#6-from-an-issue-optional) | A Gateweave Track server, steps 1 to 4                       | Not tried | Not timed      |
 
-## What each plan allows
+## What Cloudflare's plans say
 
-**Workers Free** is enough for steps 1 to 3. Agents uses a Worker, a D1 database, Durable Objects
-with SQLite storage, a Workflow and a daily Cron Trigger, all of which the Free plan includes,
-within its daily limits ([Workers](https://developers.cloudflare.com/workers/platform/pricing/),
-[Durable Objects](https://developers.cloudflare.com/durable-objects/platform/pricing/),
-[D1](https://developers.cloudflare.com/d1/platform/pricing/)). On it you can sign up, make
-workspaces, chat with agents and teams on your own model key, see every run with its trace and
-cost, find the coding agents configured in your repositories, and apply a setup to a repository,
-which opens a pull request of the setup's files.
+What Agents uses, and what Cloudflare's documentation states about each. Whether a server stays
+within the Free plan's limits in daily use has not been tried.
 
-**Workers Paid** comes in at step 4. An agent that edits code needs a sandbox, a sandbox is a
-[Cloudflare Container](https://developers.cloudflare.com/containers/pricing/), and Containers
-are not on the Free plan. Your account pays for the time they run;
-[Sandboxes](self-hosting.md#sandboxes) has the price and the limits you can set.
+- **Containers need Workers Paid.** A sandbox is a
+  [Cloudflare Container](https://developers.cloudflare.com/containers/pricing/), which Cloudflare
+  bills as part of the Workers Paid plan; its Free column has no allowance. So an agent that
+  edits code (steps 4 to 6) needs the Paid plan, and your account pays for the time sandboxes
+  run. [Sandboxes](self-hosting.md#sandboxes) has the price and the limits you can set.
+- **The rest exists on Workers Free.** Durable Objects with SQLite storage
+  ([pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)),
+  D1 ([pricing](https://developers.cloudflare.com/d1/platform/pricing/)), Workflows and Cron
+  Triggers ([limits](https://developers.cloudflare.com/workers/platform/limits/)) are all
+  offered on the Free plan, each with daily or per-account limits. When D1's daily limit is
+  reached, its queries fail until the next day.
+- **The Free plan gives a request 10 ms of CPU time.** The same
+  [limits page](https://developers.cloudflare.com/workers/platform/limits/) says that "heavier
+  workloads that handle authentication, server-side rendering, or parse large payloads typically
+  use 10-20 ms". Agents signs people in and renders its pages on the server, so some of its
+  requests may go over on Free. The Paid plan's limit is 30 seconds by default. The Free plan
+  also stops at 100,000 requests a day and 50 subrequests per request.
+- **Not tried on a Free account:** scanning repositories, applying a setup, teams of agents, and
+  the Workflow that writes a repository's wiki. The rehearsal's deploy, sign-up and chat worked,
+  on an account whose plan was not noted.
 
-**Docker** comes in at step 4 too, and only there: a deploy that includes sandboxes builds their
+**Docker** comes in at step 4, and only there: a deploy that includes sandboxes builds their
 image from `sandbox/Dockerfile` on the machine that deploys.
 
 Model usage is never on your Cloudflare bill. It goes to the provider whose key the workspace
@@ -45,17 +58,23 @@ About 67 s from submitting the form to a Worker that answers.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/gateweavehq/agents)
 
-On the form, choose **+ Create new** for the D1 database and give `BETTER_AUTH_SECRET` a random
-string of at least 32 characters, such as the output of `openssl rand -base64 32`. Keep a copy of
-it. [Deploy with the button](self-hosting.md#deploy-with-the-button) explains every field.
+On the form, choose **+ Create new** for the D1 database, and for `BETTER_AUTH_SECRET` paste a
+generated value, such as the output of `openssl rand -base64 32`, not something you type. Keep a
+copy of it. [Deploy with the button](self-hosting.md#deploy-with-the-button) explains every
+field.
 
-Nothing has to be set after the build. The server signs sessions with that secret and, until you
-give it a `SECRETS_KEY`, also encrypts the keys workspaces save under a key made from it. That is
-why the copy matters: [changing it](self-hosting.md#the-key-that-encrypts-workspaces-secrets)
-means entering those keys again.
+Nothing has to be set after the build to try the next step. The server signs sessions with that
+secret and, until you give it a `SECRETS_KEY`, also encrypts the keys workspaces store under a
+key made from it. A secret that is short or plainly not random is refused for that, and the
+Models page then says so. For anything beyond a first try, set a `SECRETS_KEY` before you store
+a key: [The key that encrypts workspaces' secrets](self-hosting.md#the-key-that-encrypts-workspaces-secrets)
+says why and how. The rehearsal ran on the version before this one, where a `SECRETS_KEY` had
+to be added by hand first: a first chat without one is covered by the tests and has not been
+tried on Cloudflare.
 
 To deploy from the command line instead, see
-[Deploy from the command line](self-hosting.md#deploy-from-the-command-line). That was not timed.
+[Deploy from the command line](self-hosting.md#deploy-from-the-command-line). That was not tried
+in the rehearsal.
 
 ## 2. A first chat
 
@@ -74,7 +93,7 @@ and no repository: it can talk and use MCP servers, not edit code.
 ## 3. Connect GitHub
 
 Needs a GitHub account or organization where you may create a GitHub App, and admin rights on
-the account whose repositories you connect. Not timed.
+the account whose repositories you connect. Not tried in the rehearsal.
 
 Each server has a GitHub App of its own, because the app's addresses point at that server.
 [github-app.md](github-app.md) has the steps:
@@ -91,7 +110,8 @@ Each server has a GitHub App of its own, because the app's addresses point at th
 
 From here the workspace lists the coding agents set up in those repositories, and
 [applying a setup](github-app.md#applying-a-setup) opens a pull request. That one needs no
-sandbox, so it works on the Free plan. It carries the setup's files, not an agent's work.
+sandbox, and so no Containers. It carries the setup's files, not an agent's work. Neither was
+tried on a Free account.
 
 GitLab connects with an access token under **Settings > GitLab** and needs nothing on the
 server, but agents cannot open merge requests on GitLab yet. For a pull request, use GitHub.
@@ -99,7 +119,7 @@ server, but agents cannot open merge requests on GitLab yet. For a pull request,
 ## 4. Turn sandboxes on
 
 Needs the Workers Paid plan, and a machine with Docker running, Node.js 24 (22+ works) and
-pnpm 12. Not timed.
+pnpm 12. Not tried in the rehearsal.
 
 1. Clone your copy of the repository and run `pnpm install`.
 2. In `wrangler.jsonc`, at the top level, add the sandbox to the Durable Object bindings and add
@@ -137,7 +157,8 @@ as above.
 
 ## 5. A pull request
 
-Needs steps 1 to 4, with the GitHub App installed on the repository. Not timed.
+Needs steps 1 to 4, with the GitHub App installed on the repository. Not tried in the
+rehearsal.
 
 1. Edit the agent from step 2, or make another: give it a sandbox, and under **Repository**
    choose the one it works in.
@@ -152,7 +173,7 @@ and the repository's token never enters the sandbox
 ## 6. From an issue (optional)
 
 Needs a [Gateweave Track](https://github.com/gateweavehq/track) server that yours can reach, and
-steps 1 to 4. Not timed on a self-hosted pair.
+steps 1 to 4. Not tried on a self-hosted pair.
 
 Track is not needed for a pull request. It is what turns "assign an issue" into one:
 
@@ -168,9 +189,10 @@ Two Workers on `workers.dev` cannot reach each other, as
 providers. Agents and Track call each other, so give each a custom domain, or add
 `global_fetch_strictly_public` to `compatibility_flags` in both. This pairing was not rehearsed.
 
-For scale: on Gateweave Cloud, one such run had its pull request open 3 minutes 45 seconds after
-the issue was assigned (the run in the [README](../README.md)). That is the agent's working time
-on one issue, not a setup time.
+No self-hosted run has been timed. The one figure there is comes from Gateweave Cloud, not from
+a server set up by these steps: in one recorded run there, the agent's pull request was open 3
+minutes 45 seconds after the issue was assigned. The [README](../README.md) links the recording
+and the pull request. It is one agent's working time on one issue, not a setup time.
 
 ## What is still done by hand
 
