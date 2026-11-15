@@ -31,12 +31,19 @@ export function RunStatusBadge({ status }: { status: RunStatus }) {
  * How long a run took, or has taken so far. A run closed for never reporting back has no end, and
  * no duration.
  */
-export function runDuration(
-	run: Pick<Run, "status" | "startedAt" | "endedAt">,
-	now = Date.now(),
-): string {
+function runDuration(run: Pick<Run, "status" | "startedAt" | "endedAt">, now: number): string {
 	const end = run.endedAt ?? (run.status === "running" ? now : null);
 	return end === null ? "Unknown" : formatDuration(Math.max(0, end - run.startedAt));
+}
+
+/**
+ * A run's duration, in an element of its own. A run still going is timed by the clock, which reads
+ * later in the browser than it did on the server, so the two never agree on the text. React takes
+ * such a difference for a broken page and renders all of it again, and a click that lands meanwhile
+ * is lost. The words here may differ, and the next refresh brings the browser's.
+ */
+export function RunDuration({ run }: { run: Pick<Run, "status" | "startedAt" | "endedAt"> }) {
+	return <span suppressHydrationWarning>{runDuration(run, Date.now())}</span>;
 }
 
 /** "1.2K in · 300 out". */
