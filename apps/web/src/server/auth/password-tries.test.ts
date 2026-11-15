@@ -140,6 +140,7 @@ describe("running out of tries at a password", () => {
 		);
 
 		expect(refused.status).toBe(429);
-		await vi.waitFor(() => expect(sentTo).toEqual(["rae@example.com"]));
+		// Sent after the answer. The wait returns as soon as it has gone; 10 s is only its end.
+		await vi.waitFor(() => expect(sentTo).toEqual(["rae@example.com"]), { timeout: 10_000 });
 	});
 });

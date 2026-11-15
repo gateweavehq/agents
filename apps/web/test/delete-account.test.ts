@@ -261,12 +261,16 @@ describe("deleting an account", () => {
 			body: { email: person.email, password: PASSWORD },
 		});
 		expect(signIn.status).toBe(401);
-		await vi.waitFor(async () => {
-			const told = (await agents.emails()).filter((email) => email.to === person.email);
-			expect(told.map((email) => email.subject)).toContain(
-				"Your Gateweave Agents account was deleted",
-			);
-		});
+		// Sent after the response. The wait returns as soon as it has arrived; 10 s is only its end.
+		await vi.waitFor(
+			async () => {
+				const told = (await agents.emails()).filter((email) => email.to === person.email);
+				expect(told.map((email) => email.subject)).toContain(
+					"Your Gateweave Agents account was deleted",
+				);
+			},
+			{ timeout: 10_000 },
+		);
 	});
 
 	it("keeps their runs for the workspace's usage, with no words and no name", async () => {
@@ -287,10 +291,14 @@ describe("deleting an account", () => {
 		});
 		expect(response.status).toBe(200);
 
-		await vi.waitFor(async () => {
-			const [after] = await workspace.registry.listRuns();
-			expect(after).toMatchObject({ id: run?.id, conversationId: null, startedBy: person.id });
-		});
+		// Forgotten after the response. The wait returns as soon as it is done; 10 s is only its end.
+		await vi.waitFor(
+			async () => {
+				const [after] = await workspace.registry.listRuns();
+				expect(after).toMatchObject({ id: run?.id, conversationId: null, startedBy: person.id });
+			},
+			{ timeout: 10_000 },
+		);
 		const page = await agents.fetch(`${origin}/usage-stays/runs`, {
 			headers: { cookie: owner.cookie },
 		});
