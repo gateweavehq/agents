@@ -8,6 +8,43 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.27.0] - 2026-11-15
+
+Agents can keep notes between runs. A workspace has a memory that its people can read and
+correct, and an agent with the Memory switch on can add to it and look things up. This release has
+two migrations, in each workspace's own registry, which apply themselves.
+
+### Added
+
+- **Memory.** A workspace keeps short notes: facts, decisions and preferences, each with who or
+  what wrote it, in which run, and when. An agent on the Gateweave engine with the new Memory
+  switch on gets three tools: `remember`, `recall` (by keyword, in any language) and `forget`
+  (only what it wrote itself). The switch is off for every existing agent. The new Memory page
+  lists the notes with search and filters; every member can read them, and owners and admins can
+  add, edit and delete them. ([#239](https://github.com/gateweavehq/agents/pull/239))
+- **Notes from outside wait for a person.** An agent reads what outsiders wrote: an issue, a
+  web page, a trigger's event. So what it notes is used at once only when a person's chat
+  message started the run and the note is about the agent itself or that person. Anything it
+  notes about the workspace or a repository, and anything from a run a trigger started, waits
+  on the Memory page until an owner or admin approves or dismisses it, and no agent recalls it
+  before that. Recalled notes are handed to the model as notes with their source, never as
+  instructions. ([#239](https://github.com/gateweavehq/agents/pull/239))
+
+### Changed
+
+- **The README opens with what it does for you**: assign an issue to an agent, get a pull
+  request back, with a frame of one real run that links to its recording.
+  ([#238](https://github.com/gateweavehq/agents/pull/238))
+
+### If you run your own
+
+- **Nothing to do** beyond updating. The registry's migrations (`0039` and `0040`, the notes and
+  their search index) apply themselves when a workspace is next used. Notes are text in the
+  workspace's own storage: no vector index and no new binding. What an agent notes in a chat is
+  readable by every member of the workspace, which the agent form and the Memory page say.
+  Deleting an account removes the notes about that person and those agents wrote in that
+  person's runs; the audit log keeps the first 80 characters of a note from when it was added.
+
 ## [0.26.0] - 2026-11-15
 
 Gateweave Track is connected in one step: choose what the agent is, approve it in Track, and it
