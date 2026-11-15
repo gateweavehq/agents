@@ -28,17 +28,20 @@ Workers Builds, so every push to its main branch deploys. On the form:
 - **D1 database**: choose **+ Create new** and give it a name. The form picks an existing database
   when one in your account has the name in `wrangler.jsonc` (`gateweave-agents`), so check it
   before you deploy.
-- **BETTER_AUTH_SECRET** signs sessions. Use a random string of at least 32 characters, for
-  example from `openssl rand -base64 32`, keep it secret and keep a copy. Changing it later
-  signs everyone out, and on a server without a `SECRETS_KEY` it also makes workspaces add their
-  keys and secret values again (see
+- **BETTER_AUTH_SECRET** signs sessions. Paste a generated value, such as the output of
+  `openssl rand -base64 32`, not something you type: until you set a `SECRETS_KEY` it also
+  encrypts what workspaces store, and a server refuses to do that with a secret that is short or
+  plainly not random. Keep it secret and keep a copy. Changing it later signs everyone out, and
+  on a server without a `SECRETS_KEY` it also makes everything workspaces stored unreadable (see
   [The key that encrypts workspaces' secrets](#the-key-that-encrypts-workspaces-secrets)).
 - Leave the build and deploy commands as they are. The deploy command applies the database
   migrations before the new code goes live.
 
 When the build finishes, open the Worker's address, create an account and then a workspace.
-Nothing else has to be set first: workspaces can save model keys and secret values at once. The
-first account runs the server. Until it changes that, anyone who can reach the address can sign up and create
+Nothing else has to be set first: workspaces can save model keys and secret values at once. For
+anything beyond a first try, give the server a `SECRETS_KEY` of its own before they do;
+[The key that encrypts workspaces' secrets](#the-key-that-encrypts-workspaces-secrets) says why
+and how. The first account runs the server. Until it changes that, anyone who can reach the address can sign up and create
 workspaces of their own, and a workspace is only visible to its members. See
 [Who may sign up](#who-may-sign-up) to close that.
 
@@ -82,9 +85,18 @@ Every later `pnpm run deploy` builds, applies new migrations, and only then depl
 Objects migrate their own storage when each one wakes.
 
 Workspaces can save model keys and secret values at once, encrypted under a key made from
-`BETTER_AUTH_SECRET`. Nobody saw that secret, so nobody holds a copy of it: to encrypt with a key
-you do hold a copy of, set `SECRETS_KEY` before workspaces save anything (see
-[The key that encrypts workspaces' secrets](#the-key-that-encrypts-workspaces-secrets)).
+`BETTER_AUTH_SECRET`. That secret was generated and never shown, and Cloudflare does not show a
+secret again, so nobody can keep a copy of it: delete or recreate the Worker, and everything
+workspaces stored is unreadable for good. For anything beyond a first try, set a key you do hold
+a copy of before workspaces save anything:
+
+```sh
+openssl rand -base64 32   # keep this value somewhere safe, then give it to the server:
+pnpm wrangler secret put SECRETS_KEY
+```
+
+[The key that encrypts workspaces' secrets](#the-key-that-encrypts-workspaces-secrets) has the
+rest.
 
 Open the Worker's address, create an account and then a workspace. The first account runs the
 server. Until it changes that, anyone who can reach the address can sign up and create workspaces
@@ -151,35 +163,36 @@ through a deploy, because `wrangler.jsonc` sets `keep_vars`. A server older than
 plain variables on every deploy, and a limit that is not set is no limit, so look through them
 after updating.
 
-| Name                          | What it does                                                                                                                                                       |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `BETTER_AUTH_SECRET`          | Signs sessions. Required, at least 32 characters. Also encrypts workspaces' secrets while `SECRETS_KEY` is unset.                                                  |
-| `BETTER_AUTH_URL`             | The address people use, such as `https://agents.example.com`. Inferred from each request when unset, and then `/mcp` is off.                                       |
-| `SECRETS_KEY`                 | Encrypts what workspaces entrust to the server (32 random bytes, base64). Optional; see [below](#the-key-that-encrypts-workspaces-secrets).                        |
-| `GITHUB_CLIENT_ID`            | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                       |
-| `GITHUB_CLIENT_SECRET`        | The client secret of the same GitHub OAuth app.                                                                                                                    |
-| `OIDC_ISSUER`                 | Turns on an OpenID Connect provider, with the two below. See [below](#sign-in-through-an-openid-connect-provider).                                                 |
-| `OIDC_CLIENT_ID`              | This deployment's client ID at the provider.                                                                                                                       |
-| `OIDC_CLIENT_SECRET`          | Its client secret there.                                                                                                                                           |
-| `OIDC_PROVIDER_NAME`          | What the sign-in button calls it. Unset: "single sign-on".                                                                                                         |
-| `GITHUB_APP_*`                | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md).                                                   |
-| `EMAIL_FROM`                  | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                                                                     |
-| `LEGAL_NOTICE_URL`            | The address of your legal notice. See [below](#your-legal-pages).                                                                                                  |
-| `PRIVACY_POLICY_URL`          | The address of your privacy policy.                                                                                                                                |
-| `TERMS_URL`                   | The address of your terms.                                                                                                                                         |
-| `SIGN_UP_REQUEST_URL`         | Where "Ask for access" leads while sign-up is by invitation: an https address. See [below](#who-may-sign-up).                                                      |
-| `AI_GATEWAY_URL`              | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                     |
-| `AI_GATEWAY_TOKEN`            | The gateway's token, when it is authenticated.                                                                                                                     |
-| `WORKERS_AI_TOKEN`            | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.                                                         |
-| `CLOUDFLARE_ACCOUNT_ID`       | The account that pays for Workers AI. Taken from `AI_GATEWAY_URL` when unset.                                                                                      |
-| `WORKERS_AI_WORKSPACES`       | The ids of the workspaces that may use Workers AI, separated by commas; `sandbox` for those `SANDBOX_WORKSPACES` invites. Every workspace when unset.              |
-| `WORKERS_AI_DAILY_DOLLARS`    | US dollars each workspace may spend on Workers AI in a day (UTC), at its list prices.                                                                              |
-| `SANDBOX_WORKSPACES`          | The ids of the workspaces that may use sandboxes, separated by commas. Every workspace when unset.                                                                 |
-| `SANDBOX_DAILY_MINUTES`       | Minutes of sandbox time each workspace may use in a day (UTC).                                                                                                     |
-| `SANDBOX_MONTHLY_BUDGET`      | US dollars the server may spend on sandboxes in a month (UTC).                                                                                                     |
-| `SANDBOX_ALERT_EMAIL`         | Who hears when sandboxes have spent 80% and then all of the monthly budget. Needs email.                                                                           |
-| `INVITATION_CONTACT`          | Where a workspace asks for an invitation to Workers AI or sandboxes: an email address or an https URL. Settings > Models links to it. Keep an address as a secret. |
-| `DURABLE_OBJECT_JURISDICTION` | Keeps workspaces in a jurisdiction, such as `eu`. See [above](#keeping-data-in-one-jurisdiction).                                                                  |
+| Name                          | What it does                                                                                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`          | Signs sessions. Required: a generated value of at least 32 characters. Also encrypts workspaces' secrets while `SECRETS_KEY` is unset.                                    |
+| `BETTER_AUTH_URL`             | The address people use, such as `https://agents.example.com`. Inferred from each request when unset, and then `/mcp` is off.                                              |
+| `SECRETS_KEY`                 | Encrypts what workspaces entrust to the server (32 random bytes, base64). Set it for anything beyond a first try; see [below](#the-key-that-encrypts-workspaces-secrets). |
+| `SECRETS_FROM_AUTH_SECRET`    | `off` stops the server from encrypting under a key made from `BETTER_AUTH_SECRET`: without a `SECRETS_KEY` it then keeps no secrets at all.                               |
+| `GITHUB_CLIENT_ID`            | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                              |
+| `GITHUB_CLIENT_SECRET`        | The client secret of the same GitHub OAuth app.                                                                                                                           |
+| `OIDC_ISSUER`                 | Turns on an OpenID Connect provider, with the two below. See [below](#sign-in-through-an-openid-connect-provider).                                                        |
+| `OIDC_CLIENT_ID`              | This deployment's client ID at the provider.                                                                                                                              |
+| `OIDC_CLIENT_SECRET`          | Its client secret there.                                                                                                                                                  |
+| `OIDC_PROVIDER_NAME`          | What the sign-in button calls it. Unset: "single sign-on".                                                                                                                |
+| `GITHUB_APP_*`                | The six settings of the GitHub App that connects workspaces to repositories; see [github-app.md](github-app.md).                                                          |
+| `EMAIL_FROM`                  | Turns on email (invitations, password reset), such as `Gateweave Agents <agents@example.com>`.                                                                            |
+| `LEGAL_NOTICE_URL`            | The address of your legal notice. See [below](#your-legal-pages).                                                                                                         |
+| `PRIVACY_POLICY_URL`          | The address of your privacy policy.                                                                                                                                       |
+| `TERMS_URL`                   | The address of your terms.                                                                                                                                                |
+| `SIGN_UP_REQUEST_URL`         | Where "Ask for access" leads while sign-up is by invitation: an https address. See [below](#who-may-sign-up).                                                             |
+| `AI_GATEWAY_URL`              | Sends model calls through a Cloudflare AI Gateway: `https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`.                                                            |
+| `AI_GATEWAY_TOKEN`            | The gateway's token, when it is authenticated.                                                                                                                            |
+| `WORKERS_AI_TOKEN`            | Offers Workers AI models to every workspace, paid by your account. A Cloudflare API token with Workers AI.                                                                |
+| `CLOUDFLARE_ACCOUNT_ID`       | The account that pays for Workers AI. Taken from `AI_GATEWAY_URL` when unset.                                                                                             |
+| `WORKERS_AI_WORKSPACES`       | The ids of the workspaces that may use Workers AI, separated by commas; `sandbox` for those `SANDBOX_WORKSPACES` invites. Every workspace when unset.                     |
+| `WORKERS_AI_DAILY_DOLLARS`    | US dollars each workspace may spend on Workers AI in a day (UTC), at its list prices.                                                                                     |
+| `SANDBOX_WORKSPACES`          | The ids of the workspaces that may use sandboxes, separated by commas. Every workspace when unset.                                                                        |
+| `SANDBOX_DAILY_MINUTES`       | Minutes of sandbox time each workspace may use in a day (UTC).                                                                                                            |
+| `SANDBOX_MONTHLY_BUDGET`      | US dollars the server may spend on sandboxes in a month (UTC).                                                                                                            |
+| `SANDBOX_ALERT_EMAIL`         | Who hears when sandboxes have spent 80% and then all of the monthly budget. Needs email.                                                                                  |
+| `INVITATION_CONTACT`          | Where a workspace asks for an invitation to Workers AI or sandboxes: an email address or an https URL. Settings > Models links to it. Keep an address as a secret.        |
+| `DURABLE_OBJECT_JURISDICTION` | Keeps workspaces in a jurisdiction, such as `eu`. See [above](#keeping-data-in-one-jurisdiction).                                                                         |
 
 Leave `AGENTS_DEMO` unset. It turns a deployment into Gateweave's public demo, where anyone gets a
 sandbox of made-up data that is deleted after a day, agents answer from a script, and nobody can
@@ -189,27 +202,63 @@ sign up or sign in (see "The public demo" in [architecture.md](architecture.md#t
 
 Workspaces entrust secrets to the server: model provider keys, the secret values of environment
 sets, GitLab tokens, triggers' signing secrets, the headers of a telemetry endpoint and what an
-MCP server's sign-in left. Each is encrypted (AES-256-GCM) before it is stored in the workspace's
-Durable Object, under a key made for that workspace alone.
+MCP server's OAuth sign-in left. Each is encrypted (AES-256-GCM) before it is stored in the
+workspace's Durable Object, under a key made for that workspace alone from one of the server's
+secrets.
 
-- **Without `SECRETS_KEY`**, that key is derived from `BETTER_AUTH_SECRET`, so a new server needs
-  no further step. The price is that the two are tied: change `BETTER_AUTH_SECRET` and what was
-  stored can no longer be opened. Nothing else breaks. Each place says so in a sentence, such
-  as "The key for OpenAI cannot be opened on this server; add it again", and the workspace enters
-  the value again. This needs a `BETTER_AUTH_SECRET` of at least 32 characters. With a shorter one,
-  secrets stay off and the pages say so, as before.
-- **With `SECRETS_KEY`** set, the server encrypts with it, and `BETTER_AUTH_SECRET` can change
-  without touching what `SECRETS_KEY` encrypted. Set it with
-  `openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY`, or as a secret in the dashboard,
-  and keep a copy: if it changes or is removed, what it encrypted has to be entered again. A
-  `SECRETS_KEY` that is set but unusable (not base64, or under 32 bytes) turns secrets off rather
-  than fall back to the other key.
-- **Setting `SECRETS_KEY` later** loses nothing. Each stored value says which of the two keys
-  encrypted it, so the server goes on opening the earlier ones for as long as
-  `BETTER_AUTH_SECRET` stays what it was, and encrypts everything saved from then on with
-  `SECRETS_KEY`. An earlier value moves to `SECRETS_KEY` only when someone saves it again. So before
-  you change `BETTER_AUTH_SECRET` on such a server, have workspaces save again what they stored
-  before `SECRETS_KEY` was set, or expect them to be asked for those values.
+**Set a `SECRETS_KEY` for anything beyond a first try**, before workspaces store anything:
+
+```sh
+openssl rand -base64 32   # keep this value somewhere safe, then give it to the server:
+pnpm wrangler secret put SECRETS_KEY
+```
+
+Or add it as a secret in the dashboard, under Workers & Pages › your Worker › Settings ›
+Variables and Secrets. Keep the copy: Cloudflare does not show a secret again. A `SECRETS_KEY`
+that is set but unusable (not base64, or under 32 bytes) turns secrets off rather than fall back
+to anything else.
+
+**Without a `SECRETS_KEY`**, the server makes that key from `BETTER_AUTH_SECRET`, so that a new
+server works with nothing more to set. Know what that means before you rely on it:
+
+- **One secret does two jobs.** `BETTER_AUTH_SECRET` signs sessions, and it also opens every
+  workspace's stored provider keys, GitLab tokens and OAuth sign-ins for anyone who has it and a
+  copy of the Durable Objects' storage, such as a backup.
+- **You can no longer rotate it freely.** Changing `BETTER_AUTH_SECRET` is the usual answer to a
+  suspected leak. Here it also makes everything workspaces stored unreadable: each place says so
+  in a sentence, such as "The key for OpenAI cannot be opened on this server; add it again", and
+  every workspace enters its values again.
+- **From the command line, nobody has a copy.** `pnpm run deploy` generates the secret and never
+  shows it, and Cloudflare does not show a secret again. Delete or recreate the Worker and what
+  workspaces stored is gone for good.
+- **It must be a generated value.** The server derives a key only from a `BETTER_AUTH_SECRET` of
+  at least 32 characters that is not plainly simple (the estimate Better Auth warns with: the
+  length times the bits of its distinct characters must reach 120, which a word or a character
+  repeated does not). That check refuses the obvious and proves nothing more, so paste the
+  output of `openssl rand -base64 32`. Below it, secrets stay off and the pages say why and what
+  to set.
+
+**Setting `SECRETS_KEY` later.** Each stored value says which of the two keys encrypted it. From
+then on the server encrypts with `SECRETS_KEY`, still opens the earlier values while
+`BETTER_AUTH_SECRET` stays what it was, and encrypts each of those again with `SECRETS_KEY` the
+first time it is used: a chat turn with that provider's key, a scan through that GitLab token, a
+delivery to that trigger. Values nobody has used since stay under the old key and still depend
+on `BETTER_AUTH_SECRET`. Nothing lists them across workspaces yet, on the server's settings or
+anywhere else, so before you change `BETTER_AUTH_SECRET` on a server that ran without a
+`SECRETS_KEY`, expect that some workspaces will be asked for a value again.
+
+**Losing `SECRETS_KEY`.** If a deploy comes without it, a workspace that holds values it
+encrypted stores nothing new and uses none of them, and its pages say "Values here were sealed
+with a SECRETS_KEY that this server no longer has; put it back". Put the same value back and
+everything works as before. The server never quietly starts encrypting such a workspace's
+secrets with the other key. A workspace that stored nothing with it is not affected. If the key
+is gone for good, each workspace removes what it stored with it and enters it again.
+
+**Keeping secrets off.** A server that had no `SECRETS_KEY` kept no secrets before this key
+existed, and starts keeping them when it is updated. To keep it as it was, set
+`SECRETS_FROM_AUTH_SECRET` to `off` (a plain variable will do): the server then never makes a
+key from `BETTER_AUTH_SECRET`, keeps secrets only with a `SECRETS_KEY`, and does not open what
+that key encrypted earlier.
 
 A server that has always had a `SECRETS_KEY` works exactly as it did.
 

@@ -241,11 +241,13 @@ export function agentServers(
 /**
  * A server as one turn reaches it: each variable its headers, or its command's environment, name
  * replaced with its value from the agent's environment set. A server whose variables are not all
- * there is left out, with why.
+ * there is left out, with why: they have no value, or, with `unavailable`, the workspace's
+ * secrets cannot be opened on this server at all, which is then the reason given.
  */
 export function turnServer(
 	{ name, reading, tools }: ReturnType<typeof agentServers>[number],
 	environment: ResolvedEnvironment | null,
+	unavailable: string | null = null,
 ): TurnMcpServer {
 	if ("problem" in reading) return { name, problem: reading.problem };
 	const { server } = reading;
@@ -267,6 +269,9 @@ export function turnServer(
 			: { name, transport: server.transport, url: server.url, headers: filled, tools };
 	}
 	const names = [...new Set(missing)].sort(compare);
+	if (unavailable !== null) {
+		return { name, problem: `${names.join(", ")} cannot be opened. ${unavailable}` };
+	}
 	return {
 		name,
 		problem: `${names.join(", ")} ${names.length === 1 ? "has" : "have"} no value in the agent's environment set`,
@@ -281,6 +286,8 @@ export interface OpenedEnvironment {
 	environment: ResolvedEnvironment;
 	assetId: string | null;
 	opened: ReadonlyMap<string, string>;
+	/** Why none of the set's stored secrets could be opened on this server, when that is so. */
+	unavailable: string | null;
 }
 
 /**
@@ -305,7 +312,7 @@ export function turnServers(
 		if (!("problem" in server.reading) && server.reading.server.transport === "stdio") {
 			return localTurnServer(server, opened, sandbox);
 		}
-		const turn = turnServer(server, opened?.environment ?? null);
+		const turn = turnServer(server, opened?.environment ?? null, opened?.unavailable ?? null);
 		if ("problem" in turn || turn.transport === "stdio" || !opened || !assetId) return turn;
 		if ("problem" in server.reading) return turn;
 		const origin = new URL(turn.url).origin;
@@ -383,7 +390,7 @@ function localTurnServer(
 			problem: `${secrets.join(", ")} ${one ? "is a secret" : "are secrets"} of the agent's environment set, and secrets never go into the sandbox, where it runs. Make ${one ? "it a variable" : "them variables"} if ${one ? "it is" : "they are"} not secret.`,
 		};
 	}
-	return turnServer(server, opened?.environment ?? null);
+	return turnServer(server, opened?.environment ?? null, opened?.unavailable ?? null);
 }
 
 /** The name `registry_passes` keeps `bindUnsentSecrets` under (see `passes.ts`). */

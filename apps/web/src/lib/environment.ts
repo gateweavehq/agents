@@ -10,6 +10,7 @@ import {
 	envSetEditInput,
 	envSetInput,
 } from "@gateweave/agents-model";
+import type { SecretsProblem } from "@gateweave/agents-registry";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
@@ -29,7 +30,8 @@ async function memberOf(slug: string, admin: boolean) {
 }
 
 /**
- * The sets, whether this server can keep secret values at all (`secretsProblem`), and, for
+ * The sets, why the workspace cannot keep secret values on this server if it cannot (the
+ * registry's `secretsState`), and, for
  * owners and admins, when tying values stored before ties failed, so that they enter those again.
  */
 export const getEnvironment = createServerFn({ method: "GET" })
@@ -39,20 +41,20 @@ export const getEnvironment = createServerFn({ method: "GET" })
 			data: slug,
 		}): Promise<{
 			configured: boolean;
+			problem: SecretsProblem | null;
 			sets: EnvSetEntry[];
 			tiesFailedAt: number | null;
 		} | null> => {
 			const found = await memberOf(slug, false);
 			if (!found) return null;
-			const { env } = await import("cloudflare:workers");
 			const { isAdmin } = await import("#/lib/roles");
-			const { secretsProblem } = await import("@gateweave/agents-registry");
 			const admin = isAdmin(found.member.membership.role);
-			const [sets, tiesFailedAt] = await Promise.all([
+			const [problem, sets, tiesFailedAt] = await Promise.all([
+				found.registry.secretsState(),
 				found.registry.listEnvSets(),
 				admin ? found.registry.secretTiesFailedAt() : null,
 			]);
-			return { configured: secretsProblem(env) === null, sets, tiesFailedAt };
+			return { configured: problem === null, problem, sets, tiesFailedAt };
 		},
 	);
 

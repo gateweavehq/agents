@@ -125,12 +125,13 @@ needs nothing on the server: an owner or admin connects it in Settings > GitLab 
 token, which the server keeps encrypted.
 
 Workspaces keep their model provider keys and environment secrets encrypted. A deployed Worker
-needs no step for that: without a `SECRETS_KEY` it encrypts under a key made from
-`BETTER_AUTH_SECRET`, so changing that secret means workspaces add their keys and secret values
-again. To keep the two apart, set `SECRETS_KEY` with
-`openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY` and keep it;
-[docs/self-hosting.md](docs/self-hosting.md#the-key-that-encrypts-workspaces-secrets) says what
-that changes. `pnpm dev:setup` generates one for local development.
+needs no step to try that: without a `SECRETS_KEY` it encrypts under a key made from
+`BETTER_AUTH_SECRET`. Then one secret both signs sessions and opens everything workspaces
+stored, and changing it makes all of that unreadable. For anything beyond a first try, generate a
+`SECRETS_KEY` with `openssl rand -base64 32`, keep a copy and give it to the server with
+`pnpm wrangler secret put SECRETS_KEY`;
+[docs/self-hosting.md](docs/self-hosting.md#the-key-that-encrypts-workspaces-secrets) has the
+rest, and how to keep secret storage off. `pnpm dev:setup` generates one for local development.
 
 Chat sends each agent's requests straight to its model provider. To send them through a
 [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) instead, for its logs,

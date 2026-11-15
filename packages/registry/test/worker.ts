@@ -106,6 +106,14 @@ export class RegistryDO extends Registry {
 	}
 }
 
+/** The registry on a server whose operator set no `SECRETS_KEY`, or took it away. */
+export class RegistryWithoutKey extends RegistryDO {
+	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+		// The generated type gives the test Worker's own SECRETS_KEY as the only value it can have.
+		super(ctx, { ...env, SECRETS_KEY: undefined } as unknown as Cloudflare.Env);
+	}
+}
+
 export default {
 	fetch: () => new Response(null, { status: 404 }),
 } satisfies ExportedHandler;

@@ -363,7 +363,14 @@ import {
 	type ScanOutcome,
 	syncRepositories,
 } from "./scans";
-import { type Sealer, type SecretsEnv, sealerFor } from "./secrets";
+import { replaceSealed, type SealedCounts, sealedCounts } from "./sealed";
+import {
+	type Sealer,
+	type SecretsEnv,
+	type SecretsProblem,
+	sealerFor,
+	secretsProblem,
+} from "./secrets";
 import { createSetup, deleteSetup, importSetup, setSetupAssets, updateSetup } from "./setups";
 import { GITHUB_NOT_SET_UP, githubSetUp, type SourceEnv, sourceFor, writerFor } from "./sources";
 import { type Db, toApplication } from "./state";
@@ -917,7 +924,8 @@ export class RegistryDO extends DurableObject {
 		const open = async (part: "client" | "verifier" | "tokens", sealed: string | null) => {
 			if (sealed === null) return null;
 			try {
-				return JSON.parse(await sealer.open(oauthPlace(asset, part), sealed)) as unknown;
+				const opened = await this.#open(sealer, oauthPlace(asset, part), sealed);
+				return JSON.parse(opened.plaintext) as unknown;
 			} catch {
 				return null;
 			}
@@ -1018,13 +1026,15 @@ export class RegistryDO extends DurableObject {
 				continue;
 			}
 			try {
-				values[name] = await sealer.open(secretPlace(pinned.assetId, name), sealed);
-				opened.set(name, sealed);
+				const value = await this.#open(sealer, secretPlace(pinned.assetId, name), sealed);
+				values[name] = value.plaintext;
+				opened.set(name, value.sealed);
 			} catch {
 				missing.push(name);
 			}
 		}
-		return { environment: { values, missing }, assetId: pinned.assetId, opened };
+		const unavailable = sealer !== null && "unavailable" in sealer ? sealer.unavailable : null;
+		return { environment: { values, missing }, assetId: pinned.assetId, opened, unavailable };
 	}
 
 	// Conversations with agents run by Gateweave. Each is private to the member who started it,
@@ -1849,7 +1859,7 @@ export class RegistryDO extends DurableObject {
 		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
 		let secret: string;
 		try {
-			secret = await sealer.open(triggerPlace(trigger.id), trigger.sealed);
+			secret = (await this.#open(sealer, triggerPlace(trigger.id), trigger.sealed)).plaintext;
 		} catch {
 			return {
 				status: "refused",
@@ -1920,17 +1930,23 @@ export class RegistryDO extends DurableObject {
 		const url = tracesUrl(stored.endpoint);
 		if (stored.sealedHeaders === null) return { url, headers: {}, setAt: stored.setAt };
 		const sealer = await this.#sealerOf();
+		// Why the workspace keeps no secrets here, when that is the reason, rather than a request to
+		// enter headers that would be refused.
+		const unavailable = "unavailable" in sealer ? sealer.unavailable : null;
 		try {
 			if ("unavailable" in sealer) throw new Error(sealer.unavailable);
-			const opened = JSON.parse(await sealer.open(TELEMETRY_PLACE, stored.sealedHeaders));
-			const headers = z.record(z.string(), z.string()).parse(opened);
+			const opened = await this.#open(sealer, TELEMETRY_PLACE, stored.sealedHeaders);
+			const headers = z.record(z.string(), z.string()).parse(JSON.parse(opened.plaintext));
 			return { url, headers, setAt: stored.setAt };
 		} catch {
 			this.#write(() =>
 				recordTelemetryExport(
 					this.#db,
 					stored.setAt,
-					{ ok: false, error: "The headers could not be opened; enter them again" },
+					{
+						ok: false,
+						error: unavailable ?? "The headers could not be opened; enter them again",
+					},
 					Date.now(),
 				),
 			);
@@ -2162,7 +2178,8 @@ export class RegistryDO extends DurableObject {
 		if ("unavailable" in sealer) return "unauthorized";
 		let expected: string;
 		try {
-			expected = await sealer.open(gitlabPlace(row.id, "webhook"), row.sealedWebhookSecret);
+			expected = (await this.#open(sealer, gitlabPlace(row.id, "webhook"), row.sealedWebhookSecret))
+				.plaintext;
 		} catch {
 			return "unauthorized";
 		}
@@ -2187,8 +2204,8 @@ export class RegistryDO extends DurableObject {
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
 		try {
-			const token = await sealer.open(gitlabPlace(row.id, "token"), row.sealedToken);
-			return { baseUrl: row.baseUrl, token };
+			const opened = await this.#open(sealer, gitlabPlace(row.id, "token"), row.sealedToken);
+			return { baseUrl: row.baseUrl, token: opened.plaintext };
 		} catch {
 			return refused("The GitLab token can no longer be opened; connect the GitLab again");
 		}
@@ -2857,7 +2874,8 @@ export class RegistryDO extends DurableObject {
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
 		try {
-			return { key: await sealer.open(keyPlace(provider), sealed), sealed };
+			const opened = await this.#open(sealer, keyPlace(provider), sealed);
+			return { key: opened.plaintext, sealed: opened.sealed };
 		} catch {
 			return {
 				status: "refused",
@@ -2866,12 +2884,55 @@ export class RegistryDO extends DurableObject {
 		}
 	}
 
+	/**
+	 * Why this workspace cannot keep secrets on this server, or null when it can, for the pages
+	 * that say so. It is the workspace's answer and not only the server's: one that holds values a
+	 * `SECRETS_KEY` sealed, on a server that has none now, keeps nothing until the key is back.
+	 */
+	secretsState(): SecretsProblem | null {
+		const env = this.env as SecretsEnv;
+		// Only a server without the key has to look: with one, what the workspace holds changes nothing.
+		const holdsExplicit = !env.SECRETS_KEY && sealedCounts(this.ctx.storage.sql).explicit > 0;
+		return secretsProblem(env, holdsExplicit);
+	}
+
+	/** How many of the workspace's sealed values each of the server's keys sealed. */
+	sealedCounts(): SealedCounts {
+		return sealedCounts(this.ctx.storage.sql);
+	}
+
 	#sealerOf(): Promise<Sealer | { unavailable: string }> {
+		// Asked each time, not kept with the sealer: removing what the lost key sealed ends it.
+		const problem = this.secretsState();
+		if (problem?.kind === "lost-key") return Promise.resolve({ unavailable: problem.message });
 		// A workspace that moved keeps the id of the object it began in, which its secrets were
 		// sealed under; one that never moved has none stored.
 		const scope = this.ctx.storage.kv.get<string>(SECRETS_SCOPE) ?? this.ctx.id.toString();
 		this.#sealer ??= sealerFor(this.env as SecretsEnv, scope);
 		return this.#sealer;
+	}
+
+	/**
+	 * Opens a sealed value. One that the key derived from `BETTER_AUTH_SECRET` sealed, on a
+	 * server that has a `SECRETS_KEY` now, is sealed again with that and stored in its place, so
+	 * the value stops depending on the other secret once it is used. `sealed` is what the place
+	 * holds afterwards. A value that cannot be stored again (the workspace is moving, or someone
+	 * replaced it meanwhile) is still opened.
+	 */
+	async #open(
+		sealer: Sealer,
+		place: string,
+		sealed: string,
+	): Promise<{ plaintext: string; sealed: string }> {
+		const plaintext = await sealer.open(place, sealed);
+		if (!sealer.renews(sealed)) return { plaintext, sealed };
+		try {
+			const renewed = await sealer.seal(place, plaintext);
+			const stored = this.#write(() => replaceSealed(this.ctx.storage.sql, sealed, renewed));
+			return { plaintext, sealed: stored ? renewed : sealed };
+		} catch {
+			return { plaintext, sealed };
+		}
 	}
 
 	// Every write is one synchronous transaction: it applies whole or not at all, and nothing

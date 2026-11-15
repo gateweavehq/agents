@@ -58,7 +58,7 @@
 	"send_email": [{ "name": "EMAIL" }],
 	// Optional: a USAGE Analytics Engine dataset (see docs/self-hosting.md), and GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, EMAIL_FROM,
 	// SIGN_UP_REQUEST_URL (where "Ask for access" leads once the owner closes sign-up), the six
-	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, AI_GATEWAY_URL with AI_GATEWAY_TOKEN,
+	// GITHUB_APP_* settings of the GitHub App, SECRETS_KEY, SECRETS_FROM_AUTH_SECRET, AI_GATEWAY_URL with AI_GATEWAY_TOKEN,
 	// WORKERS_AI_TOKEN (a secret, never a var here) with CLOUDFLARE_ACCOUNT_ID and the WORKERS_AI_*
 	// limits, and the SANDBOX_*
 	// limits (see apps/web/src/server/env.d.ts).

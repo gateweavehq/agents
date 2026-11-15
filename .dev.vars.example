@@ -2,7 +2,7 @@
 # The "Deploy to Cloudflare" button asks for every key set here, so the optional ones stay
 # commented out. Uncomment one to use it.
 
-# Signs sessions: at least 32 characters. Generate with: openssl rand -base64 32
+# Signs sessions: a generated value of at least 32 characters. Generate with: openssl rand -base64 32
 BETTER_AUTH_SECRET=
 
 # Optional: enables "Sign in with GitHub". Callback URL: http://localhost:4720/api/auth/callback/github
@@ -30,6 +30,9 @@ BETTER_AUTH_SECRET=
 # in a random one. Without it, they are encrypted under a key made from BETTER_AUTH_SECRET. Never
 # change whichever of the two is in use once keys are saved: they cannot be opened without it.
 # SECRETS_KEY=
+# Optional: `off` keeps the server from making that key from BETTER_AUTH_SECRET, so that without
+# a SECRETS_KEY it keeps no secrets at all.
+# SECRETS_FROM_AUTH_SECRET=
 
 # Optional: sends agents' model calls through Cloudflare AI Gateway, for its logs, caching and
 # rate limits: https://gateway.ai.cloudflare.com/v1/<account id>/<gateway id>. Without it, calls

@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import { envSecretInput, envSetInput } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import { RegistryDO } from "../src";
+import { sealerFor } from "../src/secrets";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -398,6 +399,41 @@ describe("agents and environment sets", () => {
 		expect(await stub.mcpCheckTarget(echo)).toEqual({
 			name: "echo",
 			problem: "API_TOKEN, DATABASE_PASSWORD have no value in the agent's environment set",
+		});
+	});
+
+	it("say that the SECRETS_KEY is gone, not that values are missing, on a server that lost it", async () => {
+		const stub = env.REGISTRY_WITHOUT_KEY.getByName(crypto.randomUUID());
+		const id = await stub.createEnvSet({
+			name: "production",
+			variables: { LOG_LEVEL: "info", REGION: "eu" },
+			secrets: ["DATABASE_PASSWORD", "API_TOKEN"],
+		});
+		const echo = await stub.createMcpServer(ECHO);
+		await stub.createAgent({
+			...agent({ assetId: id, version: 1 }),
+			mcpServers: [{ assetId: echo, version: 1 }],
+		});
+		// Both values were stored while the server had its key.
+		await runInDurableObject(stub, async (_instance: RegistryDO, state) => {
+			const sealer = await sealerFor(
+				{ SECRETS_KEY: "dGVzdC1vbmx5LXNlY3JldHMta2V5LXRlc3Qtb25seS0=" },
+				state.id.toString(),
+			);
+			if ("unavailable" in sealer) throw new Error(sealer.unavailable);
+			for (const name of ["DATABASE_PASSWORD", "API_TOKEN"]) {
+				state.storage.sql.exec(
+					"INSERT INTO env_secrets (asset_id, name, sealed, set_by, set_at) VALUES (?, ?, ?, 'Ada', 1)",
+					id,
+					name,
+					await sealer.seal(`env-sets/${id}/${name}`, "token"),
+				);
+			}
+		});
+		expect(await stub.mcpCheckTarget(echo)).toEqual({
+			name: "echo",
+			problem:
+				"API_TOKEN, DATABASE_PASSWORD cannot be opened. Values here were sealed with a SECRETS_KEY that this server no longer has; put it back",
 		});
 	});
 

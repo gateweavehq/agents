@@ -83,13 +83,24 @@ function ModelsPage() {
 	}
 	return (
 		<div className="space-y-10">
-			{data.configured ? (
-				<KeyedProviders keys={data.keys} admin={admin} />
-			) : (
+			{data.problem?.kind === "lost-key" && (
+				// The keys stay listed, so that one whose SECRETS_KEY is gone for good can be removed.
+				<p
+					role="status"
+					className="rounded-lg border border-amber-500/40 p-3 text-sm text-amber-600 dark:text-amber-500"
+				>
+					Model keys cannot be used or saved. {data.problem.message}. Until whoever runs this server
+					does, nothing can be stored here. Only if that key is gone for good: remove what was
+					stored with it, here and in the workspace's other settings, and enter it anew.
+				</p>
+			)}
+			{data.problem?.kind === "server" ? (
 				<Notice title="Model keys are not set up on this server">
-					Whoever runs this server can turn them on by setting the SECRETS_KEY secret; see the
-					README in the repository.
+					{data.problem.message}. Whoever runs this server can change that; docs/self-hosting.md in
+					the repository says how.
 				</Notice>
+			) : (
+				<KeyedProviders keys={data.keys} admin={admin} />
 			)}
 			<WorkersAi
 				offer={data.workersAiOffer}

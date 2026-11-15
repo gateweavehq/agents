@@ -24,8 +24,10 @@ Areas where reports are especially valuable:
   chat gateway (`/api/chat/*`, including WebSocket handshakes from other origins), or the
   workspace's and conversations' Durable Objects, which have no public route.
 - Secrets leaving where they belong: model provider keys and environment secrets (encrypted with
-  the server's `SECRETS_KEY`) reaching a page, a log, a run's trace or a sandbox, or a GitHub
-  token reaching a sandbox.
+  the server's `SECRETS_KEY`, or with a key derived from its `BETTER_AUTH_SECRET` on a server
+  that sets none) reaching a page, a log, a run's trace or a sandbox, or a GitHub token reaching a
+  sandbox. So is anything that recovers either of those two secrets, or a stored value without
+  them.
 - Getting out of a sandbox: reaching the internet beyond the package registries it allows,
   writing to a repository other than its own, or pushing to a branch other than its
   conversation's.

@@ -679,20 +679,31 @@ and Workers AI, for what an agent definition may name.
   the key is unrelated to anything else made from that secret) and its values start with `d1`, so
   that a first deploy keeps secrets with nothing more to set. The id at the start picks the key
   that opens a value: a server that gets a `SECRETS_KEY` later seals with it from then on and
-  still opens its `d1` values while `BETTER_AUTH_SECRET` stays the same. Nothing re-seals them;
-  saving a value again does. A `SECRETS_KEY` that is set but unusable is reported and never
-  passed over for the derived key. `secretsProblem` says whether a server can keep secrets, for
-  the registry and the pages alike: it cannot with an unusable `SECRETS_KEY`, or with none and a
-  `BETTER_AUTH_SECRET` under 32 characters, and then the page says so and keys cannot be added.
+  still opens its `d1` values while `BETTER_AUTH_SECRET` stays the same. A `SECRETS_KEY` that
+  is set but unusable is reported and never passed over for the derived key.
+- **Sealed again on use.** On a server with a `SECRETS_KEY`, a `d1` value that opens is sealed
+  with it and written back over the value it was opened from (`#open` in the registry, and
+  `replaceSealed` in `packages/registry/src/sealed.ts`, which lists every sealed column and
+  matches by the old value, so one replaced meanwhile is left alone). Values not used since stay
+  `d1`. The registry's `sealedCounts` says how many of each a workspace holds; no page shows it.
+- **When a workspace keeps none.** `secretsProblem` decides, for the registry and the pages
+  alike (the registry's `secretsState`). The server has no key to seal with: an unusable
+  `SECRETS_KEY`; or none, and a `BETTER_AUTH_SECRET` that is under 32 characters or under 120
+  bits by the estimate Better Auth warns with, written out there; or none, and
+  `SECRETS_FROM_AUTH_SECRET` set to `off`, which keeps a server from deriving a key at all. Or
+  the key is lost: the workspace holds `v1` values and the server has no `SECRETS_KEY`. Then
+  nothing is sealed under the derived key and nothing opens, and the pages say that the key has
+  to be put back, because sealing new values beside ones that cannot open would hide it.
 - **Only the registry opens one**, when a request needs it. Server functions get the provider,
   the last four characters, who added it and when, and the last check, never the key.
 - **Checking a key** lists the provider's models with it (`listProviderModels` in
   `packages/registry/src/providers.ts`) and records whether that worked, how many models there
   are, or the provider's refusal in a sentence. A check that finishes after the key was replaced
   is dropped.
-- **Losing the secret loses the keys**: `SECRETS_KEY` for what it sealed, `BETTER_AUTH_SECRET`
+- **Changing the secret loses the keys**: `SECRETS_KEY` for what it sealed, `BETTER_AUTH_SECRET`
   for what the derived key sealed. A check then says the key cannot be opened, and it has to be
-  added again; nothing throws past the registry.
+  added again; nothing throws past the registry. A `SECRETS_KEY` that is taken away is the case
+  above, and putting it back restores everything.
 
 ### Workers AI
 

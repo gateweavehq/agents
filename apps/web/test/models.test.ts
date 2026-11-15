@@ -133,3 +133,113 @@ it("turns model keys off on a server whose SECRETS_KEY is unusable, and says so"
 		await broken.dispose();
 	}
 });
+
+it("says that the SECRETS_KEY is gone, and keeps nothing new, when a server loses it", async () => {
+	const lost =
+		"Values here were sealed with a SECRETS_KEY that this server no longer has; put it back";
+	const server = await startAgents(origin, { models });
+	try {
+		const { headers: ada } = await signUp(server, origin, "ada-lost");
+		const workspaceId = await createWorkspace(server, origin, ada, "lost");
+		const empty = await createWorkspace(server, origin, ada, "lost-empty");
+		let registry = await server.registry(workspaceId);
+		await registry.saveProviderKey({ provider: "openai", key: KEY }, "Ada");
+		const assetId = await registry.createEnvSet({
+			name: "prod",
+			variables: {},
+			secrets: ["TOKEN"],
+		});
+		const html = async (path: string) =>
+			(await (await server.fetch(`${origin}${path}`, { headers: { cookie: ada.cookie } })).text())
+				// React separates adjacent text nodes with comments.
+				.replaceAll("<!-- -->", "");
+
+		// The next deploy comes without the key.
+		await server.restartWith({ SECRETS_KEY: null });
+		registry = await server.registry(workspaceId);
+		const refused = { status: "refused", message: lost };
+		expect(await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada")).toEqual(
+			refused,
+		);
+		expect(await registry.setEnvSecret({ assetId, name: "TOKEN", value: "t" }, "Ada")).toEqual(
+			refused,
+		);
+		const asked = models.requests.length;
+		expect(await registry.checkProviderKey("openai")).toEqual(refused);
+		expect(models.requests.length).toBe(asked);
+		expect(await registry.sealedCounts()).toEqual({ explicit: 1, derived: 0 });
+
+		// The pages name the cause, and the key that is stored stays listed.
+		const page = await html("/lost/settings/models");
+		expect(page).toContain(lost);
+		expect(page).toContain("••••aple");
+		expect(page).not.toContain("add it again");
+		expect(await html("/lost/environment")).toContain(lost);
+		// A workspace that stored nothing with the key is not held back by it.
+		expect(await html("/lost-empty/settings/models")).not.toContain(lost);
+		expect(
+			await (await server.registry(empty)).saveProviderKey({ provider: "openai", key: KEY }, "Ada"),
+		).toMatchObject({ hint: "aple" });
+
+		// Putting the key back is all it takes.
+		await server.restartWith({});
+		registry = await server.registry(workspaceId);
+		expect(await registry.checkProviderKey("openai")).toMatchObject({
+			check: { ok: true, models: 3 },
+		});
+		expect(await html("/lost/settings/models")).not.toContain(lost);
+	} finally {
+		await server.dispose();
+	}
+});
+
+it("keeps no secrets on a server that turned the derived key off, as before there was one", async () => {
+	const off = await startAgents(origin, {
+		secrets: false,
+		settings: { SECRETS_FROM_AUTH_SECRET: "off" },
+	});
+	try {
+		const { headers: ada } = await signUp(off, origin, "ada-off");
+		const workspaceId = await createWorkspace(off, origin, ada, "off");
+		const registry = await off.registry(workspaceId);
+		expect(await registry.saveProviderKey({ provider: "openai", key: KEY }, "Ada")).toEqual({
+			status: "refused",
+			message: "Secrets are not set up on this server (SECRETS_KEY)",
+		});
+		expect(await registry.sealedCounts()).toEqual({ explicit: 0, derived: 0 });
+		const response = await off.fetch(`${origin}/off/settings/models`, {
+			headers: { cookie: ada.cookie },
+		});
+		expect(await response.text()).toContain("Model keys are not set up on this server");
+	} finally {
+		await off.dispose();
+	}
+});
+
+it("keeps no secrets under a BETTER_AUTH_SECRET someone typed, and says how to fix it", async () => {
+	const typed = await startAgents(origin, {
+		secrets: false,
+		settings: { BETTER_AUTH_SECRET: "password".repeat(4) },
+	});
+	try {
+		const { headers: ada } = await signUp(typed, origin, "ada-typed");
+		const workspaceId = await createWorkspace(typed, origin, ada, "typed");
+		const registry = await typed.registry(workspaceId);
+		const refusal = await registry.saveProviderKey({ provider: "openai", key: KEY }, "Ada");
+		expect(refusal).toMatchObject({
+			status: "refused",
+			message: expect.stringContaining("BETTER_AUTH_SECRET is too short or too simple"),
+		});
+		const response = await typed.fetch(`${origin}/typed/settings/models`, {
+			headers: { cookie: ada.cookie },
+		});
+		const html = await response.text();
+		expect(html).toContain("Model keys are not set up on this server");
+		expect(html).toContain(
+			"Set one that was generated (openssl rand -base64 32), or set a SECRETS_KEY",
+		);
+		expect(html).not.toContain("passwordpassword");
+	} finally {
+		await typed.dispose();
+	}
+});

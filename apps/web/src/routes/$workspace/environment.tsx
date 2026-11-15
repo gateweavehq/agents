@@ -58,14 +58,16 @@ function EnvironmentPage() {
 					</Button>
 				)}
 			</header>
-			{!data.configured && (
+			{data.problem && (
 				<p
 					role="status"
 					className="rounded-lg border border-amber-500/40 p-3 text-sm text-amber-600 dark:text-amber-500"
 				>
-					Secret values cannot be stored: this server has no key it can encrypt them with. Whoever
-					runs it can turn them on by setting the SECRETS_KEY secret; see the README in the
-					repository. Sets with only variables work as they are.
+					Secret values cannot be stored. {data.problem.message}.{" "}
+					{data.problem.kind === "lost-key"
+						? "Until whoever runs this server does, the values stored here cannot be used either."
+						: "Whoever runs this server can change that; docs/self-hosting.md in the repository says how."}{" "}
+					Sets with only variables work as they are.
 				</p>
 			)}
 			{data.tiesFailedAt !== null && (
