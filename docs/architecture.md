@@ -670,19 +670,29 @@ providers, `KEYED_PROVIDERS` in `packages/model/src/vocabulary.ts`; `MODEL_PROVI
 and Workers AI, for what an agent definition may name.
 
 - **Sealed in the registry.** A key is encrypted with AES-256-GCM before it is stored, under a
-  key derived with HKDF from the server's `SECRETS_KEY` secret and the workspace's Durable Object
+  key derived with HKDF from one of the server's secrets and the workspace's Durable Object
   id, with the key's place as additional data (`packages/registry/src/secrets.ts`). A key sealed
   in one workspace does not open in another, and a sealed value copied to another row does not
-  open there either. Without `SECRETS_KEY` the page says so and keys cannot be added.
+  open there either.
+- **Which secret.** `SECRETS_KEY` when it is set, and a sealed value then starts with `v1`. A
+  server without one derives from `BETTER_AUTH_SECRET` (HKDF again, under a salt of its own, so
+  the key is unrelated to anything else made from that secret) and its values start with `d1`, so
+  that a first deploy keeps secrets with nothing more to set. The id at the start picks the key
+  that opens a value: a server that gets a `SECRETS_KEY` later seals with it from then on and
+  still opens its `d1` values while `BETTER_AUTH_SECRET` stays the same. Nothing re-seals them;
+  saving a value again does. A `SECRETS_KEY` that is set but unusable is reported and never
+  passed over for the derived key. `secretsProblem` says whether a server can keep secrets, for
+  the registry and the pages alike: it cannot with an unusable `SECRETS_KEY`, or with none and a
+  `BETTER_AUTH_SECRET` under 32 characters, and then the page says so and keys cannot be added.
 - **Only the registry opens one**, when a request needs it. Server functions get the provider,
   the last four characters, who added it and when, and the last check, never the key.
 - **Checking a key** lists the provider's models with it (`listProviderModels` in
   `packages/registry/src/providers.ts`) and records whether that worked, how many models there
   are, or the provider's refusal in a sentence. A check that finishes after the key was replaced
   is dropped.
-- **Losing `SECRETS_KEY` loses the keys.** A check then says the key cannot be opened, and it
-  has to be added again.
-  Sealed values carry a version, so a rotation scheme can be added beside this one.
+- **Losing the secret loses the keys**: `SECRETS_KEY` for what it sealed, `BETTER_AUTH_SECRET`
+  for what the derived key sealed. A check then says the key cannot be opened, and it has to be
+  added again; nothing throws past the registry.
 
 ### Workers AI
 
@@ -771,8 +781,8 @@ admins manage them on the Environment page (`packages/registry/src/environment.t
   opens) as `missing`. No RPC returns what it opens: values leave the registry only in an MCP
   server's headers, through `turnServers`, for `beginTurn` and `mcpCheckTarget`. Pages and
   server functions only see `set` or `missing`.
-- **Without `SECRETS_KEY`** the page says so and values cannot be set; sets with only variables
-  work as they are.
+- **On a server that cannot keep secrets** (see "Model providers") the page says so and values
+  cannot be set; sets with only variables work as they are.
 
 ## MCP servers
 

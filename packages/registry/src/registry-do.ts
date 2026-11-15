@@ -1001,7 +1001,7 @@ export class RegistryDO extends DurableObject {
 	 * The environment an agent runs with, secrets opened, and which sealed value each secret was
 	 * opened from. Private: only `turnServers`, which sends each secret to the origin it is tied to
 	 * alone, may hand a value on, in `beginTurn` and `mcpCheckTarget`. A value that cannot be
-	 * opened, because the server's `SECRETS_KEY` changed, counts as missing: it has to be set
+	 * opened, because the server's secret changed, counts as missing: it has to be set
 	 * again. Null when there is no such live agent.
 	 */
 	async #openEnvironment(agentId: string): Promise<OpenedEnvironment | null> {

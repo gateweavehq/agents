@@ -45,7 +45,8 @@ declare namespace Cloudflare {
 		GITHUB_APP_WEBHOOK_SECRET?: string;
 		/**
 		 * Encrypts what workspaces entrust to the server, such as model provider keys: at least 32
-		 * random bytes, base64 (`openssl rand -base64 32`). Model keys are off when unset. Never
+		 * random bytes, base64 (`openssl rand -base64 32`). When unset, they are encrypted under a
+		 * key derived from BETTER_AUTH_SECRET instead (packages/registry/src/secrets.ts). Never
 		 * change it once keys are saved: they cannot be opened without it.
 		 */
 		SECRETS_KEY?: string;

@@ -47,6 +47,7 @@ export type {
 export { METER_NAME, SandboxMeterDO } from "./sandbox-meter";
 export type { SourceFile } from "./scanner";
 export { MAX_KEPT_FILE_BYTES, type ScanOutcome } from "./scans";
+export { type SecretsEnv, secretsProblem } from "./secrets";
 export { USAGE_BLOBS, USAGE_DOUBLES, type UsageSettings, usagePoint, writeUsage } from "./usage";
 export {
 	WIKI_GONE,

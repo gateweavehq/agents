@@ -90,8 +90,38 @@ it("shows secret names as Set or Missing to admins and members, and never a valu
 	expect(body).not.toContain("production");
 });
 
-it("turns secret values off on a server without a SECRETS_KEY, and says so", async () => {
+it("keeps secret values on a server without a SECRETS_KEY, as a first deploy is", async () => {
 	const bare = await startAgents(origin, { secrets: false });
+	try {
+		const { headers: ada } = await signUp(bare, origin, "ada-first-env");
+		const workspaceId = await createWorkspace(bare, origin, ada, "first-env");
+		const registry = await bare.registry(workspaceId);
+		const assetId = await registry.createEnvSet({
+			name: "plain",
+			variables: {},
+			secrets: ["TOKEN"],
+		});
+		expect(
+			await registry.setEnvSecret({ assetId, name: "TOKEN", value: "t0p-s3cret-value" }, "Ada"),
+		).toMatchObject({ name: "TOKEN", state: "set" });
+
+		const response = await bare.fetch(`${origin}/first-env/environment`, {
+			headers: { cookie: ada.cookie },
+		});
+		const html = (await response.text()).replaceAll("<!-- -->", "");
+		expect(html).not.toContain("Secret values cannot be stored");
+		expect(html).toContain(">Set<");
+		expect(html).not.toContain("t0p-s3cret-value");
+	} finally {
+		await bare.dispose();
+	}
+});
+
+it("turns secret values off on a server whose SECRETS_KEY is unusable, and says so", async () => {
+	const bare = await startAgents(origin, {
+		secrets: false,
+		settings: { SECRETS_KEY: btoa("too short") },
+	});
 	try {
 		const { headers: ada } = await signUp(bare, origin, "ada-bare-env");
 		const workspaceId = await createWorkspace(bare, origin, ada, "bare-env");
@@ -104,7 +134,7 @@ it("turns secret values off on a server without a SECRETS_KEY, and says so", asy
 		});
 		expect(await registry.setEnvSecret({ assetId, name: "TOKEN", value: "t" }, "Ada")).toEqual({
 			status: "refused",
-			message: "Secrets are not set up on this server (SECRETS_KEY)",
+			message: "SECRETS_KEY must hold at least 32 bytes",
 		});
 
 		const response = await bare.fetch(`${origin}/bare-env/environment`, {

@@ -273,7 +273,8 @@ function builtModules(): V4ModuleDefinition[] {
  * With `github`, the Worker is set up as that GitHub App, and its requests to github.com and
  * api.github.com reach the fake instead of failing. With `models`, its requests to the model
  * providers' APIs reach that fake. Requests to a host in `hosts` reach its handler, as an MCP
- * server elsewhere would be reached. It has a `SECRETS_KEY` unless `secrets` is false, and the
+ * server elsewhere would be reached. It has a `SECRETS_KEY` unless `secrets` is false, which leaves it
+ * sealing under the key from `BETTER_AUTH_SECRET` as a first deploy does, and the
  * other settings in `settings` (such as `WORKERS_AI_TOKEN`, which offers Workers AI).
  */
 export async function startAgents(

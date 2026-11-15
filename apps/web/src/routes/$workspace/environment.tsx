@@ -63,9 +63,9 @@ function EnvironmentPage() {
 					role="status"
 					className="rounded-lg border border-amber-500/40 p-3 text-sm text-amber-600 dark:text-amber-500"
 				>
-					Secret values cannot be stored: this server has no SECRETS_KEY. Whoever runs it can turn
-					them on by setting that secret; see the README in the repository. Sets with only variables
-					work as they are.
+					Secret values cannot be stored: this server has no key it can encrypt them with. Whoever
+					runs it can turn them on by setting the SECRETS_KEY secret; see the README in the
+					repository. Sets with only variables work as they are.
 				</p>
 			)}
 			{data.tiesFailedAt !== null && (

@@ -83,21 +83,53 @@ it("says when a key stops working, in its own words", async () => {
 	expect(html).not.toContain("revoked-long-ago");
 });
 
-it("turns model keys off on a server without a SECRETS_KEY", async () => {
-	const bare = await startAgents(origin, { secrets: false });
+it("keeps model keys on a server without a SECRETS_KEY, as a first deploy is", async () => {
+	// What the Deploy button leaves: BETTER_AUTH_SECRET and nothing else.
+	const bare = await startAgents(origin, { secrets: false, models });
 	try {
 		const { headers: ada } = await signUp(bare, origin, "ada-bare");
 		const workspaceId = await createWorkspace(bare, origin, ada, "bare");
 		const registry = await bare.registry(workspaceId);
+		expect(await registry.saveProviderKey({ provider: "openai", key: KEY }, "Ada")).toMatchObject({
+			provider: "openai",
+			hint: "aple",
+		});
+		// It opens again, and reaches the provider.
+		expect(await registry.checkProviderKey("openai")).toMatchObject({
+			check: { ok: true, models: 3 },
+		});
+		expect(models.requests.at(-1)?.headers.get("authorization")).toBe(`Bearer ${KEY}`);
+		const response = await bare.fetch(`${origin}/bare/settings/models`, {
+			headers: { cookie: ada.cookie },
+		});
+		const html = await response.text();
+		expect(html).toContain("••••aple");
+		expect(html).not.toContain("Model keys are not set up on this server");
+		expect(html).not.toContain("correct-horse");
+	} finally {
+		await bare.dispose();
+	}
+});
+
+it("turns model keys off on a server whose SECRETS_KEY is unusable, and says so", async () => {
+	// The key that is set decides: a server never seals under another one behind its operator's back.
+	const broken = await startAgents(origin, {
+		secrets: false,
+		settings: { SECRETS_KEY: btoa("too short") },
+	});
+	try {
+		const { headers: ada } = await signUp(broken, origin, "ada-broken");
+		const workspaceId = await createWorkspace(broken, origin, ada, "broken");
+		const registry = await broken.registry(workspaceId);
 		expect(await registry.saveProviderKey({ provider: "openai", key: KEY }, "Ada")).toEqual({
 			status: "refused",
-			message: "Secrets are not set up on this server (SECRETS_KEY)",
+			message: "SECRETS_KEY must hold at least 32 bytes",
 		});
-		const response = await bare.fetch(`${origin}/bare/settings/models`, {
+		const response = await broken.fetch(`${origin}/broken/settings/models`, {
 			headers: { cookie: ada.cookie },
 		});
 		expect(await response.text()).toContain("Model keys are not set up on this server");
 	} finally {
-		await bare.dispose();
+		await broken.dispose();
 	}
 });

@@ -27,16 +27,17 @@ Workers Builds, so every push to its main branch deploys. On the form:
 - **D1 database**: choose **+ Create new** and give it a name. The form picks an existing database
   when one in your account has the name in `wrangler.jsonc` (`gateweave-agents`), so check it
   before you deploy.
-- **BETTER_AUTH_SECRET** signs sessions. Use a long random string, for example from
-  `openssl rand -base64 32`, and keep it secret. Changing it later signs everyone out.
+- **BETTER_AUTH_SECRET** signs sessions. Use a random string of at least 32 characters, for
+  example from `openssl rand -base64 32`, keep it secret and keep a copy. Changing it later
+  signs everyone out, and on a server without a `SECRETS_KEY` it also makes workspaces add their
+  keys and secret values again (see
+  [The key that encrypts workspaces' secrets](#the-key-that-encrypts-workspaces-secrets)).
 - Leave the build and deploy commands as they are. The deploy command applies the database
   migrations before the new code goes live.
 
-When the build finishes, add `SECRETS_KEY` under Workers & Pages › your Worker › Settings ›
-Variables and Secrets, as a secret: a long random string, such as another
-`openssl rand -base64 32`. Workspaces encrypt their model keys and secret values with it, so keep
-a copy. Then open the Worker's address, create an account and then a workspace. The first account
-runs the server. Until it changes that, anyone who can reach the address can sign up and create
+When the build finishes, open the Worker's address, create an account and then a workspace.
+Nothing else has to be set first: workspaces can save model keys and secret values at once. The
+first account runs the server. Until it changes that, anyone who can reach the address can sign up and create
 workspaces of their own, and a workspace is only visible to its members. See
 [Who may sign up](#who-may-sign-up) to close that.
 
@@ -79,14 +80,10 @@ The first deploy does three things:
 Every later `pnpm run deploy` builds, applies new migrations, and only then deploys. Durable
 Objects migrate their own storage when each one wakes.
 
-Then give the server a key for the secrets that workspaces entrust to it, such as model provider
-keys:
-
-```sh
-openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY
-```
-
-Keep it. If it changes, workspaces have to add their keys and secret values again.
+Workspaces can save model keys and secret values at once, encrypted under a key made from
+`BETTER_AUTH_SECRET`. Nobody saw that secret, so nobody holds a copy of it: to encrypt with a key
+you do hold a copy of, set `SECRETS_KEY` before workspaces save anything (see
+[The key that encrypts workspaces' secrets](#the-key-that-encrypts-workspaces-secrets)).
 
 Open the Worker's address, create an account and then a workspace. The first account runs the
 server. Until it changes that, anyone who can reach the address can sign up and create workspaces
@@ -155,9 +152,9 @@ after updating.
 
 | Name                          | What it does                                                                                                                                                       |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `BETTER_AUTH_SECRET`          | Signs sessions. Required.                                                                                                                                          |
+| `BETTER_AUTH_SECRET`          | Signs sessions. Required, at least 32 characters. Also encrypts workspaces' secrets while `SECRETS_KEY` is unset.                                                  |
 | `BETTER_AUTH_URL`             | The address people use, such as `https://agents.example.com`. Inferred from each request when unset, and then `/mcp` is off.                                       |
-| `SECRETS_KEY`                 | Encrypts model provider keys and environment secrets (32 random bytes, base64). Model keys are off without it.                                                     |
+| `SECRETS_KEY`                 | Encrypts what workspaces entrust to the server (32 random bytes, base64). Optional; see [below](#the-key-that-encrypts-workspaces-secrets).                        |
 | `GITHUB_CLIENT_ID`            | Turns on "Sign in with GitHub", with `GITHUB_CLIENT_SECRET`.                                                                                                       |
 | `GITHUB_CLIENT_SECRET`        | The client secret of the same GitHub OAuth app.                                                                                                                    |
 | `OIDC_ISSUER`                 | Turns on an OpenID Connect provider, with the two below. See [below](#sign-in-through-an-openid-connect-provider).                                                 |
@@ -186,6 +183,34 @@ after updating.
 Leave `AGENTS_DEMO` unset. It turns a deployment into Gateweave's public demo, where anyone gets a
 sandbox of made-up data that is deleted after a day, agents answer from a script, and nobody can
 sign up or sign in (see "The public demo" in [architecture.md](architecture.md#the-public-demo)).
+
+### The key that encrypts workspaces' secrets
+
+Workspaces entrust secrets to the server: model provider keys, the secret values of environment
+sets, GitLab tokens, triggers' signing secrets, the headers of a telemetry endpoint and what an
+MCP server's sign-in left. Each is encrypted (AES-256-GCM) before it is stored in the workspace's
+Durable Object, under a key made for that workspace alone.
+
+- **Without `SECRETS_KEY`**, that key is derived from `BETTER_AUTH_SECRET`, so a new server needs
+  no further step. The price is that the two are tied: change `BETTER_AUTH_SECRET` and what was
+  stored can no longer be opened. Nothing else breaks. Each place says so in a sentence, such
+  as "The key for OpenAI cannot be opened on this server; add it again", and the workspace enters
+  the value again. This needs a `BETTER_AUTH_SECRET` of at least 32 characters. With a shorter one,
+  secrets stay off and the pages say so, as before.
+- **With `SECRETS_KEY`** set, the server encrypts with it, and `BETTER_AUTH_SECRET` can change
+  without touching what `SECRETS_KEY` encrypted. Set it with
+  `openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY`, or as a secret in the dashboard,
+  and keep a copy: if it changes or is removed, what it encrypted has to be entered again. A
+  `SECRETS_KEY` that is set but unusable (not base64, or under 32 bytes) turns secrets off rather
+  than fall back to the other key.
+- **Setting `SECRETS_KEY` later** loses nothing. Each stored value says which of the two keys
+  encrypted it, so the server goes on opening the earlier ones for as long as
+  `BETTER_AUTH_SECRET` stays what it was, and encrypts everything saved from then on with
+  `SECRETS_KEY`. An earlier value moves to `SECRETS_KEY` only when someone saves it again. So before
+  you change `BETTER_AUTH_SECRET` on such a server, have workspaces save again what they stored
+  before `SECRETS_KEY` was set, or expect them to be asked for those values.
+
+A server that has always had a `SECRETS_KEY` works exactly as it did.
 
 ### Your own domain
 

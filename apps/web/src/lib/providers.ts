@@ -47,7 +47,7 @@ export interface WorkersAiSpend {
 }
 
 /**
- * The keys, whether this server can keep keys at all (it needs `SECRETS_KEY`), whether it offers
+ * The keys, whether this server can keep keys at all (`secretsProblem`), whether it offers
  * Workers AI, which has no key: the deployment pays for it, and whether it runs sandboxes for the
  * workspace, which the deployment pays for too, with how much of them the workspace used today.
  */
@@ -75,6 +75,7 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 			if (!found) return null;
 			const { env } = await import("cloudflare:workers");
 			const { workersAiOffer } = await import("#/server/workers-ai");
+			const { secretsProblem } = await import("@gateweave/agents-registry");
 			const { workspaceId } = found.member.membership;
 			const sandbox = sandboxOfferTo(env, workspaceId);
 			const offer = workersAiOffer(workspaceId);
@@ -84,7 +85,7 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 				offer === "offered" ? found.registry.workersAiSpentToday() : null,
 			]);
 			return {
-				configured: Boolean(env.SECRETS_KEY),
+				configured: secretsProblem(env) === null,
 				keys,
 				workersAi: offer === "offered",
 				workersAiOffer: offer,

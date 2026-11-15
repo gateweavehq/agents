@@ -121,12 +121,15 @@ and can close sign-up to people it has not let in (account page > This server). 
 uncomment and fill in `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` in `.dev.vars`. To connect
 workspaces to GitHub, create a GitHub App as [docs/github-app.md](docs/github-app.md) describes. GitLab
 needs nothing on the server: an owner or admin connects it in Settings > GitLab with an access
-token, which the server keeps encrypted, so `SECRETS_KEY` must be set.
+token, which the server keeps encrypted.
 
-Workspaces keep their model provider keys and environment secrets encrypted with the server's
-`SECRETS_KEY`, which `pnpm dev:setup` generates for local development. On a deployed Worker, set
-it once with `openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY` and keep it: if it
-changes, workspaces have to add their keys and secret values again.
+Workspaces keep their model provider keys and environment secrets encrypted. A deployed Worker
+needs no step for that: without a `SECRETS_KEY` it encrypts under a key made from
+`BETTER_AUTH_SECRET`, so changing that secret means workspaces add their keys and secret values
+again. To keep the two apart, set `SECRETS_KEY` with
+`openssl rand -base64 32 | pnpm wrangler secret put SECRETS_KEY` and keep it;
+[docs/self-hosting.md](docs/self-hosting.md#the-key-that-encrypts-workspaces-secrets) says what
+that changes. `pnpm dev:setup` generates one for local development.
 
 Chat sends each agent's requests straight to its model provider. To send them through a
 [Cloudflare AI Gateway](https://developers.cloudflare.com/ai-gateway/) instead, for its logs,

@@ -2,7 +2,7 @@
 # The "Deploy to Cloudflare" button asks for every key set here, so the optional ones stay
 # commented out. Uncomment one to use it.
 
-# Signs sessions. Generate with: openssl rand -base64 32
+# Signs sessions: at least 32 characters. Generate with: openssl rand -base64 32
 BETTER_AUTH_SECRET=
 
 # Optional: enables "Sign in with GitHub". Callback URL: http://localhost:4720/api/auth/callback/github
@@ -26,8 +26,9 @@ BETTER_AUTH_SECRET=
 # GITHUB_APP_PRIVATE_KEY=
 # GITHUB_APP_WEBHOOK_SECRET=
 
-# Optional: lets workspaces save model provider keys, which it encrypts. `pnpm dev:setup` fills
-# in a random one. Never change it once keys are saved: they cannot be opened without it.
+# Optional: encrypts what workspaces save, such as model provider keys. `pnpm dev:setup` fills
+# in a random one. Without it, they are encrypted under a key made from BETTER_AUTH_SECRET. Never
+# change whichever of the two is in use once keys are saved: they cannot be opened without it.
 # SECRETS_KEY=
 
 # Optional: sends agents' model calls through Cloudflare AI Gateway, for its logs, caching and
