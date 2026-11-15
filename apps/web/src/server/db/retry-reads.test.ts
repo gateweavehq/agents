@@ -1,43 +1,22 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../auth/config";
 import { createDb } from ".";
+import { faulty, LOCAL, migratedD1 } from "./faulty-d1";
 import { READ_ATTEMPTS, retryingReads } from "./retry-reads";
 
 // A read of D1 that fails for a moment (AGT-131). Under load, the local runtime's D1 answered one
 // read of a session with the error below, and a signed-in person's page was a 500 that said
 // "Failed to get session". The database here is a real one, with the failure put in front of it.
 
-const LOCAL = "D1_ERROR: Failed to get session commit token: internal error; reference = test";
-
-let mf: Miniflare;
 let real: D1Database;
+let dispose: () => Promise<void>;
 
 beforeAll(async () => {
-	mf = new Miniflare(
-		convertV4MiniflareOptions({
-			modules: true,
-			script: "export default { fetch: () => new Response() };",
-			d1Databases: { DB: "retry-reads-test" },
-		}),
-	);
-	real = (await mf.getD1Database("DB")) as unknown as D1Database;
-	const migrations = resolve(import.meta.dirname, "../../../migrations");
-	for (const file of readdirSync(migrations)
-		.filter((name) => name.endsWith(".sql"))
-		.sort()) {
-		const statements = readFileSync(join(migrations, file), "utf8")
-			.split("--> statement-breakpoint")
-			.map((statement) => statement.trim())
-			.filter(Boolean);
-		await real.batch(statements.map((statement) => real.prepare(statement)));
-	}
+	({ d1: real, dispose } = await migratedD1("retry-reads-test"));
 });
 
 afterAll(async () => {
-	await mf?.dispose();
+	await dispose?.();
 });
 
 let warned: ReturnType<typeof vi.spyOn>;
@@ -51,61 +30,6 @@ beforeEach(() => {
 afterEach(() => {
 	vi.restoreAllMocks();
 });
-
-/**
- * The database, failing when told to: the next `failures` statements sent alone are refused with
- * `message`, before they reach the database. `sent` lists every one that was tried, refused or
- * not. A session it opens fails the same way.
- */
-function faulty(d1: D1Database) {
-	const state = { failures: 0, message: LOCAL, sent: [] as string[] };
-	const sends = new Set<PropertyKey>(["all", "raw", "first", "run"]);
-	const made = new WeakMap<object, D1PreparedStatement>();
-
-	function watched(statement: D1PreparedStatement, query: string): D1PreparedStatement {
-		const proxy = new Proxy(statement, {
-			get(target, key) {
-				const value: unknown = Reflect.get(target, key, target);
-				if (typeof value !== "function") return value;
-				if (key === "bind") {
-					return (...values: unknown[]) => watched(target.bind(...values), query);
-				}
-				if (!sends.has(key)) return value.bind(target);
-				return async (...args: unknown[]) => {
-					state.sent.push(query);
-					if (state.failures > 0) {
-						state.failures -= 1;
-						throw new Error(state.message);
-					}
-					return Reflect.apply(value, target, args);
-				};
-			},
-		});
-		made.set(proxy, statement);
-		return proxy;
-	}
-
-	function wrapped<Source extends D1Database | D1DatabaseSession>(source: Source): Source {
-		return new Proxy(source, {
-			get(target, key) {
-				const value: unknown = Reflect.get(target, key, target);
-				if (typeof value !== "function") return value;
-				if (key === "prepare") return (query: string) => watched(target.prepare(query), query);
-				if (key === "batch") {
-					return (statements: D1PreparedStatement[]) =>
-						target.batch(statements.map((statement) => made.get(statement) ?? statement));
-				}
-				if (key === "withSession") {
-					return (...args: unknown[]) =>
-						wrapped(Reflect.apply(value, target, args) as D1DatabaseSession);
-				}
-				return value.bind(target);
-			},
-		});
-	}
-
-	return { database: wrapped(d1), state };
-}
 
 async function signedUp(d1: D1Database, email: string) {
 	const auth = createAuth({

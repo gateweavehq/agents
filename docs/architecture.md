@@ -27,8 +27,20 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   100 ms, each times a random factor between 0.5 and 1.5, so reads that failed together do not
   come back together. Each resend is logged by a fixed name for the failure and the attempt's
   number, never with D1's words, which can carry what a row held. After the last attempt the
-  failure still reaches the caller with Drizzle's message, which holds the statement and its
-  values: keeping those off the error page and out of Better Auth's log is AGT-133.
+  failure reaches the caller.
+- **A query of D1 that failed says nothing of its statement.** Drizzle's own error is `Failed
+  query: select … params: …`, with every value the statement was given, and whoever catches an
+  error tends to log it or show it: Better Auth logged a session read that failed, token
+  included, and a page whose read failed showed the statement and its values. So `createDb`
+  throws a `DatabaseError` instead (`apps/web/src/server/db/query-failure.ts`), whose message is
+  `A database query failed (reference 1a2b3c4d)` and nothing else. It is made where Drizzle's
+  session prepares a query, the one place every builder, `db.query` and a transaction go through;
+  a batch fails in D1's words, and gets the same. The failure is logged once, as `d1: a query
+  failed (<kind>), reference <reference>`, where the kind is D1's code, SQLite's, the name a
+  passing failure is logged under, and a constraint or a missing table by the schema's names:
+  never D1's words as they came. The error page (`RouteError`) shows no error's message, only
+  that the page could not be loaded and the reference if there is one. A dialog or a toast still
+  shows the message of what a server function threw, which for a failed query is that sentence.
 - **Rate limits** on sign-in, password reset, invitations and email are counted in a
   `RateLimiter` Durable Object per client address or recipient, so they hold across isolates and
   locations. Everything else is limited in memory per isolate. Every Worker reaches another zone
