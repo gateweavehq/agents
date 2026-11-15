@@ -21,10 +21,12 @@ asked again instead of becoming an error page. There is no migration in this rel
   opened nothing. The Runs page and a run's own page now keep what the server sent.
   ([#247](https://github.com/gateweavehq/agents/pull/247))
 - **A page failing because one database read did.** When a single read from D1 failed, the page
-  was an error although asking again would have worked. A read that fails with one of the errors
-  Cloudflare documents as passing is now sent up to three times, a moment apart. Writes are sent
-  once, as before, and so is any other error. Each resend is logged by the kind of failure, never
-  with the database's own message. ([#245](https://github.com/gateweavehq/agents/pull/245))
+  was an error although asking again would have worked. A plain read (one `SELECT` statement,
+  which is what the app's pages send) that fails with one of the errors Cloudflare documents as
+  passing is now sent up to three times, a moment apart. Everything else is sent once, as before:
+  writes, a read that begins with `WITH`, several statements in one, and any other error. Each
+  resend is logged by the kind of failure, never with the database's own message.
+  ([#245](https://github.com/gateweavehq/agents/pull/245))
 
 ### If you run your own
 
