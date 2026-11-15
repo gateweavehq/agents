@@ -14,6 +14,12 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   invitations, stored in **D1**. There is one Better Auth instance per isolate, built on first
   use, because workerd forbids I/O in global scope. It can also sign people in through an OpenID
   Connect provider: see "Signing in through a provider" below.
+- **A read of D1 that fails is sent again**, up to three times in all
+  (`apps/web/src/server/db/retry-reads.ts`), before a page or a session check is told. D1 can fail
+  for a moment, and so can the local runtime under load, where one failed read of a session made a
+  signed-in person's page a 500. Only a single `select` is sent again: a write may have happened
+  although its answer was lost, and a batch may hold writes. What SQLite itself refused is not
+  asked twice. Each resend is logged with D1's message, which holds none of the statement's values.
 - **Rate limits** on sign-in, password reset, invitations and email are counted in a
   `RateLimiter` Durable Object per client address or recipient, so they hold across isolates and
   locations. Everything else is limited in memory per isolate. Every Worker reaches another zone
