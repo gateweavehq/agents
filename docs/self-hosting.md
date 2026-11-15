@@ -12,7 +12,8 @@ workspace's accounts with the providers, not to yours. Only Workers AI (optional
 (optional, Workers Paid plan) cost your account more than the Worker itself.
 
 There are two ways to deploy: the button, which also sets up deploys on every push, or the
-command line.
+command line. [From zero to a first pull request](first-pull-request.md) lists every step from
+there to an agent that opens a pull request, with what each needs.
 
 ## Deploy with the button
 
