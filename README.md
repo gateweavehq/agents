@@ -5,8 +5,8 @@
 <h1 align="center">Gateweave Agents</h1>
 
 <p align="center">
-  <strong>See which coding agents work where, keep what they read in one place, and run your own teams of agents.</strong><br>
-  Open source, on Cloudflare, with no server to run.
+  <strong>Assign an issue to an AI agent and get a pull request back.</strong><br>
+  Open source, on your own Cloudflare account, with your own model key. No server to run, and every run shows what it did and what it cost.
 </p>
 
 <p align="center">
@@ -16,11 +16,27 @@
 </p>
 
 <p align="center">
+  <a href="https://gateweave.com/watch/issue-to-pull-request.mp4"><strong>Watch a real run (45 s)</strong></a> ·
   <a href="https://agents-demo.gateweave.com"><strong>Try the demo</strong></a> ·
   <a href="https://gateweave.com/agents"><strong>See what it does</strong></a> ·
   <a href="#self-hosting"><strong>Deploy your own</strong></a> ·
   <a href="setups/">Ready-made setups</a>
 </p>
+
+<p align="center">
+  <a href="https://gateweave.com/watch/issue-to-pull-request.mp4"><img src="docs/images/issue-to-pull-request.jpg" width="880" alt="An issue in Gateweave Track assigned to the agent Coder 2. The agent commented that it was on it, moved the issue to In Progress, opened pull request 308 and said so on the issue. The caption reads: 3 min 45 s after assigning, its pull request is open."></a>
+</p>
+
+<p align="center">
+  One real run on Gateweave Cloud, not staged: an issue in
+  <a href="https://github.com/gateweavehq/track">Gateweave Track</a> is assigned to an agent, which answers
+  26 seconds later and has <a href="https://github.com/gateweavehq/track/pull/308">its pull request</a> open
+  after 3 minutes 45 seconds, for about 11 cents on an open model.
+  <a href="https://gateweave.com/watch/issue-to-pull-request.mp4">Watch it</a> (45 s, no sound).
+</p>
+
+Beyond that, it shows which coding agents work where in your repositories, keeps what they read in
+one place, and runs your own teams of agents:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/tour-dark.gif">
