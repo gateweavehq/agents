@@ -27,8 +27,35 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   100 ms, each times a random factor between 0.5 and 1.5, so reads that failed together do not
   come back together. Each resend is logged by a fixed name for the failure and the attempt's
   number, never with D1's words, which can carry what a row held. After the last attempt the
-  failure still reaches the caller with Drizzle's message, which holds the statement and its
-  values: keeping those off the error page and out of Better Auth's log is AGT-133.
+  failure reaches the caller.
+- **A query of D1 that failed says nothing of its statement.** Drizzle's own error is `Failed
+  query: select … params: …`, with every value the statement was given, and whoever catches an
+  error tends to log it or show it: Better Auth logged a session read that failed, token
+  included, and a page whose read failed showed the statement and its values. So `createDb`
+  throws a `DatabaseError` instead (`apps/web/src/server/db/query-failure.ts`), whose message is
+  `A database query failed (reference 1a2b3c4d)` and nothing else. It is made where Drizzle's
+  session prepares a query, the one place every builder, `db.query` and a transaction go through;
+  a batch fails in D1's words where the binding is asked, and gets the same there, so what fails
+  while a batch is put together is thrown as it is. The failure is logged once, as `d1: a query
+  failed (<kind>), reference <reference>: <statement>`. The statement is the text with its `?`,
+  cut at 600 characters, never the values: the app writes no value into a statement's text (no
+  `sql.raw`; a `sql` template binds what it is given), which has to stay so. The kind is D1's
+  code at the start of its words, SQLite's at their end, a name for each thing D1 says in fixed
+  words (the passing ones of `retry-reads.ts`, and `overloaded`, `queued-too-long`, `cpu-reset`,
+  `memory-reset`, `storage-timeout`, `response-too-large`, `too-many-api-requests`,
+  `too-many-variables`, `syntax-error`), and a constraint or a missing table or column by the
+  schema's names, quoted only right after D1's code: never D1's words as they came, since the
+  same words further in may be what a row held. The error's cause is an error that says the kind
+  only, which Better Auth's oauth-provider reads to tell a database not migrated yet (`no such
+  table`) from a real failure. None of what this reaches for is in Drizzle's public types: with
+  a session it does not know, `createDb` throws as the Worker starts, and with a prepared query
+  sent some other way, at the first query. The error page (`RouteError`) shows no error's
+  message, only that the page could not be loaded and the reference if there is one, which it
+  looks for in the error's causes too. Only a message crosses from a server function to the
+  browser, so one whose reference is in a cause, as Better Auth's `Failed to get session` is,
+  leaves with the reference added to its message (`apps/web/src/start.ts`). A dialog or a toast
+  still shows the message of what a server function threw, which for a failed query is that
+  sentence.
 - **Rate limits** on sign-in, password reset, invitations and email are counted in a
   `RateLimiter` Durable Object per client address or recipient, so they hold across isolates and
   locations. Everything else is limited in memory per isolate. Every Worker reaches another zone

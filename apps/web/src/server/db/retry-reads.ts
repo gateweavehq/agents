@@ -40,7 +40,7 @@ const PASSING: readonly (readonly [label: string, text: string])[] = [
 ];
 
 /** The name of a failure that passes, or nothing for one that is thrown as it is. */
-function passing(error: unknown): string | undefined {
+export function passing(error: unknown): string | undefined {
 	if (!(error instanceof Error)) return undefined;
 	return PASSING.find(([, text]) => error.message.includes(text))?.[0];
 }
