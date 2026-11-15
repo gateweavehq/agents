@@ -38,10 +38,20 @@ import {
 	type McpServerEditInput,
 	type McpServerEntry,
 	type McpServerInput,
+	type Memory,
+	type MemoryAgentEvent,
+	type MemoryEditInput,
+	type MemoryFilter,
+	type MemoryInput,
+	type MemoryPage,
+	type MemoryRefusal,
 	MODEL_PROVIDER_NAMES,
 	mcpCheckResult,
 	mcpServerEditInput,
 	mcpServerInput,
+	memoryEditInput,
+	memoryFilter,
+	memoryInput,
 	type NewTeamInput,
 	newTeamInput,
 	type Overview,
@@ -58,6 +68,10 @@ import {
 	providerKeyInput,
 	providerMissing,
 	REPOSITORY_PROVIDERS,
+	type RecallInput,
+	type RecallOutcome,
+	type RememberInput,
+	type RememberOutcome,
 	type Repository,
 	type RepositoryDetail,
 	type RepositoryInput,
@@ -67,6 +81,8 @@ import {
 	type RunnableAgent,
 	type RunPullRequestInput,
 	type RunUsage,
+	recallInput,
+	rememberInput,
 	repositoryInput,
 	runCursor,
 	runFinish,
@@ -246,6 +262,18 @@ import {
 	remoteLibraryServer,
 	turnServers,
 } from "./mcp-servers";
+import {
+	addMemory,
+	approveMemory,
+	deleteMemory,
+	dismissMemory,
+	editMemory,
+	forgetInRun,
+	forgetMemoriesAbout,
+	listMemories,
+	recallInRun,
+	rememberInRun,
+} from "./memory";
 import {
 	beginImport,
 	checkCopy,
@@ -1076,8 +1104,90 @@ export class RegistryDO extends DurableObject {
 	 */
 	async forgetPerson(userId: string): Promise<void> {
 		const person = id.parse(userId);
-		this.#write(() => queueConversationsOf(this.#db, person, Date.now()));
+		this.#write(() => {
+			queueConversationsOf(this.#db, person, Date.now());
+			forgetMemoriesAbout(this.#db, person);
+		});
 		await this.#scheduleAlarm();
+	}
+
+	/** A page of the workspace's memory in one state, for the Memory page (`./memory.ts`). */
+	listMemories(filter: MemoryFilter): MemoryPage {
+		return listMemories(this.#db, memoryFilter.parse(filter));
+	}
+
+	/**
+	 * Adds a memory a person typed, which is trusted. `by` is their user id: the app's server
+	 * function names it after checking that they are an owner or admin, as for the calls below.
+	 */
+	addMemory(input: MemoryInput, by: string): Memory | MemoryRefusal {
+		const data = memoryInput.parse(input);
+		const member = id.parse(by);
+		return this.#write(() => addMemory(this.#db, data, member, Date.now()));
+	}
+
+	/** Null when there is no such memory. Editing one that waits does not approve it. */
+	editMemory(input: MemoryEditInput, by: string): Memory | MemoryRefusal | null {
+		const data = memoryEditInput.parse(input);
+		const member = id.parse(by);
+		return this.#write(() => editMemory(this.#db, data, member, Date.now()));
+	}
+
+	/** Makes a memory that waits trusted, so agents recall it. Null when there is none. */
+	approveMemory(memoryId: string, by: string): Memory | MemoryRefusal | null {
+		const memory = id.parse(memoryId);
+		const member = id.parse(by);
+		return this.#write(() => approveMemory(this.#db, memory, member, Date.now()));
+	}
+
+	/** Removes a memory that waits. Null when there is none. */
+	dismissMemory(memoryId: string): Memory | MemoryRefusal | null {
+		const memory = id.parse(memoryId);
+		return this.#write(() => dismissMemory(this.#db, memory));
+	}
+
+	/** Removes a memory, from the index too. Returns it as it was; null when there was none. */
+	deleteMemory(memoryId: string): Memory | null {
+		const memory = id.parse(memoryId);
+		return this.#write(() => deleteMemory(this.#db, memory));
+	}
+
+	/**
+	 * An agent's `remember`, for the runtime alone, which names only the run the tool was called
+	 * in. The registry reads from that run's row which agent it is and what started it, and so
+	 * whether the memory is trusted or waits for an owner or admin: a caller cannot say.
+	 */
+	rememberInRun(runId: string, input: RememberInput): RememberOutcome | MemoryRefusal {
+		const run = id.parse(runId);
+		const data = rememberInput.parse(input);
+		const written = this.#write(() => rememberInRun(this.#db, run, data, Date.now()));
+		if ("status" in written) return written;
+		this.#noteMemory(written.event);
+		return written.outcome;
+	}
+
+	/** An agent's `recall`, for the runtime alone: trusted memories its run's agent may see. */
+	recallInRun(runId: string, input: RecallInput): RecallOutcome | MemoryRefusal {
+		return recallInRun(this.#db, id.parse(runId), recallInput.parse(input), Date.now());
+	}
+
+	/** An agent's `forget`, for the runtime alone: only what its run's agent wrote itself. */
+	forgetInRun(runId: string, memoryId: string): { forgotten: true } | MemoryRefusal {
+		const run = id.parse(runId);
+		const memory = id.parse(memoryId);
+		const taken = this.#write(() => forgetInRun(this.#db, run, memory, Date.now()));
+		if ("status" in taken) return taken;
+		this.#noteMemory(taken.event);
+		return { forgotten: true };
+	}
+
+	/** Passes an agent's write on to the audit log. The write stands whether or not that works. */
+	#noteMemory(event: MemoryAgentEvent): void {
+		this.ctx.waitUntil(
+			this.memoryChanged(event).catch((error: unknown) => {
+				console.error(`registry: a memory's ${event.action} was not audited`, error);
+			}),
+		);
 	}
 
 	/**
@@ -1332,7 +1442,16 @@ export class RegistryDO extends DurableObject {
 		]);
 		if ("status" in opened) return opened;
 		const mcpServers = this.#write(() => turnServers(this.#db, servers, environment, sandbox));
-		return { agent, key: opened.key, mcpServers, edges, sandbox, repository };
+		return {
+			agent,
+			key: opened.key,
+			mcpServers,
+			edges,
+			sandbox,
+			repository,
+			// Gateweave's own loop only, for now: an engine in the sandbox gets none.
+			memory: tools && agent.memory && agent.engine === "gateweave",
+		};
 	}
 
 	/** Why no model of `agent`'s provider can answer here, or null when one can. */
@@ -2678,6 +2797,13 @@ export class RegistryDO extends DurableObject {
 			`registry: sandboxes have spent ${passed.share}% of the budget for ${passed.month}: $${passed.spent.toFixed(2)} of $${passed.budget}`,
 		);
 	}
+
+	/**
+	 * An agent remembered or forgot something. The audit log is the app's, in D1, which this
+	 * package cannot reach: the app's Worker exports a `RegistryDO` that writes it there
+	 * (`apps/web/src/server/registry-do.ts`).
+	 */
+	protected async memoryChanged(_event: MemoryAgentEvent): Promise<void> {}
 
 	/**
 	 * Copies a closed run's usage to the deployment's Analytics Engine dataset, when it binds one

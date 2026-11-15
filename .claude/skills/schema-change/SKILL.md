@@ -29,7 +29,9 @@ one that moves the schema forward.
    This writes `drizzle/NNNN_*.sql`, updates `drizzle/meta/` and regenerates
    `drizzle/migrations.js`. Commit all of them.
 3. Read the generated SQL. SQLite cannot alter some columns in place, so Drizzle may rebuild the
-   table; make sure existing rows survive.
+   table; make sure existing rows survive. For what Drizzle cannot express, such as an FTS5
+   table, make an empty migration with `db:generate --custom --name <name>` and write its SQL by
+   hand, as `0040_memory_search.sql` does.
 4. Migrations run in the `RegistryDO` constructor inside `blockConcurrencyWhile`, the first time
    each workspace wakes up after a deploy. They must be fast and must never fail on existing data.
 5. Run `pnpm --filter @gateweave/agents-registry test`.

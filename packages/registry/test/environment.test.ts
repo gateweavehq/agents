@@ -268,6 +268,7 @@ describe("agents and environment sets", () => {
 			"agentId",
 			"engine",
 			"instructions",
+			"memory",
 			"model",
 			"name",
 			"provider",

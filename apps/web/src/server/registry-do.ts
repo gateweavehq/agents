@@ -1,5 +1,6 @@
 import {
 	KEYED_PROVIDERS,
+	type MemoryAgentEvent,
 	MODEL_PRICES,
 	type ProviderKey,
 	type ProviderModel,
@@ -11,6 +12,7 @@ import { objectsIn, RegistryDO as Registry } from "@gateweave/agents-registry";
 import { conversationName, destroyConversationObject } from "@gateweave/agents-runtime";
 import { getAgentByName } from "agents";
 import { eq } from "drizzle-orm";
+import { recordAudit } from "./audit";
 import { db } from "./auth";
 import { schema } from "./db";
 import { fillSandbox } from "./demo/fill";
@@ -27,8 +29,9 @@ function offInDemo() {
 /**
  * The workspace's registry as this Worker runs it: the registry package's, which begins a
  * scheduled trigger's run in the runtime's conversation as the trigger gateway does for a webhook
- * (`./triggers.ts`), and emails whoever runs the server about its sandbox budget. The registry
- * package can reach neither on its own.
+ * (`./triggers.ts`), emails whoever runs the server about its sandbox budget, and writes what an
+ * agent remembered or forgot to the audit log. The registry package can reach none of them on its
+ * own.
  *
  * On the public demo (`AGENTS_DEMO`), its turns answer with the scripted model and reach nothing
  * outside, and it refuses whatever would: keys, secrets, MCP servers, triggers, telemetry,
@@ -162,6 +165,26 @@ export class RegistryDO extends Registry {
 		await mailer.send({
 			to,
 			...sandboxBudgetEmail({ ...passed, server: hostOf(this.env.BETTER_AUTH_URL) }),
+		});
+	}
+
+	/**
+	 * An agent's write to the workspace's memory, in the audit log: by no member, naming the agent
+	 * and its run, with the start of the text at most (`memoryExcerpt`).
+	 */
+	protected override async memoryChanged(event: MemoryAgentEvent): Promise<void> {
+		// Each registry is named for its workspace (`registryFor`).
+		const workspaceId = this.ctx.id.name;
+		if (!workspaceId) return;
+		await recordAudit(db, workspaceId, null, {
+			action: event.action === "remembered" ? "memory.remembered" : "memory.forgotten",
+			target: { type: "memory", id: event.memoryId, label: event.excerpt },
+			detail: {
+				agent: event.agentName,
+				agentId: event.agentId,
+				run: event.runId,
+				...(event.action === "remembered" ? { waiting: event.waiting } : {}),
+			},
 		});
 	}
 

@@ -119,6 +119,7 @@ export function agentSnapshot(db: Db, id: string): AgentSnapshot | null {
 		instructions: files.length > 0 ? files.map((file) => file.content ?? "").join("\n\n") : null,
 		sandbox: definition.sandbox,
 		engine: definition.engine,
+		memory: definition.memory,
 		updatedAt: agent.updatedAt,
 	};
 }
@@ -149,6 +150,7 @@ function definitionRow(agentId: string, input: Definition) {
 		sandbox: input.sandbox,
 		repositoryId: input.repositoryId,
 		engine: input.engine,
+		memory: input.memory,
 	};
 }
 

@@ -110,6 +110,7 @@ describe("conversations", () => {
 				instructions: "Review the change.\n",
 				sandbox: false,
 				engine: "gateweave",
+				memory: false,
 				updatedAt: agent.updatedAt,
 			},
 			key: "sk-ant-api03-abcdefgh",
@@ -117,6 +118,7 @@ describe("conversations", () => {
 			edges: [],
 			sandbox: false,
 			repository: null,
+			memory: false,
 			runId: expect.any(String),
 		});
 

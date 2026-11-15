@@ -269,6 +269,34 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 				)}
 			</section>
 
+			<section aria-labelledby="memory-heading" className="space-y-3">
+				<h2 id="memory-heading" className="text-sm font-medium">
+					Memory
+				</h2>
+				<p className="rounded-lg border p-6 text-sm text-muted-foreground">
+					{definition.memory ? (
+						definition.engine === "gateweave" ? (
+							<>
+								The agent can note facts, decisions and preferences in the workspace's{" "}
+								<Link
+									to="/$workspace/memory"
+									params={{ workspace: slug }}
+									className="font-medium text-foreground underline-offset-4 hover:underline"
+								>
+									memory
+								</Link>
+								, and recall them in later runs. What it notes in a run a trigger started waits
+								there for an owner or admin.
+							</>
+						) : (
+							"Memory is on, but the memory tools work with the Gateweave engine only, so this agent has none yet."
+						)
+					) : (
+						`No memory: the agent starts each run with what its instructions say.${admin ? " Turn it on with Edit." : ""}`
+					)}
+				</p>
+			</section>
+
 			<section aria-labelledby="mcp-heading" className="space-y-3">
 				<h2 id="mcp-heading" className="text-sm font-medium">
 					{definition.mcpServers.length === 0

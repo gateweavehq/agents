@@ -77,6 +77,7 @@ import {
 } from "./engines";
 import type { LocalServerPort } from "./local-servers";
 import { RegistryOAuthProvider } from "./mcp-oauth";
+import { memoryTools } from "./memory-tools";
 import { type MeteredRequest, meteredRequest } from "./meter";
 import {
 	describeFailure,
@@ -673,6 +674,17 @@ ${runPageNote(runs, turn.runId)}`
 						record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
 						run,
 					})
+				: {}),
+			// The registry reads who asks, and what started the run, from the run itself.
+			...(turn.memory
+				? memoryTools(
+						{
+							remember: (input) => registry.rememberInRun(runId, input),
+							recall: (input) => registry.recallInRun(runId, input),
+							forget: (id) => registry.forgetInRun(runId, id),
+						},
+						run,
+					)
 				: {}),
 			...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
 		};

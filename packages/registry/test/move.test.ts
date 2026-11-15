@@ -54,6 +54,8 @@ describe("moving a registry", () => {
 		const source = env.REGISTRY.getByName(from);
 		await source.saveProviderKey({ provider: "openai", key: KEY }, "Ada");
 		await source.createLibraryAsset({ kind: "instructions", name: "rules", text: "Be brief.\n" });
+		// A full-text index, which is copied by its content: its shadow tables are not.
+		await source.addMemory({ text: "Deploys go out on Tuesdays.", kind: "decision" }, "user-ada");
 		// A table without rowids, read on by offset, and one the code made only here, which the copy
 		// makes from the source's own SQL, with its index.
 		await runInDurableObject(source, (_instance: RegistryDO, state) => {
@@ -94,6 +96,10 @@ describe("moving a registry", () => {
 		expect(copied.notes).toHaveLength(60);
 		expect(copied.notes[59]).toEqual({ topic: "odd", line: 59 });
 		expect(copied.index).toBe(1);
+		// The memory is found by its words where it went, once, and the index takes new ones.
+		expect((await target.listMemories({ search: "deploys" })).memories).toHaveLength(1);
+		await target.addMemory({ text: "Deploys need a review.", kind: "decision" }, "user-ada");
+		expect((await target.listMemories({ search: "deploys" })).memories).toHaveLength(2);
 
 		// The key was sealed under the old object's id, which came over with it.
 		const keys = providerAnswers();

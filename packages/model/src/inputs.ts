@@ -596,6 +596,11 @@ export const agentDefinitionInput = projectInput.extend({
 	 * sandbox, an Anthropic model, no MCP servers for Claude Code) are the registry's to enforce.
 	 */
 	engine: z.enum(AGENT_ENGINES).default("gateweave"),
+	/**
+	 * Whether its turns can write to the workspace's memory and recall from it (`./memory.ts`). Off
+	 * by default, so an agent made before memory existed has none until someone turns it on.
+	 */
+	memory: z.boolean().default(false),
 });
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
 

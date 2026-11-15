@@ -24,6 +24,8 @@ import type {
 	McpServerEditInput,
 	McpServerEntry,
 	McpServerInput,
+	MemoryFilter,
+	MemoryPage,
 	NewTeamInput,
 	Overview,
 	Project,
@@ -190,6 +192,7 @@ export interface RegistryStub {
 		setBy: string,
 	): Promise<{ agent: Agent; trigger: Trigger; mcpServerId: string } | TriggerRefusal>;
 	setTelemetry(input: TelemetryInput, setBy: string): Promise<unknown>;
+	listMemories(filter: MemoryFilter): Promise<MemoryPage>;
 }
 
 /** The address Agents sends from in tests. */

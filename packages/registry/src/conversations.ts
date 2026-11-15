@@ -37,6 +37,8 @@ export interface ConversationTurn {
 	sandbox: boolean;
 	/** The repository the sandbox checks out, when the turn has one and the agent chose one. */
 	repository: SandboxRepository | null;
+	/** Whether the turn has the memory tools: the agent has memory, and the turn has tools. */
+	memory: boolean;
 	runId: string;
 }
 

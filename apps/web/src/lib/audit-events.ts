@@ -54,6 +54,14 @@ export const AUDIT_ACTIONS = [
 	// Deletions.
 	"project.deleted",
 	"library.removed",
+	// Memory: what agents read back in later runs. A person's changes, then an agent's own.
+	"memory.added",
+	"memory.edited",
+	"memory.approved",
+	"memory.dismissed",
+	"memory.deleted",
+	"memory.remembered",
+	"memory.forgotten",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -74,6 +82,7 @@ export const AUDIT_TARGET_TYPES = [
 	"setup",
 	"project",
 	"asset",
+	"memory",
 ] as const;
 
 export type AuditTargetType = (typeof AUDIT_TARGET_TYPES)[number];
@@ -96,7 +105,7 @@ export type AuditDetail = Record<string, AuditValue>;
 export interface AuditEvent {
 	id: number;
 	at: number;
-	/** The member who made the change; null for the app itself. */
+	/** The member who made the change; null for the app itself, or an agent `detail.agent` names. */
 	actorId: string | null;
 	action: AuditAction;
 	target: AuditTarget;

@@ -68,6 +68,7 @@ describe("agents run by Gateweave", () => {
 			instructions: "Review the change.\n",
 			sandbox: false,
 			engine: "gateweave",
+			memory: false,
 			updatedAt: agent.updatedAt,
 		});
 

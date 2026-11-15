@@ -411,6 +411,10 @@ function DeleteAccount({
 							connections, including tokens you connected. To stop one, disconnect it first or
 							revoke it at the service.
 						</li>
+						<li>
+							Memories about you go. What you or an agent noted about a workspace stays in its
+							memory, under "A former member".
+						</li>
 						<li>Invitations you sent that nobody has taken stop working.</li>
 					</ul>
 					{hasPassword ? (

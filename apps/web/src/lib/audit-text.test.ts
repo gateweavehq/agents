@@ -91,6 +91,38 @@ describe("audit events in words", () => {
 		).toBe("connected the agent Coder to the Track workspace acme on track.example.com");
 	});
 
+	it("names the agent that wrote to memory, and a memory by the start of its text", () => {
+		const remembered = event({
+			action: "memory.remembered",
+			actorId: null,
+			target: { type: "memory", id: "m-1", label: "Deploys go out on Tuesdays." },
+			detail: { agent: "Scout", agentId: "a-1", run: "r-1", waiting: true },
+		});
+		expect(auditActor(remembered, people)).toBe("The agent Scout");
+		expect(auditSentence(remembered, people)).toBe(
+			"remembered the memory “Deploys go out on Tuesdays.” in a run a trigger started, so it waits for approval",
+		);
+		expect(
+			auditSentence({ ...remembered, detail: { agent: "Scout", waiting: false } }, people),
+		).toBe("remembered the memory “Deploys go out on Tuesdays.”");
+		expect(auditSentence({ ...remembered, action: "memory.forgotten" }, people)).toBe(
+			"forgot the memory “Deploys go out on Tuesdays.”, which it wrote itself",
+		);
+		const say = (action: AuditEvent["action"], label: string | null = "Reviews need two people.") =>
+			auditSentence(event({ action, target: { type: "memory", id: "m-2", label } }), people);
+		expect(say("memory.added")).toBe("added the memory “Reviews need two people.”");
+		expect(say("memory.edited")).toBe("edited the memory “Reviews need two people.”");
+		expect(say("memory.approved")).toBe(
+			"approved the memory “Reviews need two people.”, so agents recall it",
+		);
+		expect(say("memory.dismissed")).toBe(
+			"dismissed the memory “Reviews need two people.”, which waited for approval",
+		);
+		expect(say("memory.deleted")).toBe("deleted the memory “Reviews need two people.”");
+		// One about a person is logged without its text.
+		expect(say("memory.added", null)).toBe("added a memory about a person");
+	});
+
 	it("keeps a URL's host only, and finds which fields changed", () => {
 		expect(hostOf("https://hooks.example.com/abc?token=secret")).toBe("hooks.example.com");
 		expect(hostOf("not a url")).toBeNull();

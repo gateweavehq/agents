@@ -363,6 +363,8 @@ export interface AgentDefinition {
 	repository: { id: string; owner: string; name: string; removed: boolean } | null;
 	/** What takes its turns: Gateweave's own loop, or Claude Code in its sandbox. */
 	engine: AgentEngine;
+	/** Whether its turns can write to the workspace's memory and recall from it. */
+	memory: boolean;
 }
 
 /**
@@ -424,6 +426,8 @@ export interface AgentSnapshot {
 	sandbox: boolean;
 	/** What takes its turns: Gateweave's own loop, or Claude Code in its sandbox. */
 	engine: AgentEngine;
+	/** Whether its turns have the memory tools. */
+	memory: boolean;
 	/** When the definition last changed. */
 	updatedAt: number;
 }

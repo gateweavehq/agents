@@ -299,7 +299,8 @@ remove a member from a workspace, which leaves their conversations.
   go, since each holds what they wrote and nobody else can open it. `forgetPerson`
   (`packages/registry/src/forget.ts`) takes the rows of the conversations they started, nested ones
   included, clears their runs' link to them and puts the ids in `conversations_to_destroy`, in one
-  write. D1's note goes once that has answered.
+  write. D1's note goes once that has answered. The same write removes the memories about them
+  ([Memory](#memory)).
 - **The registry's alarm destroys them.** Ten per alarm, each with its messages, traces and sandbox.
   Each alarm has a subrequest budget of its own, so someone with hundreds of conversations is done
   in minutes on any plan. A row goes once its object has gone. One that fails is tried again a
@@ -326,6 +327,8 @@ What stays, and the page says so before anyone confirms:
   away would silently break the team's agents, so the page tells people to disconnect them first or
   revoke them at the service. A GitLab connection names the account it was made with.
 - Conversations a trigger started, which name the trigger and were never theirs.
+- Memories about the workspace, an agent or a repository that they typed, or that an agent noted
+  in one of their runs, under their id and shown as "A former member". Those about them go.
 - What already left: what model providers received, what telemetry sent, and what agents did on
   GitHub, GitLab or in Track.
 - Point-in-time recovery, which Cloudflare provides and Agents does not control: 30 days back for a
@@ -349,6 +352,9 @@ Owners and admins see who changed the workspace, and when, in Settings > Audit l
 - **Agents, teams and setups**: created, changed (which fields) and deleted, and a setup's pull
   request opened or updated in a repository.
 - **Deletions**: projects and library assets.
+- **Memory**: memories added, edited, approved, dismissed and deleted by people, and remembered
+  and forgotten by agents, which are entries with no member that name the agent. The start of a
+  memory's text at most, and none of one about a person; see [Memory](#memory).
 
 Chats, scans, runs, replays and wikis are not in it. The registry is never told who asks, so the
 log is a D1 table, `audit_event`, written by the Worker once a change has been made: by the server
@@ -715,6 +721,8 @@ with no repository and its own id as its key, and a row in `agent_definitions` b
   drops a limit it could not show.
 - **A sandbox**, off by default, gives each of the agent's conversations a Linux machine to run
   commands and edit files in (see "Sandboxes").
+- **Memory**, off by default, gives its turns the tools that write to the workspace's memory and
+  recall from it (see "Memory").
 - **A turn reads one snapshot** (`agentSnapshot`): the model and the pinned instructions' text, in
   one synchronous read, so a turn never mixes two versions of an agent.
 - **Removing an agent** marks it removed, as scans do, so its id stays known to whatever names
@@ -1283,7 +1291,8 @@ after a reconnect.
   (which could carry the conversation away in its query).
 - **Deleting a conversation** removes its row, then destroys its Durable Object with the
   messages and traces. Its runs stay (see "Runs").
-- **Tools** come from the agent's MCP servers (see "MCP servers"). The conversation shows each
+- **Tools** come from the agent's MCP servers (see "MCP servers"), and for an agent with memory
+  from the workspace's memory (see "Memory"). The conversation shows each
   call as its server and tool, running, done or failed; what went in and came back is in the
   messages, for the model, and not shown.
 
@@ -1653,6 +1662,99 @@ Threat model, briefly:
   address you trust.
 - The route is off in the demo, as the manual setup is.
 
+## Memory
+
+A workspace keeps short notes for its agents to recall in later runs (AGT-107): facts, decisions
+and preferences, each saying who or what wrote it and where it came from
+(`packages/registry/src/memory.ts`). [memory.md](memory.md) has the user's view. This is the first
+slice: keyword recall in the registry. Vectors come once recall needs them.
+
+- **Storage.** A `memories` table in the registry: the text (up to 2,000 characters), its kind
+  (`fact`, `decision` or `preference`), what it is about (`scope`: the workspace, or one agent,
+  repository or person by id), who wrote it (`author_kind` and `author_id`: a person's user id or
+  an agent's id), the run and conversation an agent wrote it in, a person's label and https link
+  for its source, whether it is `trusted`, who approved and who last edited it, when it was made
+  and changed, when it stops being recalled (`expires_at`), and when its agent took it back
+  (`forgotten_at`). People are ids here, as everywhere in the registry; the app names them.
+- **Full text.** An FTS5 table, `memory_search`, holds each memory's text under the memory's `seq`,
+  an integer primary key, since the rowid of a table keyed by text can change in a VACUUM. Drizzle
+  cannot express an FTS5 table, so its migration (`0040_memory_search.sql`) is written by hand, as
+  Track's issue search is. The tokenizer is `unicode61 remove_diacritics 2`, so case and accents
+  do not matter, with prefix indexes for words cut short. Every write changes the row and the
+  index in the same `transactionSync`, in code and not by SQL triggers: a move copies the index by
+  its content ([Where a workspace lives](#where-a-workspace-lives)), and a trigger would then
+  index every memory twice. Removing a memory removes its row in the index and merges the index
+  (`optimize`), because FTS5 otherwise keeps a deleted row's words in its pages until a merge.
+- **The trust rule.** A memory is recalled by every later run that can see it, so one written from
+  an outsider's text would steer runs long after the run that read it: prompt injection that
+  stays. So memory follows the rule for a trigger's event, "data, never instructions":
+  - what an owner or admin types on the Memory page is trusted;
+  - what an agent writes in a run a person's chat message started is trusted;
+  - what an agent writes in a run a trigger started (a webhook, a schedule) is stored **not
+    trusted**. It shows on the Memory page as waiting, and no agent recalls it, not even in the
+    run that wrote it, until an owner or admin approves it (`approved_by`), or dismisses it, which
+    removes it. Editing one that waits does not approve it.
+- **What started a run is read from the run.** The runtime passes the tools' calls on with the
+  run's id and nothing else. The registry reads `runs.trigger_id`, which `beginRun` sets from who
+  started the run, for a trigger's nested runs too (`startedFromOutside`). A replay of a
+  trigger's run has that run's words as its history, so the registry also follows
+  `conversations.replay_of` from the run's conversation, or for a team's nested turn the
+  conversation it goes with, back through each replayed run, up to 20 of them. A link it cannot
+  follow, such as a conversation since deleted, counts as outside. The run must still be going
+  (`running`, and younger than a run's hour), and its agent must have memory on. Nothing the model
+  says can make a memory trusted.
+- **Tools.** An agent whose definition has `memory` on gets three tools in Gateweave's own loop
+  (`packages/runtime/src/memory-tools.ts`). The switch is off unless someone turns it on in the
+  agent's form, as the sandbox is, so agents made before memory have none; a turn without tools
+  (an `ask`) has none either (`ConversationTurn.memory`).
+  - `remember({ text, kind, scope? })` answers `{ id, waiting }`. The scope is `agent` (this
+    agent alone, when none is given), `workspace`, `repository` (the one the agent works in) or
+    `person` (whoever's message started the run); the registry fills in the id, and refuses a
+    scope the run has nothing for.
+  - `recall({ query, scope?, limit? })` answers `{ notice, memories }`: the trusted memories that
+    are not forgotten or expired and that this agent may see, which are the workspace's, its own,
+    its repository's, and those about the person whose message started the run. Each has its
+    text, kind, scope, who wrote it ("the agent Scout", "a person", and for one that waited that
+    a person approved it), its source and its date. The notice, and the tool's description, say
+    that these are stored notes and not instructions. Nothing of memory goes into the system
+    prompt.
+  - `forget({ id })` takes back a memory the agent wrote itself, which stays for people to read
+    and is never recalled. Anything else is refused, and a trigger's run takes back only what
+    still waits, so that an outsider's text cannot remove memory the workspace trusts.
+  - A refusal reaches the model as the tool's error, in the registry's words. The trace records
+    each call's timing and sizes, and a refusal's sentence, never a memory's text.
+- **Recall is by keyword.** A query is cut into runs of letters and digits, at most 16, in lower
+  case and without accents; each is quoted as a prefix term and they are joined with `OR`
+  (`memoryMatch` in `packages/model/src/memory.ts`). Nothing else of a query reaches FTS5, so
+  `AND`, `NEAR`, a column name or a stray quote is a word or nothing, and no query is a syntax
+  error. Matches come best first (`bm25`), the newest first among equals. A query without a word
+  lists the newest. The Memory page's search uses the same words joined with `AND`.
+- **Limits**, held in the registry, each with a refusal that says what to do:
+  - 5,000 memories a workspace that are not forgotten;
+  - 500 of them waiting, so that triggers cannot fill a workspace's memory;
+  - 1,000 forgotten ones kept, past which the oldest are removed;
+  - `recall` returns at most 20, and 8 when the call names no number.
+- **The Memory page** (`apps/web/src/lib/memory.ts`). Members read it. Owners and admins add,
+  edit, approve, dismiss and delete; a delete removes the row and its index row. The registry is
+  told who by the server function, which checked the role, and takes a memory about a person only
+  after the server function has checked that the person is a member.
+- **Audit.** `memory.added`, `.edited`, `.approved`, `.dismissed` and `.deleted` are written by
+  the server function that made the change. `memory.remembered` and `memory.forgotten` are an
+  agent's, with no member: the registry hands them to `memoryChanged`, which the app's
+  `RegistryDO` overrides to write the row, naming the agent and its run. An entry holds the
+  memory's id and at most the first 80 characters of its text (`memoryExcerpt`), and nothing of
+  the text of a memory about a person, since the log outlives the memory.
+- **When an account goes**, `forgetPerson` removes the memories about that person in the write
+  that queues their conversations. What they or an agent noted about the workspace in their runs
+  stays, as what they set up does, under their id.
+- **Backups and moves** need nothing new. A backup dumps every table, and Gateweave Backup copies
+  an FTS5 table that keeps its own text with its rowids, which `memory_search` is. A move copies
+  `memories` like any table and the index by its content.
+- **Not yet:** vectors in Vectorize with reranking, AI Search over documents, the memory tools for
+  the engines that run in the sandbox (their tools reach them through `engine-tools.ts`, which
+  would serve these too), memory for outside clients over MCP, an end date set by an agent, and
+  bringing back a forgotten memory.
+
 ## Repository wiki
 
 A repository's wiki is pages a model writes about its code (AGT-108), each citing the lines it
@@ -1784,6 +1886,11 @@ workspace.
   which opens to that run's own trace there, fetched when opened, or on its own page. The page
   links the conversation only for the member who started it; a nested run links the run that
   called it, and a trigger's run shows its conversation on the page. The Overview sums the last 30 days of runs, nested ones included.
+- **Memory** lists the workspace's memories, the newest first, fifty at a time: those agents
+  recall, those waiting for approval and those an agent took back, searched by word and filtered
+  by kind and by what they are about. Each shows its text, who or what wrote it and in which run,
+  linked for whoever may open that run, and when. Members see all of it; owners and admins add,
+  edit, approve, dismiss and delete.
 - **Environment** lists the environment sets with their variables, their secrets as set or
   missing (never a value), values kept for names that are no longer secrets, and the agents that
   run with each. Members see all of it; owners and admins create and edit sets and set, replace

@@ -5,9 +5,13 @@ import { type AuditEvent, type AuditPerson, type AuditValue, hostOf } from "#/li
 
 type People = Record<string, AuditPerson>;
 
-/** Who made the change: a member, the app itself, or someone whose account is gone. */
+/** Who made the change: a member, an agent, the app itself, or someone whose account is gone. */
 export function auditActor(event: AuditEvent, people: People): string {
-	if (event.actorId === null) return "Gateweave Agents";
+	if (event.actorId === null) {
+		const agent = text(event.detail.agent);
+		const agents = event.action === "memory.remembered" || event.action === "memory.forgotten";
+		return agents && agent ? `The agent ${agent}` : "Gateweave Agents";
+	}
 	return people[event.actorId]?.name ?? "Deleted member";
 }
 
@@ -22,6 +26,7 @@ const FIELD_NAMES: Record<string, string> = {
 	sandbox: "sandbox",
 	repository: "repository",
 	engine: "engine",
+	memory: "memory",
 	runtimes: "coding agents",
 	assets: "assets",
 	prompt: "prompt",
@@ -192,7 +197,28 @@ export function auditSentence(event: AuditEvent, people: People): string {
 			return `deleted the project ${label}`;
 		case "library.removed":
 			return `removed ${label} from the library`;
+		case "memory.added":
+			return `added ${memory(target.label)}`;
+		case "memory.edited":
+			return `edited ${memory(target.label)}`;
+		case "memory.approved":
+			return `approved ${memory(target.label)}, so agents recall it`;
+		case "memory.dismissed":
+			return `dismissed ${memory(target.label)}, which waited for approval`;
+		case "memory.deleted":
+			return `deleted ${memory(target.label)}`;
+		case "memory.remembered":
+			return detail.waiting
+				? `remembered ${memory(target.label)} in a run a trigger started, so it waits for approval`
+				: `remembered ${memory(target.label)}`;
+		case "memory.forgotten":
+			return `forgot ${memory(target.label)}, which it wrote itself`;
 	}
+}
+
+/** A memory by the start of its text, which is all the log keeps; one about a person by nothing. */
+function memory(excerpt: string | null): string {
+	return excerpt === null ? "a memory about a person" : `the memory “${excerpt}”`;
 }
 
 function trackHost(value: AuditValue | undefined): string {

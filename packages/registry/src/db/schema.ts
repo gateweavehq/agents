@@ -12,6 +12,8 @@ import {
 	ASSET_KINDS,
 	KEYED_PROVIDERS,
 	type McpTool,
+	MEMORY_KINDS,
+	MEMORY_SCOPES,
 	type Metadata,
 	MODEL_PROVIDERS,
 	REPOSITORY_PROVIDERS,
@@ -235,6 +237,8 @@ export const agentDefinitions = sqliteTable(
 		repositoryId: text("repository_id").references(() => repositories.id),
 		/** What takes its turns: Gateweave's own loop, or Claude Code in the sandbox. */
 		engine: text("engine", { enum: AGENT_ENGINES }).notNull().default("gateweave"),
+		/** Whether its turns have the memory tools (`../memory.ts`). Off unless someone turns it on. */
+		memory: integer("memory", { mode: "boolean" }).notNull().default(false),
 	},
 	(table) => [
 		index("agent_definitions_instructions_idx").on(table.instructionsAssetId),
@@ -795,6 +799,54 @@ export const wikiPages = sqliteTable(
 	],
 );
 
+/**
+ * The workspace's memory (AGT-107): short notes its people and agents keep to be recalled later
+ * (`../memory.ts`). Each says who or what wrote it and, for an agent, in which run. One an agent
+ * wrote in a run a trigger started is not `trusted`: no agent recalls it until an owner or admin
+ * approves it. An agent's `forget` sets `forgotten_at`; a person's delete removes the row.
+ *
+ * `seq` is the row's id in the full-text index `memory_search` (migration 0040, written by hand):
+ * an INTEGER PRIMARY KEY never changes, unlike the implicit rowid of a table keyed by text, which
+ * VACUUM may renumber.
+ */
+export const memories = sqliteTable(
+	"memories",
+	{
+		seq: integer("seq").primaryKey({ autoIncrement: true }),
+		id: text("id").notNull(),
+		text: text("text").notNull(),
+		kind: text("kind", { enum: MEMORY_KINDS }).notNull(),
+		scope: text("scope", { enum: MEMORY_SCOPES }).notNull(),
+		/** The agent, repository or person it is about; null for the workspace. No foreign key. */
+		scopeId: text("scope_id"),
+		authorKind: text("author_kind", { enum: ["person", "agent"] }).notNull(),
+		/** A person's user id, or an agent's id. */
+		authorId: text("author_id").notNull(),
+		/** The run an agent wrote it in, and that run's conversation. Runs outlive both. */
+		runId: text("run_id"),
+		conversationId: text("conversation_id"),
+		/** Where a person says it came from: a label, and a link to open. */
+		sourceLabel: text("source_label"),
+		sourceUrl: text("source_url"),
+		trusted: integer("trusted", { mode: "boolean" }).notNull(),
+		/** The owner or admin who approved one that waited. */
+		approvedBy: text("approved_by"),
+		approvedAt: integer("approved_at"),
+		/** The last person to edit it. */
+		editedBy: text("edited_by"),
+		createdAt: integer("created_at").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+		/** When it stops being recalled; null for never. */
+		expiresAt: integer("expires_at"),
+		forgottenAt: integer("forgotten_at"),
+	},
+	(table) => [
+		uniqueIndex("memories_id_idx").on(table.id),
+		index("memories_state_idx").on(table.forgottenAt, table.trusted, table.createdAt),
+		index("memories_scope_idx").on(table.scope, table.scopeId),
+	],
+);
+
 export type ProjectRow = typeof projects.$inferSelect;
 export type RepositoryRow = typeof repositories.$inferSelect;
 export type GitLabConnectionRow = typeof gitlabConnections.$inferSelect;
@@ -812,3 +864,4 @@ export type TriggerRow = typeof triggers.$inferSelect;
 export type TriggerDeliveryRow = typeof triggerDeliveries.$inferSelect;
 export type WikiGenerationRow = typeof wikiGenerations.$inferSelect;
 export type WikiPageRow = typeof wikiPages.$inferSelect;
+export type MemoryRow = typeof memories.$inferSelect;

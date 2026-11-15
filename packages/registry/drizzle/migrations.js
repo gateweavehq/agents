@@ -37,6 +37,8 @@ import m0035 from "./0035_jazzy_banshee.sql";
 import m0036 from "./0036_conversations_to_destroy.sql";
 import m0037 from "./0037_wiki.sql";
 import m0038 from "./0038_parched_lady_ursula.sql";
+import m0039 from "./0039_agent_memory.sql";
+import m0040 from "./0040_memory_search.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -81,5 +83,7 @@ export default {
 		m0036,
 		m0037,
 		m0038,
+		m0039,
+		m0040,
 	},
 };

@@ -127,7 +127,8 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
 - Generated files are not edited by hand: `routeTree.gen.ts`, `worker-configuration.d.ts`,
   `apps/web/src/server/db/auth-schema.ts` (`pnpm --filter @gateweave/agents-web auth:schema`),
   and everything under `migrations/` and `packages/registry/drizzle/` except the hand-written
-  `migrations.d.ts`.
+  `migrations.d.ts` and custom migrations (`drizzle-kit generate --custom`, such as
+  `0040_memory_search.sql`, for what Drizzle cannot express).
 - Dependencies are pinned to exact versions. Shared ones go in the `catalog:` of
   `pnpm-workspace.yaml`. `drizzle-orm` stays on 0.45: the 1.0 migration format does not work
   with Wrangler's D1 migrations.

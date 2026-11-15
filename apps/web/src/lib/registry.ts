@@ -85,6 +85,7 @@ const AGENT_FIELDS = [
 	"sandbox",
 	"repository",
 	"engine",
+	"memory",
 ] as const;
 
 function agentChanges(before: AgentDetail, after: AgentDetail): string[] {

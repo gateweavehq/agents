@@ -1,4 +1,8 @@
-import type { SandboxBudgetPassed, TriggerTurnOutcome } from "@gateweave/agents-model";
+import type {
+	MemoryAgentEvent,
+	SandboxBudgetPassed,
+	TriggerTurnOutcome,
+} from "@gateweave/agents-model";
 import { RegistryDO as Registry } from "../src";
 
 export { SandboxMeterDO } from "../src";
@@ -15,6 +19,7 @@ const USAGE_KEY = "test:usage";
 const DESTROYED_KEY = "test:destroyed";
 const REFUSED_KEY = "test:refused";
 const BATCHES_KEY = "test:batches";
+const MEMORY_KEY = "test:memory-events";
 
 /**
  * The registry, beginning scheduled runs as the app's does, but with no runtime: the run begins in
@@ -78,6 +83,16 @@ export class RegistryDO extends Registry {
 		const written = this.ctx.storage.kv.get<AnalyticsEngineDataPoint[]>(USAGE_KEY) ?? [];
 		this.ctx.storage.kv.put(USAGE_KEY, [...written, point]);
 		super.recordUsage(point);
+	}
+
+	protected override async memoryChanged(event: MemoryAgentEvent): Promise<void> {
+		const heard = this.ctx.storage.kv.get<MemoryAgentEvent[]>(MEMORY_KEY) ?? [];
+		this.ctx.storage.kv.put(MEMORY_KEY, [...heard, event]);
+	}
+
+	/** What agents remembered and forgot, as the app's audit log would hear it. */
+	memoryEvents(): MemoryAgentEvent[] {
+		return this.ctx.storage.kv.get<MemoryAgentEvent[]>(MEMORY_KEY) ?? [];
 	}
 
 	/** The usage events this registry wrote, as the deployment's dataset would get them. */

@@ -268,6 +268,7 @@ describe("models", () => {
 		model,
 		instructions: null,
 		sandbox: false,
+		memory: false,
 		engine: "gateweave",
 		updatedAt: 0,
 	});

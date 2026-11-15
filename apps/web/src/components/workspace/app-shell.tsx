@@ -5,6 +5,7 @@ import {
 	BookOpen,
 	Bot,
 	Boxes,
+	Brain,
 	ChevronDown,
 	FileText,
 	FolderGit2,
@@ -184,6 +185,15 @@ function Sidebar() {
 				>
 					<Activity className="size-4" />
 					Runs
+				</Link>
+				<Link
+					to="/$workspace/memory"
+					params={{ workspace: slug }}
+					className={navLink}
+					activeProps={{ className: activeNavLink }}
+				>
+					<Brain className="size-4" />
+					Memory
 				</Link>
 				<Link
 					to="/$workspace/library"
