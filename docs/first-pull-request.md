@@ -151,9 +151,12 @@ pnpm 12. Not tried in the rehearsal.
    sandboxes, up to three at once each.
 
 If you deployed with the button, your copy also deploys on every push, through Workers Builds.
-Whether its builder can build the sandbox image was not tried. A build that fails there deploys
-nothing, so the Worker stays as your machine's deploy left it: go on deploying from your machine
-as above.
+Commit the change to `wrangler.jsonc` and push it before anything else is pushed: a build of the
+repository without it deploys a Worker with no sandbox, and sandbox turns stop until the next
+deploy that has it. Whether the builder can build the sandbox image was not tried. A build that
+fails there deploys nothing, so the Worker stays as your machine's deploy left it; if it does
+fail, turn automatic deploys off for the Worker (Settings › Builds) and go on deploying from your
+machine as above.
 
 ## 5. A pull request
 
