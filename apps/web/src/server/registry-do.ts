@@ -175,7 +175,13 @@ export class RegistryDO extends Registry {
 	protected override async memoryChanged(event: MemoryAgentEvent): Promise<void> {
 		// Each registry is named for its workspace (`registryFor`).
 		const workspaceId = this.ctx.id.name;
-		if (!workspaceId) return;
+		if (!workspaceId) {
+			// Ids only: a log must not hold a memory's words.
+			console.error(
+				`registry: this object does not know its workspace, so the memory ${event.memoryId} ${event.action} in the run ${event.runId} is not in the audit log`,
+			);
+			return;
+		}
 		await recordAudit(db, workspaceId, null, {
 			action: event.action === "remembered" ? "memory.remembered" : "memory.forgotten",
 			target: { type: "memory", id: event.memoryId, label: event.excerpt },
@@ -183,7 +189,9 @@ export class RegistryDO extends Registry {
 				agent: event.agentName,
 				agentId: event.agentId,
 				run: event.runId,
-				...(event.action === "remembered" ? { waiting: event.waiting } : {}),
+				...(event.action === "remembered"
+					? { waiting: event.waiting, origin: event.origin, scope: event.scope }
+					: {}),
 			},
 		});
 	}

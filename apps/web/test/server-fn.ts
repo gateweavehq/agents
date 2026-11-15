@@ -33,25 +33,39 @@ function serialized(data: Record<string, unknown>) {
 	return { t: node({ data }), f: 127, m: [] };
 }
 
-/** Calls a server function as the page does. A thrown error still answers 200, in the body. */
+/**
+ * Calls a server function as the page does. A thrown error still answers 200, in the body. One
+ * that reads (`GET`) takes its data in the address, as the client sends it.
+ */
 export async function callServerFn(
 	agents: Agents,
 	origin: string,
 	name: string,
-	{ data, cookie, client }: { data: Record<string, unknown>; cookie: string; client: string },
+	{
+		data,
+		cookie,
+		client,
+		method = "POST",
+	}: { data: Record<string, unknown>; cookie: string; client: string; method?: "GET" | "POST" },
 ) {
-	const response = await agents.fetch(serverFnUrl(origin, name), {
-		method: "POST",
-		headers: {
-			origin,
-			cookie,
-			"cf-connecting-ip": client,
-			"x-tsr-serverFn": "true",
-			accept: "application/json",
-			"content-type": "application/json",
-		},
-		body: JSON.stringify(serialized(data)),
-	});
+	const payload = JSON.stringify(serialized(data));
+	const headers = {
+		origin,
+		cookie,
+		"cf-connecting-ip": client,
+		"x-tsr-serverFn": "true",
+		accept: "application/json",
+	};
+	const response =
+		method === "GET"
+			? await agents.fetch(`${serverFnUrl(origin, name)}?payload=${encodeURIComponent(payload)}`, {
+					headers,
+				})
+			: await agents.fetch(serverFnUrl(origin, name), {
+					method: "POST",
+					headers: { ...headers, "content-type": "application/json" },
+					body: payload,
+				});
 	const text = await response.text();
 	return { response, text, failed: text.includes('"k":["error"]') };
 }

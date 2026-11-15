@@ -1,9 +1,10 @@
 /**
  * The workspace's memory (AGT-107): notes its people and agents keep, which agents recall in
  * later runs. Members read them. Owners and admins add, edit and delete them, and approve or
- * dismiss the ones that wait: what an agent wrote in a run a trigger started, which no agent
- * recalls until someone has looked at it. Each change is in the audit log, with the start of the
- * memory's text at most.
+ * dismiss the ones that wait: what an agent wrote about the workspace or a repository, or in a
+ * run a trigger started, which no agent recalls until someone has looked at it. Each change is
+ * in the audit log, with the start of the memory's text at most, and none of it for a memory
+ * that was removed.
  */
 import {
 	type Memory,
@@ -23,8 +24,18 @@ const id = z.string().min(1).max(64);
 /** What someone whose account is gone, or who left, is called on what they wrote. */
 const FORMER_MEMBER = "A former member";
 
-/** A memory with the names its ids have now. */
-export interface MemoryEntry extends Memory {
+/**
+ * A memory with the names its ids have now. Its run's id, and who started it, are there only for
+ * someone who may open that run: a conversation is its member's alone, so the page does not tell
+ * the rest of the workspace whose chat a note came from.
+ */
+export interface MemoryEntry extends Omit<Memory, "run"> {
+	run:
+		| (Omit<NonNullable<Memory["run"]>, "id" | "startedBy"> & {
+				id: string | null;
+				startedBy: string | null;
+		  })
+		| null;
 	/** The person's or the agent's name. */
 	authorName: string;
 	/** The agent, repository or person it is about, by name; null for the workspace. */
@@ -78,8 +89,15 @@ function entry(
 ): MemoryEntry {
 	const person = (userId: string | null) =>
 		userId === null ? null : (names.get(userId) ?? FORMER_MEMBER);
+	// As the Runs page decides: a trigger's run is for owners and admins.
+	const runVisible =
+		memory.run !== null &&
+		(viewer.admin ||
+			(memory.run.startedBy === viewer.id && triggerOf(memory.run.startedBy) === null));
 	return {
 		...memory,
+		run:
+			memory.run === null || runVisible ? memory.run : { ...memory.run, id: null, startedBy: null },
 		authorName:
 			memory.author.kind === "agent"
 				? (memory.author.name ?? "A removed agent")
@@ -87,17 +105,25 @@ function entry(
 		aboutName: memory.scope === "person" ? person(memory.scopeId) : memory.scopeName,
 		approvedByName: person(memory.approvedBy),
 		editedByName: person(memory.editedBy),
-		// As the Runs page decides: a trigger's run is for owners and admins.
-		runVisible:
-			memory.run !== null &&
-			(viewer.admin ||
-				(memory.run.startedBy === viewer.id && triggerOf(memory.run.startedBy) === null)),
+		runVisible,
 	};
 }
 
 /** The audit log's name for a memory: the start of its text, or nothing for one about a person. */
 function target(memory: Memory) {
 	return { type: "memory" as const, id: memory.id, label: memoryExcerpt(memory) };
+}
+
+/**
+ * The audit log's entry for a memory that was removed: its id, kind and what it was about, and
+ * none of its text, which someone just chose to remove.
+ */
+function removed(action: "memory.deleted" | "memory.dismissed", memory: Memory) {
+	return {
+		action,
+		target: { type: "memory" as const, id: memory.id, label: null },
+		detail: { kind: memory.kind, scope: memory.scope },
+	};
 }
 
 /** A page of the workspace's memory. Null when the caller is not a member. */
@@ -191,16 +217,19 @@ export const dismissMemory = createServerFn({ method: "POST" })
 		const dismissed = await found.registry.dismissMemory(data.memoryId);
 		if (!dismissed) throw new Error("Memory not found");
 		if ("status" in dismissed) throw new Error(dismissed.message);
-		await found.audit({ action: "memory.dismissed", target: target(dismissed) });
+		await found.audit(removed("memory.dismissed", dismissed));
 	});
 
-/** Removes a memory for good, from the search index too. */
+/**
+ * Removes a memory for good, from the search index too. The audit log still has the start of its
+ * text from when it was added, which the page says before anyone confirms.
+ */
 export const deleteMemory = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), memoryId: id }))
 	.handler(async ({ data }): Promise<boolean> => {
 		const found = await memberOf(data.slug, true);
 		if (!found) throw new Error("Workspace not found");
 		const deleted = await found.registry.deleteMemory(data.memoryId);
-		if (deleted) await found.audit({ action: "memory.deleted", target: target(deleted) });
+		if (deleted) await found.audit(removed("memory.deleted", deleted));
 		return deleted !== null;
 	});

@@ -412,8 +412,10 @@ function DeleteAccount({
 							revoke it at the service.
 						</li>
 						<li>
-							Memories about you go. What you or an agent noted about a workspace stays in its
-							memory, under "A former member".
+							Memories about you go, and so does everything an agent noted in a run you started, in
+							workspaces you left too. Memories you typed yourself on a Memory page stay, under "A
+							former member". An audit log keeps the first 80 characters of a memory from when it
+							was added, unless it is about a person, until the entry is a year old.
 						</li>
 						<li>Invitations you sent that nobody has taken stop working.</li>
 					</ul>

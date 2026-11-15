@@ -269,7 +269,7 @@ import {
 	dismissMemory,
 	editMemory,
 	forgetInRun,
-	forgetMemoriesAbout,
+	forgetMemoriesOf,
 	listMemories,
 	recallInRun,
 	rememberInRun,
@@ -1106,7 +1106,7 @@ export class RegistryDO extends DurableObject {
 		const person = id.parse(userId);
 		this.#write(() => {
 			queueConversationsOf(this.#db, person, Date.now());
-			forgetMemoriesAbout(this.#db, person);
+			forgetMemoriesOf(this.#db, person);
 		});
 		await this.#scheduleAlarm();
 	}
@@ -1154,8 +1154,9 @@ export class RegistryDO extends DurableObject {
 
 	/**
 	 * An agent's `remember`, for the runtime alone, which names only the run the tool was called
-	 * in. The registry reads from that run's row which agent it is and what started it, and so
-	 * whether the memory is trusted or waits for an owner or admin: a caller cannot say.
+	 * in. The registry reads from that run's row which agent it is and what started it, and decides
+	 * from that and from what the memory is about whether it is trusted or waits for an owner or
+	 * admin: a caller cannot say.
 	 */
 	rememberInRun(runId: string, input: RememberInput): RememberOutcome | MemoryRefusal {
 		const run = id.parse(runId);

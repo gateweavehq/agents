@@ -85,8 +85,9 @@ tools that run on Cloudflare, next to [Gateweave Track](https://github.com/gatew
   endpoint.
 - **Let them remember.** Agents note facts, decisions and preferences in the workspace's
   [memory](docs/memory.md) and recall them by keyword in later runs, each with who or what wrote it.
-  What an agent notes in a run a trigger started waits for an owner or admin before any agent recalls
-  it, and people read, edit and delete all of it on one page.
+  What an agent notes for the whole workspace or a repository, or in a run a trigger started, waits
+  for an owner or admin before any agent recalls it, and people read, edit and delete all of it on
+  one page.
 - **Let them start on their own.** Triggers start an agent's runs from another service's signed webhooks
   or on a schedule, if wanted only for issues with a label or a given assignee, and can keep one
   conversation per issue.

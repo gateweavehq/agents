@@ -13,25 +13,29 @@ import {
 
 it("reads a query as its words, and nothing else of it", () => {
 	expect(memoryWords("Which database does the Storefront use?")).toEqual([
-		"which",
+		"Which",
 		"database",
 		"does",
 		"the",
-		"storefront",
+		"Storefront",
 		"use",
 	]);
-	// Accents go, as the index drops them, and so does everything that is not a letter or a digit.
-	expect(memoryWords("Résumé İstanbul  Größe")).toEqual(["resume", "istanbul", "große"]);
+	// Words stay as they were typed, marks and case included: the index's tokenizer folds them,
+	// the same way it folded the memories. Everything that is not a letter or a digit goes.
+	expect(memoryWords("Résumé İstanbul  Größe")).toEqual(["Résumé", "İstanbul", "Größe"]);
+	expect(memoryWords("re\u0301sume\u0301 \u0301x")).toEqual(["re\u0301sume\u0301"]);
+	expect(memoryWords("हमारा डेटाबेस")).toEqual(["हमारा", "डेटाबेस"]);
+	expect(memoryWords("قَاعِدَةُ البَيَانَاتِ")).toEqual(["قَاعِدَةُ", "البَيَانَاتِ"]);
+	// One Latin, Greek or Cyrillic letter is no word, such as what an apostrophe cuts off. One
+	// character of another script can be, and so can a digit.
+	expect(memoryWords("can't don't I'm O'Neil é я ω")).toEqual(["can", "don", "Neil"]);
+	expect(memoryWords("数 と 한 ह 7")).toEqual(["数", "と", "한", "ह", "7"]);
 	expect(memoryWords('"deploy" OR text:* NEAR(a, 2) -x ^y {z}')).toEqual([
 		"deploy",
-		"or",
+		"OR",
 		"text",
-		"near",
-		"a",
+		"NEAR",
 		"2",
-		"x",
-		"y",
-		"z",
 	]);
 	expect(memoryWords("\"; '--*()")).toEqual([]);
 	expect(memoryWords(Array.from({ length: 40 }, (_, index) => `w${index}`).join(" "))).toHaveLength(
@@ -42,14 +46,32 @@ it("reads a query as its words, and nothing else of it", () => {
 it("writes a query as quoted prefix terms, so no query is FTS5 syntax", () => {
 	expect(memoryMatch("deploy tuesdays", "any")).toBe('"deploy"* OR "tuesdays"*');
 	expect(memoryMatch("deploy tuesdays", "all")).toBe('"deploy"* AND "tuesdays"*');
-	expect(memoryMatch('deploy" OR text:*', "any")).toBe('"deploy"* OR "or"* OR "text"*');
-	expect(memoryMatch("NOT near AND", "all")).toBe('"not"* AND "near"* AND "and"*');
+	expect(memoryMatch('deploy" OR text:*', "any")).toBe('"deploy"* OR "OR"* OR "text"*');
+	expect(memoryMatch("NOT near AND", "all")).toBe('"NOT"* AND "near"* AND "AND"*');
+	// "can't" is "can": a lone "t" would match every word that starts with one.
+	expect(memoryMatch("can't deploy", "any")).toBe('"can"* OR "deploy"*');
+	expect(memoryMatch("t", "any")).toBeNull();
+	// A digit alone matches itself, not every number that starts with it.
+	expect(memoryMatch("version 2", "all")).toBe('"version"* AND "2"');
+	expect(memoryMatch("Postgres 17", "all")).toBe('"Postgres"* AND "17"*');
 	expect(memoryMatch("?!", "any")).toBeNull();
 	expect(memoryMatch("", "all")).toBeNull();
 	// Whatever goes in, what comes out is quoted words, stars and the one operator.
-	for (const query of ['"', '""""', 'a"b', "(((", "x:y", "* * *", "a\u0000b", "'; DROP TABLE x"]) {
-		expect(memoryMatch(query, "any") ?? "").toMatch(
-			/^("[\p{L}\p{N}]+"\*( OR "[\p{L}\p{N}]+"\*)*)?$/u,
+	const queries = [
+		'"',
+		'""""',
+		'ab"cd',
+		"(((",
+		"xx:yy",
+		"* * *",
+		"ab\u0000cd",
+		"'; DROP TABLE xx",
+		"re\u0301sume\u0301",
+		'डेटा"बेस',
+	];
+	for (const query of queries) {
+		expect(memoryMatch(query, "any") ?? "", query).toMatch(
+			/^("[\p{L}\p{N}][\p{L}\p{N}\p{M}]*"\*?( OR "[\p{L}\p{N}][\p{L}\p{N}\p{M}]*"\*?)*)?$/u,
 		);
 	}
 });

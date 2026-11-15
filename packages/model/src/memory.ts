@@ -27,21 +27,36 @@ export const MEMORY_SCOPE_NAMES: Record<MemoryScope, string> = {
 };
 
 /**
- * Where a memory stands. `waiting` is one an agent wrote in a run a trigger started: no agent
- * recalls it until an owner or admin approves it. `forgotten` is one an agent took back.
+ * Where a memory stands. `waiting` is one an agent wrote that no agent recalls until an owner or
+ * admin approves it: any it wrote about the workspace or a repository, and whatever it wrote in a
+ * run a person's message did not start. `forgotten` is one an agent took back.
  */
 export const MEMORY_STATES = ["live", "waiting", "forgotten"] as const;
 export type MemoryState = (typeof MEMORY_STATES)[number];
+
+/**
+ * What started the run an agent wrote a memory in, as the registry read it then: a person's chat
+ * message, a trigger, a replay of a trigger's run (which reads the same event), or `unknown` when
+ * the links back to what started it could not be followed. All but `person` count as outside.
+ */
+export const MEMORY_ORIGINS = ["person", "trigger", "replay", "unknown"] as const;
+export type MemoryOrigin = (typeof MEMORY_ORIGINS)[number];
+
+/** The scopes in which an agent's memory is trusted at once, in a run a person started. */
+export const MEMORY_OWN_SCOPES: readonly MemoryScope[] = ["agent", "person"];
 
 export const MEMORY_LIMITS = {
 	/** Characters of a memory's text. */
 	text: 2000,
 	/** Memories a workspace keeps that are not forgotten, the waiting ones included. */
 	live: 5000,
-	/** Of those, how many may wait for approval, so that triggers cannot fill a workspace's memory. */
+	/** Of those, how many may wait for approval, so that agents cannot fill a workspace's memory. */
 	waiting: 500,
 	/** Forgotten memories kept for people to read; past it the oldest go. */
 	forgotten: 1000,
+	/** Memories one run's agent may store, and how many it may take back, so no run loops on them. */
+	runRemembers: 20,
+	runForgets: 20,
 	/** Memories one `recall` returns at most, and when it names no number. */
 	recall: 20,
 	recallDefault: 8,
@@ -157,8 +172,16 @@ export interface Memory {
 	scopeName: string | null;
 	/** Who or what wrote it. An agent has its name here; people are named by the app, from ids. */
 	author: { kind: "person" | "agent"; id: string; name: string | null };
-	/** The run an agent wrote it in, with who or what started that run; null for a person's. */
-	run: { id: string; startedBy: string | null; trigger: string | null } | null;
+	/**
+	 * The run an agent wrote it in, with who or what started that run; null for a person's.
+	 * `origin` is what started it as the registry read it when the memory was written.
+	 */
+	run: {
+		id: string;
+		startedBy: string | null;
+		trigger: string | null;
+		origin: MemoryOrigin;
+	} | null;
 	source: { label: string | null; url: string | null };
 	/** False while it waits for an owner or admin: no agent recalls it. */
 	trusted: boolean;
@@ -201,7 +224,10 @@ export interface RecalledMemory {
 	text: string;
 	kind: MemoryKind;
 	scope: MemoryScope;
-	/** Such as "the agent Triage" or "a member of the workspace". */
+	/**
+	 * Such as "the agent Triage", "a person", or "the agent Triage, edited by a person, in a run a
+	 * trigger started; a person approved it".
+	 */
 	writtenBy: string;
 	/** A person's label and link for where it came from; null when there is none. */
 	source: string | null;
@@ -220,9 +246,12 @@ export interface MemoryAgentEvent {
 	memoryId: string;
 	/** The start of its text (`memoryExcerpt`); null for one about a person. */
 	excerpt: string | null;
+	scope: MemoryScope;
 	agentId: string;
 	agentName: string;
 	runId: string;
+	/** What started that run. */
+	origin: MemoryOrigin;
 	/** Whether what it remembered waits for approval. */
 	waiting: boolean;
 }
@@ -240,25 +269,39 @@ export function memoryExcerpt(memory: { text: string; scope: MemoryScope }): str
 		: `${line.slice(0, MEMORY_LIMITS.excerpt - 1)}…`;
 }
 
+/** A letter of a script whose words are spelled out, so that one letter alone is not a word. */
+const SPELLED = /^[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}]$/u;
+
 /**
- * The words of a query: runs of letters and digits, in lower case and without diacritics as the
- * index keeps them, the first few. Everything else of a query, quotes, brackets and the
- * punctuation of FTS5's operators included, is dropped here.
+ * The words of a query, the first few: runs of letters and digits, each with the marks written on
+ * them, as they were typed. Folding case and accents is left to the index's tokenizer, which
+ * reads a quoted word exactly as it read the memories: a query folded here would be folded
+ * differently, and would miss a Hindi or Arabic memory whose marks the tokenizer keeps apart.
+ * Everything else of a query, quotes, brackets and the punctuation of FTS5's operators included,
+ * is dropped here.
+ *
+ * So is a single Latin, Greek or Cyrillic letter, such as the "t" of "can't": as the start of a
+ * word it matches half the memory. One character of another script stays, since it can be a word
+ * (Chinese, Japanese) or what the tokenizer makes of a word with marks.
  */
 export function memoryWords(query: string): string[] {
-	const plain = query.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
-	return (plain.match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, MEMORY_LIMITS.queryWords);
+	return (query.match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu) ?? [])
+		.filter((word) => !SPELLED.test(word.replace(/\p{M}/gu, "")))
+		.slice(0, MEMORY_LIMITS.queryWords);
 }
 
 /**
  * A query as an FTS5 expression, or null when it has no words. Each word is quoted, so `and`,
- * `or`, `not` and `near` are words like any other, and a word holds only letters and digits, so
- * nothing in it ends the quotes: no query can break the syntax. A word matches the words that
- * start with it. `any` finds memories with at least one of the words, for an agent's question in
- * its own words; `all` finds those with every word, for a person narrowing a list.
+ * `or`, `not` and `near` are words like any other, and a word holds only letters, digits and
+ * marks, so nothing in it ends the quotes: no query can break the syntax. A word matches the
+ * words that start with it, except a single digit, which matches itself alone. `any` finds
+ * memories with at least one of the words, for an agent's question in its own words; `all` finds
+ * those with every word, for a person narrowing a list.
  */
 export function memoryMatch(query: string, mode: "any" | "all"): string | null {
 	const words = memoryWords(query);
 	if (words.length === 0) return null;
-	return words.map((word) => `"${word}"*`).join(mode === "any" ? " OR " : " AND ");
+	return words
+		.map((word) => (/^\p{N}$/u.test(word) ? `"${word}"` : `"${word}"*`))
+		.join(mode === "any" ? " OR " : " AND ");
 }

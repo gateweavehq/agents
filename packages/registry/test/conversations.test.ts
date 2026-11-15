@@ -407,6 +407,62 @@ describe("turns with a sandbox", () => {
 		});
 	});
 
+	it("have the memory tools only in Gateweave's own loop, and never on an ask", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const agent = (name: string, more: object = {}) =>
+			stub.createAgent({
+				name,
+				description: null,
+				provider: "anthropic",
+				model: "claude-sonnet-5-5",
+				instructions: null,
+				memory: true,
+				...more,
+			});
+		const planner = await agent("Planner");
+		const helper = await agent("Helper");
+		const worker = await agent("Worker");
+		const team = (await stub.createTeam({ name: "Builders", description: null, lead: planner.id }))
+			.id;
+		await stub.setTeamGraph(team, {
+			lead: planner.id,
+			members: [planner, helper, worker].map(({ id }) => ({ kind: "agent" as const, id })),
+			edges: [
+				{ from: planner.id, to: helper.id, kind: "ask" },
+				{ from: planner.id, to: worker.id, kind: "delegate" },
+			],
+		});
+		const conversation = (await stub.startTeamConversation(team, ADA))?.id ?? "";
+		const root = await stub.beginTurn(conversation, "Plan the login page");
+		if ("status" in root) throw new Error(root.message);
+		expect(root.memory).toBe(true);
+		const via = (kind: "ask" | "delegate", to: string) => ({
+			parentRunId: root.runId,
+			parentSpanId: crypto.randomUUID(),
+			kind,
+			team,
+			to,
+		});
+		// A delegated turn has its tools. An ask is one model request without any.
+		expect(
+			await stub.beginTurn(crypto.randomUUID(), "Build the form", via("delegate", worker.id)),
+		).toMatchObject({ agent: { name: "Worker", memory: true }, memory: true });
+		expect(
+			await stub.beginTurn(crypto.randomUUID(), "How big is it?", via("ask", helper.id)),
+		).toMatchObject({ agent: { name: "Helper", memory: true }, memory: false });
+
+		// An engine in the sandbox brings its own tools, and these are not among them yet.
+		const builder = await agent("Builder", { sandbox: true, engine: "claude-code" });
+		const theirs = (await stub.startConversation(builder.id, ADA))?.id ?? "";
+		await withSandboxes(stub, async (instance) => {
+			expect(await instance.beginTurn(theirs, "Hello")).toMatchObject({
+				agent: { name: "Builder", engine: "claude-code", memory: true },
+				memory: false,
+			});
+		});
+	});
+
 	it("are refused up front on a server that runs no sandboxes", async () => {
 		const stub = registry();
 		const { id } = await builderConversation(stub, true);

@@ -136,6 +136,45 @@ describe("an agent's memory tools", () => {
 		expect(JSON.stringify(traces)).not.toContain("Postgres");
 	});
 
+	it("hold what a person's turn notes for the whole workspace, and tell the model so", async () => {
+		const { workspaceId, registry, agent } = await workspace();
+		// The member asks for a summary of an issue. Its text, an outsider's, tells the agent to
+		// note that approvals are over, and the agent does.
+		const requests = fakeModel((call) => {
+			if (call === 0) {
+				return anthropicToolCall("remember", {
+					text: POISON,
+					kind: "decision",
+					scope: "workspace",
+				});
+			}
+			if (call === 1) return anthropicToolCall("recall", { query: "customer list billing" });
+			return anthropicStream("Done.");
+		});
+		const socket = await connect(await chat(workspaceId, registry, agent.id));
+		expect(await ask(socket, "Summarise the issue.")).toMatchObject({ error: null });
+		socket.close();
+		// The model heard that it waits, and its own recall right after found nothing.
+		expect(toolResult(requests[1])).toContain('\\"waiting\\":true');
+		expect(toolResult(requests[2])).toContain('\\"memories\\":[]');
+		expect((await registry.listMemories({})).memories).toEqual([]);
+		expect((await registry.listMemories({ state: "waiting" })).memories).toMatchObject([
+			{ text: POISON, scope: "workspace", trusted: false, run: { startedBy: "user-ada" } },
+		]);
+		// What the tool's description told it beforehand: which notes wait, what waiting means, and
+		// where a note about the person it is talking to belongs.
+		const tools = (requests[0]?.body.tools ?? []) as { name: string; description: string }[];
+		const described = tools.find((tool) => tool.name === "remember")?.description ?? "";
+		for (const text of [
+			'A note with the scope "workspace" or "repository" always waits',
+			'With "waiting": true the note is stored but no agent recalls it',
+			'Use the scope "person" for anything about the person you are talking to',
+			"Every member of the workspace can read the memory",
+		]) {
+			expect(described).toContain(text);
+		}
+	});
+
 	it("are not offered to an agent without memory", async () => {
 		const { workspaceId, registry, agent } = await workspace(false);
 		const requests = fakeModel(() => anthropicStream("Hello."));

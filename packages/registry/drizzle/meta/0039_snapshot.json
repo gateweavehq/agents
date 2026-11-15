@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "bdb803cb-f3f8-4ac7-b0f6-5f900b82b261",
+  "id": "27af658b-310f-4d41-b5e1-bd7caf2d920d",
   "prevId": "cc16bbc4-f6d6-4554-9362-1457dce0a7de",
   "tables": {
     "agent_assets": {
@@ -1247,6 +1247,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "source_label": {
           "name": "source_label",
           "type": "text",
@@ -1316,6 +1323,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "forgotten_run_id": {
+          "name": "forgotten_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -1340,6 +1354,20 @@
           "columns": [
             "scope",
             "scope_id"
+          ],
+          "isUnique": false
+        },
+        "memories_run_idx": {
+          "name": "memories_run_idx",
+          "columns": [
+            "run_id"
+          ],
+          "isUnique": false
+        },
+        "memories_forgotten_run_idx": {
+          "name": "memories_forgotten_run_idx",
+          "columns": [
+            "forgotten_run_id"
           ],
           "isUnique": false
         }

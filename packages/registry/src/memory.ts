@@ -1,12 +1,21 @@
 /**
  * The workspace's memory (AGT-107): short notes its people and agents keep, recalled by keyword.
  *
- * A memory says who or what wrote it and, for an agent, in which run. What a run's agent writes
- * is trusted only when a person's chat message started the run. A run a trigger started read
- * content an outsider may have written (a webhook's event, a mail), so what its agent remembers
- * waits: no agent recalls it until an owner or admin approves it. Otherwise one poisoned event
- * would steer every later run, long after its own run ended. Whether a run is a trigger's is read
- * here, from the run's own row, never taken from the caller.
+ * A memory says who or what wrote it and, for an agent, in which run. An agent reads what
+ * outsiders wrote: a trigger's event, and in any run an issue, a page or a tool's result. A
+ * memory is recalled by every later run that can see it, so one poisoned text would steer them
+ * long after its own run ended. So what an agent writes is trusted at once only when both hold:
+ *
+ * - a person's chat message started the run, which is read here, from the run's own row and
+ *   never taken from the caller; and
+ * - it is about the agent itself or about that person, so it reaches only that agent's runs, or
+ *   that person's.
+ *
+ * Whatever an agent writes about the workspace or a repository, which every agent or every agent
+ * of that repository would recall, and whatever it writes in a run a trigger started, waits: no
+ * agent recalls it until an owner or admin approves it. What stays possible: a note an agent
+ * keeps for itself in a chat can carry what it read from an outsider during that chat. That is
+ * why `recall` hands memories over as notes with their source, never as instructions.
  *
  * An FTS5 table, `memory_search`, holds each memory's text under the memory's `seq`. Every write
  * here changes the row and the index together, inside the caller's transaction.
@@ -14,8 +23,10 @@
 import {
 	MEMORY_LIMITS,
 	MEMORY_NOTICE,
+	MEMORY_OWN_SCOPES,
 	type Memory,
 	type MemoryAgentEvent,
+	type MemoryOrigin,
 	type MemoryPage,
 	type MemoryRefusal,
 	type MemoryScope,
@@ -33,7 +44,7 @@ import {
 	type rememberInput,
 	triggerOf,
 } from "@gateweave/agents-model";
-import { and, asc, desc, eq, gt, isNotNull, isNull, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, isNotNull, isNull, or, type SQL, sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { z } from "zod";
 import {
@@ -78,6 +89,8 @@ function unindexMemory(db: Db, seq: number): void {
 /**
  * Merges the index into one piece. Deleting a row from FTS5 only marks its words as deleted, and
  * they stay in the index's pages until a merge, which is too long for a text someone removed.
+ * It rewrites the whole index, so only what a person does merges it: an agent's `forget` never
+ * does, however often a run calls it.
  */
 function mergeIndex(db: Db): void {
 	db.run(sql`insert into memory_search (memory_search) values ('optimize')`);
@@ -164,6 +177,7 @@ function toMemory(db: Db, row: MemoryRow): Memory {
 						startedBy: run?.startedBy ?? null,
 						// A deleted trigger leaves its runs, which still say a trigger started them.
 						trigger: run?.triggerId ? (run.trigger ?? "a deleted trigger") : null,
+						origin: row.origin ?? "unknown",
 					},
 		source: { label: row.sourceLabel, url: row.sourceUrl },
 		trusted: row.trusted,
@@ -356,15 +370,23 @@ export function dismissMemory(db: Db, id: string): Memory | MemoryRefusal | null
 }
 
 /**
- * Removes the memories about someone whose account is gone (`./forget.ts`). What they wrote about
- * the workspace stays as the team's, under their id, like what else they set up.
+ * Removes what the workspace's memory holds of someone whose account is gone (`./forget.ts`):
+ * the memories about them, and whatever an agent wrote in a run they started, whatever it is
+ * about, since it came out of a conversation that was theirs alone and may say something of
+ * them. What they typed on the Memory page themselves stays as the team's, under their id, like
+ * what else they set up, and so does what other people wrote and what agents wrote in other
+ * people's runs.
  */
-export function forgetMemoriesAbout(db: Db, person: string): void {
-	const about = and(eq(memories.scope, "person"), eq(memories.scopeId, person));
-	const rows = db.select({ seq: memories.seq }).from(memories).where(about).all();
+export function forgetMemoriesOf(db: Db, person: string): void {
+	const theirRuns = db.select({ id: runs.id }).from(runs).where(eq(runs.startedBy, person));
+	const theirs = or(
+		and(eq(memories.scope, "person"), eq(memories.scopeId, person)),
+		and(eq(memories.authorKind, "agent"), sql`${memories.runId} IN ${theirRuns}`),
+	);
+	const rows = db.select({ seq: memories.seq }).from(memories).where(theirs).all();
 	if (rows.length === 0) return;
 	for (const { seq } of rows) unindexMemory(db, seq);
-	db.delete(memories).where(about).run();
+	db.delete(memories).where(theirs).run();
 	mergeIndex(db);
 }
 
@@ -378,37 +400,44 @@ interface MemoryRun {
 	person: string | null;
 	/** The repository the agent works in; null when it has none. */
 	repositoryId: string | null;
-	/** Whether what its agent writes is trusted: a person's chat message started it. */
-	trusted: boolean;
+	/** What started it. Anything but `person` is from outside. */
+	origin: MemoryOrigin;
 }
 
 /**
- * Whether content from outside may have started a run: a trigger started it, or it replays, however
- * far back, a run a trigger started, whose words are its history. A link that cannot be followed
- * (a conversation since deleted) counts as outside, so that what cannot be shown is not trusted.
+ * What started a run: a person's chat message, a trigger, or a replay, however far back, of a run
+ * a trigger started, whose words are its history. A link that cannot be followed (a conversation
+ * since deleted) answers `unknown`, so that what cannot be shown is not trusted: all but `person`
+ * count as content from outside.
  */
-function startedFromOutside(
+function runOrigin(
 	db: Db,
 	run: { triggerId: string | null; startedBy: string; conversationId: string | null },
-): boolean {
-	let current: { triggerId: string | null; conversationId: string | null } = {
-		triggerId: run.triggerId ?? triggerOf(run.startedBy),
-		conversationId: run.conversationId,
-	};
+): MemoryOrigin {
+	let current = run;
 	for (let hop = 0; hop < REPLAY_HOPS; hop++) {
-		if (current.triggerId !== null || current.conversationId === null) return true;
+		const replay = hop > 0;
+		if ((current.triggerId ?? triggerOf(current.startedBy)) !== null) {
+			return replay ? "replay" : "trigger";
+		}
+		if (current.conversationId === null) return "unknown";
 		const conversation = conversationAtTop(db, current.conversationId);
-		if (!conversation || conversation.triggerId !== null) return true;
-		if (conversation.replayOf === null) return false;
+		if (!conversation) return "unknown";
+		if (conversation.triggerId !== null) return replay ? "replay" : "trigger";
+		if (conversation.replayOf === null) return "person";
 		const replayed = db
-			.select({ triggerId: runs.triggerId, conversationId: runs.conversationId })
+			.select({
+				triggerId: runs.triggerId,
+				startedBy: runs.startedBy,
+				conversationId: runs.conversationId,
+			})
 			.from(runs)
 			.where(eq(runs.id, conversation.replayOf))
 			.get();
-		if (!replayed) return true;
+		if (!replayed) return "unknown";
 		current = replayed;
 	}
-	return true;
+	return "unknown";
 }
 
 /** A conversation, or for a team's nested turn the conversation it goes with. */
@@ -438,6 +467,11 @@ function memoryRun(db: Db, runId: string, now: number): MemoryRun | MemoryRefusa
 		return refused("This run has ended, so it cannot use the workspace's memory");
 	}
 	const { run, agentName, definition } = found;
+	// Deleting a conversation, or the account of whoever started it, takes the run's link to it
+	// while the turn may still be going. What it wrote then would outlive what was just removed.
+	if (run.conversationId === null) {
+		return refused("This run's conversation was deleted, so it cannot use the workspace's memory");
+	}
 	if (!definition.memory) {
 		return refused(
 			`Memory is turned off for ${agentName}. An owner or admin can turn it on in the agent's settings.`,
@@ -450,13 +484,38 @@ function memoryRun(db: Db, runId: string, now: number): MemoryRun | MemoryRefusa
 		conversationId: run.conversationId,
 		person: run.triggerId === null && triggerOf(run.startedBy) === null ? run.startedBy : null,
 		repositoryId: definition.repositoryId,
-		trusted: !startedFromOutside(db, run),
+		origin: runOrigin(db, run),
 	};
 }
 
 /**
- * An agent's `remember`, in a run that is going. The memory is trusted only when a person's chat
- * message started the run; otherwise it waits for an owner or admin.
+ * Why a run's agent writes no more to memory, or null when it may. Without it a run could store
+ * and take back in a loop, each round an index write, two audit entries and, past the limit on
+ * forgotten memories, the end of one kept for people to read.
+ */
+function runLimitRefusal(
+	db: Db,
+	run: MemoryRun,
+	action: "remember" | "forget",
+): MemoryRefusal | null {
+	const [limit, by] =
+		action === "remember"
+			? [MEMORY_LIMITS.runRemembers, eq(memories.runId, run.runId)]
+			: [MEMORY_LIMITS.runForgets, eq(memories.forgottenRunId, run.runId)];
+	const done = db.select({ n: count() }).from(memories).where(by).get()?.n ?? 0;
+	if (done < limit) return null;
+	return refused(
+		action === "remember"
+			? `This run has stored ${limit} memories, which is the most one run may. Go on without storing more.`
+			: `This run has taken back ${limit} memories, which is the most one run may. An owner or admin can delete others on the Memory page.`,
+	);
+}
+
+/**
+ * An agent's `remember`, in a run that is going. The memory is trusted at once only when a
+ * person's chat message started the run and it is about the agent itself or that person.
+ * Otherwise it waits for an owner or admin: what every agent would recall is theirs to let in,
+ * whatever the run read before it wrote.
  */
 export function rememberInRun(
 	db: Db,
@@ -484,7 +543,10 @@ export function rememberInRun(
 		}
 		scopeId = run.person;
 	}
-	const full = fullRefusal(db, run.trusted);
+	const over = runLimitRefusal(db, run, "remember");
+	if (over) return over;
+	const trusted = run.origin === "person" && MEMORY_OWN_SCOPES.includes(input.scope);
+	const full = fullRefusal(db, trusted);
 	if (full) return full;
 	const row = db
 		.insert(memories)
@@ -498,7 +560,8 @@ export function rememberInRun(
 			authorId: run.agentId,
 			runId: run.runId,
 			conversationId: run.conversationId,
-			trusted: run.trusted,
+			origin: run.origin,
+			trusted,
 			createdAt: now,
 			updatedAt: now,
 		})
@@ -562,27 +625,51 @@ export function recallInRun(
 	return { notice: MEMORY_NOTICE, memories: rows.map((row) => toRecalled(db, row)) };
 }
 
-function toRecalled(db: Db, row: MemoryRow): RecalledMemory {
+/** Where an agent's memory that waited came from, in the words `recall` gives the model. */
+const ORIGIN_WORDS: Record<MemoryOrigin, string> = {
+	person: "in a run a person's message started",
+	trigger: "in a run a trigger started",
+	replay: "in a replay of a run a trigger started",
+	unknown: "in a run whose start could not be read",
+};
+
+/**
+ * Who or what wrote a memory, as the model reads it: the agent or a person, that a person changed
+ * its words since, and for one that waited, where it came from and that a person approved it.
+ */
+function provenance(db: Db, row: MemoryRow): string {
 	const agent =
 		row.authorKind === "agent"
 			? db.select({ name: agents.name }).from(agents).where(eq(agents.id, row.authorId)).get()
 			: undefined;
 	const writer =
 		row.authorKind === "agent" ? `the agent ${agent?.name ?? "(removed)"}` : "a person";
+	// Only an agent's: a person's memory edited by a person is still a person's.
+	const edited =
+		row.authorKind === "agent" && row.editedBy !== null ? `${writer}, edited by a person` : writer;
+	if (row.approvedBy === null) return edited;
+	return `${edited}, ${ORIGIN_WORDS[row.origin ?? "unknown"]}; a person approved it`;
+}
+
+function toRecalled(db: Db, row: MemoryRow): RecalledMemory {
 	const source = [row.sourceLabel, row.sourceUrl].filter((part) => part !== null).join(" ");
 	return {
 		id: row.id,
 		text: row.text,
 		kind: row.kind,
 		scope: row.scope,
-		writtenBy:
-			row.approvedBy === null
-				? writer
-				: `${writer}, in a run a trigger started; a person approved it`,
+		writtenBy: provenance(db, row),
 		source: source === "" ? null : source,
 		date: new Date(row.createdAt).toISOString().slice(0, 10),
 	};
 }
+
+/** Why a run counts as from outside, to begin a refusal with. */
+const NOT_A_PERSONS: Record<Exclude<MemoryOrigin, "person">, string> = {
+	trigger: "A trigger started this run",
+	replay: "This run replays one a trigger started",
+	unknown: "What started this run could not be read",
+};
 
 /**
  * An agent's `forget`: it takes back a memory it wrote itself, which stays for people to read but
@@ -605,20 +692,26 @@ export function forgetInRun(
 		);
 	}
 	if (current.forgottenAt !== null) return refused("This memory was forgotten already");
-	if (!run.trusted && current.trusted) {
+	if (run.origin !== "person" && current.trusted) {
 		return refused(
-			"A trigger started this run, so it can only take back memories that still wait for approval. An owner or admin can delete this one on the Memory page.",
+			`${NOT_A_PERSONS[run.origin]}, so it can only take back memories that still wait for approval. An owner or admin can delete this one on the Memory page.`,
 		);
 	}
+	const over = runLimitRefusal(db, run, "forget");
+	if (over) return over;
 	db.update(memories)
-		.set({ forgottenAt: now, updatedAt: now })
+		.set({ forgottenAt: now, forgottenRunId: run.runId, updatedAt: now })
 		.where(eq(memories.seq, current.seq))
 		.run();
 	dropOldestForgotten(db);
 	return { event: agentEvent("forgotten", run, current) };
 }
 
-/** Keeps the forgotten memories within their limit: the ones forgotten longest ago go. */
+/**
+ * Keeps the forgotten memories within their limit: the ones forgotten longest ago go. The index
+ * is not merged for it, since an agent's call brings it about (`mergeIndex`): what is left of
+ * their words in the index's pages goes with the next memory a person deletes.
+ */
 function dropOldestForgotten(db: Db): void {
 	const extra = memoryCounts(db).forgotten - MEMORY_LIMITS.forgotten;
 	if (extra <= 0) return;
@@ -633,7 +726,6 @@ function dropOldestForgotten(db: Db): void {
 		db.delete(memories).where(eq(memories.seq, seq)).run();
 		unindexMemory(db, seq);
 	}
-	mergeIndex(db);
 }
 
 function agentEvent(
@@ -645,9 +737,11 @@ function agentEvent(
 		action,
 		memoryId: row.id,
 		excerpt: memoryExcerpt(row),
+		scope: row.scope,
 		agentId: run.agentId,
 		agentName: run.agentName,
 		runId: run.runId,
+		origin: run.origin,
 		waiting: !row.trusted,
 	};
 }

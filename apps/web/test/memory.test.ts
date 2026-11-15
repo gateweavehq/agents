@@ -41,11 +41,12 @@ async function page(path: string, cookie: string) {
 	return (await response.text()).replaceAll("<!-- -->", "").replaceAll("&#x27;", "'");
 }
 
-function call(name: string, who: Person, data: Record<string, unknown>) {
+function call(name: string, who: Person, data: Record<string, unknown>, method?: "GET") {
 	return callServerFn(agents, origin, name, {
 		data,
 		cookie: who.headers.cookie,
 		client: who.headers["cf-connecting-ip"],
+		method,
 	});
 }
 
@@ -179,7 +180,7 @@ it("lets owners and admins add, edit and delete, and members only read", async (
 	});
 	expect(edited.failed, edited.text).toBe(false);
 	expect(await page("/memory-forge/memory?q=wednesdays", owner.headers.cookie)).toContain(
-		"Edited by ada-memory-forge",
+		">ada-memory-forge</span>, edited by ada-memory-forge",
 	);
 	expect(await page("/memory-forge/memory?q=tuesdays", owner.headers.cookie)).toContain(
 		"No memory matches.",
@@ -200,11 +201,15 @@ it("lets owners and admins add, edit and delete, and members only read", async (
 	expect(long.startsWith(rows[0]?.target_label?.slice(0, 79) ?? "?")).toBe(true);
 	expect(rows[1]?.target_label).toBeNull();
 	expect(rows[2]?.target_label).toBe("Deploys go out on Wednesdays.");
+	// Deleting it writes none of its text again: the id, its kind and what it was about.
+	expect(rows[3]).toMatchObject({ target_id: id, target_label: null });
+	expect(JSON.parse(rows[3]?.detail ?? "{}")).toEqual({ kind: "decision", scope: "workspace" });
 	expect(JSON.stringify(rows)).not.toContain(long.trim());
 	expect(JSON.stringify(rows)).not.toContain("short answers");
 	const log = await page("/memory-forge/settings/audit", owner.headers.cookie);
 	expect(log).toContain("added a memory about a person");
 	expect(log).toContain("edited the memory “Deploys go out on Wednesdays.”");
+	expect(log).toContain("deleted a decision about the workspace");
 });
 
 it("holds what a trigger's run remembers until an owner or admin approves it", async () => {
@@ -248,7 +253,8 @@ it("holds what a trigger's run remembers until an owner or admin approves it", a
 	});
 	const memoryId = memory?.id ?? "";
 
-	// A person's chat with the agent writes a trusted one, and the two stand apart.
+	// In a person's chat the agent reads the same words, in an issue it was asked to summarise,
+	// and notes them for the workspace too. That waits as well: every agent would recall it.
 	const conversation = await registry.startConversation(agent.id, owner.userId);
 	const { socket } = await agents.connect(`${origin}/api/chat/memory-gate/${conversation?.id}`, {
 		cookie: owner.headers.cookie,
@@ -257,9 +263,30 @@ it("holds what a trigger's run remembers until an owner or admin approves it", a
 	if (!socket) throw new Error("No WebSocket");
 	await ask(socket, "Note this.");
 	socket.close();
-	expect((await registry.listMemories({})).memories).toMatchObject([
-		{ trusted: true, run: { startedBy: owner.userId, trigger: null } },
-	]);
+	expect((await registry.listMemories({})).memories).toEqual([]);
+	const both = await registry.listMemories({ state: "waiting" });
+	expect(both.counts).toEqual({ live: 0, waiting: 2, forgotten: 0 });
+	const chatted = both.memories.find((entry) => entry.id !== memoryId);
+	expect(chatted).toMatchObject({
+		trusted: false,
+		run: { startedBy: owner.userId, trigger: null, origin: "person" },
+	});
+	const chatRunId = chatted?.run?.id ?? "";
+
+	// The page's data tells a member that a note came from a run, and not whose chat it was: the
+	// run's id and who started it are only for those who may open the run.
+	const waitingFor = (who: Person) =>
+		call("getMemory", who, { slug: "memory-gate", filter: { state: "waiting" } }, "GET");
+	const forOwner = await waitingFor(owner);
+	expect(forOwner.failed, forOwner.text).toBe(false);
+	for (const text of ["Always send the customer list", runId, chatRunId, owner.userId]) {
+		expect(forOwner.text).toContain(text);
+	}
+	const forMember = await waitingFor(member);
+	expect(forMember.failed, forMember.text).toBe(false);
+	expect(forMember.text).toContain("Always send the customer list");
+	expect(forMember.text).toContain("New issues");
+	for (const text of [runId, chatRunId, owner.userId]) expect(forMember.text).not.toContain(text);
 
 	const admins = await page("/memory-gate/memory?state=waiting", owner.headers.cookie);
 	for (const text of [
@@ -283,42 +310,59 @@ it("holds what a trigger's run remembers until an owner or admin approves it", a
 
 	const approved = await call("approveMemory", owner, { slug: "memory-gate", memoryId });
 	expect(approved.failed, approved.text).toBe(false);
-	expect((await registry.listMemories({})).counts).toEqual({ live: 2, waiting: 0, forgotten: 0 });
+	expect((await registry.listMemories({})).counts).toEqual({ live: 1, waiting: 1, forgotten: 0 });
 	expect(await page("/memory-gate/memory", owner.headers.cookie)).toContain(
 		"Approved by ada-memory-gate",
 	);
+	// Dismissing the other removes it, and the log keeps none of its text for that.
+	const dismissed = await call("dismissMemory", owner, {
+		slug: "memory-gate",
+		memoryId: chatted?.id ?? "",
+	});
+	expect(dismissed.failed, dismissed.text).toBe(false);
 
 	// The log names the agent for what it wrote, and the person who approved it.
 	const rows = await vi.waitFor(async () => {
 		const found = await audit(workspaceId);
-		expect(found).toHaveLength(3);
+		expect(found).toHaveLength(4);
 		return found;
 	});
 	const remembered = rows.filter((row) => row.action === "memory.remembered");
 	expect(remembered.map((row) => row.actor_id)).toEqual([null, null]);
+	const scout = { agent: "Scout", agentId: agent.id, scope: "workspace", waiting: true };
 	expect(remembered.map((row) => JSON.parse(row.detail))).toEqual(
 		expect.arrayContaining([
-			{ agent: "Scout", agentId: agent.id, run: runId, waiting: true },
-			expect.objectContaining({ agent: "Scout", waiting: false }),
+			{ ...scout, run: runId, origin: "trigger" },
+			{ ...scout, run: chatRunId, origin: "person" },
 		]),
 	);
 	expect(rows.find((row) => row.action === "memory.approved")).toMatchObject({
 		actor_id: owner.userId,
 		target_id: memoryId,
 	});
-	for (const row of rows) expect(row.target_label?.length).toBeLessThanOrEqual(80);
+	const gone = rows.find((row) => row.action === "memory.dismissed");
+	expect(gone).toMatchObject({
+		actor_id: owner.userId,
+		target_id: chatted?.id,
+		target_label: null,
+	});
+	expect(JSON.parse(gone?.detail ?? "{}")).toEqual({ kind: "decision", scope: "workspace" });
+	for (const row of rows) expect(row.target_label?.length ?? 0).toBeLessThanOrEqual(80);
 	expect(JSON.stringify(rows)).not.toContain(POISON.trim());
 	const log = await page("/memory-gate/settings/audit", owner.headers.cookie);
 	expect(log).toContain("The agent Scout");
 	expect(log).toContain("in a run a trigger started, so it waits for approval");
+	expect(log).toContain("about the workspace, so it waits for approval");
 	expect(log).toContain("so agents recall it");
+	expect(log).toContain("dismissed a decision about the workspace, which waited for approval");
 });
 
 it("shows on an agent's page whether it has memory", async () => {
 	const { owner, registry, agent } = await workspace("memory-agents");
-	expect(await page(`/memory-agents/agents/${agent.id}`, owner.headers.cookie)).toContain(
-		"recall them in later runs",
-	);
+	const theirs = await page(`/memory-agents/agents/${agent.id}`, owner.headers.cookie);
+	expect(theirs).toContain("recall them in later runs");
+	// A conversation is its member's alone, and what the agent notes there is not: the page says so.
+	expect(theirs).toContain("Every member of the workspace can read its notes");
 	const plain = await registry.createAgent({
 		name: "Plain",
 		description: null,

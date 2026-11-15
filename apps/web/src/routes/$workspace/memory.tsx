@@ -6,12 +6,13 @@ import {
 	MEMORY_SCOPES,
 	MEMORY_STATES,
 	type MemoryKind,
+	type MemoryOrigin,
 	type MemoryScope,
 	type MemoryState,
 } from "@gateweave/agents-model";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { Plus, Search } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { MemoryDialog } from "#/components/registry/memory-dialogs";
@@ -70,8 +71,16 @@ const STATE_NAMES: Record<MemoryState, string> = {
 const EMPTY: Record<MemoryState, string> = {
 	live: "Nothing here yet. Agents with memory add to it as they work, and owners and admins can add to it by hand.",
 	waiting:
-		"Nothing waits. What an agent notes in a run a trigger started shows here until an owner or admin approves or dismisses it.",
+		"Nothing waits. What an agent notes about the workspace or a repository, or in a run a trigger started, shows here until an owner or admin approves or dismisses it.",
 	forgotten: "Nothing was forgotten. A memory an agent takes back shows here.",
+};
+
+/** What started the run a memory was written in, after "in a run", when no trigger is named. */
+const RUN_ORIGINS: Record<MemoryOrigin, string> = {
+	person: "",
+	trigger: " a trigger started",
+	replay: " that replays one a trigger started",
+	unknown: " whose start could not be read",
 };
 
 function message(error: unknown) {
@@ -102,10 +111,13 @@ function MemoryView({ data, filter }: { data: MemoryList; filter: MemorySearch }
 	// Pages after the first, as "Load more" fetches them.
 	const [older, setOlder] = useState<{ memories: MemoryEntry[]; next: number | null } | null>(null);
 	const [loading, setLoading] = useState(false);
+	// Which listing the pages belong to: a page asked for before a change is of the one before.
+	const listing = useRef(0);
 	const memories = older ? [...data.memories, ...older.memories] : data.memories;
 	const next = older ? older.next : data.next;
 	// A change may have taken a memory out of a page loaded before, so the pages start afresh.
 	const changed = async () => {
+		listing.current += 1;
 		setOlder(null);
 		await router.invalidate();
 	};
@@ -120,11 +132,13 @@ function MemoryView({ data, filter }: { data: MemoryList; filter: MemorySearch }
 	async function loadMore() {
 		if (next === null) return;
 		setLoading(true);
+		const asked = listing.current;
 		try {
 			const page = await getMemory({
 				data: { slug, filter: { ...filterOf(filter), offset: next } },
 			});
-			if (page) {
+			// The list was read again meanwhile: this page would repeat what moved into the first.
+			if (page && asked === listing.current) {
 				setOlder({ memories: [...(older?.memories ?? []), ...page.memories], next: page.next });
 			}
 		} catch (error) {
@@ -141,9 +155,11 @@ function MemoryView({ data, filter }: { data: MemoryList; filter: MemorySearch }
 					<h1 className="text-xl font-semibold tracking-tight">Memory</h1>
 					<p className="text-sm text-muted-foreground">
 						What the workspace's agents and people have noted to be recalled in later runs: facts,
-						decisions and preferences, each with who or what wrote it. An agent reads them as notes,
-						never as instructions. What an agent notes in a run a trigger started waits for an owner
-						or admin first, since an outsider may have written what it read.
+						decisions and preferences, each with who or what wrote it. Every member of the workspace
+						reads them here, the notes an agent keeps while someone chats with it included. An agent
+						reads them as notes, never as instructions. What an agent notes about the workspace or a
+						repository, or in a run a trigger started, waits for an owner or admin first, since an
+						outsider may have written what it read.
 					</p>
 				</div>
 				{admin && data.targets && (
@@ -335,7 +351,7 @@ function MemoryRow({
 					{memory.run && (
 						<>
 							{" in "}
-							{memory.runVisible ? (
+							{memory.run.id !== null ? (
 								<Link
 									to="/$workspace/runs/$runId"
 									params={{ workspace: slug, runId: memory.run.id }}
@@ -346,13 +362,15 @@ function MemoryRow({
 							) : (
 								"a run"
 							)}
-							{memory.run.trigger !== null && ` the trigger ${memory.run.trigger} started`}
+							{memory.run.trigger !== null
+								? ` the trigger ${memory.run.trigger} started`
+								: RUN_ORIGINS[memory.run.origin]}
 						</>
 					)}
+					{memory.editedByName !== null && `, edited by ${memory.editedByName}`}
 				</span>
 				<span aria-hidden>·</span>
 				<span title={formatDateTime(memory.createdAt)}>{formatRelative(memory.createdAt)}</span>
-				{memory.editedByName !== null && <span>· Edited by {memory.editedByName}</span>}
 				{memory.approvedByName !== null && <span>· Approved by {memory.approvedByName}</span>}
 				{memory.forgottenAt !== null && (
 					<span title={formatDateTime(memory.forgottenAt)}>
@@ -454,8 +472,11 @@ function MemoryRow({
 					onClose={() => setConfirming(null)}
 				>
 					{confirming === "dismiss"
-						? "It is removed for good, and no agent ever recalls it."
-						: "It is removed for good, from the search too. Agents no longer recall it."}
+						? "It is removed from the memory and its search, and no agent ever recalls it."
+						: "It is removed from the memory and its search, and agents no longer recall it."}{" "}
+					Two things stay: the audit log keeps the first {MEMORY_LIMITS.excerpt} characters from
+					when it was added, unless it is about a person, for as long as it keeps its entries, and
+					what an agent already recalled stays in that conversation.
 				</ConfirmDialog>
 			)}
 		</li>

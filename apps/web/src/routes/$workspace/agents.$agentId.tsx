@@ -285,8 +285,9 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 								>
 									memory
 								</Link>
-								, and recall them in later runs. What it notes in a run a trigger started waits
-								there for an owner or admin.
+								, and recall them in later runs. Every member of the workspace can read its notes
+								there. What it notes about the workspace or a repository, or in a run a trigger
+								started, waits there for an owner or admin.
 							</>
 						) : (
 							"Memory is on, but the memory tools work with the Gateweave engine only, so this agent has none yet."

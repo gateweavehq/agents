@@ -478,7 +478,7 @@ export function AgentDialog({
 							<span className="block text-sm font-medium">Memory</span>
 							<span className="block text-xs text-muted-foreground">
 								{engine === "gateweave"
-									? "The agent can note facts, decisions and preferences in the workspace's memory, and recall them in later runs. What it notes in a run a trigger started waits for an owner or admin on the Memory page."
+									? "The agent can note facts, decisions and preferences in the workspace's memory, and recall them in later runs. Every member of the workspace can read the notes it keeps on the Memory page, those from someone's own chat with it included. What it notes about the workspace or a repository, or in a run a trigger started, waits there for an owner or admin."
 									: `${ENGINE_NAMES[engine]} does not have the memory tools yet: they work with the Gateweave engine.`}
 							</span>
 						</span>

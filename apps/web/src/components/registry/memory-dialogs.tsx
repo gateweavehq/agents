@@ -21,6 +21,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
 import type { MemoryEntry, MemoryTargets } from "#/lib/memory";
+import { dayOf, expiryOf } from "#/lib/memory-expiry";
 
 const SELECT = "h-9 w-full rounded-md border bg-transparent px-2 text-sm";
 
@@ -37,20 +38,6 @@ export interface MemoryForm {
 	sourceLabel: string | null;
 	sourceUrl: string | null;
 	expiresAt: number | null;
-}
-
-/** A day as a date input holds it, in the browser's own time zone. */
-function dayOf(time: number | null): string {
-	if (time === null) return "";
-	const date = new Date(time);
-	const pad = (value: number) => String(value).padStart(2, "0");
-	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/** The end of that day, so a memory lasts through the day someone chose. */
-function endOf(day: string): number | null {
-	const time = new Date(`${day}T23:59:59`).getTime();
-	return day === "" || Number.isNaN(time) ? null : time;
 }
 
 /**
@@ -96,7 +83,7 @@ export function MemoryDialog({
 				scopeId: scope === "workspace" ? null : scopeId,
 				sourceLabel: sourceLabel.trim() || null,
 				sourceUrl: sourceUrl.trim() || null,
-				expiresAt: endOf(expires),
+				expiresAt: expiryOf(expires, memory?.expiresAt ?? null),
 			});
 			onClose();
 		} catch (failure) {

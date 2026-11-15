@@ -13,6 +13,7 @@ import {
 	KEYED_PROVIDERS,
 	type McpTool,
 	MEMORY_KINDS,
+	MEMORY_ORIGINS,
 	MEMORY_SCOPES,
 	type Metadata,
 	MODEL_PROVIDERS,
@@ -802,8 +803,9 @@ export const wikiPages = sqliteTable(
 /**
  * The workspace's memory (AGT-107): short notes its people and agents keep to be recalled later
  * (`../memory.ts`). Each says who or what wrote it and, for an agent, in which run. One an agent
- * wrote in a run a trigger started is not `trusted`: no agent recalls it until an owner or admin
- * approves it. An agent's `forget` sets `forgotten_at`; a person's delete removes the row.
+ * wrote about the workspace or a repository, or in a run a person's message did not start, is not
+ * `trusted`: no agent recalls it until an owner or admin approves it. An agent's `forget` sets
+ * `forgotten_at`; a person's delete removes the row.
  *
  * `seq` is the row's id in the full-text index `memory_search` (migration 0040, written by hand):
  * an INTEGER PRIMARY KEY never changes, unlike the implicit rowid of a table keyed by text, which
@@ -825,6 +827,11 @@ export const memories = sqliteTable(
 		/** The run an agent wrote it in, and that run's conversation. Runs outlive both. */
 		runId: text("run_id"),
 		conversationId: text("conversation_id"),
+		/**
+		 * What started that run, as it was read when the memory was written: the conversations it is
+		 * read from may be gone later. Null for a person's memory.
+		 */
+		origin: text("origin", { enum: MEMORY_ORIGINS }),
 		/** Where a person says it came from: a label, and a link to open. */
 		sourceLabel: text("source_label"),
 		sourceUrl: text("source_url"),
@@ -839,11 +846,16 @@ export const memories = sqliteTable(
 		/** When it stops being recalled; null for never. */
 		expiresAt: integer("expires_at"),
 		forgottenAt: integer("forgotten_at"),
+		/** The run whose agent took it back, which a run's limit on forgetting counts. */
+		forgottenRunId: text("forgotten_run_id"),
 	},
 	(table) => [
 		uniqueIndex("memories_id_idx").on(table.id),
 		index("memories_state_idx").on(table.forgottenAt, table.trusted, table.createdAt),
 		index("memories_scope_idx").on(table.scope, table.scopeId),
+		// A run's limits count what it wrote and took back, and an account's deletion finds its runs'.
+		index("memories_run_idx").on(table.runId),
+		index("memories_forgotten_run_idx").on(table.forgottenRunId),
 	],
 );
 
