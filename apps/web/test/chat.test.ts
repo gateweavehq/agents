@@ -316,10 +316,14 @@ it("deletes a workspace's conversations with it, and lets only an owner delete i
 
 	// The owner can, and the conversation's messages go with it.
 	expect((await deleteAs(owner.headers)).status).toBe(200);
-	await vi.waitFor(async () => {
-		const after = await agents.conversation(workspaceId, conversation.id);
-		expect(await after.transcript()).toBe("[]");
-	});
+	// Deleted after the response. The wait returns as soon as it is done; 10 s is only its end.
+	await vi.waitFor(
+		async () => {
+			const after = await agents.conversation(workspaceId, conversation.id);
+			expect(await after.transcript()).toBe("[]");
+		},
+		{ timeout: 10_000 },
+	);
 	expect(await (await agents.registry(workspaceId)).conversationIds()).toEqual([]);
 	expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
 });

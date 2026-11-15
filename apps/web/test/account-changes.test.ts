@@ -287,8 +287,14 @@ describe("changing a password", () => {
 		const client = newClient();
 		const person = await signUp(client, "Eda", "eda@account.test");
 		expect((await change(client, person.cookie, PASSWORD, NEW_PASSWORD)).status).toBe(200);
-		await vi.waitFor(async () => expect(await toldAbout(person.email)).toHaveLength(1));
+		// Sent after the response. The wait returns as soon as it has arrived; 10 s is only its end.
+		await vi.waitFor(async () => expect(await toldAbout(person.email)).toHaveLength(1), {
+			timeout: 10_000,
+		});
 		const [mail] = await toldAbout(person.email);
 		expect(JSON.stringify(mail)).not.toContain(NEW_PASSWORD);
+		// The wait ended at the first one, so a second, sent a moment later, is looked for after it.
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		expect(await toldAbout(person.email)).toHaveLength(1);
 	});
 });

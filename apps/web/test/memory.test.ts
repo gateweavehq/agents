@@ -322,11 +322,15 @@ it("holds what a trigger's run remembers until an owner or admin approves it", a
 	expect(dismissed.failed, dismissed.text).toBe(false);
 
 	// The log names the agent for what it wrote, and the person who approved it.
-	const rows = await vi.waitFor(async () => {
-		const found = await audit(workspaceId);
-		expect(found).toHaveLength(4);
-		return found;
-	});
+	// Recorded after the response. The wait returns as soon as they are there; 10 s is only its end.
+	const rows = await vi.waitFor(
+		async () => {
+			const found = await audit(workspaceId);
+			expect(found).toHaveLength(4);
+			return found;
+		},
+		{ timeout: 10_000 },
+	);
 	const remembered = rows.filter((row) => row.action === "memory.remembered");
 	expect(remembered.map((row) => row.actor_id)).toEqual([null, null]);
 	const scout = { agent: "Scout", agentId: agent.id, scope: "workspace", waiting: true };
