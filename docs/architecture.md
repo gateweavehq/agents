@@ -17,9 +17,18 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
 - **A read of D1 that fails is sent again**, up to three times in all
   (`apps/web/src/server/db/retry-reads.ts`), before a page or a session check is told. D1 can fail
   for a moment, and so can the local runtime under load, where one failed read of a session made a
-  signed-in person's page a 500. Only a single `select` is sent again: a write may have happened
-  although its answer was lost, and a batch may hold writes. What SQLite itself refused is not
-  asked twice. Each resend is logged with D1's message, which holds none of the statement's values.
+  signed-in person's page a 500. Only a single `select` is sent again, on the database or on a
+  session of it (`withSession`): a write may have happened although its answer was lost, and a
+  batch, or a text with a second statement after a `;`, may hold writes. And only for a failure
+  Cloudflare's D1 error list says to retry (a lost connection, the database's object reset or
+  updated, a replica cut off, a node that could not be reached), or the local runtime's own.
+  Everything else is the caller's at once: an overloaded database is not helped by more requests,
+  and a failure nobody recognises is not known to be safe to repeat. The waits are about 25 and
+  100 ms, each times a random factor between 0.5 and 1.5, so reads that failed together do not
+  come back together. Each resend is logged by a fixed name for the failure and the attempt's
+  number, never with D1's words, which can carry what a row held. After the last attempt the
+  failure still reaches the caller with Drizzle's message, which holds the statement and its
+  values: keeping those off the error page and out of Better Auth's log is AGT-133.
 - **Rate limits** on sign-in, password reset, invitations and email are counted in a
   `RateLimiter` Durable Object per client address or recipient, so they hold across isolates and
   locations. Everything else is limited in memory per isolate. Every Worker reaches another zone

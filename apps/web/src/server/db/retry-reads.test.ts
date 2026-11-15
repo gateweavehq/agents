@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAuth } from "../auth/config";
 import { createDb } from ".";
 import { READ_ATTEMPTS, retryingReads } from "./retry-reads";
@@ -10,7 +10,7 @@ import { READ_ATTEMPTS, retryingReads } from "./retry-reads";
 // read of a session with the error below, and a signed-in person's page was a 500 that said
 // "Failed to get session". The database here is a real one, with the failure put in front of it.
 
-const PASSING = "D1_ERROR: Failed to get session commit token: internal error; reference = test";
+const LOCAL = "D1_ERROR: Failed to get session commit token: internal error; reference = test";
 
 let mf: Miniflare;
 let real: D1Database;
@@ -53,12 +53,12 @@ afterEach(() => {
 });
 
 /**
- * The database, failing when told to: the next `failures` statements sent alone are refused as
- * the local runtime refused one, before they reach the database. `sent` lists every one that was
- * tried, refused or not.
+ * The database, failing when told to: the next `failures` statements sent alone are refused with
+ * `message`, before they reach the database. `sent` lists every one that was tried, refused or
+ * not. A session it opens fails the same way.
  */
 function faulty(d1: D1Database) {
-	const state = { failures: 0, sent: [] as string[] };
+	const state = { failures: 0, message: LOCAL, sent: [] as string[] };
 	const sends = new Set<PropertyKey>(["all", "raw", "first", "run"]);
 	const made = new WeakMap<object, D1PreparedStatement>();
 
@@ -75,7 +75,7 @@ function faulty(d1: D1Database) {
 					state.sent.push(query);
 					if (state.failures > 0) {
 						state.failures -= 1;
-						throw new Error(PASSING);
+						throw new Error(state.message);
 					}
 					return Reflect.apply(value, target, args);
 				};
@@ -85,19 +85,26 @@ function faulty(d1: D1Database) {
 		return proxy;
 	}
 
-	const database = new Proxy(d1, {
-		get(target, key) {
-			const value: unknown = Reflect.get(target, key, target);
-			if (typeof value !== "function") return value;
-			if (key === "prepare") return (query: string) => watched(target.prepare(query), query);
-			if (key === "batch") {
-				return (statements: D1PreparedStatement[]) =>
-					target.batch(statements.map((statement) => made.get(statement) ?? statement));
-			}
-			return value.bind(target);
-		},
-	});
-	return { database, state };
+	function wrapped<Source extends D1Database | D1DatabaseSession>(source: Source): Source {
+		return new Proxy(source, {
+			get(target, key) {
+				const value: unknown = Reflect.get(target, key, target);
+				if (typeof value !== "function") return value;
+				if (key === "prepare") return (query: string) => watched(target.prepare(query), query);
+				if (key === "batch") {
+					return (statements: D1PreparedStatement[]) =>
+						target.batch(statements.map((statement) => made.get(statement) ?? statement));
+				}
+				if (key === "withSession") {
+					return (...args: unknown[]) =>
+						wrapped(Reflect.apply(value, target, args) as D1DatabaseSession);
+				}
+				return value.bind(target);
+			},
+		});
+	}
+
+	return { database: wrapped(d1), state };
 }
 
 async function signedUp(d1: D1Database, email: string) {
@@ -117,11 +124,13 @@ async function signedUp(d1: D1Database, email: string) {
 	return { auth, cookie };
 }
 
-it("answers a session read that failed once, and logs D1's words without the token", async () => {
+/** Everything `console.warn` was given, as one text. */
+const logged = () =>
+	warned.mock.calls.map((call: unknown[]) => call.map(String).join(" ")).join("\n");
+
+it("answers a session read that failed once", async () => {
 	const { database, state } = faulty(real);
 	const { auth, cookie } = await signedUp(database, "rio@example.com");
-	const token = decodeURIComponent(/session_token=([^;]+)/.exec(cookie)?.[1] ?? "").split(".")[0];
-	expect(token?.length).toBeGreaterThan(16);
 
 	state.sent.length = 0;
 	state.failures = 1;
@@ -130,9 +139,6 @@ it("answers a session read that failed once, and logs D1's words without the tok
 	expect(found?.user.email).toBe("rio@example.com");
 	expect(state.sent).toHaveLength(2);
 	expect(warned).toHaveBeenCalledTimes(1);
-	const logged = String(warned.mock.calls[0]?.[0]);
-	expect(logged).toContain("Failed to get session commit token");
-	expect(logged).not.toContain(token);
 });
 
 it("gives up on a read that keeps failing, and answers the next one", async () => {
@@ -150,6 +156,94 @@ it("gives up on a read that keeps failing, and answers the next one", async () =
 	expect(found?.user.email).toBe("sol@example.com");
 });
 
+describe("which failures are sent again", () => {
+	// The texts Cloudflare's D1 error list answers with "Retry the operation", as D1 words them,
+	// and the local runtime's.
+	it.each([
+		["connection-lost", "D1_ERROR: Network connection lost."],
+		["storage-reset", "D1_ERROR: Internal error in D1 DB storage caused object to be reset."],
+		[
+			"storage-reset",
+			"D1_ERROR: Internal error while starting up D1 DB storage caused object to be reset.",
+		],
+		["code-updated", "D1_ERROR: D1 DB reset because its code was updated."],
+		["replica-disconnected", "D1_ERROR: Replica disconnected from primary."],
+		["cannot-resolve", "D1_ERROR: Cannot resolve D1 DB due to transient issue on remote node."],
+		[
+			"client-disconnected",
+			"D1_ERROR: Can't read from request stream because client disconnected.",
+		],
+		["local-commit-token", LOCAL],
+	])("a passing one (%s), logged by that name", async (label, message) => {
+		const { database, state } = faulty(real);
+		const d1 = retryingReads(database, { random: () => 0 });
+		state.failures = 1;
+		state.message = message;
+
+		const rows = await d1.prepare("select ? as n").bind(7).all<{ n: number }>();
+
+		expect(rows.results[0]?.n).toBe(7);
+		expect(state.sent).toHaveLength(2);
+		expect(logged()).toBe(`d1: a read failed (${label}) and is sent again (attempt 1)`);
+	});
+
+	it.each([
+		["an overloaded database", "D1_ERROR: D1 DB is overloaded. Requests queued for too long."],
+		["a full queue", "D1_ERROR: D1 DB is overloaded. Too many requests queued."],
+		["too much CPU", "D1_ERROR: D1 DB exceeded its CPU time limit and was reset."],
+		["too much memory", "D1_ERROR: D1 DB's isolate exceeded its memory limit and was reset."],
+		[
+			"a write that took too long",
+			"D1_ERROR: D1 DB storage operation exceeded timeout which caused object to be reset.",
+		],
+		[
+			"too large a result",
+			"D1_ERROR: D1 query result exceeded the maximum response size limit of 50 MB",
+		],
+		["too many requests", "Too many API requests by single worker invocation."],
+		["the wrong number of values", "D1_ERROR: Wrong number of parameter bindings for SQL query."],
+		["a column that is not there", "D1_COLUMN_NOTFOUND: Column not found (missing)"],
+		["one nobody knows", "D1_ERROR: something nobody has seen before"],
+	])("not %s: thrown at once", async (_what, message) => {
+		const { database, state } = faulty(real);
+		const d1 = retryingReads(database, { random: () => 0 });
+		state.failures = 1;
+		state.message = message;
+
+		await expect(d1.prepare("select 1").all()).rejects.toThrow(message);
+
+		expect(state.sent).toHaveLength(1);
+		expect(warned).not.toHaveBeenCalled();
+	});
+
+	it("not what SQLite refused, which it would refuse again", async () => {
+		const { database, state } = faulty(real);
+		const d1 = retryingReads(database);
+
+		await expect(d1.prepare("select * from no_such_table").all()).rejects.toThrow("SQLITE_ERROR");
+
+		expect(state.sent).toHaveLength(1);
+		expect(warned).not.toHaveBeenCalled();
+	});
+});
+
+it("logs nothing D1 said: its words can carry what a row held", async () => {
+	const { database, state } = faulty(real);
+	const d1 = retryingReads(database, { random: () => 0 });
+	const token = "kJ8sT0kEnT0kEnT0kEnT0kEnT0kEn";
+	const address = "someone@example.com";
+	state.failures = 1;
+	// As workerd words a body it could not read, with a passing failure's text inside it.
+	state.message = `D1_ERROR: Failed to parse body as JSON, got: {"token":"${token}","email":"${address}"} Network connection lost.`;
+
+	await d1.prepare("select 1").all();
+
+	expect(warned).toHaveBeenCalledTimes(1);
+	expect(logged()).not.toContain(token);
+	expect(logged()).not.toContain(address);
+	expect(logged()).toBe("d1: a read failed (connection-lost) and is sent again (attempt 1)");
+});
+
 it("sends a write once: it may have happened although its answer was lost", async () => {
 	const { database, state } = faulty(real);
 	const d1 = retryingReads(database);
@@ -160,7 +254,7 @@ it("sends a write once: it may have happened although its answer was lost", asyn
 			.prepare("insert into verification (id, identifier, value, expires_at) values (?, ?, ?, ?)")
 			.bind("once", "once", "once", 1)
 			.run(),
-	).rejects.toThrow(PASSING);
+	).rejects.toThrow(LOCAL);
 
 	expect(state.sent).toHaveLength(1);
 	expect(warned).not.toHaveBeenCalled();
@@ -173,14 +267,32 @@ it("sends a write once: it may have happened although its answer was lost", asyn
 	expect(rows.results).toHaveLength(1);
 });
 
-it("does not ask again what SQLite refused, which it would refuse again", async () => {
+it("sends a select once when another statement follows it, which may write", async () => {
 	const { database, state } = faulty(real);
 	const d1 = retryingReads(database);
+	state.failures = 1;
 
-	await expect(d1.prepare("select * from no_such_table").all()).rejects.toThrow("SQLITE_ERROR");
+	await expect(
+		d1
+			.prepare(
+				"select 1; insert into verification (id, identifier, value, expires_at) values ('two', 'two', 'two', 1)",
+			)
+			.all(),
+	).rejects.toThrow(LOCAL);
 
 	expect(state.sent).toHaveLength(1);
 	expect(warned).not.toHaveBeenCalled();
+});
+
+it("still sends again a select that only ends with a semicolon", async () => {
+	const { database, state } = faulty(real);
+	const d1 = retryingReads(database, { random: () => 0 });
+	state.failures = 1;
+
+	const rows = await d1.prepare("select 3 as n;\n").all<{ n: number }>();
+
+	expect(rows.results[0]?.n).toBe(3);
+	expect(state.sent).toHaveLength(2);
 });
 
 it("leaves a batch to the database as it was given", async () => {
@@ -190,4 +302,67 @@ it("leaves a batch to the database as it was given", async () => {
 		d1.prepare("select ? as n").bind(2),
 	]);
 	expect([one?.results[0]?.n, two?.results[0]?.n]).toEqual([1, 2]);
+});
+
+describe("a session of the database", () => {
+	it("has its reads sent again too, and its writes once", async () => {
+		const { database, state } = faulty(real);
+		const session = retryingReads(database, { random: () => 0 }).withSession("first-primary");
+
+		state.failures = 1;
+		const rows = await session.prepare("select ? as n").bind(5).all<{ n: number }>();
+		expect(rows.results[0]?.n).toBe(5);
+		expect(state.sent).toHaveLength(2);
+
+		state.sent.length = 0;
+		state.failures = 1;
+		await expect(
+			session
+				.prepare("insert into verification (id, identifier, value, expires_at) values (?, ?, ?, ?)")
+				.bind("in-session", "s", "s", 1)
+				.run(),
+		).rejects.toThrow(LOCAL);
+		expect(state.sent).toHaveLength(1);
+	});
+
+	it("keeps its bookmark and its batch", async () => {
+		const session = retryingReads(real).withSession("first-primary");
+		const unwrapped = real.withSession("first-primary");
+		expect(session.getBookmark()).toBe(unwrapped.getBookmark());
+
+		const [one] = await session.batch<{ n: number }>([session.prepare("select ? as n").bind(9)]);
+		expect(one?.results[0]?.n).toBe(9);
+
+		await unwrapped.prepare("select 1").all();
+		await session.prepare("select 1").all();
+		expect(typeof session.getBookmark()).toBe(typeof unwrapped.getBookmark());
+	});
+});
+
+describe("the waits between attempts", () => {
+	/** The waits a read that failed twice asked for, in milliseconds, without waiting them. */
+	async function failingTwice(random: () => number) {
+		const { database, state } = faulty(real);
+		const waits: number[] = [];
+		const d1 = retryingReads(database, {
+			random,
+			sleep: async (milliseconds) => {
+				waits.push(milliseconds);
+			},
+		});
+		state.failures = 2;
+		await d1.prepare("select 1").all();
+		return waits;
+	}
+
+	it("are half as long at the least and half as long again at the most", async () => {
+		expect(await failingTwice(() => 0)).toEqual([12.5, 50]);
+		expect(await failingTwice(() => 0.5)).toEqual([25, 100]);
+		expect(await failingTwice(() => 1)).toEqual([37.5, 150]);
+	});
+
+	it("differ from one read to the next", async () => {
+		const drawn = [0.1, 0.9];
+		expect(await failingTwice(() => drawn.shift() ?? 0)).toEqual([15, 140]);
+	});
 });
