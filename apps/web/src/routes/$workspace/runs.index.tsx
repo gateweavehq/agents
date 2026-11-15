@@ -3,8 +3,8 @@ import { GitPullRequestArrow } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
+	RunDuration,
 	RunStatusBadge,
-	runDuration,
 	SandboxCost,
 	TotalCost,
 	tokensUsed,
@@ -117,7 +117,7 @@ function RunsPage() {
 								</span>
 							</span>
 							<span className="text-xs text-muted-foreground tabular-nums">
-								{runDuration(run)} · {tokensUsed(run.total)}
+								<RunDuration run={run} /> · {tokensUsed(run.total)}
 							</span>
 							<span className="w-24 text-right text-sm tabular-nums">
 								<TotalCost total={run.total} />
