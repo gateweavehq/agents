@@ -3,6 +3,11 @@
  * searching files on the conversation's own Linux machine (`./sandbox.ts`). They reach it through
  * `SandboxPort`, so the tests can stand a fake in for the container. Each call joins the trace
  * like an MCP server's, with its sizes and never its content.
+ *
+ * Only `run_command` needs a machine. The five tools for files ask for a `FilePort`: files read
+ * and written whole, listed by a glob and searched. A sandbox answers it through `sandboxFiles`,
+ * with ripgrep for the last two, so files kept some other way can stand behind the same tools
+ * (AGT-122).
  */
 import { SANDBOX_IDLE_MINUTES } from "@gateweave/agents-model";
 import { type ToolSet, tool } from "ai";
@@ -47,6 +52,23 @@ export type ReadResult = { content: string } | { error: string };
 /** How many bytes went into the file, or why none did. */
 export type WriteResult = { written: number } | { error: string };
 
+/**
+ * What a listing or a search found: its lines as the model reads them, null when there are none;
+ * or why it could not look, in words the model reads.
+ */
+export type SearchResult = { found: string | null } | { error: string };
+
+/** What `search` looks for, and where. */
+export interface SearchQuery {
+	/** The pattern, as the model gave it. */
+	pattern: string;
+	/** The file or directory to search. */
+	path: string;
+	/** Only files whose paths match this glob, when there is one. */
+	glob?: string;
+	ignoreCase: boolean;
+}
+
 /** What the tools need of a sandbox. `RunnerSandbox` is the real one. */
 export interface SandboxPort {
 	/** Runs a bash command line in `cwd`, stopped after `timeoutSeconds`. */
@@ -54,6 +76,20 @@ export interface SandboxPort {
 	readFile(path: string): Promise<ReadResult>;
 	/** Writes the file, making the directories it needs. */
 	writeFile(path: string, content: string): Promise<WriteResult>;
+}
+
+/**
+ * What the tools for files need: a sandbox's two calls for whole files, and a listing and a search
+ * in place of `run`. Paths are absolute and plain, as `sandboxPath` leaves them.
+ */
+export interface FilePort {
+	readFile(path: string): Promise<ReadResult>;
+	/** Writes the file, making the directories it needs. */
+	writeFile(path: string, content: string): Promise<WriteResult>;
+	/** The files under `directory` whose paths match the glob, one to a line, sorted by path. */
+	findFiles(pattern: string, directory: string): Promise<SearchResult>;
+	/** The lines that match, each as path:line:text. */
+	search(query: SearchQuery): Promise<SearchResult>;
 }
 
 /**
@@ -76,7 +112,7 @@ export function sandboxPath(path: string): string | null {
 	return plain === SANDBOX_ROOT || plain.startsWith(`${SANDBOX_ROOT}/`) ? plain : null;
 }
 
-/** The sandbox's tools for one turn, traced in `run`. */
+/** The sandbox's tools for one turn, traced in `run`: `run_command`, then the tools for files. */
 export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 	const tools: ToolSet = {
 		run_command: tool({
@@ -104,6 +140,13 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 				return describeCommand(result, seconds);
 			},
 		}),
+	};
+	return { ...tracedTools(tools, run), ...fileTools(sandboxFiles(sandbox), run) };
+}
+
+/** The tools that read, write, edit, find and search files, traced in `run`. */
+export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
+	const tools: ToolSet = {
 		read_file: tool({
 			description: `Reads a text file, each line after its number and a tab, ${SANDBOX_LIMITS.readLines} lines at a time. The numbers are not part of the file: leave them out of edit_file.`,
 			inputSchema: z.object({
@@ -124,7 +167,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 			}),
 			execute: async ({ path, offset = 1, limit = SANDBOX_LIMITS.readLines }) => {
 				const file = within(path);
-				return numbered(file, await readText(sandbox, file), offset, limit);
+				return numbered(file, await readText(files, file), offset, limit);
 			},
 		}),
 		write_file: tool({
@@ -136,7 +179,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 			}),
 			execute: async ({ path, content }) => {
 				const file = within(path);
-				const result = await sandbox.writeFile(file, content);
+				const result = await files.writeFile(file, content);
 				if ("error" in result) throw new Error(result.error);
 				return `Wrote ${result.written} bytes to ${file}.`;
 			},
@@ -156,7 +199,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 			execute: async ({ path, old_text, new_text, replace_all = false }) => {
 				const file = within(path);
 				if (old_text === new_text) throw new Error("The new text is the same as the old.");
-				const content = await readText(sandbox, file);
+				const content = await readText(files, file);
 				const found = content.split(old_text).length - 1;
 				if (found === 0) {
 					throw new Error(
@@ -172,7 +215,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 				const changed = replace_all
 					? content.split(old_text).join(new_text)
 					: `${content.slice(0, at)}${new_text}${content.slice(at + old_text.length)}`;
-				const result = await sandbox.writeFile(file, changed);
+				const result = await files.writeFile(file, changed);
 				if ("error" in result) throw new Error(result.error);
 				const replaced = replace_all ? found : 1;
 				return `Replaced ${replaced === 1 ? "1 place" : `${replaced} places`} in ${file}.`;
@@ -191,9 +234,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 			}),
 			execute: async ({ pattern, path }) => {
 				const directory = within(path ?? SANDBOX_ROOT);
-				const command = `rg --files --hidden --sort path --glob '!.git' --glob ${quote(pattern)} -- ${quote(directory)}`;
-				const result = await sandbox.run(command, SANDBOX_ROOT, SANDBOX_LIMITS.searchSeconds);
-				return searchOutcome(result, "No files match.");
+				return foundOr("No files match.", await files.findFiles(pattern, directory));
 			},
 		}),
 		search: tool({
@@ -215,19 +256,44 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 			}),
 			execute: async ({ pattern, path, glob, ignore_case = false }) => {
 				const target = within(path ?? SANDBOX_ROOT);
-				const command = [
-					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git'",
-					ignore_case ? "--ignore-case" : "",
-					glob ? `--glob ${quote(glob)}` : "",
-					`-e ${quote(pattern)} -- ${quote(target)}`,
-				]
-					.filter(Boolean)
-					.join(" ");
-				const result = await sandbox.run(command, SANDBOX_ROOT, SANDBOX_LIMITS.searchSeconds);
-				return searchOutcome(result, "No line matches.");
+				const query = { pattern, path: target, glob, ignoreCase: ignore_case };
+				return foundOr("No line matches.", await files.search(query));
 			},
 		}),
 	};
+	return tracedTools(tools, run);
+}
+
+/**
+ * A sandbox's files as the tools for files reach them. The files are on its disk, so it lists and
+ * searches them with ripgrep, run as a command.
+ */
+export function sandboxFiles(sandbox: SandboxPort): FilePort {
+	const ripgrep = async (command: string) =>
+		ripgrepOutcome(await sandbox.run(command, SANDBOX_ROOT, SANDBOX_LIMITS.searchSeconds));
+	return {
+		readFile: (path) => sandbox.readFile(path),
+		writeFile: (path, content) => sandbox.writeFile(path, content),
+		findFiles: (pattern, directory) =>
+			ripgrep(
+				`rg --files --hidden --sort path --glob '!.git' --glob ${quote(pattern)} -- ${quote(directory)}`,
+			),
+		search: ({ pattern, path, glob, ignoreCase }) =>
+			ripgrep(
+				[
+					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git'",
+					ignoreCase ? "--ignore-case" : "",
+					glob ? `--glob ${quote(glob)}` : "",
+					`-e ${quote(pattern)} -- ${quote(path)}`,
+				]
+					.filter(Boolean)
+					.join(" "),
+			),
+	};
+}
+
+/** Each tool as the trace records it, under the sandbox's name, with the reason a call failed. */
+function tracedTools(tools: ToolSet, run: RunRecorder): ToolSet {
 	return Object.fromEntries(
 		Object.entries(tools).map(([name, each]) => [
 			name,
@@ -243,10 +309,16 @@ function within(path: string): string {
 	return plain;
 }
 
-async function readText(sandbox: SandboxPort, file: string): Promise<string> {
-	const result = await sandbox.readFile(file);
+async function readText(files: FilePort, file: string): Promise<string> {
+	const result = await files.readFile(file);
 	if ("error" in result) throw new Error(result.error);
 	return result.content;
+}
+
+/** What a listing or a search answers the model: its lines, `none` for none, or its failure. */
+function foundOr(none: string, result: SearchResult): string {
+	if ("error" in result) throw new Error(result.error);
+	return result.found ?? none;
 }
 
 function describeCommand({ exitCode, output, timedOut }: CommandResult, seconds: number): string {
@@ -278,11 +350,11 @@ function numbered(file: string, content: string, offset: number, limit: number):
 }
 
 /** ripgrep's answer: what it found, that it found nothing (exit 1), or its complaint. */
-function searchOutcome(result: CommandResult, none: string): string {
-	if (result.timedOut) throw new Error("The search took too long. Narrow it down.");
-	if (result.exitCode === 1 && result.output.trim() === "") return none;
-	if (result.exitCode !== 0) throw new Error(result.output.trim() || "The search failed.");
-	return result.output;
+function ripgrepOutcome(result: CommandResult): SearchResult {
+	if (result.timedOut) return { error: "The search took too long. Narrow it down." };
+	if (result.exitCode === 1 && result.output.trim() === "") return { found: null };
+	if (result.exitCode !== 0) return { error: result.output.trim() || "The search failed." };
+	return { found: result.output };
 }
 
 /** A word for bash, quoted so that it is passed as it is. */

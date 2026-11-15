@@ -970,7 +970,10 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   `write_file`, `edit_file` (an exact replacement, found once unless every place is asked for),
   `find_files` and `search` (ripgrep). File paths stay under `/workspace`; that keeps the tools on
   the work, not a wall, since a command reaches the whole machine, which holds nothing else. They
-  reach the container through `SandboxPort`, which the tests fill with files in memory.
+  reach the container through `SandboxPort`, which the tests fill with files in memory. Only
+  `run_command` needs the machine: the five for files ask for a `FilePort` (files read and written
+  whole, listed and searched), which `sandboxFiles` makes of a sandbox, with ripgrep run in it for
+  the last two.
 - **The trace** has a span for each call, under the server name `sandbox`, with its sizes and
   never its content, like an MCP tool's. A call that fails keeps the reason the tool gave the
   model, clipped to 500 characters (`traced` with `showErrors`), so a run's page says why; it can
