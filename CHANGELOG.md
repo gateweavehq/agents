@@ -24,8 +24,9 @@ two migrations, in each workspace's own registry, which apply themselves.
   add, edit and delete them. ([#239](https://github.com/gateweavehq/agents/pull/239))
 - **Notes from outside wait for a person.** An agent reads what outsiders wrote: an issue, a
   web page, a trigger's event. So what it notes is used at once only when a person's chat
-  message started the run and the note is about the agent itself or that person. Anything it
-  notes about the workspace or a repository, and anything from a run a trigger started, waits
+  message started the run and the agent filed the note as its own or as about that person (the
+  note's scope, which the agent chooses; what the text says is not judged). Anything it files
+  under the workspace or a repository, and anything from a run a trigger started, waits
   on the Memory page until an owner or admin approves or dismisses it, and no agent recalls it
   before that. Recalled notes are handed to the model as notes with their source, never as
   instructions. ([#239](https://github.com/gateweavehq/agents/pull/239))
@@ -42,8 +43,11 @@ two migrations, in each workspace's own registry, which apply themselves.
   their search index) apply themselves when a workspace is next used. Notes are text in the
   workspace's own storage: no vector index and no new binding. What an agent notes in a chat is
   readable by every member of the workspace, which the agent form and the Memory page say.
-  Deleting an account removes the notes about that person and those agents wrote in that
-  person's runs; the audit log keeps the first 80 characters of a note from when it was added.
+  Deleting an account removes the notes filed as about that person and those agents wrote in
+  that person's runs. It does not remove a note someone else wrote about the workspace that
+  happens to name them: an owner or admin deletes those on the Memory page. The audit log keeps
+  the first 80 characters of a note from when it was added and from each edit, except for notes
+  filed as about a person, of which it keeps no text.
 
 ## [0.26.0] - 2026-11-15
 
