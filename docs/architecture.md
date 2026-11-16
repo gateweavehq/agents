@@ -471,12 +471,29 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
   (`packages/github/src/writes.ts`), for applying setups. `commitChanges` there is not called
   yet (AGT-122): it puts a change on a branch with no git, from a base commit, the files that
   differ and the paths that are gone. A file keeps its mode, a symlink or a submodule is never
-  written over, the branch must be where its caller left it and is never forced, and each
-  refusal is a value: nothing to commit, the branch moved, a path that cannot be written
-  (`paths.ts`), or GitHub's own no with its status. `readTreeEntries` and `readBlob` in
-  `contents.ts` read what it needs: every entry's mode, and one blob's exact bytes under a size
-  limit. The tests' stand-in for GitHub (`test/fake-git.ts`, exported as
-  `@gateweave/agents-github/testing`) refuses what GitHub refuses.
+  written over (a base whose listing GitHub cut short is refused), the branch is never the
+  default branch, must be where its caller left it and is never forced, and each refusal is a
+  value: nothing to commit, the branch moved, a base the branch does not follow from, a path
+  that cannot be written, or GitHub's own no with its status. `paths.ts` holds the path rules:
+  no name a Git client refuses or that Windows or macOS reads as `.git` or `.gitmodules`, and
+  `commitChanges` adds that a new path may not differ only in case from one that is there.
+  `readTreeEntries` and `readBlob` in `contents.ts` read what it needs: every entry's mode, and
+  one blob's exact bytes under a size limit, asked for raw so nothing is decoded.
+  - **The branch's move is not a compare-and-swap.** GitHub's REST API moves a ref with no
+    "only if it is still at", and unforced it checks only that the move is a fast-forward. If
+    someone resets the branch to an earlier commit of its own between `commitChanges`' look and
+    its move, the move succeeds and the commits they dropped are back. A commit someone added
+    is never lost.
+  - **A file is not replaced by a folder, or the reverse, in one change**; that is refused.
+  - **The tests' stand-in for GitHub** (`test/fake-git.ts`, exported as
+    `@gateweave/agents-github/testing`) refuses a wrong or read-only token, an empty
+    repository's Git database (409), a tree on an unknown base, a malformed or `.git` path, a
+    deletion of what is not there, a commit on an unknown parent, a branch name Git would not
+    take, a branch that exists and a move that is not a fast-forward. What GitHub itself does
+    is unknown until tried against it for: a workflow file from a token without the Workflows
+    permission (which request fails, and how); a path under a file or a file where a folder
+    is, as when one change adds both `a` and `a/b`; and the names `paths.ts` refuses, which
+    GitHub may well take.
 - **Staying in step.** Linking, and webhooks for installation and repository changes, list the
   installation's repositories and reconcile them into the registry: new ones appear, renamed ones
   keep their history (they are matched by GitHub's id), and ones the app no longer reaches are

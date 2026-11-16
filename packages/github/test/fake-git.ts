@@ -1,10 +1,17 @@
 /**
  * Stands in for api.github.com in tests: one repository's branches, trees, blobs, commits and
- * pull requests, kept in memory. It refuses what GitHub refuses, since a fake that takes
- * anything proves nothing: a wrong token, a token that may only read, a tree on a base it does
- * not know, a path that climbs out, an entry with both content and an id, deleting a path that
- * is not there, a commit on an unknown parent, a branch that exists, a move that is not a
+ * pull requests, kept in memory. A fake that takes anything proves nothing, so it refuses: a
+ * wrong token, a token that may only read, anything in the Git database while the repository
+ * is empty (409), a tree on a base it does not know, a path that climbs out or names `.git`, an
+ * entry with both content and an id, deleting a path that is not there, a commit on an unknown
+ * parent, a branch whose name Git would not take, a branch that exists, a move that is not a
  * fast-forward.
+ *
+ * It is not GitHub, and where nobody has tried GitHub its answer here is a guess: what GitHub
+ * says to a workflow file from a token without the Workflows permission; what it does with a
+ * path under a file or a file where a folder is, as when one change adds both `a` and `a/b`
+ * (this fake says no); and which of the names `repositoryPathProblem` refuses GitHub would take
+ * (this fake takes them all but `.git`).
  *
  * It began as the stand-in of the spike for runs without a container (AGT-122) and uses nothing
  * but `fetch`'s own types and `crypto.subtle`, so a suite in workerd can use it as one in Node
@@ -50,6 +57,18 @@ function refused(status: number, message: string): Response {
 	return Response.json({ message }, { status });
 }
 
+/** The plainest of `git check-ref-format`'s rules for a branch's name; not all of them. */
+function validBranchName(name: string): boolean {
+	if (name === "" || name.startsWith("-") || name.startsWith("/")) return false;
+	if (name.endsWith("/") || name.endsWith(".") || name.endsWith(".lock")) return false;
+	if (name.includes("..") || name.includes("//") || name.includes("@{")) return false;
+	for (const char of name) {
+		const code = char.charCodeAt(0);
+		if (code <= 0x20 || code === 0x7f || "~^:?*[\\".includes(char)) return false;
+	}
+	return name.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
+}
+
 /** Base64 as GitHub sends a blob: lines of sixty characters, each ended by a newline. */
 function base64Lines(bytes: Uint8Array): string {
 	let binary = "";
@@ -91,6 +110,8 @@ export class FakeGit {
 	dropsMark = false;
 	/** A listing longer than this many entries is cut there and marked `truncated`. */
 	listingLimit = 100_000;
+	/** Whether a blob's answer says how long it is, which a compressed or chunked one does not. */
+	sendsLength = true;
 	/** Whether the write token holds the Workflows permission. */
 	workflows = false;
 	/** Called with `METHOD path` before each request is answered: a place to move a branch. */
@@ -240,6 +261,10 @@ export class FakeGit {
 		if (!url.pathname.startsWith(prefix)) return refused(404, "Not Found");
 		const resource = url.pathname.slice(prefix.length);
 		if (method !== "GET" && !writes) return refused(403, "Resource not accessible by integration");
+		// GitHub's guide to the Git database: 409 for a repository that is empty or not ready.
+		if (resource.startsWith("git/") && this.branches.size === 0) {
+			return refused(409, "Git Repository is empty.");
+		}
 
 		const branch = resource.match(/^branches\/(.+)$/);
 		if (method === "GET" && branch) {
@@ -256,11 +281,34 @@ export class FakeGit {
 		if (method === "GET" && blob) {
 			const bytes = this.blobs.get(blob[1] ?? "");
 			if (!bytes) return refused(404, "Not Found");
+			// The raw media type is the blob itself; the default wraps it in JSON as base64.
+			const raw = request.headers.get("accept") === "application/vnd.github.raw+json";
+			const answer = raw
+				? new Uint8Array(bytes)
+				: new TextEncoder().encode(
+						JSON.stringify({
+							sha: blob[1],
+							size: bytes.length,
+							content: base64Lines(bytes),
+							encoding: "base64",
+						}),
+					);
+			return new Response(answer, {
+				headers: {
+					"content-type": raw ? "application/vnd.github.raw+json" : "application/json",
+					...(this.sendsLength ? { "content-length": String(answer.length) } : {}),
+				},
+			});
+		}
+
+		const compared = resource.match(/^compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})$/);
+		if (method === "GET" && compared) {
+			const [, base = "", tip = ""] = compared;
+			if (!this.commits.has(base) || !this.commits.has(tip)) return refused(404, "Not Found");
+			const ahead = this.#descends(tip, base);
+			const behind = this.#descends(base, tip);
 			return Response.json({
-				sha: blob[1],
-				size: bytes.length,
-				content: base64Lines(bytes),
-				encoding: "base64",
+				status: ahead && behind ? "identical" : ahead ? "ahead" : behind ? "behind" : "diverged",
 			});
 		}
 
@@ -301,6 +349,7 @@ export class FakeGit {
 			const name = String(body.ref);
 			if (!name.startsWith("refs/heads/")) return refused(422, "Reference name is not valid");
 			const made = name.slice("refs/heads/".length);
+			if (!validBranchName(made)) return refused(422, `${name} is not a valid ref name.`);
 			if (this.branches.has(made)) return refused(422, "Reference already exists");
 			if (!this.commits.has(String(body.sha))) return refused(422, "Object does not exist");
 			const barred = this.#workflowsBarred(String(body.sha));
@@ -420,7 +469,9 @@ export class FakeGit {
 			if (path === "" || parts.some((part) => part === "" || part === "." || part === "..")) {
 				return refused(422, "tree.path contains a malformed path component");
 			}
-			if (parts[0] === ".git") return refused(422, "tree.path cannot be inside .git");
+			if (parts.some((part) => part.toLowerCase() === ".git")) {
+				return refused(422, "tree.path contains a malformed path component");
+			}
 			const mode = String(entry.mode);
 			if (!MODES.has(mode)) return refused(422, `tree.mode is invalid: ${entry.mode}`);
 			if (entry.type !== "blob") return refused(422, "this fake only takes blobs");

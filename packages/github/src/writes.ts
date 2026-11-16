@@ -14,7 +14,11 @@ export interface FileChange {
 	mode?: "100644" | "100755";
 }
 
-/** Who a commit is by. Left out, GitHub names the token's own account. */
+/**
+ * Who a commit is by. Left out, GitHub names the token's own account. GitHub signs the commits
+ * an app makes through the API as itself; whether it still does when an author is given was
+ * not tried, so check it against GitHub before relying on a commit showing as "Verified".
+ */
 export interface CommitAuthor {
 	name: string;
 	email: string;
@@ -34,17 +38,20 @@ export interface CommitInput {
 /** A change to put on a branch without git: see `commitChanges`. */
 export interface ChangesInput {
 	branch: string;
+	/** The repository's default branch, which is never the branch written to. */
+	defaultBranch: string;
 	/**
 	 * The commit the branch has to be at: the one this caller last put there, or null when the
 	 * branch must not exist yet. At anything else, nothing is written.
 	 */
 	expected: string | null;
 	/**
-	 * The commit the files were read at, its tree, and that tree's entries (`readTreeEntries`,
-	 * not truncated). `files` and `deleted` are the whole difference from this tree, however many
-	 * commits the branch already holds.
+	 * The commit the files were read at, its tree, and what `readTreeEntries` answered for that
+	 * tree, `truncated` included. `files` and `deleted` are the whole difference from this tree,
+	 * however many commits the branch already holds, so every change to one branch names the
+	 * same base: the commit the branch was made from.
 	 */
-	base: { commit: string; tree: string; entries: readonly TreeItem[] };
+	base: { commit: string; tree: string; entries: readonly TreeItem[]; truncated: boolean };
 	/** New files, and files whose text is not the base's, each as it should now read. */
 	files: readonly { path: string; content: string }[];
 	/** Files of the base that are gone. */
@@ -66,7 +73,13 @@ export type ChangesOutcome =
 	| { committed: false; reason: "nothing" }
 	/** The branch is not where the caller expected it: `found` is its tip, null when it is gone. */
 	| { committed: false; reason: "branch"; found: string | null }
-	/** A path that cannot be written this way. Nothing was asked of GitHub. */
+	/** The branch named is the repository's default branch. Nothing was asked of GitHub. */
+	| { committed: false; reason: "default-branch" }
+	/** GitHub cut the base's listing short, so what must be spared cannot be known. */
+	| { committed: false; reason: "truncated" }
+	/** The branch does not follow from the base given: it was made from another commit. */
+	| { committed: false; reason: "base" }
+	/** A path or a file's text that cannot be written this way. Nothing was asked of GitHub. */
 	| { committed: false; reason: "path"; path: string; message: string }
 	/** GitHub refused: its status (0 when it could not be reached) and what it said. */
 	| { committed: false; reason: "refused"; status: number; message: string };
@@ -83,6 +96,7 @@ const objectId = z.string().regex(/^[0-9a-f]{40}$/);
 const shaSchema = z.object({ sha: objectId });
 const refSchema = z.object({ object: z.object({ sha: objectId }) });
 const commitSchema = z.object({ tree: z.object({ sha: objectId }) });
+const compareSchema = z.object({ status: z.enum(["diverged", "ahead", "behind", "identical"]) });
 const pullSchema = z.object({
 	number: z.number().int().positive(),
 	html_url: z.string().url(),
@@ -179,15 +193,35 @@ async function commitTree(
  * the branch made, or moved forward and never forced. The branch is the caller's alone, so it
  * has to be where the caller left it; a commit anyone else put there is not built on and not
  * dropped. A file keeps the mode the base gives it, so an executable one stays executable, and
- * a new file is a plain one. A symlink or a submodule is never written over or taken out.
+ * a new file is a plain one. A symlink or a submodule is never written over or taken out, which
+ * holds because a base whose listing GitHub cut short is refused.
  *
  * Refusals come back as values. Only an answer of GitHub's that makes no sense is thrown.
+ *
+ * Requests: four for a new branch (its ref, the tree, the commit, the ref made). Six for one
+ * that exists (its ref, the base compared with its tip, the tree, the tip's commit, the commit,
+ * the ref moved), and one fewer when no file differs from the base.
+ *
+ * Limits, each with a test that shows it:
+ * - **The branch's move is not a compare-and-swap.** GitHub's REST API moves a ref with no
+ *   "only if it is still at" and, unforced, checks only that the move is a fast-forward. So if
+ *   someone resets the branch to an ancestor of `expected` between this function's look and
+ *   its move, the move succeeds and puts back the commits they dropped. A commit someone
+ *   added is never lost; one someone took away can come back.
+ * - **The base is checked to be an ancestor of the branch's tip, not to be the very commit the
+ *   branch was made from.** A newer base is refused (`base`), since its commit would carry the
+ *   default branch's changes as its own. An older one cannot be told from the right one.
+ * - **A file is not replaced by a folder, or a folder by a file, in one change**: a path under
+ *   a file, or a file where a folder is, is refused, as is a new path beside one that differs
+ *   only in case. What GitHub does with them was not tried.
  */
 export async function commitChanges(
 	token: string,
 	repository: RepositoryName,
 	input: ChangesInput,
 ): Promise<ChangesOutcome> {
+	if (input.branch === input.defaultBranch) return { committed: false, reason: "default-branch" };
+	if (input.base.truncated) return { committed: false, reason: "truncated" };
 	const planned = await planChanges(input);
 	if ("reason" in planned) return planned;
 	const changed = planned.files.length > 0 || planned.deleted.length > 0;
@@ -197,6 +231,20 @@ export async function commitChanges(
 	try {
 		const tip = await branchCommit(token, repository, input.branch);
 		if (tip !== input.expected) return { committed: false, reason: "branch", found: tip };
+		if (input.expected !== null) {
+			// The tree below is the base's with the changes, on top of the branch's tip. Were the
+			// base not behind the tip, the commit would hold whatever lies between them as its own.
+			const base = objectId.parse(input.base.commit);
+			const compared = compareSchema.parse(
+				await request(
+					`${repositoryPath(repository)}/compare/${base}...${objectId.parse(input.expected)}?per_page=1`,
+					token,
+				),
+			);
+			if (compared.status !== "ahead" && compared.status !== "identical") {
+				return { committed: false, reason: "base" };
+			}
+		}
 		// The base's tree, not the branch's: the changes are the whole difference from the base,
 		// so what an earlier commit on the branch did is in them already.
 		const tree = changed
@@ -226,10 +274,13 @@ export async function commitChanges(
 		else await moveBranch(token, repository, input.branch, commit, false);
 	} catch (error) {
 		if (!(error instanceof GitHubError)) throw error;
-		// GitHub holds the same line between the read above and here: the name is taken, or the
-		// move is not a fast-forward. Which it was is read from the branch, not from GitHub's words.
+		// GitHub holds part of the same line between the read above and here: the name is taken,
+		// or the move is not a fast-forward. Which it was is read from the branch, not from
+		// GitHub's words. A branch at this call's own commit means the write was applied and only
+		// its answer was lost, a connection reset or a 502 on the way back.
 		try {
 			const tip = await branchCommit(token, repository, input.branch);
+			if (tip === commit) return { committed: true, commit };
 			if (tip !== input.expected) return { committed: false, reason: "branch", found: tip };
 		} catch {
 			// The refusal that came first says more than a failed second look.
@@ -267,6 +318,30 @@ async function planChanges(
 			: entry?.mode === TREE_MODES.submodule
 				? "a submodule"
 				: null;
+	// Every name in the tree by its lower case, so a new name that differs from one only in case
+	// is caught: on Windows and macOS the two would be one file, or one folder.
+	const spellings = new Map<string, string>();
+	const known = new Set([...entries.keys(), ...folders]);
+	for (const name of known) {
+		if (!spellings.has(name.toLowerCase())) spellings.set(name.toLowerCase(), name);
+	}
+	/** The name a new path, or a folder above it, differs from only in case; it joins the tree. */
+	const caseTwin = (path: string): string | null => {
+		const names: string[] = [];
+		for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
+			names.unshift(path.slice(0, end));
+		}
+		// The topmost folder first, so the answer names where the two part ways.
+		for (const name of names) {
+			const twin = spellings.get(name.toLowerCase());
+			if (twin !== undefined && !known.has(name)) return twin;
+		}
+		for (const name of names) {
+			known.add(name);
+			if (!spellings.has(name.toLowerCase())) spellings.set(name.toLowerCase(), name);
+		}
+		return null;
+	};
 	const seen = new Set<string>();
 	/** What holds for a written and a deleted path alike. */
 	const problem = (path: string): string | null => {
@@ -286,6 +361,11 @@ async function planChanges(
 	for (const file of input.files) {
 		const found = problem(file.path);
 		if (found) return refuse(file.path, found);
+		if (!file.content.isWellFormed()) {
+			return refuse(file.path, "holds text that is not Unicode: half of a surrogate pair");
+		}
+		const twin = caseTwin(file.path);
+		if (twin !== null) return refuse(file.path, `differs only in case from ${twin}`);
 		if (folders.has(file.path)) return refuse(file.path, "is a folder in the repository");
 		for (let end = file.path.lastIndexOf("/"); end > 0; end = file.path.lastIndexOf("/", end - 1)) {
 			const above = entries.get(file.path.slice(0, end));

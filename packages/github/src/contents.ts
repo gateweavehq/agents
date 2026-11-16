@@ -3,7 +3,6 @@
 // request, so a scan stays within a Worker's subrequest limit.
 import { z } from "zod";
 import { GitHubError, request, send } from "./app";
-import { fromBase64 } from "./encoding";
 
 export interface RepositoryName {
 	owner: string;
@@ -72,12 +71,6 @@ const treeSchema = z.object({
 	),
 });
 
-const restBlobSchema = z.object({
-	content: z.string(),
-	encoding: z.literal("base64"),
-	size: z.number().int().nonnegative().nullable(),
-});
-
 const blobSchema = z
 	.object({
 		text: z.string().nullable(),
@@ -138,8 +131,9 @@ export async function readTree(
 /**
  * Every entry of a tree that is not a folder, at any depth, with its mode: what a commit made
  * through the API has to know, so an executable file keeps its bit and a symlink or a submodule
- * is not written over. `truncated` says GitHub cut the listing, as for `readTree`: a caller that
- * would write must refuse then, since what it cannot see it cannot spare.
+ * is not written over. `truncated` says GitHub cut the listing, as for `readTree`. The answer is
+ * what `commitChanges` takes as its base, and it refuses a truncated one, since what it cannot
+ * see it cannot spare.
  */
 export async function readTreeEntries(
 	token: string,
@@ -174,11 +168,16 @@ export async function gitBlobId(bytes: Uint8Array): Promise<string> {
 	return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** GitHub's media type for a blob as it is, with no JSON and no base64 around it. */
+const RAW = "application/vnd.github.raw+json";
+
 /**
  * One blob's exact bytes, by its id: a byte order mark, line ends and bytes that are not text
- * come back as they are, which GraphQL's `text` does not promise. A blob over `maxBytes` is not
- * returned, and no more of GitHub's answer is read than a blob of that size could take, so a
- * file of 100 MB does not pass through memory to be refused.
+ * come back as they are, which GraphQL's `text` does not promise. They are asked for raw, so
+ * nothing is decoded and the bytes are in memory at most twice, as they arrive and as one array.
+ * A blob over `maxBytes` is not returned: by the answer's length where GitHub gives one, and
+ * otherwise by reading no further than `maxBytes`, so a file of 100 MB does not pass through
+ * memory to be refused. `size` is null when the answer was cut off before its length was known.
  */
 export async function readBlob(
 	token: string,
@@ -187,42 +186,55 @@ export async function readBlob(
 	maxBytes: number,
 ): Promise<BlobRead> {
 	const id = objectId.parse(blob);
-	const response = await send(`${repositoryPath(repository)}/git/blobs/${id}`, token);
-	// Base64 is four characters to three bytes, GitHub breaks its lines with an escaped newline
-	// every sixty, and the rest of the answer is a few addresses.
-	const body = await textUpTo(response, Math.ceil(maxBytes * 1.5) + 4096);
-	if (body === null) return { read: false, size: null };
-	const found = restBlobSchema.parse(JSON.parse(body));
-	if (found.size !== null && found.size > maxBytes) return { read: false, size: found.size };
-	const bytes = fromBase64(found.content);
-	if (bytes.length > maxBytes) return { read: false, size: bytes.length };
+	const response = await send(`${repositoryPath(repository)}/git/blobs/${id}`, token, {}, RAW);
+	// A compressed answer's length is the compressed one, which says nothing of the blob's.
+	const length = response.headers.has("content-encoding")
+		? Number.NaN
+		: Number(response.headers.get("content-length") ?? Number.NaN);
+	if (length > maxBytes) {
+		await response.body?.cancel().catch(() => {});
+		return { read: false, size: length };
+	}
+	const bytes = await bytesUpTo(response, maxBytes);
+	if (bytes === null) return { read: false, size: null };
 	if ((await gitBlobId(bytes)) !== id) {
 		throw new GitHubError(502, "GitHub answered with bytes that are not the blob asked for");
 	}
 	return { read: true, bytes, size: bytes.length };
 }
 
-/** The body as text, or null, with the rest unread, once it is longer than `limit` bytes. */
-async function textUpTo(response: Response, limit: number): Promise<string | null> {
-	if (Number(response.headers.get("content-length") ?? 0) > limit) {
-		await response.body?.cancel();
-		return null;
-	}
-	if (!response.body) return "";
-	const reader = response.body.getReader();
-	const decoder = new TextDecoder();
-	let text = "";
+/** The body's bytes, or null, with the rest unread, once there are more than `limit`. */
+async function bytesUpTo(
+	response: Response,
+	limit: number,
+): Promise<Uint8Array<ArrayBuffer> | null> {
+	const chunks: Uint8Array[] = [];
 	let length = 0;
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) return text + decoder.decode();
-		length += value.length;
-		if (length > limit) {
-			await reader.cancel();
-			return null;
+	if (response.body) {
+		const reader = response.body.getReader();
+		for (;;) {
+			let chunk: ReadableStreamReadResult<Uint8Array>;
+			try {
+				chunk = await reader.read();
+			} catch (error) {
+				throw new GitHubError(0, `GitHub's answer broke off: ${String(error)}`);
+			}
+			if (chunk.done) break;
+			length += chunk.value.length;
+			if (length > limit) {
+				await reader.cancel().catch(() => {});
+				return null;
+			}
+			chunks.push(chunk.value);
 		}
-		text += decoder.decode(value, { stream: true });
 	}
+	const bytes = new Uint8Array(length);
+	let at = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, at);
+		at += chunk.length;
+	}
+	return bytes;
 }
 
 /**

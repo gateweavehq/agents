@@ -267,14 +267,22 @@ export async function request(path: string, token: string, init: RequestInit = {
 	return (await send(path, token, init)).json();
 }
 
-/** The same call, for a caller that reads the answer's body itself. */
-export async function send(path: string, token: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * The same call, for a caller that reads the answer's body itself. `accept` asks for another of
+ * GitHub's media types; every other header is the same for every call.
+ */
+export async function send(
+	path: string,
+	token: string,
+	init: RequestInit = {},
+	accept = "application/vnd.github+json",
+): Promise<Response> {
 	let response: Response;
 	try {
 		response = await fetch(`${API_URL}${path}`, {
 			...init,
 			headers: {
-				accept: "application/vnd.github+json",
+				accept,
 				authorization: `Bearer ${token}`,
 				"user-agent": "gateweave-agents",
 				"x-github-api-version": "2022-11-28",
