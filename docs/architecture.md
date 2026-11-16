@@ -1100,9 +1100,12 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     removes one it added is theirs, and the push is refused.
   - **Search is literal text**, never a regular expression: a model's pattern does not run in
     the Durable Object, where one that backtracks without end would hold the conversation. The
-    tool's description says so. It has its own globs (`glob.ts`), read as ripgrep reads them
-    and bounded: a glob that branches or nests too far is refused, and the steps of matching
-    are counted, so one made to be slow is stopped in a fraction of a second with words.
+    tool's description says so. It has its own globs (`glob.ts`), read as ripgrep was recorded
+    reading them: a name is matched as its UTF-8 bytes, so `?` and a set take a byte and not a
+    letter; braces inside a set are the set's; and one branch with a slash holds every branch
+    from where the path starts. They are bounded: a glob that branches or nests too far is
+    refused, a set is a table looked up once a byte, and every step of matching is counted,
+    remembered or not, so one made to be slow is stopped in a fraction of a second with words.
   - **Held to the sandbox's ripgrep.** `test/ripgrep/recorded.json` is what the ripgrep in the
     sandbox's image answered to the two command lines `sandboxFiles` writes, over a small
     repository (`record.mjs` beside it makes it, in the image). `ripgrep-recorded.test.ts`

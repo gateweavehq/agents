@@ -1,27 +1,34 @@
 /**
  * Globs for files that no ripgrep reaches (`./file-store.ts`), read the way ripgrep's `--glob`
- * reads them, so a model writes one glob for either:
+ * reads them, so a model writes one glob for either. The rules are what the sandbox image's
+ * ripgrep was recorded doing (`test/ripgrep/recorded.json`), and `test/ripgrep-recorded.test.ts`
+ * holds this module to the recordings:
  *
- * - `*` is any run of characters in one part of a path, `?` any one of them, `[abc]`, `[a-z]` and
- *   `[!abc]` one of a set, and a backslash takes the next character as it is. A character is a
- *   code point, so `?` takes an emoji whole.
+ * - `*` is any run within one part of a path, `?` any one byte of it, `[abc]`, `[a-z]` and
+ *   `[!abc]` one byte of a set, and a backslash takes what follows as it is.
+ * - **A name is matched as its UTF-8 bytes**, as ripgrep matches it. For names in ASCII that is
+ *   a character; for others it is not: `?.txt` does not take `é.txt`, `??.txt` does, and a set
+ *   holds bytes, so `[é]` is two of them and takes neither `é` nor any other letter. A letter
+ *   written out in a glob still takes that letter: `é*.txt` takes `é.txt`.
  * - `**` as a whole part is any number of parts, none included; at the end it is everything below.
- * - `{a,b}` is either. It may hold others, which ripgrep refuses; that is the one difference.
- * - A glob with no slash is matched against a file's name, in any directory. One with a slash is
- *   matched against the whole path from where the caller anchors it.
+ * - `{a,b}` is either. Braces inside a set are bytes of the set, not branches. Braces may hold
+ *   others, which ripgrep refuses; that is the one thing taken here that ripgrep does not take.
+ * - A glob with no slash anywhere is matched against a file's name, in any directory. One with a
+ *   slash, in any of its branches, is matched in every branch against the whole path from where
+ *   the caller anchors it: `{src/a.ts,README.md}` takes a `README.md` only where the path starts.
  * - The file itself has to match: a glob that names a directory does not take what is in it.
  * - Capitals and small letters differ.
  *
- * `test/ripgrep-recorded.test.ts` holds these to what the sandbox's ripgrep answered.
- *
  * The glob is a model's and it is matched in the conversation's Durable Object, against as many
- * as 20,000 paths, so the work one glob may do is bounded three ways. No regular expression is
- * made of it: a part is matched a character at a time, going back to the last `*` only, and the
- * parts with a table that visits each pair of a glob's part and a path's part once. A glob may
- * branch into `GLOB_LIMITS.alternatives`, hold `GLOB_LIMITS.parts` parts and
- * `GLOB_LIMITS.anyDepth` of them `**`, and is refused in words past that. And every step of the
- * matching is counted: past `GLOB_LIMITS.steps` over all the paths one glob is asked about,
- * `matches` throws `GlobTooSlow`, which the caller answers in words.
+ * as 20,000 paths, so the work one glob may do is bounded. No regular expression is made of it:
+ * a part is matched a byte at a time, going back to the last `*` only; a set is a table looked
+ * up once a byte, however long the set is written; and the parts are matched with a table that
+ * works each pair of a glob's part and a path's part out once. A glob may branch into
+ * `GLOB_LIMITS.alternatives`, hold `GLOB_LIMITS.parts` parts and `GLOB_LIMITS.anyDepth` of them
+ * `**`, and is refused in words past that. And every step is counted, a byte compared or a pair
+ * of parts looked at, whether worked out or remembered: past `GLOB_LIMITS.steps` over all the
+ * paths one glob is asked about, `matches` throws `GlobTooSlow`, which the caller answers in
+ * words.
  */
 
 export const GLOB_LIMITS = {
@@ -32,10 +39,9 @@ export const GLOB_LIMITS = {
 	/** Parts that are `**`, in each alternative, after those in a row are taken as one. */
 	anyDepth: 8,
 	/**
-	 * Steps one glob may take over every path it is asked about: a character compared, or a pair
-	 * of parts tried. Measured in Node on a laptop over 20,000 paths: `*.txt` took about 400,000
-	 * steps and a glob with nine endings in braces about three million, and a glob made to be
-	 * slow was stopped at twenty million after 0.3 seconds.
+	 * Steps one glob may take over every path it is asked about: a byte compared, or a pair of
+	 * parts looked at. `test/glob.test.ts` holds the figures: plain globs over 20,000 paths stay
+	 * under half of this, and globs made to be slow are stopped by it.
 	 */
 	steps: 20_000_000,
 };
@@ -54,16 +60,30 @@ export interface Glob {
 	matches(parts: readonly string[], start?: number): boolean;
 	/** Whether it begins with `**` in every branch, so that where a path starts is all one. */
 	readonly floating: boolean;
+	/** Steps taken so far, of those it may take. */
+	readonly steps: number;
 }
 
 type Token =
-	| { kind: "char"; char: string }
+	| { kind: "byte"; byte: number }
 	| { kind: "one" }
 	| { kind: "run" }
-	| { kind: "set"; negated: boolean; ranges: [string, string][] };
+	/** A set, as a table of the 256 bytes: 1 for those it takes. */
+	| { kind: "set"; takes: Uint8Array };
 
 /** One part of a glob: `**`, or what a path's part has to match. */
 type Part = "**" | Token[];
+
+const BACKSLASH = 0x5c;
+const STAR = 0x2a;
+const QUESTION = 0x3f;
+const OPEN = 0x5b;
+const CLOSE = 0x5d;
+const BANG = 0x21;
+const CARET = 0x5e;
+const DASH = 0x2d;
+
+const encoder = new TextEncoder();
 
 /** Reads a glob, or says in words why it cannot be read. */
 export function readGlob(
@@ -73,13 +93,15 @@ export function readGlob(
 	if (pattern.startsWith("!")) {
 		return { error: "A glob that begins with ! leaves files out, which is not done here." };
 	}
-	const alternatives = expandBraces(pattern);
+	// Decided for the glob whole, before its branches are told apart, as ripgrep decides it.
+	const anchored = pattern.includes("/");
+	const alternatives = expandBraces(pattern.startsWith("/") ? pattern.slice(1) : pattern);
 	if (alternatives === null) {
 		return {
 			error: `That glob branches into more than ${GLOB_LIMITS.alternatives}. Use fewer {…}.`,
 		};
 	}
-	const read = alternatives.map(readAlternative);
+	const read = alternatives.map((alternative) => readAlternative(alternative, anchored));
 	if (read.some((glob) => glob.length > GLOB_LIMITS.parts)) {
 		return { error: `That glob has more than ${GLOB_LIMITS.parts} parts between its slashes.` };
 	}
@@ -90,6 +112,9 @@ export function readGlob(
 	return {
 		floating: read.every((glob) => glob[0] === "**"),
 		matches: (parts, start = 0) => read.some((glob) => matchParts(glob, parts, start, budget)),
+		get steps() {
+			return steps - Math.max(budget.left, 0);
+		},
 	};
 }
 
@@ -100,8 +125,21 @@ export function globMatches(pattern: string, path: string): boolean {
 }
 
 /**
+ * Where the set that opens at `open` closes, or -1 when it never does. A `]` right after the
+ * opening, or after the `!` or `^` that turns the set round, is one of the set.
+ */
+function setEnd(pattern: string, open: number): number {
+	let index = open + 1;
+	if (pattern.charAt(index) === "!" || pattern.charAt(index) === "^") index++;
+	for (let first = true; index < pattern.length; index++, first = false) {
+		if (pattern.charAt(index) === "]" && !first) return index;
+	}
+	return -1;
+}
+
+/**
  * Every glob the braces stand for, or null when there are too many. Braces with no comma stand
- * for what they hold, and one never closed is itself.
+ * for what they hold, one never closed is itself, and braces inside a set are the set's.
  */
 function expandBraces(pattern: string): string[] | null {
 	let open = -1;
@@ -111,6 +149,9 @@ function expandBraces(pattern: string): string[] | null {
 		const char = pattern.charAt(index);
 		if (char === "\\") {
 			index++;
+		} else if (char === "[") {
+			const end = setEnd(pattern, index);
+			if (end !== -1) index = end;
 		} else if (char === "{") {
 			if (depth === 0) {
 				open = index;
@@ -139,16 +180,15 @@ function expandBraces(pattern: string): string[] | null {
 	return [pattern];
 }
 
-function readAlternative(pattern: string): Part[] {
-	const anchored = pattern.startsWith("/");
+function readAlternative(pattern: string, anchored: boolean): Part[] {
 	const parts: Part[] = [];
-	for (const part of splitParts(anchored ? pattern.slice(1) : pattern)) {
+	for (const part of splitParts(pattern)) {
 		// `**/**` is `**`: any number of parts twice over is any number of parts.
 		if (part === "**" && parts.at(-1) === "**") continue;
 		parts.push(part === "**" ? "**" : readPart(part));
 	}
-	// With no slash it is a name, wherever the file is.
-	if (anchored || parts.length > 1) return parts;
+	// With no slash in the glob it is a name, wherever the file is.
+	if (anchored) return parts;
 	return parts[0] === "**" ? parts : ["**", ...parts];
 }
 
@@ -173,71 +213,60 @@ function splitParts(pattern: string): string[] {
 }
 
 function readPart(part: string): Token[] {
-	// By code point, so that a character outside the first plane is one character.
-	const chars = Array.from(part);
+	const bytes = encoder.encode(part);
 	const tokens: Token[] = [];
-	for (let index = 0; index < chars.length; index++) {
-		const char = chars[index] ?? "";
-		const next = chars[index + 1];
-		if (char === "\\" && next !== undefined) {
-			tokens.push({ kind: "char", char: next });
+	for (let index = 0; index < bytes.length; index++) {
+		const byte = bytes[index] ?? 0;
+		const next = bytes[index + 1];
+		if (byte === BACKSLASH && next !== undefined) {
+			tokens.push({ kind: "byte", byte: next });
 			index++;
-		} else if (char === "*") {
+		} else if (byte === STAR) {
 			// `a**b` is `a*b`: only a whole part of two stars crosses directories.
 			if (tokens.at(-1)?.kind !== "run") tokens.push({ kind: "run" });
-		} else if (char === "?") {
+		} else if (byte === QUESTION) {
 			tokens.push({ kind: "one" });
-		} else if (char === "[") {
-			const set = readSet(chars, index);
+		} else if (byte === OPEN) {
+			const set = readSet(bytes, index);
 			if (set) {
 				tokens.push(set.token);
 				index = set.end;
 			} else {
-				tokens.push({ kind: "char", char });
+				tokens.push({ kind: "byte", byte });
 			}
 		} else {
-			tokens.push({ kind: "char", char });
+			tokens.push({ kind: "byte", byte });
 		}
 	}
 	return tokens;
 }
 
-/** The set that opens at `open`, and where it closes; null when it never does. */
-function readSet(chars: readonly string[], open: number): { token: Token; end: number } | null {
+/**
+ * The set that opens at `open`, and where it closes; null when it never does. It is made into a
+ * table here, once, so that looking a byte up costs the same however long the set is written.
+ */
+function readSet(bytes: Uint8Array, open: number): { token: Token; end: number } | null {
 	let index = open + 1;
-	const negated = chars[index] === "!" || chars[index] === "^";
+	const negated = bytes[index] === BANG || bytes[index] === CARET;
 	if (negated) index++;
-	const ranges: [string, string][] = [];
+	const takes = new Uint8Array(256);
 	// A `]` right after the opening is one of the set.
-	for (let first = true; index < chars.length; first = false) {
-		const char = chars[index] ?? "";
-		if (char === "]" && !first) return { token: { kind: "set", negated, ranges }, end: index };
-		const to = chars[index + 2];
-		if (chars[index + 1] === "-" && to !== undefined && to !== "]") {
-			ranges.push([char, to]);
+	for (let first = true; index < bytes.length; first = false) {
+		const byte = bytes[index] ?? 0;
+		if (byte === CLOSE && !first) {
+			if (negated) for (let each = 0; each < 256; each++) takes[each] = takes[each] === 1 ? 0 : 1;
+			return { token: { kind: "set", takes }, end: index };
+		}
+		const to = bytes[index + 2];
+		if (bytes[index + 1] === DASH && to !== undefined && to !== CLOSE) {
+			for (let each = byte; each <= to; each++) takes[each] = 1;
 			index += 3;
 		} else {
-			ranges.push([char, char]);
+			takes[byte] = 1;
 			index++;
 		}
 	}
 	return null;
-}
-
-/** Where a character stands among all characters: `<` on strings compares halves of a pair. */
-function order(char: string): number {
-	return char.codePointAt(0) ?? 0;
-}
-
-function matchToken(token: Token, char: string): boolean {
-	if (token.kind === "char") return token.char === char;
-	if (token.kind === "set") {
-		const at = order(char);
-		return (
-			token.ranges.some(([from, to]) => order(from) <= at && at <= order(to)) !== token.negated
-		);
-	}
-	return true;
 }
 
 interface Budget {
@@ -248,40 +277,48 @@ function spend(budget: Budget): void {
 	if (--budget.left < 0) throw new GlobTooSlow();
 }
 
-/** Whether the text holds half of a pair, and so has to be taken a code point at a time. */
-function hasPairs(text: string): boolean {
-	for (let index = 0; index < text.length; index++) {
-		const code = text.charCodeAt(index);
-		if (code >= 0xd800 && code <= 0xdfff) return true;
+/** The part as bytes: itself where it is ASCII, which most names are, and encoded where not. */
+function bytesOf(part: string): { length: number; at(index: number): number } {
+	for (let index = 0; index < part.length; index++) {
+		if (part.charCodeAt(index) > 0x7f) {
+			const bytes = encoder.encode(part);
+			return { length: bytes.length, at: (at) => bytes[at] ?? 0 };
+		}
 	}
-	return false;
+	return { length: part.length, at: (at) => part.charCodeAt(at) };
 }
 
 /** Whether a path's part matches a glob's: forward, and back to the last `*` when it fails. */
 function matchPart(tokens: Token[], part: string, budget: Budget): boolean {
-	const text: ArrayLike<string> = hasPairs(part) ? Array.from(part) : part;
+	const text = bytesOf(part);
 	let token = 0;
-	let char = 0;
+	let byte = 0;
 	let star = -1;
-	let starChar = 0;
-	while (char < text.length) {
+	let starByte = 0;
+	while (byte < text.length) {
 		spend(budget);
 		const next = tokens[token];
-		if (next && next.kind !== "run" && matchToken(next, text[char] ?? "")) {
+		if (next && next.kind !== "run" && takes(next, text.at(byte))) {
 			token++;
-			char++;
+			byte++;
 		} else if (next?.kind === "run") {
 			star = token++;
-			starChar = char;
+			starByte = byte;
 		} else if (star !== -1) {
 			token = star + 1;
-			char = ++starChar;
+			byte = ++starByte;
 		} else {
 			return false;
 		}
 	}
 	while (tokens[token]?.kind === "run") token++;
 	return token === tokens.length;
+}
+
+function takes(token: Exclude<Token, { kind: "run" }>, byte: number): boolean {
+	if (token.kind === "byte") return token.byte === byte;
+	if (token.kind === "set") return token.takes[byte] === 1;
+	return true;
 }
 
 function matchParts(
@@ -291,13 +328,16 @@ function matchParts(
 	budget: Budget,
 ): boolean {
 	const width = parts.length + 1;
-	// 0 for not tried, 1 for no, 2 for yes: each pair of a glob's part and a path's is tried once.
+	// 0 for not tried, 1 for no, 2 for yes: each pair of a glob's part and a path's is worked out
+	// once.
 	const tried = new Uint8Array((glob.length + 1) * width);
 	const lastAny = glob.lastIndexOf("**");
 	const from = (at: number, part: number): boolean => {
+		// Charged whether it is worked out or remembered: a `**` asks about every part after it,
+		// and those askings are work too, however cheap each is.
+		spend(budget);
 		const key = at * width + part;
 		if (tried[key] !== 0) return tried[key] === 2;
-		spend(budget);
 		const next = glob[at];
 		let matched: boolean;
 		if (next === undefined) {

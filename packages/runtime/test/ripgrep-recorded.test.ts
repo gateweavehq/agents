@@ -264,6 +264,60 @@ describe("the files store, beside the recorded ripgrep", () => {
 		});
 	});
 
+	it("reads a glob's braces, sets and bytes as ripgrep read them, over names that are not plain", async () => {
+		const { tree, finds } = recorded.naming;
+		// What ripgrep answered, so that a new recording that says otherwise is seen here first.
+		const answered = Object.fromEntries(
+			finds.map((found) => [found.pattern, found.output.replaceAll("/workspace/repo/", "")]),
+		);
+		expect(answered).toMatchObject({
+			// Braces in a set are bytes of the set.
+			"[{}].txt": "{.txt\n}.txt\n",
+			// One branch with a slash holds every branch from where the path starts.
+			"{repo/src/index.ts,README.md}": "src/index.ts\n",
+			"{repo/README.md,index.ts}": "README.md\n",
+			// A name is matched as bytes: `é` is two and `😀` four.
+			"?.txt": "a.txt\n{.txt\n}.txt\n",
+			"??.txt": "[].txt\né.txt\n",
+			"???.txt": "",
+			"????.txt": "éé.txt\n😀.txt\n",
+			"[é].txt": "",
+			"[!a].txt": "{.txt\n}.txt\n",
+		});
+
+		// The tests' stand-in, which reads globs with the store's own reader.
+		const sandbox = standIn(tree);
+		for (const found of finds) {
+			const ran = await sandbox.run(found.command, ROOT, 60);
+			expect({ command: found.command, exitCode: ran.exitCode, output: ran.output }).toEqual({
+				command: found.command,
+				exitCode: found.exitCode,
+				output: withoutGit(found.output),
+			});
+		}
+
+		// The store. It also holds a glob with a slash from the repository's root, where the
+		// branch without one finds the file ripgrep leaves out; never the nested one.
+		const both = { found: "/workspace/repo/README.md\n/workspace/repo/src/index.ts\n" };
+		const otherwise: Record<string, SearchResult> = {
+			"{repo/src/index.ts,README.md}": both,
+			"{README.md,repo/src/index.ts}": both,
+		};
+		await store(tree, async (files) => {
+			for (const found of finds) {
+				const ripgrep = await reading({
+					exitCode: found.exitCode,
+					output: withoutGit(found.output),
+					timedOut: false,
+				});
+				expect({
+					pattern: found.pattern,
+					store: await files.findFiles(found.pattern, found.directory),
+				}).toEqual({ pattern: found.pattern, store: otherwise[found.pattern] ?? ripgrep });
+			}
+		});
+	});
+
 	it("does not read .gitignore, and has no .git, where ripgrep honours one and can list the other", async () => {
 		const { tree, finds, searches } = recorded.ignoring;
 		const listed = finds[0]?.output ?? "";

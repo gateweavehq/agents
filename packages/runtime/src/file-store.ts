@@ -295,22 +295,29 @@ export class FileStore implements DeletingFilePort, PushPort {
 	 * then nothing is asked of GitHub, and the work goes on from the same commit, turn after turn.
 	 * A conversation keeps the repository it first checked out, as a sandbox's does.
 	 */
-	checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult> {
-		this.#checkingOut ??= this.#checkout(repository, branch).finally(() => {
-			this.#checkingOut = null;
+	async checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult> {
+		// One at a time, and each for itself: a call that waited for another's checkout then
+		// looks at what is checked out, so it is answered for the repository it asked for and
+		// never with the other call's answer.
+		while (this.#checkingOut) await this.#checkingOut;
+		const mine = this.#checkout(repository, branch).finally(() => {
+			if (this.#checkingOut === mine) this.#checkingOut = null;
 		});
-		return this.#checkingOut;
+		this.#checkingOut = mine;
+		return mine;
 	}
 
 	async #checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult> {
 		const name = `${repository.owner}/${repository.name}`;
+		/** What a checkout that is already there answers the one asking for `repository`. */
+		const already = (kept: CheckoutRow): CheckoutResult =>
+			kept.external_id === repository.externalId
+				? { checkedOut: false }
+				: {
+						error: `This conversation has ${kept.owner}/${kept.name} checked out. Start a new conversation to work on ${name}.`,
+					};
 		const kept = this.#row();
-		if (kept) {
-			if (kept.external_id === repository.externalId) return { checkedOut: false };
-			return {
-				error: `This conversation has ${kept.owner}/${kept.name} checked out. Start a new conversation to work on ${name}.`,
-			};
-		}
+		if (kept) return already(kept);
 		let head: { commit: string; tree: string };
 		let listed: { entries: TreeItem[]; truncated: boolean };
 		const access = await this.#access(repository, "read");
@@ -331,9 +338,11 @@ export class FileStore implements DeletingFilePort, PushPort {
 		);
 		if (packed.length > FILE_STORE_LIMITS.listingBytes) return { error: TOO_LARGE };
 		const sql = this.#storage.sql;
-		const made = this.#storage.transactionSync(() => {
-			// Another call may have checked out while GitHub was asked.
-			if (this.#row()) return false;
+		const others = this.#storage.transactionSync(() => {
+			// Another store over the same storage may have checked out while GitHub was asked,
+			// and not this repository.
+			const there = this.#row();
+			if (there) return there;
 			sql.exec("DELETE FROM file_listing");
 			const step = FILE_STORE_LIMITS.storedBytes;
 			for (let start = 0, part = 0; start < packed.length; start += step, part++) {
@@ -355,10 +364,10 @@ export class FileStore implements DeletingFilePort, PushPort {
 				listed.entries.length,
 				this.#now(),
 			);
-			return true;
+			return null;
 		});
 		this.#listing = null;
-		return { checkedOut: made };
+		return others ? already(others) : { checkedOut: true };
 	}
 
 	async readFile(path: string): Promise<ReadResult> {
@@ -388,21 +397,14 @@ export class FileStore implements DeletingFilePort, PushPort {
 		const listing = await this.#list();
 		const refused = this.#unwritable(listing, relative, path);
 		if (refused !== null) return { error: refused };
-		if (this.#isDirectory(listing, relative)) return { error: `${path} is a directory.` };
-		const under = this.#fileAbove(listing, relative, path);
-		if (under !== null) return { error: under };
+		const misplaced = this.#misplaced(listing, relative, path);
+		if (misplaced !== null) return { error: misplaced };
 		if (!content.isWellFormed()) {
 			return { error: `${path} would hold text that is not Unicode: half of a surrogate pair.` };
 		}
 		if (content.includes("\0")) {
 			return {
 				error: `${path} would hold a NUL character, which makes a file binary to git and to a search. Text files hold none.`,
-			};
-		}
-		const twin = this.#caseTwin(listing, relative);
-		if (twin !== null) {
-			return {
-				error: `${path} differs only in case from ${absolute(twin)}, which is there already. On Windows and macOS the two would be one.`,
 			};
 		}
 		const bytes = encoder.encode(content);
@@ -432,13 +434,19 @@ export class FileStore implements DeletingFilePort, PushPort {
 		}
 		const same = entry !== null && entry.id === (await gitBlobId(bytes));
 		const sql = this.#storage.sql;
-		const tooLarge = this.#storage.transactionSync(() => {
+		const failed = this.#storage.transactionSync((): string | null => {
+			// Looked at again here, after every await: another call may have written a file where
+			// this one needs a directory, under this one, or by this name in another case, while
+			// GitHub was asked or the bytes were hashed. Both would be kept, and no push could
+			// then take the change.
+			const since = this.#misplaced(listing, relative, path);
+			if (since !== null) return since;
 			if (same) {
 				// As the base has it: no longer a change.
 				sql.exec("DELETE FROM file_changes WHERE path = ?", relative);
-				return false;
+				return null;
 			}
-			if (this.#overLimit(relative, bytes.length)) return true;
+			if (this.#overLimit(relative, bytes.length)) return CHANGE_TOO_LARGE;
 			sql.exec(
 				`INSERT INTO file_changes (path, original, bytes, size, changed_at) VALUES (?, ?, ?, ?, ?)
 				ON CONFLICT (path) DO UPDATE SET bytes = excluded.bytes, size = excluded.size,
@@ -449,9 +457,23 @@ export class FileStore implements DeletingFilePort, PushPort {
 				bytes.length,
 				this.#now(),
 			);
-			return false;
+			return null;
 		});
-		return tooLarge ? { error: CHANGE_TOO_LARGE } : { written: bytes.length };
+		return failed === null ? { written: bytes.length } : { error: failed };
+	}
+
+	/**
+	 * Why a file cannot be at the path as the files stand now: files lie under it, a part of it
+	 * is a file, or it differs only in case from a name that is there. Nothing is awaited, so a
+	 * write asks it again in the transaction that keeps the file.
+	 */
+	#misplaced(listing: Listing, relative: string, path: string): string | null {
+		if (this.#isDirectory(listing, relative)) return `${path} is a directory.`;
+		const under = this.#fileAbove(listing, relative, path);
+		if (under !== null) return under;
+		const twin = this.#caseTwin(listing, relative);
+		if (twin === null) return null;
+		return `${path} differs only in case from ${absolute(twin)}, which is there already. On Windows and macOS the two would be one.`;
 	}
 
 	async deleteFile(path: string): Promise<DeleteResult> {
@@ -590,12 +612,19 @@ export class FileStore implements DeletingFilePort, PushPort {
 	): Generator<string> {
 		for (const file of files) {
 			let held: ArrayBuffer | null | undefined;
-			if (file.written) {
-				const change = this.#change(file.path);
-				// Deleted by another call since the files were listed: there is nothing to search.
-				if (!change || change.bytes === null) continue;
+			// The change is looked up now, not when the files were listed: another call may have
+			// changed it while this search asked GitHub for texts.
+			const change = file.written ? this.#change(file.path) : null;
+			// Deleted since: there is nothing to search.
+			if (change && change.bytes === null) continue;
+			// A file the conversation made, whose row is gone: deleted since, the same.
+			if (file.written && !change && !file.entry) continue;
+			if (change) {
 				held = change.bytes;
 			} else {
+				// The base's file: never written, or written back as the base has it since the
+				// search began, which takes the change away and leaves the file.
+				if (file.written && file.entry && !this.#searchable(file.entry)) continue;
 				const [blob] = this.#storage.sql
 					.exec<{ kind: BlobKind; bytes: ArrayBuffer | null }>(
 						"SELECT kind, bytes FROM file_blobs WHERE id = ?",
@@ -610,13 +639,18 @@ export class FileStore implements DeletingFilePort, PushPort {
 			}
 			if (!held) {
 				throw new SearchStopped(
-					`${absolute(file.path)} was held when this search began and is no longer: another call made room for other files meanwhile. Search again.`,
+					`${absolute(file.path)} is not held to be searched, as it was to be when this search began: another call changed the files or made room for others meanwhile. Search again.`,
 				);
 			}
 			const text = decodeText(new Uint8Array(held));
 			if (text === null) throw new SearchStopped(undecoded(absolute(file.path)));
 			yield* matchingLines(text, needle, ignoreCase, `${absolute(file.path)}:`);
 		}
+	}
+
+	/** Whether a base file is one a search looks in at all: not a symlink, and not too large. */
+	#searchable(entry: TreeItem): boolean {
+		return entry.mode !== TREE_MODES.symlink && entry.size <= FILE_STORE_LIMITS.readBytes;
 	}
 
 	/**

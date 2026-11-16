@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GlobTooSlow, globMatches, readGlob } from "../src/glob";
+import { GLOB_LIMITS, GlobTooSlow, globMatches, readGlob } from "../src/glob";
 
 // Each case of matching was put to ripgrep 14.1.1 (`rg --files --hidden --glob`) over the same
 // paths by hand, which agreed, but for braces in braces, which it refuses. What is held to
@@ -110,14 +110,47 @@ describe("a glob", () => {
 		expect("error" in readGlob("{a,b}".repeat(6))).toBe(false);
 	});
 
-	it("takes ? and a set for one character, one outside the first plane included", () => {
-		expect(globMatches("?.txt", "😀.txt")).toBe(true);
-		expect(globMatches("??.txt", "😀.txt")).toBe(false);
-		expect(globMatches("a?b", "a😀b")).toBe(true);
-		expect(globMatches("[😀-😂].txt", "😁.txt")).toBe(true);
-		expect(globMatches("[😀-😂].txt", "😃.txt")).toBe(false);
-		expect(globMatches("[!😀].txt", "😁.txt")).toBe(true);
-		expect(globMatches("😀*", "😀😁.txt")).toBe(true);
+	// The next three are what the sandbox image's ripgrep answered for the same names
+	// (`ripgrep/recorded.json`, under `naming`); `ripgrep-recorded.test.ts` holds them to it.
+
+	it("matches a name as its UTF-8 bytes, so ? and a set take one byte, not one letter", () => {
+		expect(globMatches("?.txt", "a.txt")).toBe(true);
+		expect(globMatches("?.txt", "é.txt")).toBe(false);
+		expect(globMatches("??.txt", "é.txt")).toBe(true);
+		expect(globMatches("????.txt", "éé.txt")).toBe(true);
+		expect(globMatches("????.txt", "😀.txt")).toBe(true);
+		expect(globMatches("?.txt", "😀.txt")).toBe(false);
+		// A set written with a letter of two bytes is a set of those two bytes.
+		expect(globMatches("[é].txt", "é.txt")).toBe(false);
+		expect(globMatches("[à-ï].txt", "é.txt")).toBe(false);
+		expect(globMatches("[!a].txt", "é.txt")).toBe(false);
+		expect(globMatches("[!a].txt", "{.txt")).toBe(true);
+		// A letter written out takes that letter, and * any run of bytes.
+		expect(globMatches("é*.txt", "éé.txt")).toBe(true);
+		expect(globMatches("*é.txt", "é.txt")).toBe(true);
+		expect(globMatches("*.txt", "😀.txt")).toBe(true);
+	});
+
+	it("takes braces inside a set for bytes of the set, not for branches", () => {
+		expect(globMatches("[{}].txt", "{.txt")).toBe(true);
+		expect(globMatches("[{}].txt", "}.txt")).toBe(true);
+		expect(globMatches("[{}].txt", "[].txt")).toBe(false);
+		expect(globMatches("[{].txt", "{.txt")).toBe(true);
+		expect(globMatches("[a{}]*.txt", "a.txt")).toBe(true);
+		expect(globMatches("[a{}]*.txt", "}.txt")).toBe(true);
+		// A set inside braces is still a set, and the braces still branch.
+		expect(globMatches("{[{],a}.txt", "{.txt")).toBe(true);
+		expect(globMatches("{[{],a}.txt", "a.txt")).toBe(true);
+		expect(globMatches("{[{],a}.txt", "}.txt")).toBe(false);
+	});
+
+	it("holds every branch from where the path starts once any branch has a slash", () => {
+		const paths = ["README.md", "src/index.ts", "nested/README.md", "nested/src/index.ts"];
+		const taken = (pattern: string) => paths.filter((path) => globMatches(pattern, path));
+		expect(taken("{src/index.ts,README.md}")).toEqual(["README.md", "src/index.ts"]);
+		expect(taken("{README.md,src/index.ts}")).toEqual(["README.md", "src/index.ts"]);
+		// With no slash in any branch, each is a name wherever the file is.
+		expect(taken("{index.ts,README.md}")).toEqual(paths);
 	});
 
 	it("takes ** parts in a row for one, and refuses more parts than it will match", () => {
@@ -173,13 +206,64 @@ describe("a glob", () => {
 		expect(() => part.matches(name)).toThrow(GlobTooSlow);
 	});
 
+	it("looks a byte up in a set at one cost, however long the set is written", async () => {
+		// Five hundred members, and a star before it that tries the set at every byte of a name
+		// that has none of them: 20,000 names of 200 bytes are four million tries. Scanned a
+		// member at a time those were two billion looks, all inside the steps a glob may take.
+		const long = readGlob(`*[${"a".repeat(500)}]`);
+		if ("error" in long) throw new Error(long.error);
+		const names = Array.from({ length: 20_000 }, () => ["b".repeat(200)]);
+		await tick();
+		const started = Date.now();
+		expect(names.filter((parts) => long.matches(parts))).toHaveLength(0);
+		await tick();
+		expect(Date.now() - started).toBeLessThan(2_000);
+		expect(long.steps).toBeLessThan(GLOB_LIMITS.steps / 2);
+		// The set still takes what it names, and a range, and is turned round by `!`.
+		expect(globMatches(`*[${"a".repeat(500)}]`, "bbba")).toBe(true);
+		expect(globMatches("[a-cx]", "b")).toBe(true);
+		expect(globMatches("[a-cx]", "d")).toBe(false);
+		expect(globMatches("[!a-cx]", "d")).toBe(true);
+		expect(globMatches("[]a]", "]")).toBe(true);
+	});
+
+	it("counts a pair of parts each time it is asked about, so ** after ** is stopped", async () => {
+		// Eight `**`, each asking about every directory after it: 500 files under 1,000
+		// directories named `a`. Each pair is worked out once, but asked about over a billion
+		// times, which went uncounted while only the working out was.
+		const nested = readGlob(`${"**/a/".repeat(7)}**/b`);
+		if ("error" in nested) throw new Error(nested.error);
+		const under = Array.from({ length: 1_000 }, () => "a");
+		const files = Array.from({ length: 500 }, (_, index) => [...under, `file-${index}`]);
+		await tick();
+		const started = Date.now();
+		const stopped = (() => {
+			try {
+				for (const parts of files) nested.matches(parts);
+				return null;
+			} catch (error) {
+				return error;
+			}
+		})();
+		await tick();
+		expect(stopped).toBeInstanceOf(GlobTooSlow);
+		expect(Date.now() - started).toBeLessThan(3_000);
+		expect(nested.steps).toBe(GLOB_LIMITS.steps);
+	});
+
 	it("matches the globs people write over 20,000 paths without being stopped", async () => {
 		await tick();
 		const started = Date.now();
 		const count = (pattern: string, from = 0) => {
 			const glob = readGlob(pattern);
 			if ("error" in glob) throw new Error(glob.error);
-			return deep.filter((parts) => glob.matches(parts, from)).length;
+			const matched = deep.filter((parts) => glob.matches(parts, from)).length;
+			// Under half of what a glob may take.
+			expect({ pattern, steps: glob.steps < GLOB_LIMITS.steps / 2 }).toEqual({
+				pattern,
+				steps: true,
+			});
+			return matched;
 		};
 		expect(count("*.txt")).toBe(20_000);
 		expect(count("**/*.txt")).toBe(20_000);

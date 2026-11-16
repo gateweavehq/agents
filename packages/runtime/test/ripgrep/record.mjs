@@ -57,6 +57,43 @@ const ignoring = {
 	"repo/build/out.txt": "a needle in a build\n",
 };
 
+/**
+ * A third, for how a glob is read: braces in a set, a brace whose branches differ in having a
+ * slash, and what `?` and a set take of a name that is not ASCII.
+ */
+const naming = {
+	"repo/{.txt": "x\n",
+	"repo/}.txt": "x\n",
+	"repo/[].txt": "x\n",
+	"repo/a.txt": "x\n",
+	"repo/é.txt": "x\n",
+	"repo/éé.txt": "x\n",
+	"repo/😀.txt": "x\n",
+	"repo/README.md": "x\n",
+	"repo/src/index.ts": "x\n",
+	"repo/nested/README.md": "x\n",
+	"repo/nested/src/index.ts": "x\n",
+};
+
+const namingFinds = [
+	"[{}].txt",
+	"[{].txt",
+	"[a{}]*.txt",
+	"{[{],a}.txt",
+	"{repo/src/index.ts,README.md}",
+	"{README.md,repo/src/index.ts}",
+	"{repo/README.md,index.ts}",
+	"?.txt",
+	"??.txt",
+	"???.txt",
+	"????.txt",
+	"[é].txt",
+	"[à-ï].txt",
+	"[!a].txt",
+	"é*.txt",
+	"*é.txt",
+];
+
 function quote(word) {
 	return `'${word.replaceAll("'", `'\\''`)}'`;
 }
@@ -187,6 +224,17 @@ const recorded = {
 					...run(searching({ pattern: "needle", path: ROOT })),
 				},
 			],
+		};
+	})(),
+	naming: (() => {
+		write(naming);
+		return {
+			tree: naming,
+			finds: namingFinds.map((pattern) => ({
+				pattern,
+				directory: ROOT,
+				...run(listing(pattern, ROOT)),
+			})),
 		};
 	})(),
 };

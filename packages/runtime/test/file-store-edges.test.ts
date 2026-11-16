@@ -570,7 +570,7 @@ describe("calls that run side by side", () => {
 			expect(taken).not.toBe("");
 			expect(stopped).toEqual({
 				error: expect.stringMatching(
-					/^\/workspace\/repo\/many\/file-\d\d\.txt was held when this search began and is no longer: another call made room for other files meanwhile\. Search again\.$/,
+					/^\/workspace\/repo\/many\/file-\d\d\.txt is not held to be searched, as it was to be when this search began: another call changed the files or made room for others meanwhile\. Search again\.$/,
 				),
 			});
 
@@ -579,6 +579,103 @@ describe("calls that run side by side", () => {
 			const again = await search();
 			if ("error" in again) throw new Error(again.error);
 			expect(again.found?.split("\n").filter((line) => line !== "")).toHaveLength(60);
+		});
+	});
+
+	it("search the base's file when another call put an edited file back while the search waited", async () => {
+		const files = { "a.txt": "needle as it was\n", "b.txt": "needle b\n", "c.txt": "nothing\n" };
+		await checkedOut(files, async ({ fake, store }) => {
+			await store.readFile(`${REPO}/a.txt`);
+			await store.writeFile(`${REPO}/a.txt`, "needle as edited\n");
+			// The search lists a.txt as written, then asks GitHub for the other two. Meanwhile
+			// another call writes a.txt back as the base has it, which takes its change away.
+			fake.before = async (route) => {
+				if (route !== "POST /graphql") return;
+				fake.before = undefined;
+				expect(await store.writeFile(`${REPO}/a.txt`, files["a.txt"])).toEqual({ written: 17 });
+			};
+			expect(await store.search({ pattern: "needle", path: REPO, ignoreCase: false })).toEqual({
+				found: `${REPO}/a.txt:1:needle as it was\n${REPO}/b.txt:1:needle b\n`,
+			});
+		});
+	});
+
+	it("answer each caller of a checkout for the repository it asked for", async () => {
+		const fake = new FakeGit();
+		await fake.seed(FILES);
+		useGitHub(fake);
+		await inConversation(async (storage) => {
+			const { store } = storeOver(storage, fake);
+			const site = repositoryOf(fake);
+			const other = { ...site, name: "other", externalId: "9" };
+			// Three calls on one store while the first is still asking GitHub.
+			const results = await Promise.all([
+				store.checkout(site, BRANCH),
+				store.checkout(other, BRANCH),
+				store.checkout(site, BRANCH),
+			]);
+			expect(results).toEqual([
+				{ checkedOut: true },
+				{
+					error:
+						"This conversation has acme/site checked out. Start a new conversation to work on acme/other.",
+				},
+				{ checkedOut: false },
+			]);
+			// GitHub was asked once, for the first.
+			expect(fake.requests).toHaveLength(2);
+			expect(rowCounts(storage).checkout).toBe(1);
+		});
+
+		// Two stores, where the other's checkout is found only in the write: the same answer.
+		const again = new FakeGit();
+		await again.seed(FILES);
+		useGitHub(again);
+		await inConversation(async (storage) => {
+			const site = repositoryOf(again);
+			const other = { ...site, externalId: "9" };
+			const results = await Promise.all([
+				storeOver(storage, again).store.checkout(site, BRANCH),
+				storeOver(storage, again).store.checkout(other, BRANCH),
+			]);
+			expect(results).toEqual([
+				{ checkedOut: true },
+				{
+					error:
+						"This conversation has acme/site checked out. Start a new conversation to work on acme/site.",
+				},
+			]);
+		});
+	});
+
+	it("keep one of two files that cannot both be there, written at the same time", async () => {
+		await checkedOut(FILES, async ({ fake, store, storage }) => {
+			// README.md is deleted, so its name is free in any case. Writing it again has to hash
+			// its bytes first, and meanwhile another call writes the name in another case.
+			await store.deleteFile(`${REPO}/README.md`);
+			const [upper, lower] = await Promise.all([
+				store.writeFile(`${REPO}/README.md`, "# Back\n"),
+				store.writeFile(`${REPO}/Readme.md`, "# Renamed\n"),
+			]);
+			expect(lower).toEqual({ written: 10 });
+			expect(upper).toEqual({
+				error: `${REPO}/README.md differs only in case from ${REPO}/Readme.md, which is there already. On Windows and macOS the two would be one.`,
+			});
+			// A file and a file under it, the same way.
+			const [file, under] = await Promise.all([
+				store.writeFile(`${REPO}/new`, "a file\n"),
+				store.writeFile(`${REPO}/new/page.md`, "a page\n"),
+			]);
+			expect([file, under]).toEqual([
+				{ written: 7 },
+				{ error: `A part of ${REPO}/new/page.md is a file, not a directory.` },
+			]);
+			expect(rowCounts(storage).changes).toBe(3);
+			// What was kept can be proposed.
+			expect(await store.push(BRANCH, "Rename", AUTHOR)).toMatchObject({ pushed: true });
+			expect(Object.keys(fake.filesAt(BRANCH)).sort()).toEqual(
+				["Readme.md", "docs/guide.md", "new", "src/index.ts"].sort(),
+			);
 		});
 	});
 });
