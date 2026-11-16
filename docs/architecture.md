@@ -1500,6 +1500,16 @@ after a reconnect.
   provider's refusal becomes a sentence of ours chosen by its status (`describeFailure` in
   `packages/runtime/src/models.ts`); the provider's message, which can quote the key, is neither
   shown nor logged.
+- **A turn runs, and can be stopped, before its reply begins.** A reply's first frame waits for
+  the agent's MCP servers, and in a sandbox for the checkout. The page that sent the message
+  shows Stop from the moment it is sent until the send settles, whatever the chat hook's status
+  says: a message sent before a new socket has heard whether a turn was left running is set back
+  to ready by that answer, with the turn under way. A page that opens meanwhile, or a socket
+  that comes back, hears only that a turn is pending (`cf_agent_stream_pending`), of which the chat hook
+  says nothing until the reply starts, so the page reads those frames itself
+  (`apps/web/src/lib/pending-turn.ts`) and stops that turn by its request's id. A stop in that
+  time ends the run as stopped: the model's request never leaves, and an engine in the sandbox
+  is never started.
 - **AI Gateway, when the deployment names one.** With `AI_GATEWAY_URL`
   (`https://gateway.ai.cloudflare.com/v1/<account>/<gateway>`), every model request goes through
   that gateway with the workspace's key (Workers AI: the deployment's token, see "Workers AI"),

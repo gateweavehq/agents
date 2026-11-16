@@ -789,6 +789,14 @@ ${runPageNote(runs, turn.runId)}`
 					await end("failed", problem);
 					return;
 				}
+				// A turn stopped while it was getting ready: a listener added from here on would never
+				// hear a stop that has already been, and the CLI would work on with nobody to stop it.
+				if (signal?.aborted) {
+					await toolbox.close();
+					await end("stopped");
+					writer.write({ type: "finish" });
+					return;
+				}
 				const github = repository ? this.#pullRequests(repository) : null;
 				const tools: ToolSet = {
 					...toolbox.tools,

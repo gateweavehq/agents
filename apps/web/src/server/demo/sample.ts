@@ -199,7 +199,8 @@ export function pastHistory(
 				endedAt: each.endedAt + 40,
 				error: null,
 				edge: "delegate",
-				to: each.member.id,
+				// The member's name, as the runtime records it: the trace shows it as it is.
+				to: each.member.agent.name,
 				childRunId: each.runId,
 			}),
 		),

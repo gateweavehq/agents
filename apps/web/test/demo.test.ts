@@ -218,6 +218,18 @@ describe("on the demo deployment", () => {
 		).transcript();
 		expect(transcript).toContain("Storefront 2.5 is nearly ready to tag.");
 
+		// Its trace says who the lead handed work to by name, and shows no agent's id.
+		const runPage = await agents.fetch(`${origin}/${visitor.slug}/runs/${teamRun?.id}`, {
+			headers: { cookie: visitor.cookie },
+		});
+		expect(runPage.status).toBe(200);
+		// React separates adjacent text nodes with comments.
+		const trace = (await runPage.text()).replaceAll("<!-- -->", "");
+		for (const member of ["Code reviewer", "Docs writer"]) {
+			expect(trace).toContain(`Delegate to <span class="font-medium">${member}</span>`);
+		}
+		expect(trace).not.toMatch(/Delegate to (<span[^>]*>)?[0-9a-f]{8}-[0-9a-f]{4}-/);
+
 		// Storefront's wiki, with every page.
 		const wikiOf = repositories.find((repository) => repository.name === "storefront");
 		const wiki = await registry.getWiki(wikiOf?.id ?? "");

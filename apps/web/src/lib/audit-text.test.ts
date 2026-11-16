@@ -71,6 +71,22 @@ describe("audit events in words", () => {
 				target: { type: "agent", id: "a-2", label: "Coder" },
 				detail: { fields: ["instructions"], asset: "Rules", from: 1, version: 2 },
 			}),
+		).toBe("moved the agent Coder from v1 to v2 of Rules");
+		// A pin moved back says so the same way.
+		expect(
+			say({
+				action: "agent.updated",
+				target: { type: "agent", id: "a-2", label: "Coder" },
+				detail: { fields: ["instructions"], asset: "Rules", from: 2, version: 1 },
+			}),
+		).toBe("moved the agent Coder from v2 to v1 of Rules");
+		// An entry that does not say where the pin was names only where it went.
+		expect(
+			say({
+				action: "agent.updated",
+				target: { type: "agent", id: "a-2", label: "Coder" },
+				detail: { fields: ["instructions"], asset: "Rules", version: 2 },
+			}),
 		).toBe("moved the agent Coder to v2 of Rules");
 		expect(
 			say({

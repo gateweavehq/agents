@@ -19,6 +19,7 @@ import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
+import { type PendingTurn, pendingTurnAfter, stopFrame } from "#/lib/pending-turn";
 import {
 	type CallState,
 	describeEdgeCall,
@@ -205,7 +206,33 @@ function LiveConversation({
 	};
 	const { messages, sendMessage, stop, status, error, clearError, isStreaming, isRecovering } =
 		useAgentChat({ agent, onFinish: turnEnded, onError: turnEnded });
-	const busy = !closed && (status === "submitted" || isStreaming || isRecovering);
+	// A turn this page found waiting to begin, which the hook says nothing of until its reply starts.
+	const [pending, setPending] = useState<PendingTurn>(null);
+	useEffect(() => {
+		const onMessage = (event: MessageEvent) => {
+			const frame: unknown = event.data;
+			if (typeof frame === "string") setPending((current) => pendingTurnAfter(current, frame));
+		};
+		// The next socket asks again.
+		const onClose = () => setPending(null);
+		agent.addEventListener("message", onMessage);
+		agent.addEventListener("close", onClose);
+		return () => {
+			agent.removeEventListener("message", onMessage);
+			agent.removeEventListener("close", onClose);
+		};
+	}, [agent]);
+	// A turn this page sent, from the moment it is sent until it ends, fails or is stopped. The hook's
+	// own status cannot be relied on for that: a message sent before a new socket has heard whether a
+	// turn was left running is set back to ready by that answer, with the turn still under way.
+	const [sent, setSent] = useState(false);
+	const answering = sent || status === "submitted" || isStreaming || isRecovering;
+	const busy = !closed && (answering || pending !== null);
+	// Nothing of the reply has come yet.
+	const waiting =
+		status === "submitted" ||
+		(pending !== null && !answering) ||
+		(sent && !isStreaming && messages.at(-1)?.role === "user");
 	const end = useRef<HTMLDivElement>(null);
 	// The refused words went into the list as soon as they were sent, and are back in the box now.
 	const shown =
@@ -236,7 +263,19 @@ function LiveConversation({
 		onDraftChange("");
 		onSend();
 		sending.current = text;
-		await sendMessage({ text });
+		setSent(true);
+		try {
+			// Settles when the turn is over, however it ended.
+			await sendMessage({ text });
+		} finally {
+			setSent(false);
+		}
+	}
+
+	function stopTurn() {
+		// The hook stops the turns it sent or picked up; one still waiting to begin is named here.
+		if (pending?.id) agent.send(stopFrame(pending.id));
+		void stop();
 	}
 
 	function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -264,7 +303,7 @@ function LiveConversation({
 							first={index === 0}
 						/>
 					))}
-					{status === "submitted" && !closed && (
+					{waiting && !closed && (
 						<p className="text-sm text-muted-foreground" aria-live="polite">
 							{agentName} is thinking…
 						</p>
@@ -335,7 +374,20 @@ function LiveConversation({
 						className="max-h-48 min-h-10 resize-none"
 					/>
 					{busy ? (
-						<Button type="button" size="icon" variant="outline" onClick={stop} aria-label="Stop">
+						<Button
+							type="button"
+							size="icon"
+							variant="outline"
+							onClick={stopTurn}
+							// A turn the server did not name can be stopped once its reply begins.
+							disabled={!answering && pending?.id === null}
+							title={
+								!answering && pending?.id === null
+									? "It can be stopped once the reply begins"
+									: undefined
+							}
+							aria-label="Stop"
+						>
 							<Square />
 						</Button>
 					) : (

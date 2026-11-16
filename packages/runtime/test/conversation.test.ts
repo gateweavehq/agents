@@ -12,9 +12,37 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-async function conversation({ key = true } = {}) {
+/** An MCP server that never answers: a request to it waits until its caller gives up. */
+function silentServer() {
+	const asked: Request[] = [];
+	const handle = (request: Request) => {
+		asked.push(request);
+		return new Promise<Response>((_resolve, reject) => {
+			const giveUp = () => reject(request.signal.reason ?? new Error("Aborted"));
+			if (request.signal.aborted) giveUp();
+			else request.signal.addEventListener("abort", giveUp, { once: true });
+		});
+	};
+	return { asked, handle };
+}
+
+async function conversation({ key = true, server = false } = {}) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
+	const mcpServers = server
+		? [
+				{
+					assetId: await registry.createMcpServer({
+						name: "acme",
+						transport: "http",
+						url: "https://mcp.acme.dev/mcp",
+						headers: [],
+					}),
+					version: 1,
+					tools: null,
+				},
+			]
+		: [];
 	const rules = await registry.createLibraryAsset({
 		kind: "instructions",
 		name: "rules",
@@ -26,6 +54,7 @@ async function conversation({ key = true } = {}) {
 		provider: "anthropic",
 		model: "claude-sonnet-5-5",
 		instructions: { assetId: rules, version: 1 },
+		mcpServers,
 	});
 	if (key) await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
 	const started = await registry.startConversation(agent.id, "user-ada");
@@ -240,6 +269,25 @@ describe("runs", () => {
 		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
 		await turn;
 		await vi.waitFor(async () => expect((await registry.listRuns())[0]?.status).toBe("stopped"));
+		socket.close();
+	});
+
+	it("record a turn stopped before its reply began as stopped, with no request the model gets", async () => {
+		const { registry, stub } = await conversation({ server: true });
+		const acme = silentServer();
+		const requests = fakeModel(() => anthropicStream("Never sent"), {
+			"mcp.acme.dev": acme.handle,
+		});
+		const socket = await connect(stub);
+		const id = crypto.randomUUID();
+		const turn = ask(socket, "Take your time", id);
+		// The turn waits for its MCP server, so nothing of its reply has been sent.
+		await vi.waitFor(() => expect(acme.asked).toHaveLength(1));
+		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
+		await turn;
+		await vi.waitFor(async () => expect((await registry.listRuns())[0]?.status).toBe("stopped"));
+		// The stand-in for `fetch` takes any request; a real one refuses a request stopped already.
+		expect(requests.filter((request) => request.signal?.aborted !== true)).toEqual([]);
 		socket.close();
 	});
 
