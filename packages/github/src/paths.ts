@@ -58,20 +58,30 @@ function isDigits(text: string): boolean {
 	return true;
 }
 
-/** The short names NTFS may give `.gitmodules`, as Git's own check lists them. */
+/**
+ * The short names NTFS may give `.gitmodules`, as Git's own check has them: `gitmod~1` to
+ * `gitmod~4`, and the fallback NTFS makes from a hash of the name, eight characters that begin
+ * with some of `gi7eba`, then `~`, then a number that does not start with 0.
+ */
 function shortGitmodules(name: string): boolean {
-	if (name.startsWith("gi7eba~")) return isDigits(name.slice("gi7eba~".length));
-	return name.length === 8 && name.startsWith("gitmod~") && "1234".includes(name.charAt(7));
+	if (name.length !== 8) return false;
+	if (name.startsWith("gitmod~")) return "1234".includes(name.charAt(7));
+	const tilde = name.indexOf("~");
+	if (tilde === -1 || tilde > 6 || name.slice(0, tilde) !== "gi7eba".slice(0, tilde)) return false;
+	return name.charAt(tilde + 1) !== "0" && isDigits(name.slice(tilde + 1));
 }
 
-/** `con`, `prn`, `aux`, `nul`, `com1` to `com9` and `lpt1` to `lpt9`, in any case. */
+/**
+ * `con`, `prn`, `aux`, `nul`, and `com` or `lpt` with a digit from 1 to 9 or one of the
+ * superscripts ¹ ² ³, which Windows reserves as well; in any case.
+ */
 function windowsDevice(name: string): boolean {
 	const lower = name.toLowerCase();
 	if (WINDOWS_DEVICES.has(lower)) return true;
 	return (
 		lower.length === 4 &&
 		(lower.startsWith("com") || lower.startsWith("lpt")) &&
-		"123456789".includes(lower.charAt(3))
+		"123456789¹²³".includes(lower.charAt(3))
 	);
 }
 
