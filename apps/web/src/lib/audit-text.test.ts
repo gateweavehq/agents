@@ -67,6 +67,13 @@ describe("audit events in words", () => {
 		).toBe("changed the agent Coder's model, MCP servers and sandbox");
 		expect(
 			say({
+				action: "agent.updated",
+				target: { type: "agent", id: "a-2", label: "Coder" },
+				detail: { fields: ["instructions"], asset: "Rules", from: 1, version: 2 },
+			}),
+		).toBe("moved the agent Coder to v2 of Rules");
+		expect(
+			say({
 				action: "trigger.updated",
 				target: { type: "trigger", id: "t-1", label: "Nightly" },
 				detail: { fields: ["active"], active: false },

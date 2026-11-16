@@ -818,6 +818,12 @@ with no repository and its own id as its key, and a row in `agent_definitions` b
 - **Instructions** are a library asset of kind instructions or prompt, pinned to a version as a
   setup's assets are, and all text. The agent reads it through `agent_assets`, so the asset's
   page lists the agent. A new version in the library changes nothing until someone moves the pin.
+  "Use vN" on the agent's page moves it with `moveAgentPin`, which takes the asset and the
+  version and nothing else: `updateAgent` takes the whole definition and fills what is missing
+  with the schema's defaults, so a page that sent the agent back to move a pin reset whatever it
+  left out. The form's Save, which is a whole save, starts from `inputOf`
+  (`apps/web/src/lib/agent-input.ts`), whose test fails when the schema has a field it does not
+  carry.
 - **MCP servers** are pinned like instructions, each optionally limited to some of its tools (see
   "MCP servers"). The form offers the tools of the server's last check on the MCP page; a server
   never checked keeps the list its pin has and says to check it first, so saving the form never

@@ -21,11 +21,19 @@ function serverFnUrl(origin: string, name: string) {
 	return `${origin}/_serverFn/${id}`;
 }
 
-/** A string or a plain object of strings and objects, as the client serializes it (seroval). */
+/**
+ * Plain data (strings, numbers, booleans, null, lists and objects of them), as the client
+ * serializes it (seroval).
+ */
 function serialized(data: unknown) {
 	let next = 0;
 	const node = (value: unknown): unknown => {
 		if (typeof value === "string") return { t: 1, s: value };
+		if (typeof value === "number") return { t: 0, s: value };
+		// seroval's constants: 0 is null, 2 is true, 3 is false.
+		if (value === null) return { t: 2, s: 0 };
+		if (typeof value === "boolean") return { t: 2, s: value ? 2 : 3 };
+		if (Array.isArray(value)) return { t: 9, i: next++, a: value.map(node), o: 0 };
 		const object = value as Record<string, unknown>;
 		const keys = Object.keys(object);
 		return { t: 10, i: next++, p: { k: keys, v: keys.map((key) => node(object[key])) }, o: 0 };

@@ -4,8 +4,11 @@ import { join, resolve } from "node:path";
 import type {
 	Agent,
 	AgentDefinitionInput,
+	AgentDetail,
+	AgentSnapshot,
 	ApplyOutcome,
 	ApplyRefusal,
+	AssetDetail,
 	AssetVersion,
 	Conversation,
 	EnvRefusal,
@@ -138,6 +141,9 @@ export interface RegistryStub {
 	): Promise<{ connection: GitLabConnection; webhookSecret: string } | ProviderRefusal>;
 	gitlabConnections(): Promise<GitLabConnection[]>;
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
+	getAgent(agentId: string): Promise<AgentDetail | null>;
+	agentSnapshot(agentId: string): Promise<AgentSnapshot | null>;
+	getAsset(assetId: string, version?: number): Promise<AssetDetail | null>;
 	createMcpServer(input: McpServerInput): Promise<string>;
 	editMcpServer(input: McpServerEditInput): Promise<number>;
 	listMcpServers(): Promise<McpServerEntry[]>;

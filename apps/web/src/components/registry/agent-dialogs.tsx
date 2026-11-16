@@ -38,6 +38,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
+import { inputOf } from "#/lib/agent-input";
 import { getMcpServers, getModels, getRepositories } from "#/lib/registry";
 
 function message(error: unknown) {
@@ -192,6 +193,9 @@ export function AgentDialog({
 		const environmentPin = pinFor(environment, pinnedEnv, sets);
 		try {
 			await onSave({
+				// An edit starts from the agent as it is, so a field this form has no control for yet
+				// goes back as it was instead of to its default (AGT-135).
+				...(agent && inputOf(agent.agent, agent.definition)),
 				name: name.trim(),
 				description: description.trim() || null,
 				provider,

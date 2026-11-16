@@ -169,8 +169,14 @@ export function auditSentence(event: AuditEvent, people: People): string {
 		}
 		case "agent.created":
 			return `created the agent ${label}`;
-		case "agent.updated":
+		case "agent.updated": {
+			// A pin moved by itself names its asset and where it went.
+			const asset = text(detail.asset);
+			if (asset && typeof detail.version === "number") {
+				return `moved the agent ${label} to v${detail.version} of ${asset}`;
+			}
 			return `changed the agent ${label}'s ${fieldsOf(detail.fields)}`;
+		}
 		case "agent.removed":
 			return `removed the agent ${label}`;
 		case "team.created":
