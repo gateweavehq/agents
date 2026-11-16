@@ -1,4 +1,4 @@
-import { createMiddleware, createStart } from "@tanstack/react-start";
+import { createCsrfMiddleware, createMiddleware, createStart } from "@tanstack/react-start";
 import { referenceIn } from "./lib/error-reference";
 
 /**
@@ -21,4 +21,18 @@ const keepReference = createMiddleware({ type: "function" }).server(async ({ nex
 	}
 });
 
-export const startInstance = createStart(() => ({ functionMiddleware: [keepReference] }));
+/**
+ * The framework's own guard against a request forged from another site, listed here because
+ * exporting a start instance replaces its default request middleware, which is this guard and
+ * nothing else: without the line every server function would answer a page of any origin, with
+ * the person's cookie where the browser sends it. It refuses, with 403, a request to a server
+ * function whose `Sec-Fetch-Site` is not `same-origin`, or, without that header, whose `Origin`
+ * or else `Referer` is not the app's own, or which carries none of the three. Routes that are not
+ * server functions (webhooks, `/mcp`, `/api/auth`) are not its concern.
+ */
+const sameOriginOnly = createCsrfMiddleware({ filter: (ctx) => ctx.handlerType === "serverFn" });
+
+export const startInstance = createStart(() => ({
+	requestMiddleware: [sameOriginOnly],
+	functionMiddleware: [keepReference],
+}));
