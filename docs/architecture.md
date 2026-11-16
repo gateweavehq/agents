@@ -400,7 +400,9 @@ Owners and admins see who changed the workspace, and when, in Settings > Audit l
   MCP servers added, edited, signed in and out (by host), triggers created, changed, deleted and
   given a new secret, and Track triage or Track work set up.
 - **Agents, teams and setups**: created, changed (which fields) and deleted, and a setup's pull
-  request opened or updated in a repository.
+  request opened or updated in a repository. An agent's pin moved by itself ("Use vN") is a change
+  that names the pin's field alone and carries the asset's name and the versions it went from and
+  to; one moved to where it already was is not logged.
 - **Deletions**: projects and library assets.
 - **Memory**: memories added, edited, approved, dismissed and deleted by people, and remembered
   and forgotten by agents, which are entries with no member that name the agent. The start of a

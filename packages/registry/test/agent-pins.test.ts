@@ -1,7 +1,11 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -123,6 +127,73 @@ describe("moving an agent's pin", () => {
 		});
 		// The asset's page still lists the agent.
 		expect((await stub.getAsset(rules))?.agents.map((reader) => reader.id)).toEqual([agent.id]);
+	});
+
+	it("moves the pin of that agent alone, and marks only that agent changed", async () => {
+		const stub = registry();
+		const { rules, prod, acme, agent } = await pinned(stub);
+		// Another agent pins the same three assets, at the same versions.
+		const other = await stub.createAgent({
+			name: "Reviewer",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: { assetId: rules, version: 1 },
+			environment: { assetId: prod, version: 1 },
+			mcpServers: [{ assetId: acme, version: 1, tools: null }],
+		});
+		const others = await stateOf(stub, other.id);
+		const later = agent.updatedAt + 60_000;
+		vi.spyOn(Date, "now").mockReturnValue(later);
+
+		for (const assetId of [rules, prod, acme]) {
+			const moved = await stub.moveAgentPin(agent.id, { assetId, version: 2 });
+			expect(moved?.agent.updatedAt).toBe(later);
+		}
+		expect((await stateOf(stub, agent.id)).pins).toEqual({
+			instructions: 2,
+			environment: 2,
+			mcpServers: [{ version: 2, tools: ["search"] }],
+		});
+		// A turn tells a changed agent by this.
+		expect((await stub.agentSnapshot(agent.id))?.updatedAt).toBe(later);
+		expect((await stub.getAgent(agent.id))?.agent.updatedAt).toBe(later);
+
+		expect(await stateOf(stub, other.id)).toEqual(others);
+		expect((await stub.agentSnapshot(other.id))?.updatedAt).toBe(other.updatedAt);
+	});
+
+	it("moves a pin back to an older version", async () => {
+		const stub = registry();
+		const { rules, agent } = await pinned(stub);
+		await stub.moveAgentPin(agent.id, { assetId: rules, version: 2 });
+		expect(await stub.moveAgentPin(agent.id, { assetId: rules, version: 1 })).toMatchObject({
+			field: "instructions",
+			from: 2,
+			version: 1,
+		});
+		expect((await stateOf(stub, agent.id)).pins.instructions).toBe(1);
+		expect((await stub.agentSnapshot(agent.id))?.instructions).toBe("Be brief.\n");
+	});
+
+	it("moves a pin whose asset has left the library, as an update lets it stay pinned", async () => {
+		const stub = registry();
+		const { rules, agent } = await pinned(stub);
+		await stub.removeFromLibrary(rules);
+		expect((await stub.getAgent(agent.id))?.definition?.instructions).toMatchObject({
+			version: 1,
+			removed: true,
+		});
+		expect(await stub.moveAgentPin(agent.id, { assetId: rules, version: 2 })).toMatchObject({
+			field: "instructions",
+			asset: "Rules",
+			from: 1,
+			version: 2,
+		});
+		expect((await stub.getAgent(agent.id))?.definition?.instructions).toMatchObject({
+			version: 2,
+			removed: true,
+		});
 	});
 
 	it("refuses an asset the agent does not pin and a version that does not exist", async () => {

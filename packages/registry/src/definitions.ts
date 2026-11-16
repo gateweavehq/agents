@@ -128,6 +128,14 @@ export function moveAgentPin(
 		.from(agentMcpServers)
 		.where(and(eq(agentMcpServers.agentId, id), eq(agentMcpServers.assetId, pin.assetId)))
 		.get();
+	// Read before anything is written: past this point the move either ends whole or throws,
+	// which undoes it, so it never answers as if there were no agent with the pin moved.
+	const asset = db
+		.select({ name: assets.name })
+		.from(assets)
+		.where(eq(assets.id, pin.assetId))
+		.get();
+	if (!asset) throw new AgentError("That library asset does not exist");
 	let moved: Pick<MovedPin, "field" | "from">;
 	if (current.instructionsAssetId === pin.assetId && current.instructionsVersion !== null) {
 		checkInstructions(db, pin, pin.assetId);
@@ -159,12 +167,7 @@ export function moveAgentPin(
 		throw new AgentError("The agent does not pin that asset");
 	}
 	const row = db.update(agents).set({ updatedAt: now }).where(eq(agents.id, id)).returning().get();
-	const asset = db
-		.select({ name: assets.name })
-		.from(assets)
-		.where(eq(assets.id, pin.assetId))
-		.get();
-	if (!row || !asset) return null;
+	if (!row) throw new Error("The agent whose pin moved is gone");
 	const assetIds = db
 		.select({ assetId: agentAssets.assetId })
 		.from(agentAssets)

@@ -163,5 +163,26 @@ it("moves a pin by naming it alone, for owners and admins only, and logs what mo
 	expect(missing.failed, missing.text).toBe(true);
 	expect(missing.text).toContain("Rules has no version 9");
 	expect(await auditOf(workspaceId)).toHaveLength(1);
+
+	// An admin, who is not the owner, may move it too: here back to the older version.
+	const admin = await signUp(agents, origin, "linus-pin-alone");
+	await agents.db
+		.prepare(
+			"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, 'admin', ?)",
+		)
+		.bind(crypto.randomUUID(), workspaceId, admin.userId, Date.now())
+		.run();
+	const back = await call("moveAgentPin", admin, {
+		slug: "pin-alone",
+		agentId: agent.id,
+		pin: { assetId: rules, version: 1 },
+	});
+	expect(back.failed, back.text).toBe(false);
+	expect((await registry.getAgent(agent.id))?.definition).toEqual(before);
+	expect((await auditOf(workspaceId)).at(-1)).toEqual({
+		action: "agent.updated",
+		agent: agent.id,
+		detail: { fields: ["instructions"], asset: "Rules", from: 2, version: 1 },
+	});
 	expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
 });
