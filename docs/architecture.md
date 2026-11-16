@@ -468,8 +468,8 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
   Everyone else gets the same refusal as for an installation they cannot see. The token is not
   kept.
 - **Writing.** Commits, branches and pull requests through the REST API
-  (`packages/github/src/writes.ts`), for applying setups. `commitChanges` there is not called
-  yet (AGT-122): it puts a change on a branch with no git, from a base commit, the files that
+  (`packages/github/src/writes.ts`), for applying setups. `commitChanges` there is called only
+  by the files store, which nothing uses yet (AGT-122): it puts a change on a branch with no git, from a base commit, the files that
   differ and the paths that are gone. A file keeps its mode, and a symlink or a submodule is
   never written over. A truncated listing cannot reach it unnoticed: its `base` is the commit,
   the tree and the whole answer of `readTreeEntries`, `truncated` included, and a base whose
@@ -1072,7 +1072,50 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   reach the container through `SandboxPort`, which the tests fill with files in memory. Only
   `run_command` needs the machine: the five for files ask for a `FilePort` (files read and written
   whole, listed and searched), which `sandboxFiles` makes of a sandbox, with ripgrep run in it for
-  the last two.
+  the last two. The port's answers are text in ripgrep's format, which is written down at
+  `SearchResult`, and its owner writes what `find_files` and `search` say of themselves
+  (`FileWords`), since the rules are its own.
+- **Files without a machine** (AGT-122, built and not yet used: no agent setting turns it on and
+  `ConversationAgent` makes none). `FileStore` (`packages/runtime/src/file-store.ts`) answers the
+  same `FilePort` over a repository's files kept in the conversation's own SQLite, with nothing
+  that runs: no shell, no git, no interpreter.
+  - **Loaded as asked for.** A checkout reads the default branch's head and its tree, two
+    requests, and keeps the listing compressed in a few rows. `find_files` answers from it.
+    `read_file` fetches that one blob the first time; `search` fetches the texts it lacks under
+    its path and glob, fifty to a request. A later turn asks GitHub nothing for what is held,
+    and works on the commit first read.
+  - **Bytes as they are.** A file is the blob's bytes, checked against its id, so a byte order
+    mark and Windows line ends survive an edit; its mode is the listing's, so an executable
+    file stays one.
+  - **Out as a commit.** `push` hands the files that differ and the paths that are gone to
+    `commitChanges`, with the commit this conversation last put on its branch; the answers are
+    a sandbox's (`PushPort`), so `open_pull_request` can stand on either.
+  - **Search is literal text**, never a regular expression: a model's pattern does not run in
+    the Durable Object, where one that backtracks without end would hold the conversation. The
+    tool's description says so. It has its own globs (`glob.ts`), read as ripgrep reads them.
+    Where it differs from a sandbox's ripgrep is listed at the top of `file-store.ts`: it does
+    not read `.gitignore` (the files are the commit's own and what the conversation wrote),
+    and it leaves out files over 256 KiB and files that are not UTF-8.
+  - **Limits, each answered in words.** A tree GitHub cuts short, or of more than 20,000
+    entries, is not checked out. A file over 256 KiB, a binary file and a symlink are listed and
+    not read, and the last two not written over. A search that would fetch more than 500 files
+    fetches none. A change of more than 500 files or 20 MB is refused as it is written, and a
+    written file holds at most 1 MiB, under what one value in Durable Object SQLite may.
+  - **What a conversation can hold** follows: the listing (at most 8 MiB in 8 rows), the blobs
+    fetched (at most 32 MiB, a row a blob and so at most 20,000, the oldest going first), the
+    change (20 MB in 500 rows) and one row for the checkout. About 60 MiB and 20,509 rows at
+    the most.
+  - **Four tables of the conversation's** (`file_checkout`, `file_listing`, `file_blobs`,
+    `file_changes`), made on first use as the trace's are, each write in one `transactionSync`
+    after GitHub was asked. Deleting the conversation empties the object and them with it; a
+    move copies every table it finds and makes the ones a new object lacks; a backup lists the
+    tables itself. None of the three names a table, and `test/file-store-storage.test.ts`
+    holds each to it. A conversation that holds files takes more calls to move, about one for
+    every 4 MB.
+  - **The token** is asked of the caller for each call that needs GitHub, for the one
+    repository and for reading or writing, and is never stored, answered or traced. GitHub's
+    refusals reach the model as the store's own words with a status; only a change GitHub
+    refuses as invalid (422) is given in GitHub's words.
 - **The trace** has a span for each call, under the server name `sandbox`, with its sizes and
   never its content, like an MCP tool's. A call that fails keeps the reason the tool gave the
   model, clipped to 500 characters (`traced` with `showErrors`), so a run's page says why; it can

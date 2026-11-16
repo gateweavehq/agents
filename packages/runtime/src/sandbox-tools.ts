@@ -7,7 +7,9 @@
  * Only `run_command` needs a machine. The five tools for files ask for a `FilePort`: files read
  * and written whole, listed by a glob and searched. A sandbox answers it through `sandboxFiles`,
  * with ripgrep for the last two, so files kept some other way can stand behind the same tools
- * (AGT-122).
+ * (AGT-122): `FileStore` in `./file-store.ts` keeps a repository's files in the conversation's
+ * own SQLite. What a port answers is written down at `SearchResult`, and what it says of itself
+ * to the model at `FileWords`.
  */
 import { SANDBOX_IDLE_MINUTES } from "@gateweave/agents-model";
 import { type ToolSet, tool } from "ai";
@@ -52,11 +54,49 @@ export type ReadResult = { content: string } | { error: string };
 /** How many bytes went into the file, or why none did. */
 export type WriteResult = { written: number } | { error: string };
 
+/** That the file is gone, or why it is not, in words the model reads. */
+export type DeleteResult = { deleted: true } | { error: string };
+
 /**
- * What a listing or a search found: its lines as the model reads them, null when there are none;
- * or why it could not look, in words the model reads.
+ * What a listing or a search found, as the text the model reads; or why it could not look, in
+ * words the model reads.
+ *
+ * The text is in ripgrep's format, and the format is part of the port. A sandbox's answer is
+ * ripgrep's own output, clipped by the sandbox as any command's is, which cannot be taken apart
+ * into results and put together again byte for byte; so every port writes the same text rather
+ * than hand over results for the tools to format:
+ *
+ * - One result to a line, each line ended by a newline, the last one too.
+ * - A listing's line is the file's absolute path. Lines are sorted by path, one part of the path
+ *   at a time and each part by its bytes, so `src/a/x.ts` comes before `src/a.ts` and `B.ts`
+ *   before `a.ts`.
+ * - A search's line is `path:line:text`: the absolute path, the line's number from 1, and the
+ *   line without its newline; a carriage return before the newline stays. When `query.path` is
+ *   a file and not a directory, the path and its colon are left out (`line:text`), as ripgrep
+ *   leaves them out for one file. A matching line longer than 500 bytes is given as
+ *   `[Omitted long matching line]` in place of its text. A byte order mark at a file's start is
+ *   not part of its first line. The files come in no promised order from a sandbox, where
+ *   ripgrep searches several at once, and sorted like a listing from `FileStore`.
+ * - Text longer than `OUTPUT_LIMIT` bytes keeps its start and its end, with how many bytes were
+ *   left out between them, as a command's output does (`./output.ts`).
+ * - `found` is null when nothing matches, never an empty string. A sandbox's port passes on what
+ *   its command printed: ripgrep exits with 1 when it finds nothing, which is null here, and does
+ *   not exit with 0 having printed nothing.
  */
 export type SearchResult = { found: string | null } | { error: string };
+
+/**
+ * What `find_files` and `search` tell the model of the files behind them. The port's owner
+ * writes them, since only it knows its rules: which files it leaves out, and what a pattern is.
+ */
+export interface FileWords {
+	/** The description of `find_files`. */
+	findFiles: string;
+	/** The description of `search`. */
+	search: string;
+	/** What `search`'s pattern is: a regular expression, or text as it is written. */
+	pattern: string;
+}
 
 /** What `search` looks for, and where. */
 export interface SearchQuery {
@@ -90,7 +130,28 @@ export interface FilePort {
 	findFiles(pattern: string, directory: string): Promise<SearchResult>;
 	/** The lines that match, each as path:line:text. */
 	search(query: SearchQuery): Promise<SearchResult>;
+	/** What the listing and the search say of themselves; a sandbox's words when left out. */
+	readonly words?: FileWords;
 }
+
+/**
+ * Files that can also be taken away one at a time. A sandbox's can, with `rm`, though its model
+ * has `run_command` for that and is offered no tool for it; `delete_file` is for files that no
+ * command reaches (`deletingFileTools`).
+ */
+export interface DeletingFilePort extends FilePort {
+	/** Deletes the file. A directory is not deleted this way. */
+	deleteFile(path: string): Promise<DeleteResult>;
+}
+
+/** What a sandbox's listing and search say: ripgrep's rules. */
+export const SANDBOX_FILE_WORDS: FileWords = {
+	findFiles:
+		"Lists the files whose paths match a glob, such as **/*.ts or src/**/test_*.py, sorted by path. Files git ignores are left out, and so is .git.",
+	search:
+		"Searches files for a regular expression with ripgrep, and lists each matching line as path:line:text. Files git ignores are left out, and so is .git.",
+	pattern: "The regular expression (Rust syntax)",
+};
 
 /**
  * A path the model gave, made absolute and plain, or null when it leads out of the sandbox's root.
@@ -146,6 +207,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 
 /** The tools that read, write, edit, find and search files, traced in `run`. */
 export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
+	const words = files.words ?? SANDBOX_FILE_WORDS;
 	const tools: ToolSet = {
 		read_file: tool({
 			description: `Reads a text file, each line after its number and a tab, ${SANDBOX_LIMITS.readLines} lines at a time. The numbers are not part of the file: leave them out of edit_file.`,
@@ -222,8 +284,7 @@ export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
 			},
 		}),
 		find_files: tool({
-			description:
-				"Lists the files whose paths match a glob, such as **/*.ts or src/**/test_*.py, sorted by path. Files git ignores are left out, and so is .git.",
+			description: words.findFiles,
 			inputSchema: z.object({
 				pattern: z.string().min(1).max(1_000).describe("The glob"),
 				path: z
@@ -238,10 +299,9 @@ export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
 			},
 		}),
 		search: tool({
-			description:
-				"Searches files for a regular expression with ripgrep, and lists each matching line as path:line:text. Files git ignores are left out, and so is .git.",
+			description: words.search,
 			inputSchema: z.object({
-				pattern: z.string().min(1).max(1_000).describe("The regular expression (Rust syntax)"),
+				pattern: z.string().min(1).max(1_000).describe(words.pattern),
 				path: z
 					.string()
 					.max(1_000)
@@ -265,15 +325,49 @@ export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
 }
 
 /**
- * A sandbox's files as the tools for files reach them. The files are on its disk, so it lists and
- * searches them with ripgrep, run as a command.
+ * The tools for files with `delete_file` after them: for files no command reaches, where a file
+ * goes only this way. A sandbox's turn is not offered it; there `run_command` deletes.
  */
-export function sandboxFiles(sandbox: SandboxPort): FilePort {
+export function deletingFileTools(files: DeletingFilePort, run: RunRecorder): ToolSet {
+	const tools: ToolSet = {
+		delete_file: tool({
+			description:
+				"Deletes a file. A directory is gone once the files in it are; it is not deleted by its own path.",
+			inputSchema: z.object({
+				path: z.string().min(1).max(1_000).describe(`Absolute, or from ${SANDBOX_ROOT}`),
+			}),
+			execute: async ({ path }) => {
+				const file = within(path);
+				const result = await files.deleteFile(file);
+				if ("error" in result) throw new Error(result.error);
+				return `Deleted ${file}.`;
+			},
+		}),
+	};
+	return { ...fileTools(files, run), ...tracedTools(tools, run) };
+}
+
+/**
+ * A sandbox's files as the tools for files reach them. The files are on its disk, so it lists and
+ * searches them with ripgrep, and deletes one with `rm`, each run as a command.
+ */
+export function sandboxFiles(sandbox: SandboxPort): DeletingFilePort {
 	const ripgrep = async (command: string) =>
 		ripgrepOutcome(await sandbox.run(command, SANDBOX_ROOT, SANDBOX_LIMITS.searchSeconds));
 	return {
+		words: SANDBOX_FILE_WORDS,
 		readFile: (path) => sandbox.readFile(path),
 		writeFile: (path, content) => sandbox.writeFile(path, content),
+		deleteFile: async (path) => {
+			const removed = await sandbox.run(
+				`rm -- ${quote(path)}`,
+				SANDBOX_ROOT,
+				SANDBOX_LIMITS.searchSeconds,
+			);
+			if (removed.timedOut) return { error: `${path} was not deleted in time.` };
+			if (removed.exitCode === 0) return { deleted: true };
+			return { error: removed.output.trim() || `${path} could not be deleted.` };
+		},
 		findFiles: (pattern, directory) =>
 			ripgrep(
 				`rg --files --hidden --sort path --glob '!.git' --glob ${quote(pattern)} -- ${quote(directory)}`,
