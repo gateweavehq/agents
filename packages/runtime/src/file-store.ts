@@ -612,19 +612,20 @@ export class FileStore implements DeletingFilePort, PushPort {
 	): Generator<string> {
 		for (const file of files) {
 			let held: ArrayBuffer | null | undefined;
-			// The change is looked up now, not when the files were listed: another call may have
-			// changed it while this search asked GitHub for texts.
-			const change = file.written ? this.#change(file.path) : null;
-			// Deleted since: there is nothing to search.
+			// The change is looked up now, for every file, whatever it was when the files were
+			// listed: another call may have written, deleted or put back any of them while this
+			// search asked GitHub for texts.
+			const change = this.#change(file.path);
+			// Deleted, then or since: there is nothing to search.
 			if (change && change.bytes === null) continue;
 			// A file the conversation made, whose row is gone: deleted since, the same.
-			if (file.written && !change && !file.entry) continue;
+			if (!change && !file.entry) continue;
 			if (change) {
 				held = change.bytes;
 			} else {
 				// The base's file: never written, or written back as the base has it since the
 				// search began, which takes the change away and leaves the file.
-				if (file.written && file.entry && !this.#searchable(file.entry)) continue;
+				if (file.entry && !this.#searchable(file.entry)) continue;
 				const [blob] = this.#storage.sql
 					.exec<{ kind: BlobKind; bytes: ArrayBuffer | null }>(
 						"SELECT kind, bytes FROM file_blobs WHERE id = ?",

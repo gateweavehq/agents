@@ -600,6 +600,31 @@ describe("calls that run side by side", () => {
 		});
 	});
 
+	it("search a file as it is when the answer is made, deleted or edited while the search waited", async () => {
+		const files = {
+			"a.txt": "needle to be deleted\n",
+			"b.txt": "needle b\n",
+			"c.txt": "needle to be edited\n",
+		};
+		await checkedOut(files, async ({ fake, store }) => {
+			// Two files are held and unchanged when the search lists them; it asks GitHub for the
+			// third, and meanwhile other calls delete one of the two and edit the other.
+			await store.readFile(`${REPO}/a.txt`);
+			await store.readFile(`${REPO}/c.txt`);
+			fake.before = async (route) => {
+				if (route !== "POST /graphql") return;
+				fake.before = undefined;
+				expect(await store.deleteFile(`${REPO}/a.txt`)).toEqual({ deleted: true });
+				expect(await store.writeFile(`${REPO}/c.txt`, "needle as edited\n")).toEqual({
+					written: 17,
+				});
+			};
+			expect(await store.search({ pattern: "needle", path: REPO, ignoreCase: false })).toEqual({
+				found: `${REPO}/b.txt:1:needle b\n${REPO}/c.txt:1:needle as edited\n`,
+			});
+		});
+	});
+
 	it("answer each caller of a checkout for the repository it asked for", async () => {
 		const fake = new FakeGit();
 		await fake.seed(FILES);
