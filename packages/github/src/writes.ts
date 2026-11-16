@@ -196,24 +196,28 @@ async function commitTree(
  * a new file is a plain one. A symlink or a submodule is never written over or taken out, which
  * holds because a base whose listing GitHub cut short is refused.
  *
- * Refusals come back as values. Only an answer of GitHub's that makes no sense is thrown.
+ * Refusals come back as values. What is thrown is an answer of GitHub's that makes no sense,
+ * or a failure that is not GitHub's own, and the last only once the branch has been read and
+ * is not at this call's commit.
  *
  * Requests: four for a new branch (its ref, the tree, the commit, the ref made). Six for one
  * that exists (its ref, the base compared with its tip, the tree, the tip's commit, the commit,
  * the ref moved), and one fewer when no file differs from the base.
  *
  * Limits, each with a test that shows it:
- * - **The branch's move is not a compare-and-swap.** GitHub's REST API moves a ref with no
- *   "only if it is still at" and, unforced, checks only that the move is a fast-forward. So if
- *   someone resets the branch to an ancestor of `expected` between this function's look and
- *   its move, the move succeeds and puts back the commits they dropped. A commit someone
- *   added is never lost; one someone took away can come back.
+ * - **The branch's move is not a compare-and-swap, and `expected` is not enforced atomically.**
+ *   GitHub's REST API moves a ref with no "only if it is still at" and, unforced, checks only
+ *   that the move is a fast-forward. So a reset of the branch to an ancestor of `expected`
+ *   between this function's look and its move is not detected: the move succeeds and puts back
+ *   the commits that were dropped. A commit someone added is never lost; one someone took away
+ *   can come back. Nothing in this function can close that; it would take another API.
  * - **The base is checked to be an ancestor of the branch's tip, not to be the very commit the
  *   branch was made from.** A newer base is refused (`base`), since its commit would carry the
  *   default branch's changes as its own. An older one cannot be told from the right one.
  * - **A file is not replaced by a folder, or a folder by a file, in one change**: a path under
- *   a file, or a file where a folder is, is refused, as is a new path beside one that differs
- *   only in case. What GitHub does with them was not tried.
+ *   a file, or a file where a folder is, is refused, whether the other is in the base or in
+ *   the same change, as is a new path beside one that differs only in case. GitHub is never
+ *   asked for them, so what it would do does not matter here.
  */
 export async function commitChanges(
 	token: string,
@@ -273,19 +277,21 @@ export async function commitChanges(
 		if (input.expected === null) await createBranch(token, repository, input.branch, commit);
 		else await moveBranch(token, repository, input.branch, commit, false);
 	} catch (error) {
-		if (!(error instanceof GitHubError)) throw error;
-		// GitHub holds part of the same line between the read above and here: the name is taken,
-		// or the move is not a fast-forward. Which it was is read from the branch, not from
-		// GitHub's words. A branch at this call's own commit means the write was applied and only
-		// its answer was lost, a connection reset or a 502 on the way back.
+		// Whatever failed, and of whatever class, what became of the write is not known yet: a
+		// connection can break after GitHub moved the branch, even after the answer's headers
+		// came. So the branch is read. At this call's own commit, the write was applied and only
+		// its answer was lost. Elsewhere than expected, GitHub held part of the same line as the
+		// look above: the name is taken, or the move is not a fast-forward. Which it was is read
+		// from the branch, not from GitHub's words.
 		try {
 			const tip = await branchCommit(token, repository, input.branch);
 			if (tip === commit) return { committed: true, commit };
 			if (tip !== input.expected) return { committed: false, reason: "branch", found: tip };
 		} catch {
-			// The refusal that came first says more than a failed second look.
+			// The failure that came first says more than a failed second look.
 		}
-		return refusal(error);
+		if (error instanceof GitHubError) return refusal(error);
+		throw error;
 	}
 	return { committed: true, commit };
 }
@@ -342,6 +348,29 @@ async function planChanges(
 		}
 		return null;
 	};
+	// The files this change writes and the folders they need, each with the file that needs it:
+	// one change cannot have `new` as a file and `new/page.md` under it.
+	const written = new Set<string>();
+	const needed = new Map<string, string>();
+	/** Why a written path cannot stand beside another this change writes; it joins them. */
+	const clash = (path: string): string | null => {
+		const within = needed.get(path);
+		if (within !== undefined) {
+			return `is a folder for ${within}, which this change also writes, and cannot be a file too`;
+		}
+		const above: string[] = [];
+		for (let end = path.lastIndexOf("/"); end > 0; end = path.lastIndexOf("/", end - 1)) {
+			above.push(path.slice(0, end));
+		}
+		for (const folder of above) {
+			if (written.has(folder)) {
+				return `is under ${folder}, which this change also writes as a file`;
+			}
+		}
+		written.add(path);
+		for (const folder of above) if (!needed.has(folder)) needed.set(folder, path);
+		return null;
+	};
 	const seen = new Set<string>();
 	/** What holds for a written and a deleted path alike. */
 	const problem = (path: string): string | null => {
@@ -364,6 +393,8 @@ async function planChanges(
 		if (!file.content.isWellFormed()) {
 			return refuse(file.path, "holds text that is not Unicode: half of a surrogate pair");
 		}
+		const clashing = clash(file.path);
+		if (clashing !== null) return refuse(file.path, clashing);
 		const twin = caseTwin(file.path);
 		if (twin !== null) return refuse(file.path, `differs only in case from ${twin}`);
 		if (folders.has(file.path)) return refuse(file.path, "is a folder in the repository");

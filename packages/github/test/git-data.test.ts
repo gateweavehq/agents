@@ -493,6 +493,44 @@ describe("a commit made without git", () => {
 		expect(github.commitAt("gateweave/c-1")?.parents).toEqual([first.commit]);
 	});
 
+	it("looks at the branch again when the answer breaks off after its headers", async () => {
+		const edit = { files: [{ path: "docs/guide.md", content: "New guide.\n" }] };
+		const writesRef = (input: string, init?: RequestInit) =>
+			input.includes("/git/refs") && init?.method !== undefined;
+		/** The headers of a success, and a body the connection drops: not a `GitHubError`. */
+		const broken = (status: number) =>
+			new Response(
+				new ReadableStream<Uint8Array>({
+					pull(controller) {
+						controller.error(new TypeError("terminated"));
+					},
+				}),
+				{ status },
+			);
+
+		// GitHub made the branch before the connection went.
+		vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+			const answer = await github.fetch(input, init);
+			return writesRef(input, init) ? broken(201) : answer;
+		});
+		const first = await commitChanges(github.token, github.repository, await change(edit));
+		expect(first).toEqual({ committed: true, commit: github.branches.get("gateweave/c-1") });
+		if (!first.committed) throw new Error(JSON.stringify(first));
+
+		// The same failure with the branch not moved is the failure itself, after the look.
+		vi.stubGlobal("fetch", async (input: string, init?: RequestInit) =>
+			writesRef(input, init) ? broken(200) : github.fetch(input, init),
+		);
+		const second = commitChanges(
+			github.token,
+			github.repository,
+			await change({ ...edit, deleted: ["docs/old.md"], expected: first.commit }),
+		);
+		await expect(second).rejects.toThrow("terminated");
+		expect(github.branches.get("gateweave/c-1")).toBe(first.commit);
+		expect(github.requests.at(-1)).toBe("GET /repos/acme/site/git/ref/heads/gateweave/c-1");
+	});
+
 	it("puts back commits someone took off the branch between its look and its move: a limit", async () => {
 		// GitHub's REST API has no "move only if still at": unforced, it checks a fast-forward.
 		const edit = { files: [{ path: "docs/guide.md", content: "New guide.\n" }] };
@@ -699,6 +737,33 @@ describe("a commit that is refused", () => {
 		const taken = await commitChanges(github.token, github.repository, {
 			...base,
 			files: [file("README.md"), file("docs/guide.md"), file("notes/a.md"), file("notes/b.md")],
+		});
+		expect(taken.committed).toBe(true);
+	});
+
+	it("refuses two paths of one change of which one is a file and the other needs it as a folder", async () => {
+		const base = await change();
+		const asked = github.requests.length;
+		const file = (path: string) => ({ path, content: "x\n" });
+		for (const [files, path, words] of [
+			[[file("new"), file("new/page.md")], "new/page.md", "is under new, which this change"],
+			[[file("new/page.md"), file("new")], "new", "is a folder for new/page.md, which this change"],
+			[[file("a/b"), file("a/b/c/d.md")], "a/b/c/d.md", "is under a/b, which this change"],
+			[[file("a/b/c/d.md"), file("x.md"), file("a/b")], "a/b", "is a folder for a/b/c/d.md"],
+			// The same pairs, apart in case as well.
+			[[file("new"), file("New/page.md")], "New/page.md", "differs only in case from new"],
+			[[file("New/page.md"), file("new")], "new", "differs only in case from New"],
+		] as const) {
+			const outcome = await commitChanges(github.token, github.repository, { ...base, files });
+			expect(outcome).toMatchObject({ committed: false, reason: "path", path });
+			expect(outcome).toHaveProperty("message", expect.stringContaining(words));
+		}
+		expect(github.requests.length).toBe(asked);
+
+		// Names that only begin alike are no folder of one another.
+		const taken = await commitChanges(github.token, github.repository, {
+			...base,
+			files: [file("new"), file("new.md"), file("newer/page.md")],
 		});
 		expect(taken.committed).toBe(true);
 	});
@@ -969,6 +1034,30 @@ describe("a path in a repository", () => {
 			"..\\outside",
 		]) {
 			expect(repositoryPathProblem(path), JSON.stringify(path)).toEqual(expect.any(String));
+		}
+	});
+
+	it("is settled at once for a part of 200,000 spaces and dots, wherever it stands", () => {
+		const long = " .".repeat(100_000);
+		const started = performance.now();
+		for (const path of [long, `docs/${long}`, `.git${long}`, `${long}/x`, `.gitmodules${long}`]) {
+			expect(repositoryPathProblem(path)).toBe("is longer than 4,096 bytes");
+		}
+		// The longest that are read at all: a path of 4,096 bytes, and a part of 255.
+		const part = " .".repeat(125);
+		expect(repositoryPathProblem(`${`${part}/`.repeat(16)}x`)).toContain("ending in a dot");
+		expect(repositoryPathProblem(`.git${part}`)).toContain(".git");
+		expect(repositoryPathProblem(`x${" ".repeat(4095)}`)).toContain("255 bytes");
+		expect(performance.now() - started).toBeLessThan(100);
+	});
+
+	it("holds none of the characters Windows allows in no name, in a file or a folder", () => {
+		for (const char of '<>"|?*') {
+			for (const path of [`docs/a${char}.md`, `do${char}cs/a.md`, char]) {
+				expect(repositoryPathProblem(path), path).toBe(
+					`holds ${char}, which Windows allows in no name`,
+				);
+			}
 		}
 	});
 

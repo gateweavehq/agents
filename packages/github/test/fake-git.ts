@@ -10,7 +10,7 @@
  * It is not GitHub, and where nobody has tried GitHub its answer here is a guess: what GitHub
  * says to a workflow file from a token without the Workflows permission; what it does with a
  * path under a file or a file where a folder is, as when one change adds both `a` and `a/b`
- * (this fake says no); and which of the names `repositoryPathProblem` refuses GitHub would take
+ * (this fake says no, and `commitChanges` never asks); and which of the names `repositoryPathProblem` refuses GitHub would take
  * (this fake takes them all but `.git`).
  *
  * It began as the stand-in of the spike for runs without a container (AGT-122) and uses nothing

@@ -3,6 +3,9 @@
 // about the people who clone the repository afterwards: a name that a Git client refuses, or
 // that Windows or macOS folds into `.git` or `.gitmodules`, must not get into a commit through
 // an API that has no client to refuse it. Each refusal is in words.
+//
+// The text is someone else's, so nothing here runs a pattern that can repeat over it: lengths
+// are checked first, and what is trimmed or left out is done a character at a time.
 import { encoder } from "./encoding";
 
 /** Where GitHub reads workflows from. Writing under it needs the app's Workflows permission. */
@@ -11,21 +14,65 @@ export const WORKFLOWS_FOLDER = ".github/workflows/";
 const MAX_PATH_BYTES = 4096;
 const MAX_PART_BYTES = 255;
 
-/** Characters HFS+ leaves out when it compares names, as Git's own check lists them. */
-const IGNORED_BY_HFS = /[‌-‏‪-‮⁪-⁯﻿]/g;
-
 /** Names Windows keeps for devices, whatever follows the first dot. */
-const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const WINDOWS_DEVICES = new Set(["con", "prn", "aux", "nul"]);
 
-/** The short names NTFS may give `.gitmodules`, as Git's own check lists them. */
-const SHORT_GITMODULES = /^(gitmod~[1-4]|gi7eba~[0-9]+)$/;
+/** Characters Windows allows in no name, besides the colon and the control characters. */
+const WINDOWS_FORBIDDEN = '<>"|?*';
 
-function hasControlCharacter(text: string): boolean {
+const DOT = 0x2e;
+const SPACE = 0x20;
+
+/** Whether HFS+ leaves the character out when it compares names, as Git's own check lists them. */
+function ignoredByHfs(code: number): boolean {
+	return (
+		(code >= 0x200c && code <= 0x200f) ||
+		(code >= 0x202a && code <= 0x202e) ||
+		(code >= 0x206a && code <= 0x206f) ||
+		code === 0xfeff
+	);
+}
+
+/**
+ * What a name is to a file system that ignores case, the characters HFS+ ignores, and the dots
+ * and spaces Windows drops from a name's end.
+ */
+function folded(part: string): string {
+	let kept = "";
+	for (let index = 0; index < part.length; index++) {
+		if (!ignoredByHfs(part.charCodeAt(index))) kept += part.charAt(index);
+	}
+	let end = kept.length;
+	while (end > 0 && (kept.charCodeAt(end - 1) === DOT || kept.charCodeAt(end - 1) === SPACE)) {
+		end--;
+	}
+	return kept.slice(0, end).toLowerCase();
+}
+
+function isDigits(text: string): boolean {
+	if (text === "") return false;
 	for (let index = 0; index < text.length; index++) {
 		const code = text.charCodeAt(index);
-		if (code < 0x20 || code === 0x7f) return true;
+		if (code < 0x30 || code > 0x39) return false;
 	}
-	return false;
+	return true;
+}
+
+/** The short names NTFS may give `.gitmodules`, as Git's own check lists them. */
+function shortGitmodules(name: string): boolean {
+	if (name.startsWith("gi7eba~")) return isDigits(name.slice("gi7eba~".length));
+	return name.length === 8 && name.startsWith("gitmod~") && "1234".includes(name.charAt(7));
+}
+
+/** `con`, `prn`, `aux`, `nul`, `com1` to `com9` and `lpt1` to `lpt9`, in any case. */
+function windowsDevice(name: string): boolean {
+	const lower = name.toLowerCase();
+	if (WINDOWS_DEVICES.has(lower)) return true;
+	return (
+		lower.length === 4 &&
+		(lower.startsWith("com") || lower.startsWith("lpt")) &&
+		"123456789".includes(lower.charAt(3))
+	);
 }
 
 /**
@@ -35,33 +82,42 @@ function hasControlCharacter(text: string): boolean {
  */
 export function repositoryPathProblem(path: string): string | null {
 	if (path === "") return "is empty";
+	// A string is never more bytes than three for each of its units, and never fewer than one,
+	// so the count of units settles the long ones before anything reads them.
+	if (path.length > MAX_PATH_BYTES || encoder.encode(path).length > MAX_PATH_BYTES) {
+		return "is longer than 4,096 bytes";
+	}
 	if (path.includes("\\")) return "holds a backslash; a repository's paths use /";
 	if (path.startsWith("/")) return "is not a path inside the repository";
-	if (encoder.encode(path).length > MAX_PATH_BYTES) return "is longer than 4,096 bytes";
 	for (const part of path.split("/")) {
 		if (part === "") return "has an empty part";
+		if (encoder.encode(part).length > MAX_PART_BYTES) return "has a part longer than 255 bytes";
 		if (part === "." || part === "..") return `has the part ${part}`;
-		if (hasControlCharacter(part)) return "holds a control character";
-		// What the name is to a file system that ignores case, the characters HFS+ ignores, and
-		// the dots and spaces Windows drops from a name's end.
-		const folded = part
-			.replace(IGNORED_BY_HFS, "")
-			.toLowerCase()
-			.replace(/[. ]+$/, "");
-		if (folded === ".git" || folded === "git~1") {
+		for (let index = 0; index < part.length; index++) {
+			const code = part.charCodeAt(index);
+			if (code < 0x20 || code === 0x7f) return "holds a control character";
+		}
+		const name = folded(part);
+		if (name === ".git" || name === "git~1") {
 			return "is inside .git, or a name that some file systems read as .git";
 		}
-		if (folded === ".gitmodules" || SHORT_GITMODULES.test(folded)) {
+		if (name === ".gitmodules" || shortGitmodules(name)) {
 			return "is .gitmodules, or a name that some file systems read as it; submodules are not changed this way";
 		}
 		if (part.includes(":")) {
 			return "holds a colon, which Windows reads as a stream of another file";
 		}
-		if (/[. ]$/.test(part)) return "has a part ending in a dot or a space, which Windows drops";
-		if (WINDOWS_DEVICE.test(part.split(".")[0]?.trimEnd() ?? "")) {
+		for (const forbidden of WINDOWS_FORBIDDEN) {
+			if (part.includes(forbidden)) return `holds ${forbidden}, which Windows allows in no name`;
+		}
+		const last = part.charCodeAt(part.length - 1);
+		if (last === DOT || last === SPACE) {
+			return "has a part ending in a dot or a space, which Windows drops";
+		}
+		const dot = part.indexOf(".");
+		if (windowsDevice((dot === -1 ? part : part.slice(0, dot)).trimEnd())) {
 			return `has the part ${part}, a name Windows keeps for a device`;
 		}
-		if (encoder.encode(part).length > MAX_PART_BYTES) return "has a part longer than 255 bytes";
 	}
 	return null;
 }
