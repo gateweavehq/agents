@@ -3,6 +3,7 @@ import {
 	type Agent,
 	type AgentDefinitionInput,
 	type AgentDetail,
+	type AgentPinInput,
 	type AgentSnapshot,
 	APPLICATION_STATES,
 	type ApplyOutcome,
@@ -10,6 +11,7 @@ import {
 	type AssetDetail,
 	type AssetVersion,
 	agentDefinitionInput,
+	agentPinInput,
 	type Conversation,
 	type EnvRefusal,
 	type EnvSecret,
@@ -199,6 +201,8 @@ import {
 	agentSnapshot,
 	checkSandboxChoices,
 	createAgent,
+	type MovedPin,
+	moveAgentPin,
 	removeAgent,
 	updateAgent,
 } from "./definitions";
@@ -707,6 +711,12 @@ export class RegistryDO extends DurableObject {
 	updateAgent(agentId: string, input: AgentDefinitionInput): Agent | null {
 		const data = agentDefinitionInput.parse(input);
 		return this.#write(() => updateAgent(this.#db, id.parse(agentId), data, Date.now()));
+	}
+
+	/** Moves one pin to another version of its asset; the rest of the agent stays as it is. */
+	moveAgentPin(agentId: string, pin: AgentPinInput): MovedPin | null {
+		const data = agentPinInput.parse(pin);
+		return this.#write(() => moveAgentPin(this.#db, id.parse(agentId), data, Date.now()));
 	}
 
 	removeAgent(agentId: string): boolean {

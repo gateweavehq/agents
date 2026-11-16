@@ -92,6 +92,94 @@ export function updateAgent(db: Db, id: string, input: Definition, now: number):
 	return toAgent(row, linkInstructions(db, id, input));
 }
 
+/** A pin an agent moved, for the audit log: which of its fields, and the asset by name. */
+export interface MovedPin {
+	agent: Agent;
+	field: "instructions" | "environment" | "mcpServers";
+	asset: string;
+	/** The version it was pinned to, and the one it is pinned to now. */
+	from: number;
+	version: number;
+}
+
+/**
+ * Moves one pin of an agent to another version of the asset it pins, by the rules an update
+ * applies to that pin, and leaves the rest of the definition as it is: unlike an update, it takes
+ * nothing else, so it can reset nothing else. Null when there is no such agent run by Gateweave.
+ */
+export function moveAgentPin(
+	db: Db,
+	id: string,
+	pin: { assetId: string; version: number },
+	now: number,
+): MovedPin | null {
+	const current = db
+		.select({
+			instructionsAssetId: agentDefinitions.instructionsAssetId,
+			instructionsVersion: agentDefinitions.instructionsVersion,
+			envSetAssetId: agentDefinitions.envSetAssetId,
+			envSetVersion: agentDefinitions.envSetVersion,
+			sandbox: agentDefinitions.sandbox,
+		})
+		.from(agentDefinitions)
+		.innerJoin(agents, eq(agents.id, agentDefinitions.agentId))
+		.where(and(eq(agentDefinitions.agentId, id), isNull(agents.removedAt)))
+		.get();
+	if (!current) return null;
+	const server = db
+		.select({ version: agentMcpServers.version })
+		.from(agentMcpServers)
+		.where(and(eq(agentMcpServers.agentId, id), eq(agentMcpServers.assetId, pin.assetId)))
+		.get();
+	// Read before anything is written: past this point the move either ends whole or throws,
+	// which undoes it, so it never answers as if there were no agent with the pin moved.
+	const asset = db
+		.select({ name: assets.name })
+		.from(assets)
+		.where(eq(assets.id, pin.assetId))
+		.get();
+	if (!asset) throw new AgentError("That library asset does not exist");
+	let moved: Pick<MovedPin, "field" | "from">;
+	if (current.instructionsAssetId === pin.assetId && current.instructionsVersion !== null) {
+		checkInstructions(db, pin, pin.assetId);
+		db.update(agentDefinitions)
+			.set({ instructionsVersion: pin.version })
+			.where(eq(agentDefinitions.agentId, id))
+			.run();
+		moved = { field: "instructions", from: current.instructionsVersion };
+	} else if (current.envSetAssetId === pin.assetId && current.envSetVersion !== null) {
+		checkEnvironment(db, pin, pin.assetId);
+		db.update(agentDefinitions)
+			.set({ envSetVersion: pin.version })
+			.where(eq(agentDefinitions.agentId, id))
+			.run();
+		moved = { field: "environment", from: current.envSetVersion };
+	} else if (server) {
+		// The check reads the pin's version and the sandbox only, so the tools it keeps stay out.
+		checkMcpServers(
+			db,
+			{ mcpServers: [{ ...pin, tools: null }], sandbox: current.sandbox },
+			new Set([pin.assetId]),
+		);
+		db.update(agentMcpServers)
+			.set({ version: pin.version })
+			.where(and(eq(agentMcpServers.agentId, id), eq(agentMcpServers.assetId, pin.assetId)))
+			.run();
+		moved = { field: "mcpServers", from: server.version };
+	} else {
+		throw new AgentError("The agent does not pin that asset");
+	}
+	const row = db.update(agents).set({ updatedAt: now }).where(eq(agents.id, id)).returning().get();
+	if (!row) throw new Error("The agent whose pin moved is gone");
+	const assetIds = db
+		.select({ assetId: agentAssets.assetId })
+		.from(agentAssets)
+		.where(eq(agentAssets.agentId, id))
+		.all()
+		.map((link) => link.assetId);
+	return { agent: toAgent(row, assetIds), ...moved, asset: asset.name, version: pin.version };
+}
+
 export function removeAgent(db: Db, id: string, now: number): boolean {
 	if (!definitionOf(db, id)) return false;
 	db.update(agents).set({ removedAt: now, updatedAt: now }).where(eq(agents.id, id)).run();

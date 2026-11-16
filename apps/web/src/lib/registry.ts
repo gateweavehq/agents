@@ -5,6 +5,7 @@ import {
 	type AssetDetail,
 	type AssetKind,
 	agentDefinitionInput,
+	agentPinInput,
 	isKeyedProvider,
 	type LibraryEntry,
 	libraryEditInput,
@@ -186,6 +187,33 @@ export const updateAgent = createServerFn({ method: "POST" })
 			});
 		}
 		return agent;
+	});
+
+/**
+ * Moves one pin of an agent to another version of its asset. Unlike `updateAgent` it takes only
+ * the pin, so a page that shows an agent need not send the agent back, and cannot send it back
+ * short of a field (AGT-135).
+ */
+export const moveAgentPin = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), agentId: id, pin: agentPinInput }))
+	.handler(async ({ data }): Promise<Agent> => {
+		const { registry, audit } = await managedOf(data.slug);
+		const moved = await registry.moveAgentPin(data.agentId, data.pin);
+		if (!moved) throw new Error("Agent not found");
+		if (moved.from !== moved.version) {
+			await audit({
+				action: "agent.updated",
+				target: { type: "agent", id: moved.agent.id, label: moved.agent.name },
+				// The one field an edit would name, and which pin went where.
+				detail: {
+					fields: [moved.field],
+					asset: moved.asset,
+					from: moved.from,
+					version: moved.version,
+				},
+			});
+		}
+		return moved.agent;
 	});
 
 export const removeAgent = createServerFn({ method: "POST" })

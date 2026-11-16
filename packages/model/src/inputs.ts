@@ -546,6 +546,17 @@ export const mcpToolAllowlist = z
 export const MAX_AGENT_MCP_SERVERS = 10;
 
 /**
+ * Moving one pin of an agent run by Gateweave (its instructions, its environment set or one of
+ * its MCP servers) to another version of the asset it pins. It names the pin alone, so nothing
+ * else of the agent can change with it, as a whole definition sent back could.
+ */
+export const agentPinInput = z.object({
+	assetId: z.string().min(1).max(64),
+	version: z.number().int().positive(),
+});
+export type AgentPinInput = z.input<typeof agentPinInput>;
+
+/**
  * An agent defined in the app and run by Gateweave: the model it calls with the workspace's key
  * for that provider (Workers AI needs none), and what it always reads, a library asset pinned to
  * a version (one of `INSTRUCTION_KINDS`).

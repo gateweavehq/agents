@@ -1,5 +1,4 @@
 import {
-	type Agent,
 	type AgentDefinition,
 	type AgentDetail,
 	type AgentMcpServer,
@@ -28,7 +27,7 @@ import { Notice } from "#/components/workspace/notice";
 import { availableProviders } from "#/lib/available-providers";
 import { startChat } from "#/lib/chat";
 import { getProviderKeys } from "#/lib/providers";
-import { getAgent, getLibrary, removeAgent, updateAgent } from "#/lib/registry";
+import { getAgent, getLibrary, moveAgentPin, removeAgent, updateAgent } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 import { getTriggers } from "#/lib/triggers";
 
@@ -175,7 +174,7 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 				{definition.instructions ? (
 					<>
 						<ul className="rounded-lg border text-sm">
-							<PinRow field="instructions" pin={definition.instructions} admin={admin} />
+							<PinRow pin={definition.instructions} admin={admin} />
 						</ul>
 						{data.instructions.map((file) => (
 							<details key={file.path} open className="overflow-hidden rounded-lg border">
@@ -203,7 +202,7 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 				{definition.environment ? (
 					<>
 						<ul className="rounded-lg border text-sm">
-							<PinRow field="environment" pin={definition.environment} admin={admin} />
+							<PinRow pin={definition.environment} admin={admin} />
 						</ul>
 						<p className="text-xs text-muted-foreground">
 							Its variables and secrets are on the{" "}
@@ -307,7 +306,7 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 				{definition.mcpServers.length > 0 ? (
 					<ul className="divide-y rounded-lg border text-sm">
 						{definition.mcpServers.map((server) => (
-							<PinRow key={server.asset.id} field="mcp-server" pin={server} admin={admin}>
+							<PinRow key={server.asset.id} pin={server} admin={admin}>
 								<McpServerState server={server} />
 							</PinRow>
 						))}
@@ -393,12 +392,10 @@ function Names({ names }: { names: string[] }) {
 
 /** A pinned library asset, and its newer version if the library has one. */
 function PinRow({
-	field,
 	pin,
 	admin,
 	children,
 }: {
-	field: "instructions" | "environment" | "mcp-server";
 	pin: PinnedAsset;
 	admin: boolean;
 	children?: ReactNode;
@@ -411,22 +408,15 @@ function PinRow({
 	const update = !removed && version < asset.version;
 
 	async function moveToLatest() {
-		if (!data?.definition) return;
+		if (!data) return;
 		setPending(true);
 		try {
-			const { agent, definition } = data;
-			// Only the pin of this row moves; the others stay where they are.
-			const input = inputOf(agent, definition);
-			const latest = { assetId: asset.id, version: asset.version };
-			if (field === "mcp-server") {
-				// The newer version keeps the tools the agent was limited to.
-				input.mcpServers = input.mcpServers.map((server) =>
-					server.assetId === asset.id ? { ...server, version: asset.version } : server,
-				);
-			} else {
-				input[field] = latest;
-			}
-			await updateAgent({ data: { slug, agentId: agent.id, agent: input } });
+			const { agent } = data;
+			// Only the pin of this row is named, so nothing else of the agent can change with it:
+			// the others stay where they are, and an MCP server keeps the tools it was limited to.
+			await moveAgentPin({
+				data: { slug, agentId: agent.id, pin: { assetId: asset.id, version: asset.version } },
+			});
 			toast.success(`${agent.name} reads v${asset.version} of ${asset.name}`);
 			await router.invalidate();
 		} catch (error) {
@@ -470,30 +460,6 @@ function PinRow({
 			{children}
 		</li>
 	);
-}
-
-/** The update that leaves an agent as it is, with every pin where it is. */
-function inputOf(agent: Agent, definition: AgentDefinition) {
-	return {
-		name: agent.name,
-		description: agent.description,
-		provider: definition.provider,
-		model: definition.model,
-		instructions: keep(definition.instructions),
-		environment: keep(definition.environment),
-		mcpServers: definition.mcpServers.map((server) => ({
-			assetId: server.asset.id,
-			version: server.version,
-			tools: server.tools,
-		})),
-		sandbox: definition.sandbox,
-		repositoryId: definition.repository?.id ?? null,
-	};
-}
-
-/** What an agent update sends for a pin it keeps. */
-function keep(pin: PinnedAsset | null): { assetId: string; version: number } | null {
-	return pin && { assetId: pin.asset.id, version: pin.version };
 }
 
 /** Where a coding agent found in a repository is configured, and what it reads. */
