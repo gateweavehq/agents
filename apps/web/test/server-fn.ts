@@ -21,8 +21,8 @@ function serverFnUrl(origin: string, name: string) {
 	return `${origin}/_serverFn/${id}`;
 }
 
-/** A plain object of strings and objects as the client serializes it (seroval's JSON). */
-function serialized(data: Record<string, unknown>) {
+/** A string or a plain object of strings and objects, as the client serializes it (seroval). */
+function serialized(data: unknown) {
 	let next = 0;
 	const node = (value: unknown): unknown => {
 		if (typeof value === "string") return { t: 1, s: value };
@@ -34,8 +34,35 @@ function serialized(data: Record<string, unknown>) {
 }
 
 /**
- * Calls a server function as the page does. A thrown error still answers 200, in the body. One
- * that reads (`GET`) takes its data in the address, as the client sends it.
+ * A request to one of the app's server functions as the client makes it, with only the headers
+ * given beside the ones every such call has: nothing here says which page it comes from. One that
+ * reads (`GET`) takes its data in the address, as the client sends it.
+ */
+export function serverFnRequest(
+	origin: string,
+	name: string,
+	{
+		data,
+		headers,
+		method = "POST",
+	}: { data: unknown; headers: Record<string, string>; method?: "GET" | "POST" },
+) {
+	const payload = JSON.stringify(serialized(data));
+	const common = { "x-tsr-serverFn": "true", accept: "application/json", ...headers };
+	return method === "GET"
+		? new Request(`${serverFnUrl(origin, name)}?payload=${encodeURIComponent(payload)}`, {
+				headers: common,
+			})
+		: new Request(serverFnUrl(origin, name), {
+				method: "POST",
+				headers: { ...common, "content-type": "application/json" },
+				body: payload,
+			});
+}
+
+/**
+ * Calls a server function as the app's own page does, which names the app's origin. A thrown
+ * error still answers 200, in the body.
  */
 export async function callServerFn(
 	agents: Agents,
@@ -45,27 +72,16 @@ export async function callServerFn(
 		data,
 		cookie,
 		client,
-		method = "POST",
+		method,
 	}: { data: Record<string, unknown>; cookie: string; client: string; method?: "GET" | "POST" },
 ) {
-	const payload = JSON.stringify(serialized(data));
-	const headers = {
-		origin,
-		cookie,
-		"cf-connecting-ip": client,
-		"x-tsr-serverFn": "true",
-		accept: "application/json",
-	};
-	const response =
-		method === "GET"
-			? await agents.fetch(`${serverFnUrl(origin, name)}?payload=${encodeURIComponent(payload)}`, {
-					headers,
-				})
-			: await agents.fetch(serverFnUrl(origin, name), {
-					method: "POST",
-					headers: { ...headers, "content-type": "application/json" },
-					body: payload,
-				});
+	const response = await agents.fetch(
+		serverFnRequest(origin, name, {
+			data,
+			method,
+			headers: { origin, cookie, "cf-connecting-ip": client },
+		}),
+	);
 	const text = await response.text();
 	return { response, text, failed: text.includes('"k":["error"]') };
 }

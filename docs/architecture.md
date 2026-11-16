@@ -55,7 +55,12 @@ The UI, the API and auth ship as one Worker (`apps/web`), the same shape as Gate
   browser, so one whose reference is in a cause, as Better Auth's `Failed to get session` is,
   leaves with the reference added to its message (`apps/web/src/start.ts`). A dialog or a toast
   still shows the message of what a server function threw, which for a failed query is that
-  sentence.
+  sentence. That file also lists the framework's guard against forged requests
+  (`createCsrfMiddleware`, for server functions only) as request middleware: a start instance
+  replaces the framework's default request middleware, which is that guard, so leaving it out
+  would let a page of another origin call a server function. A server function answers 403
+  unless `Sec-Fetch-Site` is `same-origin` or, without that header, `Origin` or else `Referer`
+  is the app's own (`test/server-fn-origin.test.ts`).
 - **Rate limits** on sign-in, password reset, invitations and email are counted in a
   `RateLimiter` Durable Object per client address or recipient, so they hold across isolates and
   locations. Everything else is limited in memory per isolate. Every Worker reaches another zone
