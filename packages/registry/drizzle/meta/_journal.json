@@ -288,6 +288,13 @@
       "when": 1794712067742,
       "tag": "0040_memory_search",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1794847258870,
+      "tag": "0041_agent_files",
+      "breakpoints": true
     }
   ]
 }

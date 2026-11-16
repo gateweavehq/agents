@@ -99,6 +99,12 @@ declare namespace Cloudflare {
 		 */
 		SANDBOX_ALERT_EMAIL?: string;
 		/**
+		 * `1` to let through the turns of agents set to work on a repository's files without a
+		 * sandbox (AGT-122). Unset everywhere for now: no form offers that setting, and the turns
+		 * have no file tools yet, so the registry refuses them unless this says otherwise.
+		 */
+		FILES_ONLY_RUNS?: string;
+		/**
 		 * Where a workspace asks for an invitation to Workers AI or sandboxes, when the server offers
 		 * them by invitation: an email address or an https URL. Settings > Models links to it.
 		 */

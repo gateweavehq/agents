@@ -1,5 +1,6 @@
 export * from "./edge-tools";
 export type * from "./entities";
+export * from "./files";
 export * from "./inputs";
 export * from "./memory";
 export * from "./paths";

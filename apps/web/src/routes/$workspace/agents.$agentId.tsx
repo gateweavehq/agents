@@ -488,6 +488,7 @@ function inputOf(agent: Agent, definition: AgentDefinition) {
 		})),
 		sandbox: definition.sandbox,
 		repositoryId: definition.repository?.id ?? null,
+		files: definition.files,
 	};
 }
 

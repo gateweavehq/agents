@@ -110,6 +110,9 @@ export function AgentDialog({
 	const [sandbox, setSandbox] = useState(agent?.definition.sandbox ?? false);
 	const [engine, setEngine] = useState<AgentEngine>(agent?.definition.engine ?? "gateweave");
 	const [memory, setMemory] = useState(agent?.definition.memory ?? false);
+	// Set only through the registry so far (AGT-122). The form offers no way to choose it, and
+	// keeps it on an agent that has it, with its repository, unless the agent is given a sandbox.
+	const files = (agent?.definition.files ?? false) && !sandbox;
 	const chosenRepository = agent?.definition.repository ?? null;
 	const [repositoryId, setRepositoryId] = useState(chosenRepository?.id ?? "");
 	// The repositories the workspace's GitHub App reaches, which a sandbox can check out.
@@ -211,8 +214,9 @@ export function AgentDialog({
 				sandbox,
 				engine,
 				memory,
+				files,
 				// The repository is checked out in the sandbox, so it goes with it.
-				repositoryId: sandbox && repositoryId !== "" ? repositoryId : null,
+				repositoryId: (sandbox || files) && repositoryId !== "" ? repositoryId : null,
 			});
 			onClose();
 		} catch (failure) {

@@ -4,6 +4,7 @@
  * gateway with a bug cannot store something the pages would choke on.
  */
 import { z } from "zod";
+import { FILES_WITH_SANDBOX } from "./files";
 import {
 	AGENT_ENGINES,
 	ASSET_KINDS,
@@ -549,7 +550,7 @@ export const MAX_AGENT_MCP_SERVERS = 10;
  * for that provider (Workers AI needs none), and what it always reads, a library asset pinned to
  * a version (one of `INSTRUCTION_KINDS`).
  */
-export const agentDefinitionInput = projectInput.extend({
+const agentDefinitionFields = projectInput.extend({
 	provider: z.enum(MODEL_PROVIDERS),
 	/** The provider's id for the model, as its models API lists it (`@cf/…` for Workers AI). */
 	model: z
@@ -601,7 +602,23 @@ export const agentDefinitionInput = projectInput.extend({
 	 * by default, so an agent made before memory existed has none until someone turns it on.
 	 */
 	memory: z.boolean().default(false),
+	/**
+	 * Whether its turns work on its repository's files without a sandbox (`./files.ts`): they read
+	 * and edit them and open pull requests, and run nothing. Off by default. What it needs besides
+	 * no sandbox (a repository, Gateweave's own loop) the registry enforces, since it knows the
+	 * repository. No form offers it yet.
+	 */
+	files: z.boolean().default(false),
 });
+
+/**
+ * An agent's definition as it is saved. An agent has `files`, a sandbox or neither, never both:
+ * the one rule about them that needs nothing but the input.
+ */
+export const agentDefinitionInput = agentDefinitionFields.refine(
+	(agent) => !(agent.files && agent.sandbox),
+	{ message: FILES_WITH_SANDBOX, path: ["files"] },
+);
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
 
 /** The one file of an MCP server written in the app, in the format Claude Code reads. */

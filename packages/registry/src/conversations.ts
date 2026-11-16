@@ -35,10 +35,24 @@ export interface ConversationTurn {
 	edges: TurnEdge[];
 	/** Whether the turn has the agent's sandbox: it has one, and the turn has tools. */
 	sandbox: boolean;
-	/** The repository the sandbox checks out, when the turn has one and the agent chose one. */
+	/**
+	 * The repository the sandbox checks out, when the turn has one and the agent chose one, or the
+	 * one a turn with `files` reads and edits.
+	 */
 	repository: SandboxRepository | null;
 	/** Whether the turn has the memory tools: the agent has memory, and the turn has tools. */
 	memory: boolean;
+	/**
+	 * Set when the turn works on the repository's files without a sandbox (AGT-122): the agent is
+	 * set to, and the turn has tools. Left out otherwise. The runtime does not read it yet, so
+	 * such a turn runs as one without file tools.
+	 */
+	files?: true;
+	/**
+	 * The model requests the turn may make, where the registry says: `MAX_SANDBOX_STEPS` for a
+	 * turn with `files`. Left out otherwise, and the runtime's own limits hold.
+	 */
+	steps?: number;
 	runId: string;
 }
 

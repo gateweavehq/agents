@@ -21,6 +21,9 @@ import {
 	envSecretInput,
 	envSetEditInput,
 	envSetInput,
+	FILES_NOT_OFFERED,
+	type FilesSettings,
+	filesOffered,
 	type GitLabConnection,
 	type GitLabConnectionInput,
 	gitlabConnectionInput,
@@ -32,6 +35,7 @@ import {
 	type LibraryTarget,
 	libraryEditInput,
 	libraryTarget,
+	MAX_SANDBOX_STEPS,
 	MAX_WORKSPACE_SANDBOXES,
 	type McpCheck,
 	type McpCheckResult,
@@ -1416,9 +1420,18 @@ export class RegistryDO extends DurableObject {
 			const over = this.#sandboxLimitRefusal(conversation, agent);
 			if (over) return over;
 		}
+		// Working on the repository's files without a sandbox (AGT-122) asks for no sandbox, so no
+		// offer, limit or meter of theirs decides here, and the run is not marked as having one. An
+		// ask has no tools, so it has no files to work on either. The runtime gives such a turn no
+		// file tools yet, so a server refuses it unless it says otherwise (`FILES_ONLY_RUNS`): an
+		// agent told it can edit files does not quietly answer as one that cannot.
+		const files = agent.files === true && tools;
+		if (files && !filesOffered(this.env as FilesSettings)) {
+			return refused(`${FILES_NOT_OFFERED}, so ${agent.name} cannot answer.`);
+		}
 		const limits = sandboxLimits(this.env as SandboxSettings);
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
-		const repository = sandbox ? agentRepository(this.#db, agent.agentId) : null;
+		const repository = sandbox || files ? agentRepository(this.#db, agent.agentId) : null;
 		if (repository && "problem" in repository) {
 			return refused(
 				`${repository.problem}, so ${agent.name} cannot answer. An owner or admin can choose another repository on the agent, or reconnect it in Repositories.`,
@@ -1462,6 +1475,8 @@ export class RegistryDO extends DurableObject {
 			repository,
 			// Gateweave's own loop only, for now: an engine in the sandbox gets none.
 			memory: tools && agent.memory && agent.engine === "gateweave",
+			// Its work goes in many small steps, as a sandbox's does.
+			...(files ? { files: true as const, steps: MAX_SANDBOX_STEPS } : {}),
 		};
 	}
 

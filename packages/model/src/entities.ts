@@ -365,6 +365,11 @@ export interface AgentDefinition {
 	engine: AgentEngine;
 	/** Whether its turns can write to the workspace's memory and recall from it. */
 	memory: boolean;
+	/**
+	 * Whether its turns work on the repository's files without a sandbox: they read and edit them and
+	 * open pull requests, and run nothing. Never with a sandbox, and only with a repository.
+	 */
+	files: boolean;
 }
 
 /**
@@ -428,6 +433,11 @@ export interface AgentSnapshot {
 	engine: AgentEngine;
 	/** Whether its turns have the memory tools. */
 	memory: boolean;
+	/**
+	 * Set when its turns work on its repository's files without a sandbox, and left out otherwise,
+	 * so the snapshot of an agent without the setting is what it was before the setting existed.
+	 */
+	files?: true;
 	/** When the definition last changed. */
 	updatedAt: number;
 }

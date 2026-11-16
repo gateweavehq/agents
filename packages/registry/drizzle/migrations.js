@@ -39,6 +39,7 @@ import m0037 from "./0037_wiki.sql";
 import m0038 from "./0038_parched_lady_ursula.sql";
 import m0039 from "./0039_agent_memory.sql";
 import m0040 from "./0040_memory_search.sql";
+import m0041 from "./0041_agent_files.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -85,5 +86,6 @@ export default {
 		m0038,
 		m0039,
 		m0040,
+		m0041,
 	},
 };

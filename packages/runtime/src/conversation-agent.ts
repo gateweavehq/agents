@@ -4,6 +4,8 @@ import {
 	type AgentSnapshot,
 	conversationBranch,
 	ENGINE_NAMES,
+	MAX_SANDBOX_STEPS,
+	MAX_STEPS,
 	PULL_REQUEST_TOOL,
 	type PullRequestOutcome,
 	providerMissing,
@@ -132,12 +134,6 @@ const UNREAD_REQUEST: MeteredRequest = {
 	gatewayLogId: null,
 	error: null,
 };
-
-/** The model requests one turn may make: the first, and one after each round of tool calls. */
-export const MAX_STEPS = 10;
-
-/** The same for a turn with a sandbox, whose work takes many small steps. */
-export const MAX_SANDBOX_STEPS = 40;
 
 /** Most characters of a nested turn's answer that the model which asked for it reads. */
 export const MAX_ANSWER = 50_000;

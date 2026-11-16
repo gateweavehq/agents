@@ -294,6 +294,7 @@ export function getAgent(db: Db, id: string): AgentDetail | null {
 		sandbox: row.sandbox,
 		engine: row.engine,
 		memory: row.memory,
+		files: row.files,
 		repository: chosenRepository(db, row.repositoryId),
 	};
 	const instructions = pinned

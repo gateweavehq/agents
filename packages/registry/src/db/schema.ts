@@ -234,12 +234,17 @@ export const agentDefinitions = sqliteTable(
 		envSetVersion: integer("env_set_version"),
 		/** Whether its turns have a sandbox to run commands and edit files in. */
 		sandbox: integer("sandbox", { mode: "boolean" }).notNull().default(false),
-		/** The repository its sandbox checks out; only an agent with a sandbox has one. */
+		/** The repository its sandbox checks out, or its turns' files are read from. */
 		repositoryId: text("repository_id").references(() => repositories.id),
 		/** What takes its turns: Gateweave's own loop, or Claude Code in the sandbox. */
 		engine: text("engine", { enum: AGENT_ENGINES }).notNull().default("gateweave"),
 		/** Whether its turns have the memory tools (`../memory.ts`). Off unless someone turns it on. */
 		memory: integer("memory", { mode: "boolean" }).notNull().default(false),
+		/**
+		 * Whether its turns work on the repository's files without a sandbox (AGT-122). Never with
+		 * `sandbox`, and only with a repository, which `../definitions.ts` holds on every save.
+		 */
+		files: integer("files", { mode: "boolean" }).notNull().default(false),
 	},
 	(table) => [
 		index("agent_definitions_instructions_idx").on(table.instructionsAssetId),

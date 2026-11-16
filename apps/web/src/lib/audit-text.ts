@@ -27,6 +27,7 @@ const FIELD_NAMES: Record<string, string> = {
 	repository: "repository",
 	engine: "engine",
 	memory: "memory",
+	files: "work on files without a sandbox",
 	runtimes: "coding agents",
 	assets: "assets",
 	prompt: "prompt",

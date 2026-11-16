@@ -1,0 +1,1 @@
+ALTER TABLE `agent_definitions` ADD `files` integer DEFAULT false NOT NULL;
