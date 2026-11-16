@@ -1438,8 +1438,10 @@ export class RegistryDO extends DurableObject {
 			);
 		}
 		if (repository && !githubSetUp(this.env as SourceEnv)) {
+			// A turn with files checks nothing out: it reads the repository through GitHub's API.
+			const cannot = files ? "read" : "check out";
 			return refused(
-				`${GITHUB_NOT_SET_UP}, so ${agent.name} cannot check out ${repository.owner}/${repository.name}. Whoever runs this server can set it up; see the README.`,
+				`${GITHUB_NOT_SET_UP}, so ${agent.name} cannot ${cannot} ${repository.owner}/${repository.name}. Whoever runs this server can set it up; see the README.`,
 			);
 		}
 		// A stand-in turn reaches nothing outside, so none of the agent's MCP servers either.

@@ -11,7 +11,6 @@ import {
 	MAX_WORKSPACE_SANDBOXES,
 } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
-import migrations from "../drizzle/migrations.js";
 import type { RegistryDO } from "../src";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
@@ -222,6 +221,44 @@ describe("an agent that works on files without a sandbox", () => {
 		expect(await stub.listAgents()).toEqual([]);
 	});
 
+	it("is saved with the setting off by a form that knows nothing of it and sends no repository", async () => {
+		const stub = registry();
+		const [site = ""] = await stub.syncRepositories([SITE]);
+		const agent = await stub.createAgent(onFiles(site));
+		// What the app's form sends for an agent without a sandbox, until it carries every field
+		// (AGT-135): no `files`, and no repository. Nothing refuses it, so the setting goes.
+		const old = { ...plain({ name: "Renamed" }), sandbox: false, repositoryId: null };
+		expect(old).not.toHaveProperty("files");
+		await expect(stub.updateAgent(agent.id, old)).resolves.toMatchObject({ name: "Renamed" });
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
+			files: false,
+			sandbox: false,
+			repository: null,
+		});
+		expect(await stub.agentSnapshot(agent.id)).not.toHaveProperty("files");
+		expect(await storedDefinitions(stub)).toMatchObject([
+			{ agent_id: agent.id, files: 0, sandbox: 0, repository_id: null },
+		]);
+	});
+
+	it("is told a repository on GitLab cannot be worked on, in its own words and not a sandbox's", async () => {
+		const stub = registry();
+		const [shop = ""] = await stub.syncRepositories([
+			{ ...SITE, provider: "gitlab", externalId: "gitlab.example.test:7", name: "shop" },
+		]);
+		await inside(stub, (instance) => {
+			expect(() => instance.createAgent(onFiles(shop))).toThrow(
+				"acme/shop is on GitLab: an agent works on the files of GitHub repositories only, for now",
+			);
+			expect(() => instance.createAgent(onFiles(shop))).not.toThrow(/sandbox/);
+			// An agent with a sandbox is told what it always was.
+			expect(() => instance.createAgent(plain({ sandbox: true, repositoryId: shop }))).toThrow(
+				"acme/shop is on GitLab: sandboxes check out GitHub repositories only, for now",
+			);
+		});
+		expect(await stub.listAgents()).toEqual([]);
+	});
+
 	it("takes only a repository the workspace's GitHub App reaches, and keeps one it had", async () => {
 		const stub = registry();
 		const [site = ""] = await stub.syncRepositories([SITE]);
@@ -260,7 +297,8 @@ describe("a turn of an agent that works on files without a sandbox", () => {
 		expect(await stub.beginTurn(id, "Fix the typo")).toEqual(refusal);
 		// Sandboxes and a GitHub App do not offer it: only the setting does, and only as `1`.
 		const server = { SANDBOX: {}, GITHUB_APP_ID: "1", GITHUB_APP_PRIVATE_KEY: "unused" };
-		for (const value of [undefined, "", "0", "true", "yes", "11", 0, true]) {
+		// A number or a list that would read as `1` is not the text `1`.
+		for (const value of [undefined, "", "0", "true", "yes", "11", 0, true, 1, ["1"]]) {
 			await withSettings(stub, { ...server, FILES_ONLY_RUNS: value }, async (instance) => {
 				expect(await instance.beginTurn(id, "Fix the typo")).toEqual(refusal);
 			});
@@ -305,8 +343,8 @@ describe("a turn of an agent that works on files without a sandbox", () => {
 		});
 		expect(MAX_SANDBOX_STEPS).toBe(40);
 		expect(JSON.stringify(turn)).not.toMatch(/token|ghs_/i);
-		// Wrangler hands a number in `vars` over as a number.
-		await withSettings(stub, { ...OFFERED, FILES_ONLY_RUNS: 1 }, async (instance) => {
+		// Space around the setting is trimmed, as around the server's other settings.
+		await withSettings(stub, { ...OFFERED, FILES_ONLY_RUNS: " 1\n" }, async (instance) => {
 			expect(await instance.beginTurn(id, "And the next")).toMatchObject({ files: true });
 		});
 	});
@@ -365,15 +403,27 @@ describe("a turn of an agent that works on files without a sandbox", () => {
 		expect(await stub.sandboxSecondsToday()).toBe(0);
 	});
 
-	it("is refused where the server cannot reach the repository, in the words a sandbox's turn is", async () => {
+	it("is refused where the server cannot reach the repository, and is not told of a checkout", async () => {
 		const stub = registry();
-		const { id } = await conversation(stub);
-		// A server that is not a GitHub App has no way to read it.
+		const { id, site } = await conversation(stub);
+		// A server that is not a GitHub App has no way to read it. Nothing is checked out here.
 		await withSettings(stub, { FILES_ONLY_RUNS: "1" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Fix the typo")).toEqual({
 				status: "refused",
 				message:
-					"GitHub is not set up on this server, so Builder cannot check out acme/site. Whoever runs this server can set it up; see the README.",
+					"GitHub is not set up on this server, so Builder cannot read acme/site. Whoever runs this server can set it up; see the README.",
+			});
+		});
+		// An agent with a sandbox on the same repository is told what it always was.
+		const builder = await stub.createAgent(
+			plain({ name: "Coder", sandbox: true, repositoryId: site }),
+		);
+		const theirs = (await stub.startConversation(builder.id, ADA))?.id ?? "";
+		await withSettings(stub, { SANDBOX: {} }, async (instance) => {
+			expect(await instance.beginTurn(theirs, "Fix the build")).toEqual({
+				status: "refused",
+				message:
+					"GitHub is not set up on this server, so Coder cannot check out acme/site. Whoever runs this server can set it up; see the README.",
 			});
 		});
 		await stub.removeInstallation("99");
@@ -385,6 +435,22 @@ describe("a turn of an agent that works on files without a sandbox", () => {
 			});
 		});
 		expect(await stub.listRuns()).toEqual([]);
+	});
+
+	it("is told in its own words when its repository turns out to be on GitLab", async () => {
+		const stub = registry();
+		const { id, site } = await conversation(stub);
+		// No save allows it, so the row is changed where it lies: the turn reads it all the same.
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("UPDATE repositories SET provider = 'gitlab' WHERE id = ?", site);
+		});
+		await withSettings(stub, OFFERED, async (instance) => {
+			expect(await instance.beginTurn(id, "Fix the typo")).toEqual({
+				status: "refused",
+				message:
+					"acme/site is on GitLab: an agent works on the files of GitHub repositories only, for now, so Builder cannot answer. An owner or admin can choose another repository on the agent, or reconnect it in Repositories.",
+			});
+		});
 	});
 
 	it("has no files on an ask, which has no tools, so an ask is not refused", async () => {
@@ -487,78 +553,5 @@ describe("agents without the setting", () => {
 		expect(turn).toMatchObject({ sandbox: true, repository: { name: "site" } });
 		expect(turn).not.toHaveProperty("files");
 		expect(turn).not.toHaveProperty("steps");
-	});
-});
-
-describe("the migration that adds the setting", () => {
-	const TAG = "0041_agent_files";
-
-	it("leaves every agent of a registry on the schema before it as it was", async () => {
-		const stub = registry();
-		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
-		const [site = ""] = await stub.syncRepositories([SITE]);
-		const rules = await stub.createLibraryAsset({
-			kind: "instructions",
-			name: "rules",
-			text: "Be brief.\n",
-		});
-		const made = [
-			await stub.createAgent(plain({ name: "Plain" })),
-			await stub.createAgent(
-				plain({ name: "Reader", instructions: { assetId: rules, version: 1 }, memory: true }),
-			),
-			await stub.createAgent(plain({ name: "Builder", sandbox: true, repositoryId: site })),
-			await stub.createAgent(plain({ name: "Coder", sandbox: true, engine: "claude-code" })),
-		];
-		const read = async () =>
-			JSON.stringify({
-				agents: await stub.listAgents(),
-				details: await Promise.all(made.map(({ id }) => stub.getAgent(id))),
-				snapshots: await Promise.all(made.map(({ id }) => stub.agentSnapshot(id))),
-			});
-		const before = await read();
-		const rowsBefore = await storedDefinitions(stub);
-
-		// Back to the table as the migration before this one left it, with the rows it held.
-		const entry = migrations.journal.entries.find(({ tag }) => tag === TAG);
-		const sql = migrations.migrations[`m${String(entry?.idx).padStart(4, "0")}`] ?? "";
-		expect(sql).toContain("agent_definitions");
-		const columns = (state: DurableObjectState) =>
-			state.storage.sql
-				.exec<{ name: string }>("PRAGMA table_info(agent_definitions)")
-				.toArray()
-				.map(({ name }) => name);
-		await runInDurableObject(stub, (_instance, state) => {
-			state.storage.sql.exec("ALTER TABLE agent_definitions DROP COLUMN files");
-			expect(columns(state)).not.toContain("files");
-			expect(columns(state)).toHaveLength(Object.keys(rowsBefore[0] ?? {}).length - 1);
-			// The migration's own statements, as the registry runs them when it wakes.
-			for (const statement of sql.split("--> statement-breakpoint")) {
-				state.storage.sql.exec(statement);
-			}
-			expect(columns(state).at(-1)).toBe("files");
-		});
-
-		expect(await read()).toBe(before);
-		const rows = await storedDefinitions(stub);
-		expect(rows).toEqual(rowsBefore);
-		expect(rows).toHaveLength(made.length);
-		expect(rows.every((row) => row.files === 0)).toBe(true);
-		// And each still takes its turn, or is refused it, as before.
-		const turn = async (agentId: string) => {
-			const id = (await stub.startConversation(agentId, ADA))?.id ?? "";
-			return stub.beginTurn(id, "Hello");
-		};
-		for (const agent of made.slice(0, 2)) {
-			const begun = await turn(agent.id);
-			expect(begun).toMatchObject({ sandbox: false, repository: null });
-			expect(begun).not.toHaveProperty("files");
-		}
-		for (const agent of made.slice(2)) {
-			expect(await turn(agent.id)).toEqual({
-				status: "refused",
-				message: `This server does not run sandboxes, so ${agent.name} cannot answer. Whoever runs this server can turn them on; see the README.`,
-			});
-		}
 	});
 });

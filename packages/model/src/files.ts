@@ -10,17 +10,21 @@
 /** What a deployment sets to run turns that work on files without a sandbox. */
 export interface FilesSettings {
 	/**
-	 * `1` to run them. Off when unset or anything else, so a mistyped value never turns them on.
-	 * Until the runtime gives such a turn its file tools, `1` only lets the turn through as one
-	 * without them.
+	 * The text `1` to run them, with or without space around it. Off when unset or anything else,
+	 * so a mistyped value never turns them on. Until the runtime gives such a turn its file tools,
+	 * `1` only lets the turn through as one without them.
 	 */
 	FILES_ONLY_RUNS?: unknown;
 }
 
-/** Whether the deployment runs turns that work on files without a sandbox. */
+/**
+ * Whether the deployment runs turns that work on files without a sandbox: the setting is the
+ * text `1`, trimmed. Anything that is not text is off, a number or a list among them, which read
+ * as `1` once made text: in `wrangler.jsonc` the value is written `"1"`.
+ */
 export function filesOffered(settings: FilesSettings): boolean {
-	// Wrangler passes a number in `vars` as a number.
-	return String(settings.FILES_ONLY_RUNS ?? "").trim() === "1";
+	const setting = settings.FILES_ONLY_RUNS;
+	return typeof setting === "string" && setting.trim() === "1";
 }
 
 /** Why an agent set to work on files without a sandbox cannot answer where the server runs no such turn. */

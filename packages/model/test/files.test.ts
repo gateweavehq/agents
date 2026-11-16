@@ -48,11 +48,15 @@ describe("an agent's files setting", () => {
 describe("a deployment's files setting", () => {
 	it("is on only as 1, so a mistyped value never turns it on", () => {
 		expect(filesOffered({})).toBe(false);
-		for (const value of ["", "0", "true", "yes", "on", "11", "1.0", 0, true, null]) {
+		for (const value of ["", "0", "true", "yes", "on", "11", "1.0", "1,1", 0, true, null]) {
 			expect(filesOffered({ FILES_ONLY_RUNS: value })).toBe(false);
 		}
-		// Wrangler passes a number in `vars` as a number.
-		for (const value of ["1", " 1 ", 1]) {
+		// Only text is read: a number or a list that reads as `1` once made text is off.
+		for (const value of [1, ["1"], [1], { toString: () => "1" }, new String("1")]) {
+			expect(filesOffered({ FILES_ONLY_RUNS: value })).toBe(false);
+		}
+		// Space around it is trimmed, as around the other settings.
+		for (const value of ["1", " 1", "1 ", "1\n", "\t1 "]) {
 			expect(filesOffered({ FILES_ONLY_RUNS: value })).toBe(true);
 		}
 	});

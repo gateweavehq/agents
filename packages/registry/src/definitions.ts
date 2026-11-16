@@ -238,15 +238,24 @@ function checkRepository(
 		.get();
 	if (!repository) throw new AgentError("There is no such repository in the workspace");
 	if (repository.id === chosenId) return;
-	const problem = repositoryProblem(repository);
+	const problem = repositoryProblem(repository, input.files);
 	if (problem) throw new AgentError(problem);
 }
 
-/** Why the workspace's GitHub App cannot check out a repository for a sandbox; null if it can. */
-function repositoryProblem(repository: typeof repositories.$inferSelect): string | null {
+/**
+ * Why the workspace's GitHub App cannot check out a repository for a sandbox, or read it for an
+ * agent that works on its `files` without one; null if it can. Each is told in its own words
+ * where they differ: an agent without a sandbox is not told what sandboxes do.
+ */
+function repositoryProblem(
+	repository: typeof repositories.$inferSelect,
+	files: boolean,
+): string | null {
 	const name = `${repository.owner}/${repository.name}`;
 	if (repository.provider === "gitlab") {
-		return `${name} is on GitLab: sandboxes check out GitHub repositories only, for now`;
+		return files
+			? `${name} is on GitLab: an agent works on the files of GitHub repositories only, for now`
+			: `${name} is on GitLab: sandboxes check out GitHub repositories only, for now`;
 	}
 	if (repository.provider !== "github" || repository.installationId === null) {
 		return `${name} is not reached through the workspace's GitHub App`;
@@ -308,14 +317,14 @@ export function agentRepository(
 	agentId: string,
 ): SandboxRepository | { problem: string } | null {
 	const found = db
-		.select({ repository: repositories })
+		.select({ repository: repositories, files: agentDefinitions.files })
 		.from(agentDefinitions)
 		.innerJoin(repositories, eq(repositories.id, agentDefinitions.repositoryId))
 		.where(eq(agentDefinitions.agentId, agentId))
 		.get();
 	if (!found) return null;
 	const { repository } = found;
-	const problem = repositoryProblem(repository);
+	const problem = repositoryProblem(repository, found.files);
 	if (problem || repository.installationId === null) {
 		return { problem: problem ?? "The repository cannot be reached" };
 	}
