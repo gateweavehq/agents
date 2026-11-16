@@ -50,13 +50,14 @@ jobs:
           fi
           # A pull request checks out the merge GitHub made; its first parent is the base.
           # Without rename detection, so a file moved under docs/ still counts by where it was.
+          # And without quoting, so a path with a letter outside ASCII still matches the patterns.
           app=false
           while read -r file; do
             [ -z "$file" ] && continue
             case "$file" in
               apps/web/*|packages/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|wrangler.jsonc|.node-version|.github/workflows/*) app=true ;;
             esac
-          done <<< "$(git diff --name-only --no-renames HEAD^1 HEAD)"
+          done <<< "$(git -c core.quotePath=false diff --name-only --no-renames HEAD^1 HEAD)"
           echo "app=$app" >> "$GITHUB_OUTPUT"
           echo "App changed: $app."
 
