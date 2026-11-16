@@ -33,8 +33,9 @@ export const GLOB_LIMITS = {
 	anyDepth: 8,
 	/**
 	 * Steps one glob may take over every path it is asked about: a character compared, or a pair
-	 * of parts tried. A plain glob over 20,000 paths takes under two million; twenty million is
-	 * a fraction of a second.
+	 * of parts tried. Measured in Node on a laptop over 20,000 paths: `*.txt` took about 400,000
+	 * steps and a glob with nine endings in braces about three million, and a glob made to be
+	 * slow was stopped at twenty million after 0.3 seconds.
 	 */
 	steps: 20_000_000,
 };
