@@ -1,4 +1,4 @@
-import { GitHubError } from "@gateweave/agents-github";
+import { createCommit, GitHubError } from "@gateweave/agents-github";
 import { FakeGit } from "@gateweave/agents-github/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FILE_STORE_LIMITS, FileStore } from "../src/file-store";
@@ -251,6 +251,131 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 				...FILES,
 				"README.md": "# One\n",
 				"docs/guide.md": "# Other\n",
+			});
+		});
+	});
+
+	const theirs = `The branch ${BRANCH} holds a commit this conversation did not make, so the work was not put over it.`;
+
+	/** A commit on the branch's tip, by someone else, that takes one file away. */
+	async function removed(fake: FakeGit, path: string): Promise<string> {
+		const parent = fake.branches.get(BRANCH) ?? fake.branches.get("main") ?? "";
+		const commit = await createCommit(fake.token, fake.repository, {
+			parent,
+			tree: fake.commits.get(parent)?.tree ?? "",
+			files: [],
+			deleted: [path],
+			message: `someone removed ${path}`,
+		});
+		fake.branches.set(BRANCH, commit);
+		return commit;
+	}
+
+	it("is someone else's when it puts back a file the conversation changed", async () => {
+		await checkedOut(FILES, async ({ fake, store, storage }) => {
+			await store.writeFile(`${REPO}/README.md`, "# Mine\n");
+			const first = await store.push(BRANCH, "Mine", AUTHOR);
+			if ("error" in first) throw new Error(first.error);
+			// Someone reverts it on the branch: the file is the base's again, which is not what
+			// the conversation's commit before it held, and not what this push would leave.
+			const reverted = await fake.push(BRANCH, "README.md", FILES["README.md"] ?? "");
+
+			expect(await store.push(BRANCH, "Mine again", AUTHOR)).toEqual({ error: theirs });
+			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
+			expect(await store.push(BRANCH, "And more", AUTHOR)).toEqual({ error: theirs });
+			expect(fake.branches.get(BRANCH)).toBe(reverted);
+			expect(fake.filesAt(BRANCH)).toEqual(FILES);
+			expect(noted(storage)).toBe(first.head);
+		});
+	});
+
+	it("is someone else's when it restores a file the conversation deleted", async () => {
+		await checkedOut(FILES, async ({ fake, store }) => {
+			await store.deleteFile(`${REPO}/docs/guide.md`);
+			expect(await store.push(BRANCH, "Drop the guide", AUTHOR)).toMatchObject({ pushed: true });
+			const restored = await fake.push(BRANCH, "docs/guide.md", FILES["docs/guide.md"] ?? "");
+
+			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
+			expect(await store.push(BRANCH, "And more", AUTHOR)).toEqual({ error: theirs });
+			expect(fake.branches.get(BRANCH)).toBe(restored);
+			expect(fake.filesAt(BRANCH)).toEqual(FILES);
+		});
+	});
+
+	it("is someone else's when it removes a file the conversation added", async () => {
+		await checkedOut(FILES, async ({ fake, store }) => {
+			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
+			expect(await store.push(BRANCH, "Add a page", AUTHOR)).toMatchObject({ pushed: true });
+			const taken = await removed(fake, "docs/new.md");
+
+			await store.writeFile(`${REPO}/README.md`, "# Mine\n");
+			expect(await store.push(BRANCH, "And more", AUTHOR)).toEqual({ error: theirs });
+			expect(fake.branches.get(BRANCH)).toBe(taken);
+			expect(fake.filesAt(BRANCH)).toEqual(FILES);
+		});
+	});
+
+	it("is someone else's when it changes only whether a file can be run", async () => {
+		await checkedOut(FILES, async ({ fake, store }) => {
+			// The same text, made executable: a change the push would undo by leaving the base's mode.
+			const parent = fake.branches.get("main") ?? "";
+			const made = await createCommit(fake.token, fake.repository, {
+				parent,
+				tree: fake.commits.get(parent)?.tree ?? "",
+				files: [{ path: "README.md", content: FILES["README.md"] ?? "", mode: "100755" }],
+				message: "someone made the readme executable",
+			});
+			fake.branches.set(BRANCH, made);
+
+			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
+			expect(await store.push(BRANCH, "Mine", AUTHOR)).toEqual({ error: theirs });
+			expect(fake.branches.get(BRANCH)).toBe(made);
+			expect(fake.modesAt(BRANCH)["README.md"]).toBe("100755");
+		});
+	});
+
+	it("is someone else's when it lacks a file this push does not delete, and its own when it does", async () => {
+		// Before any push the commit is held against the base.
+		await checkedOut(FILES, async ({ fake, store }) => {
+			const taken = await removed(fake, "src/index.ts");
+			await store.writeFile(`${REPO}/README.md`, "# Mine\n");
+			expect(await store.push(BRANCH, "Mine", AUTHOR)).toEqual({ error: theirs });
+			expect(fake.branches.get(BRANCH)).toBe(taken);
+
+			// Once the push deletes that file too, the commit holds nothing the push would undo.
+			await store.deleteFile(`${REPO}/src/index.ts`);
+			expect(await store.push(BRANCH, "Mine", AUTHOR)).toMatchObject({ pushed: true });
+			expect(fake.commitAt(BRANCH)?.parents).toEqual([taken]);
+			const { "src/index.ts": _gone, ...rest } = FILES;
+			expect(fake.filesAt(BRANCH)).toEqual({ ...rest, "README.md": "# Mine\n" });
+		});
+	});
+});
+
+describe("a name that changes only in case", () => {
+	it("is refused while the other stands, and taken once the conversation deleted it", async () => {
+		await checkedOut(FILES, async ({ fake, store }) => {
+			expect(await store.writeFile(`${REPO}/Readme.md`, "# Renamed\n")).toMatchObject({
+				error: expect.stringContaining(`differs only in case from ${REPO}/README.md`),
+			});
+			expect(await store.deleteFile(`${REPO}/README.md`)).toEqual({ deleted: true });
+			expect(await store.writeFile(`${REPO}/Readme.md`, "# Renamed\n")).toEqual({ written: 10 });
+			// A directory is gone once its files are, and can come back in another case.
+			expect(await store.writeFile(`${REPO}/Docs/guide.md`, "# Guide\n")).toMatchObject({
+				error: expect.stringContaining(`differs only in case from ${REPO}/docs`),
+			});
+			expect(await store.deleteFile(`${REPO}/docs/guide.md`)).toEqual({ deleted: true });
+			expect(await store.writeFile(`${REPO}/Docs/guide.md`, "# Guide\n")).toEqual({ written: 8 });
+			// The new names are there to differ from now, and the old ones are not.
+			expect(await store.writeFile(`${REPO}/README.md`, "# Back\n")).toMatchObject({
+				error: expect.stringContaining(`differs only in case from ${REPO}/Readme.md`),
+			});
+
+			expect(await store.push(BRANCH, "Rename", AUTHOR)).toMatchObject({ pushed: true });
+			expect(fake.filesAt(BRANCH)).toEqual({
+				"Readme.md": "# Renamed\n",
+				"Docs/guide.md": "# Guide\n",
+				"src/index.ts": FILES["src/index.ts"],
 			});
 		});
 	});

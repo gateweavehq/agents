@@ -751,11 +751,17 @@ export class FileStore implements DeletingFilePort, PushPort {
 	 * Whether the commit found on the branch is this conversation's own work, though it has no
 	 * note of it: GitHub took a push and the note was lost with the answer, or with the object,
 	 * which a deploy restarts. It is when it follows directly from where the conversation left
-	 * the branch (or from the base, before any push) and holds nothing this push would not put
-	 * there: every file in it is the base's, or exactly what the change now writes, and every
-	 * file it lacks is one the change deletes. A commit on top of it then drops nothing, whoever
-	 * made it. A file the conversation changed again since is not what the commit holds, and
-	 * then the commit is taken for someone else's, as before.
+	 * the branch (or from the base, before any push) and everything it changed from that commit
+	 * ends as this push leaves it: a file it wrote holds what the push writes there, content and
+	 * mode, and a file it took away is one the push deletes. A commit on top of it then undoes
+	 * nothing in it, whoever made it.
+	 *
+	 * The commit is held against its own parent, not against the base. A person who puts a file
+	 * back as the base has it, on a branch where the conversation changed that file, has changed
+	 * it from the parent, and the push would change it back: that commit is theirs, and so is
+	 * one that restores a file the conversation deleted, or removes one it added. A file the
+	 * conversation changed again since the lost push is not what the commit holds either, and
+	 * the commit is then taken for someone else's too, as it was before any of this.
 	 */
 	async #isOwn(
 		token: string,
@@ -773,22 +779,42 @@ export class FileStore implements DeletingFilePort, PushPort {
 		}
 		const held = await readTreeEntries(token, repository, commit.tree);
 		if (held.truncated) return false;
+		// What the commit follows from: the conversation's last commit, or the base before any.
+		let before: readonly TreeItem[] = listing.entries;
+		if (expected !== null) {
+			const parent = await readCommit(token, repository, expected);
+			const listed = await readTreeEntries(token, repository, parent.tree);
+			if (listed.truncated) return false;
+			before = listed.entries;
+		}
 		const written = new Map<string, string>();
 		for (const file of files) {
 			written.set(file.path, await gitBlobId(encoder.encode(file.content)));
 		}
-		const seen = new Set<string>();
-		for (const entry of held.entries) {
-			seen.add(entry.path);
-			const was = listing.byPath.get(entry.path);
-			if (was && was.id === entry.id && was.mode === entry.mode) continue;
-			// A written file keeps the base's mode when it can be run, and is a plain file otherwise.
-			const mode = was?.mode === TREE_MODES.executable ? TREE_MODES.executable : TREE_MODES.file;
-			if (written.get(entry.path) === entry.id && entry.mode === mode) continue;
-			return false;
-		}
 		const gone = new Set(deleted);
-		return listing.entries.every((entry) => seen.has(entry.path) || gone.has(entry.path));
+		/** What this push leaves at a path: its blob and mode, or null for no file. */
+		const left = (path: string): { id: string; mode: string } | null => {
+			if (gone.has(path)) return null;
+			const was = listing.byPath.get(path);
+			const id = written.get(path);
+			if (id === undefined) return was ? { id: was.id, mode: was.mode } : null;
+			// A written file keeps the base's mode when it can be run, and is a plain file otherwise.
+			const runs = was?.mode === TREE_MODES.executable;
+			return { id, mode: runs ? TREE_MODES.executable : TREE_MODES.file };
+		};
+		const same = (
+			one: { id: string; mode: string } | null | undefined,
+			other: { id: string; mode: string } | null | undefined,
+		) => (one ? other?.id === one.id && other.mode === one.mode : !other);
+		const parents = new Map(before.map((entry) => [entry.path, entry]));
+		const theirs = new Map(held.entries.map((entry) => [entry.path, entry]));
+		for (const path of new Set([...parents.keys(), ...theirs.keys()])) {
+			const now = theirs.get(path);
+			// Not changed by the commit: nothing of its own to undo there.
+			if (same(parents.get(path), now)) continue;
+			if (!same(now, left(path))) return false;
+		}
+		return true;
 	}
 
 	/** The checkout, and the path from the repository's root; or why there is no file there. */
@@ -869,9 +895,28 @@ export class FileStore implements DeletingFilePort, PushPort {
 	 * written.
 	 */
 	#caseTwin(listing: Listing, relative: string): string | null {
-		const known = (name: string) => listing.byPath.has(name) || listing.folders.has(name);
+		const changes = this.#changedPaths();
+		const gone = new Set(changes.filter((change) => change.deleted).map((change) => change.path));
+		// The repository's names as they stand: a file the conversation deleted is not there to
+		// differ from, nor a directory once all its files are gone, so a file can be given the
+		// same name in another case by deleting it and writing it.
+		let standing = listing.lower;
+		let known = (name: string) => listing.byPath.has(name) || listing.folders.has(name);
+		if (gone.size > 0) {
+			const names = new Set<string>();
+			standing = new Map();
+			for (const { path } of listing.entries) {
+				if (gone.has(path)) continue;
+				for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
+					const name = path.slice(0, end);
+					names.add(name);
+					if (!standing.has(name.toLowerCase())) standing.set(name.toLowerCase(), name);
+				}
+			}
+			known = (name) => names.has(name);
+		}
 		const written = new Map<string, string>();
-		for (const change of this.#changedPaths()) {
+		for (const change of changes) {
 			if (change.deleted) continue;
 			for (let end = change.path.length; end > 0; end = change.path.lastIndexOf("/", end - 1)) {
 				const name = change.path.slice(0, end);
@@ -885,7 +930,7 @@ export class FileStore implements DeletingFilePort, PushPort {
 		// The topmost first, so the answer names where the two part ways.
 		for (const name of names) {
 			if (known(name)) continue;
-			const twin = listing.lower.get(name.toLowerCase()) ?? written.get(name.toLowerCase());
+			const twin = standing.get(name.toLowerCase()) ?? written.get(name.toLowerCase());
 			if (twin !== undefined && twin !== name) return twin;
 		}
 		return null;

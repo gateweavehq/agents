@@ -1093,8 +1093,11 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     a sandbox's (`PushPort`), so `open_pull_request` can stand on either. A commit GitHub took
     whose note was lost, with the answer or with the object when a deploy restarts it, is found
     by the next push and taken for the conversation's own when it follows directly from where
-    the conversation left the branch and holds nothing that push would not put there; a commit
-    on top of it then drops nothing, whoever made it.
+    the conversation left the branch and everything it changed from that commit ends as the
+    push leaves it, content, mode and deletions; a commit on top of it then undoes nothing in
+    it, whoever made it. It is held against its own parent and not the base, so a person's
+    commit that puts a file back as the base has it, restores one the conversation deleted or
+    removes one it added is theirs, and the push is refused.
   - **Search is literal text**, never a regular expression: a model's pattern does not run in
     the Durable Object, where one that backtracks without end would hold the conversation. The
     tool's description says so. It has its own globs (`glob.ts`), read as ripgrep reads them
@@ -1117,7 +1120,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     change of more than 500 files or 20 MB is refused as it is written. Only text is written: a
     NUL character is refused, and a row whose bytes the store could not read back is an error,
     never an empty file, in a read, a search and a push. A name that differs only in case from
-    one that is there is refused as it is written.
+    one that is there is refused as it is written; one the conversation deleted is not there,
+    so a file's name changes case by deleting it and writing it, and `commitChanges` takes
+    that in one change.
   - **No value over 900,000 bytes.** Durable Object SQLite takes none over 2 MB, and a backup
     and a move's digest read every value through `quote()`, which writes bytes as two
     characters each: 900,000 bytes are 1,800,003 characters. So the listing is cut into rows

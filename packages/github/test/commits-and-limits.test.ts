@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GitHubError, isRateLimit, readCommit, readTexts } from "../src";
+import {
+	commitChanges,
+	GitHubError,
+	isRateLimit,
+	readCommit,
+	readTexts,
+	readTreeEntries,
+} from "../src";
 import { FakeGit } from "./fake-git";
 
 afterEach(() => {
@@ -71,5 +78,54 @@ describe("a commit read by its id", () => {
 			status: 404,
 		});
 		await expect(readCommit(fake.readToken, fake.repository, "main")).rejects.toThrow();
+	});
+});
+
+describe("a name that changes only in case, in one change", () => {
+	const files = { "README.md": "# Site\n", "docs/guide.md": "# Guide\n", "src/a.ts": "a\n" };
+
+	async function change(written: string[], deleted: string[]) {
+		const fake = new FakeGit();
+		const commit = await fake.seed(files);
+		vi.stubGlobal("fetch", fake.fetch);
+		const tree = fake.commits.get(commit)?.tree ?? "";
+		const base = await readTreeEntries(fake.readToken, fake.repository, tree);
+		const outcome = await commitChanges(fake.token, fake.repository, {
+			branch: "work",
+			defaultBranch: "main",
+			expected: null,
+			base: { commit, tree, ...base },
+			files: written.map((path) => ({ path, content: "renamed\n" })),
+			deleted,
+			message: "Rename",
+		});
+		return { outcome, fake };
+	}
+
+	it("is refused while the other name stands in the tree", async () => {
+		expect((await change(["Readme.md"], [])).outcome).toEqual({
+			committed: false,
+			reason: "path",
+			path: "Readme.md",
+			message: "differs only in case from README.md",
+		});
+		// A folder stands while any file in it does.
+		expect((await change(["Docs/guide.md"], [])).outcome).toMatchObject({
+			reason: "path",
+			message: "differs only in case from docs",
+		});
+	});
+
+	it("is taken when the change deletes the other, a folder's last file included", async () => {
+		const { outcome, fake } = await change(
+			["Readme.md", "Docs/guide.md"],
+			["README.md", "docs/guide.md"],
+		);
+		expect(outcome).toMatchObject({ committed: true });
+		expect(Object.keys(fake.filesAt("work")).sort()).toEqual([
+			"Docs/guide.md",
+			"Readme.md",
+			"src/a.ts",
+		]);
 	});
 });

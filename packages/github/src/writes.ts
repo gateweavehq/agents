@@ -325,9 +325,18 @@ async function planChanges(
 				? "a submodule"
 				: null;
 	// Every name in the tree by its lower case, so a new name that differs from one only in case
-	// is caught: on Windows and macOS the two would be one file, or one folder.
+	// is caught: on Windows and macOS the two would be one file, or one folder. The tree is taken
+	// as this change leaves it: a path it deletes is not there to differ from, nor a folder once
+	// every file in it is deleted, so a file can change the case of its name in one change.
 	const spellings = new Map<string, string>();
-	const known = new Set([...entries.keys(), ...folders]);
+	const gone = new Set(input.deleted);
+	const known = new Set<string>();
+	for (const path of entries.keys()) {
+		if (gone.has(path)) continue;
+		for (let end = path.length; end > 0; end = path.lastIndexOf("/", end - 1)) {
+			known.add(path.slice(0, end));
+		}
+	}
 	for (const name of known) {
 		if (!spellings.has(name.toLowerCase())) spellings.set(name.toLowerCase(), name);
 	}
