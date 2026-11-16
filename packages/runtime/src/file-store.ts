@@ -534,6 +534,12 @@ export class FileStore implements DeletingFilePort, PushPort {
 	 * Puts the change on the conversation's branch as one commit, made through GitHub's API from
 	 * the commit the files were read at (`commitChanges`): the branch must not exist yet, or be at
 	 * the commit this conversation last put there. Nothing is committed when nothing differs.
+	 *
+	 * Two limits. The commit is noted here in the write right after GitHub's answer, with nothing
+	 * awaited between; were the object to stop in that moment, the branch would hold a commit the
+	 * conversation does not know for its own, and every later push would be refused as someone
+	 * else's. And the base never moves: a conversation works on the commit it first read, however
+	 * far the default branch has gone, and GitHub shows what conflicts on the pull request.
 	 */
 	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
 		const row = this.#row();
