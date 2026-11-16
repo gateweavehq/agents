@@ -18,12 +18,25 @@ import {
 	useGitHub,
 } from "./file-store-support";
 
-// The tools for files, asked the same things of both kinds of port: a sandbox's files, listed and
-// searched by its ripgrep (a stand-in that answers as ripgrep was seen to), and the files store,
-// which keeps a repository's files with no machine. Every answer below is the same text from
-// both, so a model reads one as it reads the other, and the two cannot drift apart unnoticed.
-// Where their rules differ on purpose (`../src/file-store.ts` lists where), the store's own
-// suite holds it to its rule.
+// The tools for files, asked the same things of both kinds of port: a sandbox's files and the
+// files store, which keeps a repository's files with no machine. Every answer below is the same
+// text from both, so a model reads one as it reads the other.
+//
+// What this shows: that the tools, the sentences and the formats are the same over both ports,
+// through a turn's worth of calls that read, write, edit, delete and then list and search what
+// they left.
+//
+// What it does not show by itself: that the sandbox's side is ripgrep. There is no container
+// here, so that side is `RipgrepSandbox`, a stand-in that answers the port's two command lines
+// from files in memory. It is held to the sandbox image's real ripgrep elsewhere:
+// `ripgrep-recorded.test.ts` runs it, and the store, over output recorded from that ripgrep.
+// This suite's files change as it goes, which no recording follows, so what is compared here is
+// the store with the stand-in, and what makes that worth something is the other suite. Its `rm`
+// is not recorded at all: the two ports refuse a missing file each in its own words, and the
+// suite asks only that both refuse and name it.
+//
+// Where the two differ on purpose (`../src/file-store.ts` lists where), the store's own suites
+// hold it to its rule.
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -43,7 +56,7 @@ const FILES: Record<string, string> = {
 	".github/CODEOWNERS": "* @acme/needle-team\n",
 	"windows.txt": "one\r\ntwo needle\r\n",
 	"long.txt": `${LONG}\nshort needle\n`,
-	"marked.txt": "﻿needle after a mark\n",
+	"marked.txt": "\uFEFFneedle after a mark\n",
 };
 
 type Port = (body: (files: DeletingFilePort) => Promise<void>) => Promise<void>;

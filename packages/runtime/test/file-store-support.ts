@@ -178,12 +178,13 @@ function compare(a: string, b: string): number {
 
 /**
  * A sandbox in memory whose `rg` and `rm` answer from its files, for the two command lines
- * `sandboxFiles` writes and the one it deletes with. It is not ripgrep. It does what ripgrep
- * 14.1.1 was seen to do for the cases the shared suite asks of it: a glob without a slash is a
- * file's name and one with a slash holds from the working directory; files sorted a part of the
- * path at a time; `line:text` for a search of one file; a file with a NUL byte skipped; a byte
- * order mark left off the first line; a carriage return kept; a line over 500 bytes omitted;
- * exit 1 for nothing found and 2 for a path that is not there. It knows nothing of `.gitignore`.
+ * `sandboxFiles` writes and the one it deletes with. It is not ripgrep, and it is held to
+ * ripgrep: `ripgrep-recorded.test.ts` runs it over the files and the command lines that the
+ * sandbox image's own ripgrep was recorded on (`ripgrep/recorded.json`), and its exit code and
+ * output have to be the recorded ones, case by case. Its globs are read by the store's
+ * `readGlob`, held from the working directory as ripgrep holds them, and the same recordings
+ * hold that too. It has no `.git` and knows nothing of `.gitignore`; the recordings show what
+ * ripgrep does with both, and the test says where that differs. Its `rm` is not recorded.
  */
 export class RipgrepSandbox extends MemorySandbox {
 	override async run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult> {
@@ -205,35 +206,58 @@ export class RipgrepSandbox extends MemorySandbox {
 			if (words[index] === "--glob") globs.push(words[++index] ?? "");
 			else if (words[index] === "-e") pattern = words[++index] ?? "";
 		}
+		const listing = words.includes("--files");
 		const single = this.files.has(target);
 		const under = [...this.files.keys()].filter(
 			(file) => file === target || file.startsWith(`${target}/`),
 		);
 		if (under.length === 0) {
-			return answer(2, `rg: ${target}: No such file or directory (os error 2)\n`);
+			const why = "No such file or directory (os error 2)";
+			return answer(
+				2,
+				listing
+					? `${target}: IO error for operation on ${target}: ${why}\n`
+					: `${target}: ${why}\n`,
+			);
 		}
 		const wanted = globs.filter((glob) => glob !== "!.git").map((glob) => readGlob(glob));
 		const listed = under
 			.filter((file) => {
+				// A file named itself is taken whatever the globs say.
+				if (single) return true;
 				const parts = file.slice(cwd.length + 1).split("/");
 				return wanted.every((glob) => !("error" in glob) && glob.matches(parts));
 			})
 			.sort(compare);
-		if (words.includes("--files")) {
+		if (listing) {
 			return listed.length === 0 ? answer(1, "") : answer(0, `${listed.join("\n")}\n`);
 		}
 		const expression = new RegExp(pattern ?? "", words.includes("--ignore-case") ? "i" : "");
+		const encoder = new TextEncoder();
 		let output = "";
 		for (const file of listed) {
 			const content = this.files.get(file) ?? "";
-			if (content.includes("\u0000")) continue;
-			const text = content.startsWith("﻿") ? content.slice(1) : content;
-			const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
-			for (const [index, line] of lines.entries()) {
+			const zero = content.indexOf("\0");
+			if (zero !== -1) {
+				// Skipped among others; named itself, ripgrep says it matched and shows nothing.
+				if (single && expression.test(content)) {
+					const offset = encoder.encode(content.slice(0, zero)).length;
+					output += `binary file matches (found "\\0" byte around offset ${offset})\n`;
+				}
+				continue;
+			}
+			const text = content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+			let number = 0;
+			for (let start = 0; start < text.length; ) {
+				const end = text.indexOf("\n", start);
+				const line = text.slice(start, end === -1 ? text.length : end);
+				start = end === -1 ? text.length : end + 1;
+				number++;
 				if (!expression.test(line)) continue;
-				const long = new TextEncoder().encode(line).length > 500;
+				// The newline that ends a line is counted with it.
+				const long = encoder.encode(line).length + (end === -1 ? 0 : 1) > 500;
 				const shown = long ? "[Omitted long matching line]" : line;
-				output += `${single ? "" : `${file}:`}${index + 1}:${shown}\n`;
+				output += `${single ? "" : `${file}:`}${number}:${shown}\n`;
 			}
 		}
 		return output === "" ? answer(1, "") : answer(0, output);

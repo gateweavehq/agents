@@ -17,26 +17,65 @@ export async function clipOutput(
 	limit = OUTPUT_LIMIT,
 ): Promise<ClippedOutput> {
 	if (!stream) return { text: "", omitted: 0 };
-	const headLimit = Math.floor(limit / 2);
-	const tailLimit = limit - headLimit;
-	const head = new Uint8Array(headLimit);
-	let headLength = 0;
-	let tail: Uint8Array = new Uint8Array(0);
-	let total = 0;
-	for await (const chunk of stream) {
-		total += chunk.length;
-		const taken = Math.min(headLimit - headLength, chunk.length);
-		head.set(chunk.subarray(0, taken), headLength);
-		headLength += taken;
-		if (taken < chunk.length) tail = lastBytes(join(tail, chunk.subarray(taken)), tailLimit);
+	const clip = new Clip(limit);
+	for await (const chunk of stream) clip.add(chunk);
+	return clip.end();
+}
+
+/**
+ * Text that is already here, clipped the same way with nothing awaited: for an answer made from
+ * rows that another call could change between two awaits (`./file-store.ts`).
+ */
+export function clipText(chunks: Iterable<string>, limit = OUTPUT_LIMIT): ClippedOutput {
+	const clip = new Clip(limit);
+	const encoder = new TextEncoder();
+	// Many lines to one piece, since each piece added copies the end kept so far.
+	let piece = "";
+	for (const chunk of chunks) {
+		piece += chunk;
+		if (piece.length < 16_384) continue;
+		clip.add(encoder.encode(piece));
+		piece = "";
 	}
-	const omitted = total - headLength - tail.length;
-	const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
-	if (omitted === 0) return { text: decode(join(head.subarray(0, headLength), tail)), omitted };
-	return {
-		text: `${decode(head)}\n\n[${omitted} bytes of output left out here]\n\n${decode(tail)}`,
-		omitted,
-	};
+	if (piece !== "") clip.add(encoder.encode(piece));
+	return clip.end();
+}
+
+/** The first and the last bytes of what is added, and how many lay between. */
+class Clip {
+	readonly #head: Uint8Array;
+	readonly #tailLimit: number;
+	#headLength = 0;
+	#tail: Uint8Array = new Uint8Array(0);
+	#total = 0;
+
+	constructor(limit: number) {
+		const headLimit = Math.floor(limit / 2);
+		this.#head = new Uint8Array(headLimit);
+		this.#tailLimit = limit - headLimit;
+	}
+
+	add(chunk: Uint8Array): void {
+		this.#total += chunk.length;
+		const taken = Math.min(this.#head.length - this.#headLength, chunk.length);
+		this.#head.set(chunk.subarray(0, taken), this.#headLength);
+		this.#headLength += taken;
+		if (taken < chunk.length) {
+			this.#tail = lastBytes(join(this.#tail, chunk.subarray(taken)), this.#tailLimit);
+		}
+	}
+
+	end(): ClippedOutput {
+		const omitted = this.#total - this.#headLength - this.#tail.length;
+		const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+		if (omitted === 0) {
+			return { text: decode(join(this.#head.subarray(0, this.#headLength), this.#tail)), omitted };
+		}
+		return {
+			text: `${decode(this.#head)}\n\n[${omitted} bytes of output left out here]\n\n${decode(this.#tail)}`,
+			omitted,
+		};
+	}
 }
 
 function join(a: Uint8Array, b: Uint8Array): Uint8Array {

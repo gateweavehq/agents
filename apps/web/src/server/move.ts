@@ -18,7 +18,9 @@ import type { WorkspaceRef } from "./workspaces";
 /**
  * How many workspaces one daily run moves. Each conversation takes about a dozen calls to the two
  * objects, of the thousand a Worker on the Free plan may make to Cloudflare's services; the Paid
- * plan allows ten thousand.
+ * plan allows ten thousand. One that holds a repository's files (`file-store.ts` in the runtime,
+ * which nothing uses yet) takes a read and a write more for every 4 MB of them: about forty calls
+ * at the most it can hold.
  */
 const MOVES_PER_RUN = 3;
 

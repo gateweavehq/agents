@@ -142,22 +142,42 @@ describe("checking a repository out with no machine", () => {
 		});
 	});
 
-	it("takes a repository of exactly as many files as are allowed, in a few rows", async () => {
+	it("takes a repository of exactly as many files as are allowed, its listing cut into rows", async () => {
 		const fake = new FakeGit();
 		const many: Record<string, string> = {};
+		// Names and texts that do not compress, so the listing is as long as one of this many
+		// files gets: every blob's id is its own, and every name holds 48 bytes of noise.
+		const noise = new Uint8Array(48);
 		for (let index = 0; index < FILE_STORE_LIMITS.files; index++) {
-			many[`dir${index % 50}/file-${index}.txt`] = `text ${index % 7}\n`;
+			crypto.getRandomValues(noise);
+			const name = [...noise].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+			many[`dir${index % 50}/${name}-${index}.txt`] = `text ${index}\n`;
 		}
+		many["dir49/file-last.txt"] = many[Object.keys(many)[0] ?? ""] ?? "";
+		delete many[Object.keys(many)[0] ?? ""];
 		await fake.seed(many);
 		useGitHub(fake);
 		await inConversation(async (storage) => {
 			const { store } = storeOver(storage, fake);
 			expect(await store.checkout(repositoryOf(fake), BRANCH)).toEqual({ checkedOut: true });
-			const rows = rowCounts(storage);
-			expect(rows.listing).toBeGreaterThanOrEqual(1);
-			expect(rows.listing).toBeLessThanOrEqual(8);
-			expect(found(await store.findFiles("file-19999.txt", REPO))).toBe(
-				`${REPO}/dir49/file-19999.txt\n`,
+			const parts = storage.sql
+				.exec<{ bytes: number; quoted: number }>(
+					"SELECT length(bytes) AS bytes, length(quote(bytes)) AS quoted FROM file_listing ORDER BY part",
+				)
+				.toArray();
+			// More than one row, each at most what one value may hold, and under 2 MB as a backup
+			// and a move read it, through quote().
+			expect(parts.length).toBeGreaterThan(1);
+			expect(parts.length).toBeLessThanOrEqual(10);
+			expect(parts[0]).toEqual({ bytes: 900_000, quoted: 1_800_003 });
+			expect(Math.max(...parts.map((part) => part.quoted))).toBeLessThan(2_000_000);
+			// Cut and put together again, it is the same listing.
+			const later = storeOver(storage, fake).store;
+			expect(found(await later.findFiles("file-last.txt", REPO))).toBe(
+				`${REPO}/dir49/file-last.txt\n`,
+			);
+			expect(found(await later.findFiles("*-19999.txt", REPO))).toMatch(
+				/^\/workspace\/repo\/dir49\/[0-9a-f]{96}-19999\.txt\n$/,
 			);
 		});
 	});
@@ -227,10 +247,20 @@ describe("reading", () => {
 				await store.readFile(`${REPO}/data/logo.bin`);
 				expect(fake.requests).toHaveLength(asked);
 
-				// None of them is written over.
+				// None of them is written over: not the one that is not text, and not the one too
+				// large to read, which cannot be told to be text.
 				expect(await store.writeFile(`${REPO}/data/logo.bin`, "text\n")).toEqual({
-					error: `${REPO}/data/logo.bin is not text, and is not written over.`,
+					error: `${REPO}/data/logo.bin is not text, and is not written over. Delete it first to put another file there.`,
 				});
+				expect(await store.writeFile(`${REPO}/data/large.txt`, "text\n")).toEqual({
+					error: `${REPO}/data/large.txt is 257 KiB, over what can be read here, so it is not written over. Delete it first to put another file there.`,
+				});
+				// Deleted, each leaves its path free for a file.
+				expect(await store.deleteFile(`${REPO}/data/large.txt`)).toEqual({ deleted: true });
+				expect(await store.writeFile(`${REPO}/data/large.txt`, "small now\n")).toEqual({
+					written: 10,
+				});
+				expect(await store.readFile(`${REPO}/data/large.txt`)).toEqual({ content: "small now\n" });
 				expect(await store.writeFile(`${REPO}/data/link.md`, "text\n")).toEqual({
 					error: `${REPO}/data/link.md is a symlink, which is left as it is.`,
 				});
@@ -354,7 +384,7 @@ describe("searching", () => {
 	});
 
 	it("reads a file again as bytes when GitHub's text of it lost the byte order mark", async () => {
-		const files = { "marked.txt": "﻿a needle\r\n", "plain.txt": "another needle\n" };
+		const files = { "marked.txt": "\uFEFFa needle\r\n", "plain.txt": "another needle\n" };
 		await checkedOut(files, async ({ fake, store }) => {
 			fake.dropsMark = true;
 			expect(found(await store.search({ pattern: "needle", path: REPO, ignoreCase: false }))).toBe(
@@ -364,7 +394,7 @@ describe("searching", () => {
 			expect(fake.requests[0]).toBe("POST /graphql");
 			expect(fake.requests[1]).toMatch(/\/git\/blobs\/[0-9a-f]{40}$/);
 			// What is held is the file's own bytes, mark and all.
-			expect(content(await store.readFile(`${REPO}/marked.txt`))).toBe("﻿a needle\r\n");
+			expect(content(await store.readFile(`${REPO}/marked.txt`))).toBe("\uFEFFa needle\r\n");
 			expect(fake.requests).toHaveLength(2);
 		});
 	});
@@ -372,7 +402,7 @@ describe("searching", () => {
 	it("reads at most 25 such files again in one search, and says how many it left", async () => {
 		const files: Record<string, string> = {};
 		for (let index = 0; index < 27; index++) {
-			files[`marked-${String(index).padStart(2, "0")}.txt`] = `﻿needle ${index}\n`;
+			files[`marked-${String(index).padStart(2, "0")}.txt`] = `\uFEFFneedle ${index}\n`;
 		}
 		await checkedOut(files, async ({ fake, store }) => {
 			fake.dropsMark = true;
@@ -512,9 +542,14 @@ describe("writing", () => {
 
 	it("refuses a file over 1 MiB, and a change of more than 500 files or 20 MB", async () => {
 		await checkedOut(FILES, async ({ store, storage }) => {
-			expect(await store.writeFile(`${REPO}/big.txt`, "€".repeat(400_000))).toEqual({
-				error: `${REPO}/big.txt would be 1172 KiB, over what can be written here (1024 KiB).`,
+			// 900,000 bytes is the most one file holds; a character can be three of them.
+			expect(await store.writeFile(`${REPO}/big.txt`, "€".repeat(300_001))).toEqual({
+				error: `${REPO}/big.txt would be 900003 bytes, over what one file can hold here (900000).`,
 			});
+			expect(await store.writeFile(`${REPO}/big.txt`, "€".repeat(300_000))).toEqual({
+				written: 900_000,
+			});
+			expect(await store.deleteFile(`${REPO}/big.txt`)).toEqual({ deleted: true });
 			for (let index = 0; index < FILE_STORE_LIMITS.changedFiles - 1; index++) {
 				expect(await store.writeFile(`${REPO}/many/file-${index}.txt`, "x\n")).toEqual({
 					written: 2,
@@ -532,13 +567,20 @@ describe("writing", () => {
 		});
 
 		await checkedOut(FILES, async ({ store }) => {
-			const megabyte = "m".repeat(1_000_000);
-			for (let index = 0; index < 20; index++) {
-				expect(await store.writeFile(`${REPO}/bulk/${index}.txt`, megabyte)).toEqual({
-					written: 1_000_000,
+			const most = "m".repeat(FILE_STORE_LIMITS.writtenBytes);
+			for (let index = 0; index < 22; index++) {
+				expect(await store.writeFile(`${REPO}/bulk/${index}.txt`, most)).toEqual({
+					written: 900_000,
 				});
 			}
-			expect(await store.writeFile(`${REPO}/bulk/last.txt`, "x")).toEqual({
+			// 19,800,000 bytes so far: 200,000 more are the last that fit in 20 MB.
+			expect(await store.writeFile(`${REPO}/bulk/over.txt`, "x".repeat(200_001))).toEqual({
+				error: CHANGE_TOO_LARGE,
+			});
+			expect(await store.writeFile(`${REPO}/bulk/last.txt`, "x".repeat(200_000))).toEqual({
+				written: 200_000,
+			});
+			expect(await store.writeFile(`${REPO}/bulk/one-more.txt`, "x")).toEqual({
 				error: CHANGE_TOO_LARGE,
 			});
 		});
@@ -569,7 +611,7 @@ describe("proposing the work", () => {
 	});
 
 	it("keeps a byte order mark, Windows line ends and the executable bit through an edit and a push", async () => {
-		const script = "﻿#!/bin/sh\r\necho one\r\necho two\r\n";
+		const script = "\uFEFF#!/bin/sh\r\necho one\r\necho two\r\n";
 		const files = { "bin/run.sh": script, "README.md": "# Site\n" };
 		for (const dropsMark of [false, true]) {
 			await checkedOut(
@@ -593,7 +635,7 @@ describe("proposing the work", () => {
 
 					const bytes = fake.bytesAt(BRANCH)["bin/run.sh"] ?? new Uint8Array();
 					expect([...bytes]).toEqual([
-						...new TextEncoder().encode("﻿#!/bin/sh\r\necho one\r\necho 2\r\n"),
+						...new TextEncoder().encode("\uFEFF#!/bin/sh\r\necho one\r\necho 2\r\n"),
 					]);
 					expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
 					expect(fake.modesAt(BRANCH)["bin/run.sh"]).toBe("100755");
@@ -745,16 +787,38 @@ describe("proposing the work", () => {
 		});
 	});
 
-	it("names the file a change cannot hold, where only the whole change shows it", async () => {
-		await checkedOut(FILES, async ({ fake, store }) => {
-			await store.writeFile(`${REPO}/readme.md`, "a twin\n");
-			expect(await store.push(BRANCH, "Twin", AUTHOR)).toEqual({
-				error: `${REPO}/readme.md differs only in case from README.md, so nothing was proposed. Change that file, or delete it, and try again.`,
+	it("refuses a name that differs only in case from one that is there, as it is written", async () => {
+		await checkedOut(FILES, async ({ fake, store, storage }) => {
+			const twin = (path: string, of: string) => ({
+				error: `${REPO}/${path} differs only in case from ${REPO}/${of}, which is there already. On Windows and macOS the two would be one.`,
 			});
-			expect(fake.branches.has(BRANCH)).toBe(false);
-			await store.deleteFile(`${REPO}/readme.md`);
-			await store.writeFile(`${REPO}/README.md`, "# One\n");
+			// A file of the repository, a directory of it, and a directory further up the path.
+			expect(await store.writeFile(`${REPO}/readme.md`, "a twin\n")).toEqual(
+				twin("readme.md", "README.md"),
+			);
+			expect(await store.writeFile(`${REPO}/Docs/new.md`, "new\n")).toEqual(
+				twin("Docs/new.md", "docs"),
+			);
+			expect(await store.writeFile(`${REPO}/docs/API/new.md`, "new\n")).toEqual(
+				twin("docs/API/new.md", "docs/api"),
+			);
+			// A file the conversation wrote, and a directory it made.
+			expect(await store.writeFile(`${REPO}/notes/Todo.md`, "todo\n")).toEqual({ written: 5 });
+			expect(await store.writeFile(`${REPO}/notes/todo.md`, "todo\n")).toEqual(
+				twin("notes/todo.md", "notes/Todo.md"),
+			);
+			expect(await store.writeFile(`${REPO}/Notes/other.md`, "x\n")).toEqual(
+				twin("Notes/other.md", "notes"),
+			);
+			// The same name again is the same file, and is written.
+			expect(await store.writeFile(`${REPO}/notes/Todo.md`, "done\n")).toEqual({ written: 5 });
+			expect(await store.writeFile(`${REPO}/README.md`, "# One\n")).toEqual({ written: 6 });
+			expect(rowCounts(storage).changes).toBe(2);
+			// So the push has nothing to refuse.
 			expect(await store.push(BRANCH, "One", AUTHOR)).toMatchObject({ pushed: true });
+			expect(Object.keys(fake.filesAt(BRANCH)).sort()).toEqual(
+				[...Object.keys(FILES), "notes/Todo.md"].sort(),
+			);
 		});
 	});
 });
@@ -769,9 +833,10 @@ describe("the token", () => {
 		await inConversation(async (storage) => {
 			const wrong = storeOver(storage, fake, { read: WRONG, write: WRONG }).store;
 			const refused = await wrong.checkout(repositoryOf(fake), BRANCH);
-			expect(refused).toEqual({
-				error: "GitHub did not read acme/site (it answered 401). Try again.",
-			});
+			// The caller keeps a token until it runs out, so the answer does not say to try again.
+			const unauthorized =
+				"GitHub no longer takes the workspace's GitHub App's access to acme/site (it answered 401), as when the app was removed or suspended there. An owner or admin can check the app's installation; trying again now gets the same answer.";
+			expect(refused).toEqual({ error: unauthorized });
 
 			// Checked out with a good token, then read and pushed with a wrong one.
 			await storeOver(storage, fake).store.checkout(repositoryOf(fake), BRANCH);
@@ -785,13 +850,12 @@ describe("the token", () => {
 			] as const) {
 				answers.push(String(await call(name, input).catch((error: unknown) => error)));
 			}
-			expect(answers[1]).toBe("Error: GitHub did not read acme/site (it answered 401). Try again.");
-			expect(answers[2]).toBe("Error: GitHub did not read acme/site (it answered 401). Try again.");
+			expect(answers[1]).toBe(`Error: ${unauthorized}`);
+			expect(answers[2]).toBe(`Error: ${unauthorized}`);
+			expect(answers[3]).toBe(`Error: ${unauthorized}`);
 			await wrong.writeFile(`${REPO}/docs/new.md`, "new\n");
 			const pushed = await wrong.push(BRANCH, "New", AUTHOR);
-			expect(pushed).toEqual({
-				error: "GitHub did not write to acme/site (it answered 401). Try again.",
-			});
+			expect(pushed).toEqual({ error: unauthorized });
 			answers.push(JSON.stringify(pushed));
 
 			// Nowhere: not in an answer, not in what the trace keeps, not in a row.

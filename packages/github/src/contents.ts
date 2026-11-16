@@ -84,7 +84,12 @@ const textsSchema = z.object({
 		.object({ repository: z.record(z.string(), blobSchema).nullable() })
 		.nullable()
 		.optional(),
-	errors: z.array(z.object({ message: z.string() })).optional(),
+	errors: z.array(z.object({ message: z.string(), type: z.string().optional() })).optional(),
+});
+
+const commitSchema = z.object({
+	tree: z.object({ sha: objectId }),
+	parents: z.array(z.object({ sha: objectId })),
 });
 
 function repositoryPath({ owner, name }: RepositoryName) {
@@ -156,6 +161,28 @@ async function listTree(token: string, repository: RepositoryName, tree: string)
 			token,
 		),
 	);
+}
+
+/**
+ * Whether GitHub's words say the caller is over a rate limit, the primary one or a secondary
+ * one. REST answers those with 403 or 429 and GraphQL with 200, so the status alone does not
+ * tell a limit from a missing permission; the words do ("API rate limit exceeded", "You have
+ * exceeded a secondary rate limit").
+ */
+export function isRateLimit(message: string): boolean {
+	return message.toLowerCase().includes("rate limit");
+}
+
+/** A commit's tree and the commits it follows, by its id. */
+export async function readCommit(
+	token: string,
+	repository: RepositoryName,
+	commit: string,
+): Promise<{ tree: string; parents: string[] }> {
+	const found = commitSchema.parse(
+		await request(`${repositoryPath(repository)}/git/commits/${objectId.parse(commit)}`, token),
+	);
+	return { tree: found.tree.sha, parents: found.parents.map((parent) => parent.sha) };
 }
 
 /** `git hash-object` of these bytes: the id Git and GitHub give the blob that holds them. */
@@ -270,7 +297,12 @@ export async function readTexts(
 		const found = response.data?.repository;
 		if (!found) {
 			const message = response.errors?.[0]?.message ?? "no repository in the answer";
-			throw new GitHubError(404, `GitHub could not read the files: ${message}`);
+			// GraphQL answers 200 with no repository both for one it cannot find and for a caller
+			// over its rate limit; only its errors tell the two apart.
+			const limited = response.errors?.some(
+				(error) => error.type === "RATE_LIMITED" || isRateLimit(error.message),
+			);
+			throw new GitHubError(limited ? 429 : 404, `GitHub could not read the files: ${message}`);
 		}
 		for (const [index, id] of batch.entries()) {
 			const blob = found[`b${index}`];

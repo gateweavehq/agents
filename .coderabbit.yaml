@@ -1,0 +1,5 @@
+# CodeRabbit reviews pull requests here. Its settings are the defaults but for this one.
+reviews:
+  # Do not append a "Summary by CodeRabbit" to a pull request's description: the description is
+  # its author's. The review itself still comes as comments.
+  high_level_summary: false

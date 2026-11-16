@@ -33,7 +33,7 @@ const FILES = {
 	"README.md": "# Site\n\nA needle in the readme.\n",
 	"docs/guide.md": "# Guide\n",
 	"docs/old.md": "old\n",
-	"bin/run.sh": "﻿#!/bin/sh\r\necho one\r\n",
+	"bin/run.sh": "\uFEFF#!/bin/sh\r\necho one\r\n",
 };
 
 /**
@@ -46,7 +46,7 @@ async function workOn(fake: FakeGit, name: string): Promise<void> {
 		expect(await store.checkout(repositoryOf(fake), BRANCH)).toEqual({ checkedOut: true });
 		await store.readFile(`${REPO}/README.md`);
 		await store.search({ pattern: "needle", path: `${REPO}/docs`, ignoreCase: false });
-		await store.writeFile(`${REPO}/bin/run.sh`, "﻿#!/bin/sh\r\necho 1\r\n");
+		await store.writeFile(`${REPO}/bin/run.sh`, "\uFEFF#!/bin/sh\r\necho 1\r\n");
 		await store.writeFile(`${REPO}/docs/new.md`, "new\n");
 		await store.deleteFile(`${REPO}/docs/old.md`);
 		expect(rowCounts(storage)).toEqual({ checkout: 1, listing: 1, blobs: 4, changes: 3 });
@@ -190,7 +190,7 @@ describe("a conversation that holds a repository's files", () => {
 			fake.requests.length = 0;
 			expect(await store.checkout(repositoryOf(fake), BRANCH)).toEqual({ checkedOut: false });
 			const read = await store.readFile(`${REPO}/bin/run.sh`);
-			expect(read).toEqual({ content: "﻿#!/bin/sh\r\necho 1\r\n" });
+			expect(read).toEqual({ content: "\uFEFF#!/bin/sh\r\necho 1\r\n" });
 			expect(await store.readFile(`${REPO}/README.md`)).toEqual({ content: FILES["README.md"] });
 			expect(fake.requests).toEqual([]);
 			expect(await store.push(BRANCH, "After the move", AUTHOR)).toMatchObject({ pushed: true });
@@ -198,7 +198,7 @@ describe("a conversation that holds a repository's files", () => {
 		const { "docs/old.md": _gone, ...kept } = FILES;
 		expect(fake.filesAt(BRANCH)).toEqual({
 			...kept,
-			"bin/run.sh": "﻿#!/bin/sh\r\necho 1\r\n",
+			"bin/run.sh": "\uFEFF#!/bin/sh\r\necho 1\r\n",
 			"docs/new.md": "new\n",
 		});
 	});
@@ -231,7 +231,7 @@ describe("a conversation that holds a repository's files", () => {
 				.join("")
 				.toUpperCase();
 		expect(changes.map((row) => row.v)).toEqual([
-			`'bin/run.sh',X'${hex("﻿#!/bin/sh\r\necho 1\r\n")}'`,
+			`'bin/run.sh',X'${hex("\uFEFF#!/bin/sh\r\necho 1\r\n")}'`,
 			`'docs/new.md',X'${hex("new\n")}'`,
 			"'docs/old.md',NULL",
 		]);

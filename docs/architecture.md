@@ -305,7 +305,8 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
   commands may run outside it.
 - **Cost.** Each conversation takes about a dozen calls to its two objects, of the thousand a
   Worker on the Free plan may make to Cloudflare's services in one invocation (ten thousand on
-  Paid); hence three workspaces a run.
+  Paid); hence three workspaces a run. One that holds a repository's files (see "Files without
+  a machine"; nothing makes one yet) takes about forty at the most it can hold.
 
 Local runtimes have no jurisdictions (workerd says "not implemented"), so the tests move a
 workspace between two names instead (`packages/runtime/test/move.test.ts` and
@@ -1089,33 +1090,58 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     file stays one.
   - **Out as a commit.** `push` hands the files that differ and the paths that are gone to
     `commitChanges`, with the commit this conversation last put on its branch; the answers are
-    a sandbox's (`PushPort`), so `open_pull_request` can stand on either.
+    a sandbox's (`PushPort`), so `open_pull_request` can stand on either. A commit GitHub took
+    whose note was lost, with the answer or with the object when a deploy restarts it, is found
+    by the next push and taken for the conversation's own when it follows directly from where
+    the conversation left the branch and holds nothing that push would not put there; a commit
+    on top of it then drops nothing, whoever made it.
   - **Search is literal text**, never a regular expression: a model's pattern does not run in
     the Durable Object, where one that backtracks without end would hold the conversation. The
-    tool's description says so. It has its own globs (`glob.ts`), read as ripgrep reads them.
-    Where it differs from a sandbox's ripgrep is listed at the top of `file-store.ts`: it does
-    not read `.gitignore` (the files are the commit's own and what the conversation wrote),
-    and it leaves out files over 256 KiB and files that are not UTF-8.
+    tool's description says so. It has its own globs (`glob.ts`), read as ripgrep reads them
+    and bounded: a glob that branches or nests too far is refused, and the steps of matching
+    are counted, so one made to be slow is stopped in a fraction of a second with words.
+  - **Held to the sandbox's ripgrep.** `test/ripgrep/recorded.json` is what the ripgrep in the
+    sandbox's image answered to the two command lines `sandboxFiles` writes, over a small
+    repository (`record.mjs` beside it makes it, in the image). `ripgrep-recorded.test.ts`
+    holds the store to it, and the tests' stand-in for ripgrep too, and writes out both answers
+    wherever the store differs on purpose. Those are listed at the top of `file-store.ts`: it
+    does not read `.gitignore` (the files are the commit's own and what the conversation
+    wrote), it leaves out files over 256 KiB and files that are not UTF-8, and a glob with a
+    slash also holds from the repository's root. The recordings also show what ripgrep does in
+    a sandbox that its tools' descriptions do not say: a glob that matches an ignored file, or
+    one in `.git`, lists it, so `find_files` there, which always has a glob, can.
   - **Limits, each answered in words.** A tree GitHub cuts short, or of more than 20,000
     entries, is not checked out. A file over 256 KiB, a binary file and a symlink are listed and
-    not read, and the last two not written over. A search that would fetch more than 500 files
-    fetches none. A change of more than 500 files or 20 MB is refused as it is written, and a
-    written file holds at most 1 MiB, under what one value in Durable Object SQLite may.
-  - **What a conversation can hold** follows: the listing (at most 8 MiB in 8 rows), the blobs
+    not read, and none of the three is written over; the first two can be deleted, and a file
+    then written where they were. A search that would fetch more than 500 files fetches none. A
+    change of more than 500 files or 20 MB is refused as it is written. Only text is written: a
+    NUL character is refused, and a row whose bytes the store could not read back is an error,
+    never an empty file, in a read, a search and a push. A name that differs only in case from
+    one that is there is refused as it is written.
+  - **No value over 900,000 bytes.** Durable Object SQLite takes none over 2 MB, and a backup
+    and a move's digest read every value through `quote()`, which writes bytes as two
+    characters each: 900,000 bytes are 1,800,003 characters. So the listing is cut into rows
+    of that, a written file holds at most that, and a fetched file is at most 256 KiB. Local
+    workerd does not enforce the limit, so the tests hold the store to the number.
+  - **What a conversation can hold** follows: the listing (at most 8 MiB in 10 rows), the blobs
     fetched (at most 32 MiB, a row a blob and so at most 20,000, the oldest going first), the
-    change (20 MB in 500 rows) and one row for the checkout. About 60 MiB and 20,509 rows at
+    change (20 MB in 500 rows) and one row for the checkout. About 60 MiB and 20,511 rows at
     the most.
   - **Four tables of the conversation's** (`file_checkout`, `file_listing`, `file_blobs`,
     `file_changes`), made on first use as the trace's are, each write in one `transactionSync`
     after GitHub was asked. Deleting the conversation empties the object and them with it; a
     move copies every table it finds and makes the ones a new object lacks; a backup lists the
     tables itself. None of the three names a table, and `test/file-store-storage.test.ts`
-    holds each to it. A conversation that holds files takes more calls to move, about one for
-    every 4 MB.
+    holds each to it. A conversation that holds files takes more calls to move, a read and a
+    write for every 4 MB: about forty at the most it can hold.
   - **The token** is asked of the caller for each call that needs GitHub, for the one
     repository and for reading or writing, and is never stored, answered or traced. GitHub's
     refusals reach the model as the store's own words with a status; only a change GitHub
-    refuses as invalid (422) is given in GitHub's words.
+    refuses as invalid (422) is given in GitHub's words. The words say what the refusal is: a
+    403 whose message is a rate limit's is a limit and not a missing permission, as is a
+    GraphQL answer with no repository and a rate limit among its errors; no token for a call
+    is told apart from a change GitHub refused; a 401 is not answered with "try again", since
+    the app keeps a token until it runs out.
 - **The trace** has a span for each call, under the server name `sandbox`, with its sizes and
   never its content, like an MCP tool's. A call that fails keeps the reason the tool gave the
   model, clipped to 500 characters (`traced` with `showErrors`), so a run's page says why; it can

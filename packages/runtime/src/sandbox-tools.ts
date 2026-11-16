@@ -73,15 +73,17 @@ export type DeleteResult = { deleted: true } | { error: string };
  * - A search's line is `path:line:text`: the absolute path, the line's number from 1, and the
  *   line without its newline; a carriage return before the newline stays. When `query.path` is
  *   a file and not a directory, the path and its colon are left out (`line:text`), as ripgrep
- *   leaves them out for one file. A matching line longer than 500 bytes is given as
- *   `[Omitted long matching line]` in place of its text. A byte order mark at a file's start is
+ *   leaves them out for one file. A matching line of more than 500 bytes, counted with the
+ *   newline that ends it, is given as `[Omitted long matching line]` in place of its text. A
+ *   file named itself is searched, and listed, whatever the glob. A byte order mark at a file's start is
  *   not part of its first line. The files come in no promised order from a sandbox, where
  *   ripgrep searches several at once, and sorted like a listing from `FileStore`.
  * - Text longer than `OUTPUT_LIMIT` bytes keeps its start and its end, with how many bytes were
  *   left out between them, as a command's output does (`./output.ts`).
- * - `found` is null when nothing matches, never an empty string. A sandbox's port passes on what
- *   its command printed: ripgrep exits with 1 when it finds nothing, which is null here, and does
- *   not exit with 0 having printed nothing.
+ * - `found` is null when nothing matches. `FileStore` never answers an empty string. A sandbox's
+ *   port can: it passes on what its command printed, so a command that exits with 0 and prints
+ *   nothing comes back as `""`, which the tools then answer with as it is. ripgrep itself exits
+ *   with 1 when it finds nothing, which is null here.
  */
 export type SearchResult = { found: string | null } | { error: string };
 

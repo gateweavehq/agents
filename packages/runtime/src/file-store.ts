@@ -20,15 +20,20 @@
  * everything it did not change. A file's mode is the listing's, which `commitChanges` sends with
  * the change: an executable file stays executable.
  *
- * **Which files a search looks in**, next to a sandbox's ripgrep (`sandboxFiles`):
+ * **Which files a search looks in**, next to a sandbox's ripgrep (`sandboxFiles`). What is said
+ * of ripgrep here is what the sandbox image's own answered, recorded in
+ * `test/ripgrep/recorded.json`; `test/ripgrep-recorded.test.ts` holds this module to the
+ * recordings wherever the two columns say the same, and writes out both answers where they do
+ * not.
  *
  * | | A sandbox (ripgrep) | Here | Why |
  * | --- | --- | --- | --- |
- * | `.gitignore` | Honoured, for tracked files too | Not read | The files here are the commit's own, which are tracked, and what the conversation wrote. Files a build leaves behind, which the rules are mostly for, do not exist here. A tracked file that a rule names is searched here and not there; a file written here that a rule names is listed, and is committed, where `git add --all` would leave it out. |
+ * | `.gitignore` | Honoured by a search with no glob. A glob that matches an ignored file brings it back, so `find_files`, which always has one, lists ignored files | Not read | The files here are the commit's own, which are tracked, and what the conversation wrote. Files a build leaves behind, which the rules are mostly for, do not exist here. A tracked file that a rule names is searched here; a file written here that a rule names is listed, and is committed, where `git add --all` would leave it out. |
  * | Hidden files | Included | Included | The same. |
- * | `.git` | Left out | Not there | GitHub's tree has no `.git`, and a path that names it is refused. |
+ * | `.git` | Left out, but a glob that matches what lies in it lists that too (`*` does) | Not there | GitHub's tree has no `.git`, and a path that names it is refused. |
  * | Binary files | Skipped: a NUL byte | Skipped: a NUL byte, or bytes that are not UTF-8 | A file is pushed as text, so one that does not decode cannot be held as text. ripgrep would search a Latin-1 file; this does not. |
- * | Long lines | `[Omitted long matching line]` over 500 bytes | The same | One format for both. |
+ * | Long lines | `[Omitted long matching line]` over 500 bytes, the newline that ends the line counted | The same | One format for both. |
+ * | A file named itself | Searched and listed whatever the glob | The same | The same. |
  * | Symlinks | Not followed | Skipped | The same. |
  * | Large files | Searched | Skipped over 256 KiB | They are not fetched. `read_file` says so of each; the tool's description says so of a search. |
  * | The pattern | A regular expression | Text as it is written | A model's pattern is not run as a regular expression in the Durable Object, where one that backtracks without end would hold the conversation. |
@@ -49,12 +54,29 @@
  * are listed and not read; a search that would fetch more than 500 files fetches none; a change
  * of more than 500 files or 20 MB is refused as it is written.
  *
+ * **What is written, and what is not.** Text only: a NUL character or half a surrogate pair is
+ * refused, so no row holds bytes the store cannot read back, and were one to, it is an error
+ * and never an empty file, in a read, a search and a push alike. A file that is not text is not
+ * written over, and neither is one over 256 KiB, which cannot be told to be text and which the
+ * model cannot have read; either can be deleted, and a file then written where it was. A name
+ * that differs only in case from one that is there is refused. A symlink, a submodule and a
+ * workflow are left as they are.
+ *
  * **What one conversation can hold** follows from them. One row for the checkout; the listing,
- * at most 8 MiB in 8 rows; the blobs fetched, at most 32 MiB of bytes in at most 20,000 rows, a
- * row a blob, the oldest going when a new one would pass that; the change, at most 20 MB in 500
- * rows. So at most about 60 MiB and 20,509 rows, beside the paths and ids, a few MiB more.
- * Durable Object SQLite takes no value over 2 MB, which is why the listing is cut in parts of
- * 1 MiB and a written file may hold 1 MiB.
+ * at most 8 MiB in 10 rows; the blobs fetched, at most 32 MiB of bytes in at most 20,000 rows,
+ * a row a blob, the oldest going when a new one would pass that; the change, at most 20 MB in
+ * 500 rows. So at most about 60 MiB and 20,511 rows, beside the paths and ids, a few MiB more.
+ * No value is over 900,000 bytes (`storedBytes` says why): the listing is cut in parts of that,
+ * a written file may hold that, and a fetched file is at most 256 KiB, so it is one value and is
+ * never cut.
+ *
+ * **Calls side by side.** A model's tool calls in one step run together, and each await lets
+ * another in. A checkout looks again, in its write, for one that got there first. A search
+ * reads its rows and makes its answer with nothing awaited between, and making room for new
+ * blobs never takes one the search under way is to read; one that another call took while the
+ * texts were fetched stops the search with why. What is not guarded: two `edit_file` calls on
+ * one file in one step both read the file before either writes, and the second's write drops
+ * the first's edit. That is in the tools (`fileTools`), and is as true of a sandbox.
  *
  * **Storage.** Every write is synchronous: what GitHub has to be asked is asked first, then the
  * rows are written in one `transactionSync` with no await inside. The tables are the
@@ -66,15 +88,19 @@
  * **The token** is asked of the caller for each call that needs GitHub, with what it is for,
  * and is used and dropped. It is never stored, never in an answer and never in the trace. A
  * failure of GitHub's reaches the model as this module's words and a status, and for a refused
- * commit as GitHub's own message, with the token taken out should it ever be there.
+ * commit as GitHub's own message, with the token taken out should it ever be there. The words
+ * say what the failure is: a rate limit is not a missing permission though both can be a 403,
+ * no token for a call is not a refused change, and a 401 is not something to try again.
  */
 import {
 	branchHead,
 	commitChanges,
 	GitHubError,
 	gitBlobId,
+	isRateLimit,
 	type RepositoryName,
 	readBlob,
+	readCommit,
 	readTexts,
 	readTreeEntries,
 	repositoryPathProblem,
@@ -85,9 +111,9 @@ import {
 } from "@gateweave/agents-github";
 import { SANDBOX_REPOSITORY_PATH, type SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutResult } from "./checkout";
-import { type Glob, readGlob } from "./glob";
+import { type Glob, GlobTooSlow, readGlob } from "./glob";
 import { failureForLogs } from "./models";
-import { clipOutput } from "./output";
+import { clipText } from "./output";
 import type { CommitAuthor, PushPort, PushResult } from "./pull-requests";
 import {
 	type DeleteResult,
@@ -106,13 +132,25 @@ const MIB = 1024 * KIB;
 export const FILE_STORE_LIMITS = {
 	/** Entries in a repository's tree. 20,000 is what the GitLab scan allows too. */
 	files: 20_000,
-	/** The compressed listing, and each of the rows it is cut into. */
+	/**
+	 * Bytes in any one value a row holds: a part of the listing, a fetched blob, a written file.
+	 * Durable Object SQLite takes no value over 2 MB, and that has to hold for the value as a
+	 * backup and a move's digest read it too, through `quote()`, which writes bytes as `X'…'`:
+	 * two characters a byte and three around them. 900,000 bytes are 1,800,003 characters, which
+	 * leaves a tenth of the 2,000,000 to spare. Local workerd does not enforce the limit, so no
+	 * test here would catch a larger value; the tests hold the store to this number instead.
+	 */
+	storedBytes: 900_000,
+	/** The compressed listing, which is cut into rows of `storedBytes`. */
 	listingBytes: 8 * MIB,
-	listingPartBytes: MIB,
-	/** A file that is read, or searched. */
+	/**
+	 * A file that is read, or searched. Under `storedBytes`, so a fetched blob is always one
+	 * value and is never cut; were this raised past it, such a blob would be answered and not
+	 * kept (`#keep`).
+	 */
 	readBytes: 256 * KIB,
-	/** A file as it is written: under what one value in Durable Object SQLite may hold. */
-	writtenBytes: MIB,
+	/** A file as it is written: one value. */
+	writtenBytes: 900_000,
 	/** Files one search may fetch. */
 	searchFetched: 500,
 	/** Bytes of fetched blobs kept; the oldest go first. Also the most one search looks through. */
@@ -170,6 +208,8 @@ interface Listing {
 	byPath: Map<string, TreeItem>;
 	/** Every directory the tree has. */
 	folders: Set<string>;
+	/** Every file and directory by its name in lower case, to find a name that differs only in case. */
+	lower: Map<string, string>;
 }
 
 /** A file as the model sees it now: the base's, or one the conversation wrote. */
@@ -273,10 +313,11 @@ export class FileStore implements DeletingFilePort, PushPort {
 		}
 		let head: { commit: string; tree: string };
 		let listed: { entries: TreeItem[]; truncated: boolean };
+		const access = await this.#access(repository, "read");
+		if ("error" in access) return access;
 		try {
-			const token = await this.#token(repository, "read");
-			head = await branchHead(token, repository, repository.defaultBranch);
-			listed = await readTreeEntries(token, repository, head.tree);
+			head = await branchHead(access.token, repository, repository.defaultBranch);
+			listed = await readTreeEntries(access.token, repository, head.tree);
 		} catch (error) {
 			return { error: describeFailure(error, name, "read") };
 		}
@@ -294,7 +335,7 @@ export class FileStore implements DeletingFilePort, PushPort {
 			// Another call may have checked out while GitHub was asked.
 			if (this.#row()) return false;
 			sql.exec("DELETE FROM file_listing");
-			const step = FILE_STORE_LIMITS.listingPartBytes;
+			const step = FILE_STORE_LIMITS.storedBytes;
 			for (let start = 0, part = 0; start < packed.length; start += step, part++) {
 				const bytes = packed.slice(start, start + step);
 				sql.exec("INSERT INTO file_listing (part, bytes) VALUES (?, ?)", part, exact(bytes));
@@ -328,7 +369,9 @@ export class FileStore implements DeletingFilePort, PushPort {
 		const change = this.#change(relative);
 		if (change) {
 			if (change.bytes === null) return { error: `${path} does not exist.` };
-			return { content: decodeText(new Uint8Array(change.bytes)) ?? "" };
+			const content = decodeText(new Uint8Array(change.bytes));
+			// Never an empty file in its place: what cannot be read is said, not guessed.
+			return content === null ? { error: undecoded(path) } : { content };
 		}
 		const entry = listing.byPath.get(relative);
 		if (!entry) {
@@ -351,23 +394,40 @@ export class FileStore implements DeletingFilePort, PushPort {
 		if (!content.isWellFormed()) {
 			return { error: `${path} would hold text that is not Unicode: half of a surrogate pair.` };
 		}
+		if (content.includes("\0")) {
+			return {
+				error: `${path} would hold a NUL character, which makes a file binary to git and to a search. Text files hold none.`,
+			};
+		}
+		const twin = this.#caseTwin(listing, relative);
+		if (twin !== null) {
+			return {
+				error: `${path} differs only in case from ${absolute(twin)}, which is there already. On Windows and macOS the two would be one.`,
+			};
+		}
 		const bytes = encoder.encode(content);
 		if (bytes.length > FILE_STORE_LIMITS.writtenBytes) {
 			return {
-				error: `${path} would be ${kib(bytes.length)} KiB, over what can be written here (${FILE_STORE_LIMITS.writtenBytes / KIB} KiB).`,
+				error: `${path} would be ${bytes.length} bytes, over what one file can hold here (${FILE_STORE_LIMITS.writtenBytes}).`,
 			};
 		}
 		const entry = listing.byPath.get(relative) ?? null;
 		if (entry && !this.#change(relative)) {
-			// A file that is not text is not written over. One too large to read cannot be told,
-			// and is written whole or not at all, which is the model's to decide.
-			if (entry.size <= FILE_STORE_LIMITS.readBytes) {
-				const held = await this.#load(row, entry, path);
-				if ("error" in held) {
-					return {
-						error: held.notText ? `${path} is not text, and is not written over.` : held.error,
-					};
-				}
+			// A file that is not text is not written over, and neither is one too large to read:
+			// it cannot be told to be text, and the model cannot have read what it would replace.
+			// Either can be deleted, and a file then written where it was.
+			if (entry.size > FILE_STORE_LIMITS.readBytes) {
+				return {
+					error: `${path} is ${kib(entry.size)} KiB, over what can be read here, so it is not written over. Delete it first to put another file there.`,
+				};
+			}
+			const held = await this.#load(row, entry, path);
+			if ("error" in held) {
+				return {
+					error: held.notText
+						? `${path} is not text, and is not written over. Delete it first to put another file there.`
+						: held.error,
+				};
 			}
 		}
 		const same = entry !== null && entry.id === (await gitBlobId(bytes));
@@ -433,7 +493,7 @@ export class FileStore implements DeletingFilePort, PushPort {
 		if ("error" in glob) return glob;
 		const found = await this.#under(directory, glob);
 		if ("error" in found) return found;
-		return { found: await clipped(found.files.map((file) => `${absolute(file.path)}\n`)) };
+		return { found: clipped(found.files.map((file) => `${absolute(file.path)}\n`)) };
 	}
 
 	async search({ pattern, path, glob: only, ignoreCase }: SearchQuery): Promise<SearchResult> {
@@ -451,18 +511,19 @@ export class FileStore implements DeletingFilePort, PushPort {
 			// One file, named: it is read as `read_file` reads it, and what it cannot read it says.
 			const [file] = files;
 			if (!file) return { found: null };
-			let text: string;
-			if (file.written) {
-				text =
-					decodeText(new Uint8Array(this.#change(file.path)?.bytes ?? new ArrayBuffer(0))) ?? "";
-			} else if (file.entry) {
+			let text: string | null;
+			if (!file.written && file.entry) {
 				const loaded = await this.#load(row, file.entry, path);
 				if ("error" in loaded) return { error: loaded.error };
 				text = loaded.text;
 			} else {
-				return { found: null };
+				// Read after the last await, so it is the file as it is when the answer is made.
+				const bytes = this.#change(file.path)?.bytes;
+				if (!bytes) return { error: missing(path) };
+				text = decodeText(new Uint8Array(bytes));
 			}
-			return { found: await clipped(matchingLines(text, needle, ignoreCase, "")) };
+			if (text === null) return { error: undecoded(path) };
+			return { found: clipped(matchingLines(text, needle, ignoreCase, "")) };
 		}
 
 		// What can be searched, and of that what GitHub has yet to be asked for.
@@ -494,38 +555,66 @@ export class FileStore implements DeletingFilePort, PushPort {
 				error: `That would search ${Math.ceil(bytes / MIB)} MiB of files, more than is held at once (${FILE_STORE_LIMITS.heldBytes / MIB} MiB). Give a path or a glob.`,
 			};
 		}
-		let left = 0;
+		let unchecked: ReadonlySet<string> = new Set();
 		if (lacking.size > 0) {
-			try {
-				left = await this.#fetchTexts(row, [...lacking], counted);
-			} catch (error) {
-				return { error: describeFailure(error, `${row.owner}/${row.name}`, "read") };
-			}
+			const fetched = await this.#fetchTexts(row, [...lacking], counted);
+			if ("error" in fetched) return fetched;
+			unchecked = fetched.left;
 		}
-		const text = await clipped(this.#lines(searched, needle, ignoreCase));
+		const left = unchecked.size;
+		// From here to the answer nothing is awaited, so no other call's write comes between the
+		// rows this reads. What another call took away while the texts were fetched is found
+		// missing below, and said.
+		let text: string | null;
+		try {
+			text = clipped(this.#lines(searched, needle, ignoreCase, unchecked));
+		} catch (error) {
+			if (error instanceof SearchStopped) return { error: error.message };
+			throw error;
+		}
 		if (left === 0) return { found: text };
 		const note = `[${left === 1 ? "1 file was" : `${left} files were`} not searched: GitHub's text of ${left === 1 ? "it" : "them"} could not be checked this time. Search again to go on.]\n`;
 		return { found: `${text ?? ""}${note}` };
 	}
 
-	/** The matching lines of the files held, each file read from its row as its turn comes. */
-	*#lines(files: SeenFile[], needle: string, ignoreCase: boolean): Generator<string> {
+	/**
+	 * The matching lines of the files held, each file read from its row as its turn comes. A file
+	 * that was to be searched and is not there to read stops the search with why: its matches
+	 * are never left out without a word.
+	 */
+	*#lines(
+		files: SeenFile[],
+		needle: string,
+		ignoreCase: boolean,
+		left: ReadonlySet<string>,
+	): Generator<string> {
 		for (const file of files) {
 			let held: ArrayBuffer | null | undefined;
 			if (file.written) {
-				held = this.#change(file.path)?.bytes;
+				const change = this.#change(file.path);
+				// Deleted by another call since the files were listed: there is nothing to search.
+				if (!change || change.bytes === null) continue;
+				held = change.bytes;
 			} else {
 				const [blob] = this.#storage.sql
-					.exec<{ bytes: ArrayBuffer | null }>(
-						"SELECT bytes FROM file_blobs WHERE id = ? AND kind = 'text'",
+					.exec<{ kind: BlobKind; bytes: ArrayBuffer | null }>(
+						"SELECT kind, bytes FROM file_blobs WHERE id = ?",
 						file.entry?.id ?? "",
 					)
 					.toArray();
+				// Fetched just now and found to be no text: skipped, as a search skips such files.
+				if (blob && blob.kind !== "text") continue;
+				// Left for the next search (`rereads`), which the answer's last line counts.
+				if (!blob && file.entry && left.has(file.entry.id)) continue;
 				held = blob?.bytes;
 			}
-			if (!held) continue;
+			if (!held) {
+				throw new SearchStopped(
+					`${absolute(file.path)} was held when this search began and is no longer: another call made room for other files meanwhile. Search again.`,
+				);
+			}
 			const text = decodeText(new Uint8Array(held));
-			if (text === null) continue;
+			if (text === null) throw new SearchStopped(undecoded(absolute(file.path)));
 			yield* matchingLines(text, needle, ignoreCase, `${absolute(file.path)}:`);
 		}
 	}
@@ -535,11 +624,14 @@ export class FileStore implements DeletingFilePort, PushPort {
 	 * the commit the files were read at (`commitChanges`): the branch must not exist yet, or be at
 	 * the commit this conversation last put there. Nothing is committed when nothing differs.
 	 *
-	 * Two limits. The commit is noted here in the write right after GitHub's answer, with nothing
-	 * awaited between; were the object to stop in that moment, the branch would hold a commit the
-	 * conversation does not know for its own, and every later push would be refused as someone
-	 * else's. And the base never moves: a conversation works on the commit it first read, however
-	 * far the default branch has gone, and GitHub shows what conflicts on the pull request.
+	 *
+	 * The commit is noted in the write right after GitHub's answer. The answer can be lost all
+	 * the same, anywhere in the round trip that moves the branch, and a deploy restarts the
+	 * object; the branch then holds a commit the conversation has no note of. The next push
+	 * finds it and takes it for its own when it is (`#isOwn`), and goes on from it.
+	 *
+	 * The base never moves: a conversation works on the commit it first read, however far the
+	 * default branch has gone, and GitHub shows what conflicts on the pull request.
 	 */
 	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
 		const row = this.#row();
@@ -561,19 +653,29 @@ export class FileStore implements DeletingFilePort, PushPort {
 		const files: { path: string; content: string }[] = [];
 		const deleted: string[] = [];
 		for (const change of changes) {
-			if (change.bytes === null) deleted.push(change.path);
-			else
-				files.push({ path: change.path, content: decodeText(new Uint8Array(change.bytes)) ?? "" });
+			if (change.bytes === null) {
+				deleted.push(change.path);
+				continue;
+			}
+			const content = decodeText(new Uint8Array(change.bytes));
+			// A file that cannot be read back is never committed empty in its place.
+			if (content === null) {
+				return {
+					error: `${undecoded(absolute(change.path))} Nothing was proposed. Write the file again, or delete it.`,
+				};
+			}
+			files.push({ path: change.path, content });
 		}
 		const listing = await this.#list();
-		let token = "";
-		let outcome: Awaited<ReturnType<typeof commitChanges>>;
-		try {
-			token = await this.#token(repositoryOf(row), "write");
-			outcome = await commitChanges(token, repositoryOf(row), {
+		const repository = repositoryOf(row);
+		const access = await this.#access(repository, "write");
+		if ("error" in access) return access;
+		const { token } = access;
+		const commit = (expected: string | null) =>
+			commitChanges(token, repository, {
 				branch,
 				defaultBranch: row.default_branch,
-				expected: row.tip,
+				expected,
 				base: {
 					commit: row.base_commit,
 					tree: row.base_tree,
@@ -585,19 +687,35 @@ export class FileStore implements DeletingFilePort, PushPort {
 				message,
 				author,
 			});
+		const note = (tip: string) =>
+			this.#storage.transactionSync(() => {
+				this.#storage.sql.exec("UPDATE file_checkout SET tip = ? WHERE id = 1", tip);
+			});
+		let expected = row.tip;
+		let outcome: Awaited<ReturnType<typeof commitChanges>>;
+		try {
+			outcome = await commit(expected);
+			if (!outcome.committed && outcome.reason === "branch" && outcome.found !== null) {
+				// The branch is somewhere this conversation has no note of. If what is there is its
+				// own work, a commit GitHub took whose note was lost, it is taken for its own and
+				// the push goes on from it.
+				const { found } = outcome;
+				if (await this.#isOwn(token, row, listing, files, deleted, expected, found)) {
+					note(found);
+					expected = found;
+					outcome = await commit(expected);
+				}
+			}
 		} catch (error) {
 			return { error: describeFailure(error, name, "write") };
 		}
 		if (outcome.committed) {
-			const { commit } = outcome;
-			this.#storage.transactionSync(() => {
-				this.#storage.sql.exec("UPDATE file_checkout SET tip = ? WHERE id = 1", commit);
-			});
-			return { head: commit, pushed: true };
+			note(outcome.commit);
+			return { head: outcome.commit, pushed: true };
 		}
 		switch (outcome.reason) {
 			case "nothing":
-				return row.tip === null ? nothing : { head: row.tip, pushed: false };
+				return expected === null ? nothing : { head: expected, pushed: false };
 			case "branch":
 				return {
 					error:
@@ -627,6 +745,50 @@ export class FileStore implements DeletingFilePort, PushPort {
 					),
 				};
 		}
+	}
+
+	/**
+	 * Whether the commit found on the branch is this conversation's own work, though it has no
+	 * note of it: GitHub took a push and the note was lost with the answer, or with the object,
+	 * which a deploy restarts. It is when it follows directly from where the conversation left
+	 * the branch (or from the base, before any push) and holds nothing this push would not put
+	 * there: every file in it is the base's, or exactly what the change now writes, and every
+	 * file it lacks is one the change deletes. A commit on top of it then drops nothing, whoever
+	 * made it. A file the conversation changed again since is not what the commit holds, and
+	 * then the commit is taken for someone else's, as before.
+	 */
+	async #isOwn(
+		token: string,
+		row: CheckoutRow,
+		listing: Listing,
+		files: readonly { path: string; content: string }[],
+		deleted: readonly string[],
+		expected: string | null,
+		found: string,
+	): Promise<boolean> {
+		const repository = repositoryOf(row);
+		const commit = await readCommit(token, repository, found);
+		if (commit.parents.length !== 1 || commit.parents[0] !== (expected ?? row.base_commit)) {
+			return false;
+		}
+		const held = await readTreeEntries(token, repository, commit.tree);
+		if (held.truncated) return false;
+		const written = new Map<string, string>();
+		for (const file of files) {
+			written.set(file.path, await gitBlobId(encoder.encode(file.content)));
+		}
+		const seen = new Set<string>();
+		for (const entry of held.entries) {
+			seen.add(entry.path);
+			const was = listing.byPath.get(entry.path);
+			if (was && was.id === entry.id && was.mode === entry.mode) continue;
+			// A written file keeps the base's mode when it can be run, and is a plain file otherwise.
+			const mode = was?.mode === TREE_MODES.executable ? TREE_MODES.executable : TREE_MODES.file;
+			if (written.get(entry.path) === entry.id && entry.mode === mode) continue;
+			return false;
+		}
+		const gone = new Set(deleted);
+		return listing.entries.every((entry) => seen.has(entry.path) || gone.has(entry.path));
 	}
 
 	/** The checkout, and the path from the repository's root; or why there is no file there. */
@@ -688,7 +850,45 @@ export class FileStore implements DeletingFilePort, PushPort {
 				folders.add(folder);
 			}
 		}
-		return { entries, byPath: new Map(entries.map((entry) => [entry.path, entry])), folders };
+		const lower = new Map<string, string>();
+		for (const name of [...entries.map((entry) => entry.path), ...folders]) {
+			if (!lower.has(name.toLowerCase())) lower.set(name.toLowerCase(), name);
+		}
+		return {
+			entries,
+			byPath: new Map(entries.map((entry) => [entry.path, entry])),
+			folders,
+			lower,
+		};
+	}
+
+	/**
+	 * The file or directory that a new path, or a directory it needs, differs from only in case:
+	 * one of the repository's, or one the conversation wrote. `commitChanges` refuses such a
+	 * change whole at the push; here the listing is in hand, so the file is refused as it is
+	 * written.
+	 */
+	#caseTwin(listing: Listing, relative: string): string | null {
+		const known = (name: string) => listing.byPath.has(name) || listing.folders.has(name);
+		const written = new Map<string, string>();
+		for (const change of this.#changedPaths()) {
+			if (change.deleted) continue;
+			for (let end = change.path.length; end > 0; end = change.path.lastIndexOf("/", end - 1)) {
+				const name = change.path.slice(0, end);
+				if (!written.has(name.toLowerCase())) written.set(name.toLowerCase(), name);
+			}
+		}
+		const names: string[] = [];
+		for (let end = relative.length; end > 0; end = relative.lastIndexOf("/", end - 1)) {
+			names.unshift(relative.slice(0, end));
+		}
+		// The topmost first, so the answer names where the two part ways.
+		for (const name of names) {
+			if (known(name)) continue;
+			const twin = listing.lower.get(name.toLowerCase()) ?? written.get(name.toLowerCase());
+			if (twin !== undefined && twin !== name) return twin;
+		}
+		return null;
 	}
 
 	#change(relative: string): { bytes: ArrayBuffer | null } | null {
@@ -802,21 +1002,29 @@ export class FileStore implements DeletingFilePort, PushPort {
 			: seen.filter((file) => file.path.startsWith(prefix));
 		if (within.length === 0 && relative !== "") return { error: `${path} does not exist.` };
 		// A glob with a slash holds from the sandbox's root, as ripgrep has it, from the
-		// repository's, or from the directory looked in.
+		// repository's, or from the directory looked in. One that begins with `**` holds the same
+		// from any of them, and is tried once. A file named itself is taken whatever the glob, as
+		// ripgrep takes one.
 		const root = SANDBOX_REPOSITORY_PATH.slice(SANDBOX_ROOT.length + 1).split("/");
-		const depth = relative === "" || single ? 0 : relative.split("/").length;
-		const files = within
-			.map((file) => ({ file, parts: [...root, ...file.path.split("/")] }))
-			.filter(
-				({ parts }) =>
-					glob === null ||
-					glob.matches(parts, 0) ||
-					glob.matches(parts, root.length) ||
-					(depth > 0 && glob.matches(parts, root.length + depth)),
-			)
-			.sort((a, b) => compareParts(a.parts, b.parts))
-			.map(({ file }) => file);
-		return { row, files, single };
+		const depth = relative === "" ? 0 : relative.split("/").length;
+		const matches = (parts: string[]) =>
+			glob === null ||
+			single ||
+			glob.matches(parts, 0) ||
+			(!glob.floating &&
+				(glob.matches(parts, root.length) ||
+					(depth > 0 && glob.matches(parts, root.length + depth))));
+		try {
+			const files = within
+				.map((file) => ({ file, parts: [...root, ...file.path.split("/")] }))
+				.filter(({ parts }) => matches(parts))
+				.sort((a, b) => compareParts(a.parts, b.parts))
+				.map(({ file }) => file);
+			return { row, files, single };
+		} catch (error) {
+			if (error instanceof GlobTooSlow) return { error: error.message };
+			throw error;
+		}
 	}
 
 	#blobKinds(): Map<string, BlobKind> {
@@ -854,10 +1062,11 @@ export class FileStore implements DeletingFilePort, PushPort {
 			text = decodeText(new Uint8Array(held.bytes));
 		} else if (held?.kind !== "binary") {
 			let bytes: Uint8Array;
+			const access = await this.#access(repositoryOf(row), "read");
+			if ("error" in access) return access;
 			try {
-				const token = await this.#token(repositoryOf(row), "read");
 				const read = await readBlob(
-					token,
+					access.token,
 					repositoryOf(row),
 					entry.id,
 					FILE_STORE_LIMITS.readBytes,
@@ -889,41 +1098,67 @@ export class FileStore implements DeletingFilePort, PushPort {
 	 * byte order mark was dropped on the way, is read again as bytes, a few to a search. Returns
 	 * how many were left for another search.
 	 */
-	async #fetchTexts(row: CheckoutRow, ids: string[], keep: Set<string>): Promise<number> {
+	async #fetchTexts(
+		row: CheckoutRow,
+		ids: string[],
+		keep: Set<string>,
+	): Promise<{ left: Set<string> } | { error: string }> {
 		const repository = repositoryOf(row);
-		const token = await this.#token(repository, "read");
+		const access = await this.#access(repository, "read");
+		if ("error" in access) return access;
+		const { token } = access;
 		let rereads = 0;
-		let left = 0;
-		for (let start = 0; start < ids.length; start += TEXTS_PER_REQUEST) {
-			const batch = ids.slice(start, start + TEXTS_PER_REQUEST);
-			const texts = await readTexts(token, repository, batch);
-			const fetched: FetchedBlob[] = [];
-			for (const id of batch) {
-				const text = texts.get(id) ?? null;
-				if (text === null) {
-					fetched.push({ id, bytes: null, size: 0, kind: "unread" });
-					continue;
-				}
-				let bytes: Uint8Array = encoder.encode(text);
-				if ((await gitBlobId(bytes)) !== id) {
-					if (rereads >= FILE_STORE_LIMITS.rereads) {
-						left++;
-						continue;
-					}
-					rereads++;
-					const read = await readBlob(token, repository, id, FILE_STORE_LIMITS.readBytes);
-					if (!read.read) {
+		const left = new Set<string>();
+		try {
+			for (let start = 0; start < ids.length; start += TEXTS_PER_REQUEST) {
+				const batch = ids.slice(start, start + TEXTS_PER_REQUEST);
+				const texts = await readTexts(token, repository, batch);
+				const fetched: FetchedBlob[] = [];
+				for (const id of batch) {
+					const text = texts.get(id) ?? null;
+					if (text === null) {
 						fetched.push({ id, bytes: null, size: 0, kind: "unread" });
 						continue;
 					}
-					bytes = read.bytes;
+					let bytes: Uint8Array = encoder.encode(text);
+					if ((await gitBlobId(bytes)) !== id) {
+						if (rereads >= FILE_STORE_LIMITS.rereads) {
+							left.add(id);
+							continue;
+						}
+						rereads++;
+						const read = await readBlob(token, repository, id, FILE_STORE_LIMITS.readBytes);
+						if (!read.read) {
+							fetched.push({ id, bytes: null, size: 0, kind: "unread" });
+							continue;
+						}
+						bytes = read.bytes;
+					}
+					const isText = decodeText(bytes) !== null;
+					fetched.push({ id, bytes: isText ? bytes : null, size: bytes.length });
 				}
-				const isText = decodeText(bytes) !== null;
-				fetched.push({ id, bytes: isText ? bytes : null, size: bytes.length });
+				this.#keep(fetched, keep);
 			}
-			this.#keep(fetched, keep);
+		} catch (error) {
+			return { error: describeFailure(error, `${row.owner}/${row.name}`, "read") };
 		}
-		return left;
+		return { left };
+	}
+
+	/**
+	 * A token for one call's requests, or why GitHub gave none, in words. Kept apart from what
+	 * the requests themselves answer: a 422 here is the app asking for a permission it does not
+	 * hold, not GitHub refusing a change.
+	 */
+	async #access(
+		repository: SandboxRepository,
+		access: "read" | "write",
+	): Promise<{ token: string } | { error: string }> {
+		try {
+			return { token: await this.#token(repository, access) };
+		} catch (error) {
+			return { error: describeNoToken(error, `${repository.owner}/${repository.name}`, access) };
+		}
 	}
 
 	/**
@@ -933,7 +1168,15 @@ export class FileStore implements DeletingFilePort, PushPort {
 	#keep(blobs: FetchedBlob[], keep: Iterable<string>): void {
 		const sql = this.#storage.sql;
 		const kept = new Set(keep);
-		const incoming = blobs.reduce((sum, blob) => sum + (blob.bytes?.length ?? 0), 0);
+		// Bytes too many for one value are not kept, and not cut either: such a blob is asked for
+		// again when it is next wanted, which costs a request and never a row that cannot be
+		// backed up. No blob is that large while `readBytes` is under `storedBytes`.
+		const fitting = blobs.map((blob) =>
+			blob.bytes && blob.bytes.length > FILE_STORE_LIMITS.storedBytes
+				? { id: blob.id, bytes: null, size: 0, kind: "unread" as const }
+				: blob,
+		);
+		const incoming = fitting.reduce((sum, blob) => sum + (blob.bytes?.length ?? 0), 0);
 		const now = this.#now();
 		this.#storage.transactionSync(() => {
 			let held =
@@ -955,7 +1198,7 @@ export class FileStore implements DeletingFilePort, PushPort {
 					held -= size;
 				}
 			}
-			for (const blob of blobs) {
+			for (const blob of fitting) {
 				sql.exec(
 					`INSERT INTO file_blobs (id, kind, bytes, size, fetched_at) VALUES (?, ?, ?, ?, ?)
 					ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, bytes = excluded.bytes,
@@ -1003,6 +1246,14 @@ function missing(path: string): string {
 	return `${path} does not exist.`;
 }
 
+/** Why a file the store holds is not answered: its bytes are not text, which no write lets in. */
+function undecoded(path: string): string {
+	return `${path} holds bytes that are not text, so it cannot be read here.`;
+}
+
+/** A search that stops with why, in words the model reads, rather than leave a file's lines out. */
+class SearchStopped extends Error {}
+
 function directory(path: string): string {
 	return `${path} is a directory. List it with find_files.`;
 }
@@ -1043,7 +1294,7 @@ function* matchingLines(
 	prefix: string,
 ): Generator<string> {
 	// The mark is not part of the first line.
-	const text = content.startsWith("﻿") ? content.slice(1) : content;
+	const text = content.startsWith("\uFEFF") ? content.slice(1) : content;
 	let number = 0;
 	for (let start = 0; start < text.length; ) {
 		const end = text.indexOf("\n", start);
@@ -1051,33 +1302,22 @@ function* matchingLines(
 		start = end === -1 ? text.length : end + 1;
 		number++;
 		if (!(ignoreCase ? line.toLowerCase() : line).includes(needle)) continue;
+		// ripgrep counts the line with the newline that ends it, in bytes, and a carriage return
+		// before that is part of the line: 499 bytes and a newline are shown, 500 and a newline
+		// are not, and 500 at the end of a file with no newline are.
+		const most = LONG_LINE_BYTES - (end === -1 ? 0 : 1);
 		const long =
-			line.length > LONG_LINE_BYTES ||
-			(line.length * 3 > LONG_LINE_BYTES && encoder.encode(line).length > LONG_LINE_BYTES);
+			line.length > most || (line.length * 3 > most && encoder.encode(line).length > most);
 		yield `${prefix}${number}:${long ? LONG_LINE : line}\n`;
 	}
 }
 
-/** The lines as one text, clipped as a command's output is; null when there are none. */
-async function clipped(lines: Iterable<string>): Promise<string | null> {
-	const each = lines[Symbol.iterator]();
-	const stream = new ReadableStream<Uint8Array>({
-		pull(controller) {
-			// Many lines to a chunk, so a long listing is not a turn of the loop for each.
-			let chunk = "";
-			while (chunk.length < 16_384) {
-				const next = each.next();
-				if (next.done) {
-					if (chunk !== "") controller.enqueue(encoder.encode(chunk));
-					controller.close();
-					return;
-				}
-				chunk += next.value;
-			}
-			controller.enqueue(encoder.encode(chunk));
-		},
-	});
-	const { text } = await clipOutput(stream);
+/**
+ * The lines as one text, clipped as a command's output is; null when there are none. Nothing
+ * is awaited, so the rows the lines are read from are those of one moment.
+ */
+function clipped(lines: Iterable<string>): string | null {
+	const { text } = clipText(lines);
 	return text === "" ? null : text;
 }
 
@@ -1107,12 +1347,21 @@ function describeFailure(
 		return "GitHub could not be reached. Try again.";
 	}
 	const did = access === "read" ? "read" : "write to";
+	// GitHub answers a caller over a rate limit with 429 or with 403, and GraphQL with 200
+	// (`readTexts` makes that 429); a 403 is a missing permission only when its words are not
+	// a limit's.
+	if (error.status === 429 || (error.status === 403 && isRateLimit(error.message))) {
+		return LIMITED;
+	}
 	switch (error.status) {
 		case 0:
 			return "GitHub could not be reached. Try again.";
+		case 401:
+			// The caller keeps a token until it runs out, so the same answer would come at once.
+			return `GitHub no longer takes the workspace's GitHub App's access to ${name} (it answered 401), as when the app was removed or suspended there. An owner or admin can check the app's installation; trying again now gets the same answer.`;
 		case 403:
 			return access === "read"
-				? `The workspace's GitHub App may not read ${name}.`
+				? `The workspace's GitHub App may not read ${name}. An owner or admin can give it the Contents permission.`
 				: `The workspace's GitHub App may not write to ${name}. An owner or admin can give it the Contents permission, read and write.`;
 		case 404:
 			return `The workspace's GitHub App no longer reaches ${name}.`;
@@ -1125,6 +1374,44 @@ function describeFailure(
 				: `GitHub could not ${did} ${name} (it answered 422).`;
 		}
 		default:
-			return `GitHub did not ${did} ${name} (it answered ${error.status}). Try again.`;
+			return error.status >= 500
+				? `GitHub could not answer just now (${error.status}). Try again.`
+				: `GitHub did not ${did} ${name} (it answered ${error.status}).`;
+	}
+}
+
+const LIMITED =
+	"GitHub is limiting the requests of the workspace's GitHub App just now. Wait a few minutes before trying again.";
+
+/**
+ * Why GitHub gave no token for a call, in words the model reads. These are answers to the app
+ * asking for access, not to anything done with it: a 422 is a permission asked for that the app
+ * does not hold, and nothing of a change was looked at.
+ */
+function describeNoToken(error: unknown, name: string, access: "read" | "write"): string {
+	if (!(error instanceof GitHubError)) {
+		console.error("No token for a repository's files", failureForLogs(error));
+		return "GitHub could not be reached. Try again.";
+	}
+	const to = access === "read" ? "read" : "write to";
+	const permission =
+		access === "read" ? "the Contents permission" : "the Contents permission, read and write";
+	if (error.status === 429 || (error.status === 403 && isRateLimit(error.message))) {
+		return LIMITED;
+	}
+	switch (error.status) {
+		case 0:
+			return "GitHub could not be reached. Try again.";
+		case 401:
+			return "GitHub does not take this server's GitHub App for who it says it is (it answered 401). Whoever runs the server can check the app's id and key.";
+		case 403:
+		case 404:
+			return `The workspace's GitHub App is not installed where it reaches ${name}, or was suspended there. An owner or admin can check the app's installation.`;
+		case 422:
+			return `GitHub gave the workspace's GitHub App no access to ${to} ${name}: the app does not hold ${permission}, or no longer reaches the repository. An owner or admin can check its permissions.`;
+		default:
+			return error.status >= 500
+				? `GitHub could not answer just now (${error.status}). Try again.`
+				: `GitHub gave the workspace's GitHub App no access to ${to} ${name} (it answered ${error.status}).`;
 	}
 }
