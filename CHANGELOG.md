@@ -8,6 +8,41 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.28.2] - 2026-11-16
+
+Fixes "Use vN" on an agent's page, which reset the agent's engine and memory. There is no
+migration in this release.
+
+### Fixed
+
+- **Moving a pin to its latest version no longer resets the agent's engine and memory.** "Use vN"
+  on an agent's page saved the whole agent from a list of fields that left out the engine and
+  memory, so an agent running on Claude Code, Codex or OpenCode went back to Gateweave's own loop
+  and its memory was turned off, without a word. Moving a pin is now its own call, which names the
+  asset and the version and changes nothing else. Open pages keep the old behaviour until they are
+  reloaded. ([#260](https://github.com/gateweavehq/agents/pull/260))
+
+### Changed
+
+- **The audit log says which pin moved.** Its entry names the asset and the two versions, where it
+  used to list the fields of a whole save.
+  ([#260](https://github.com/gateweavehq/agents/pull/260))
+
+### If you run your own
+
+- **Check agents whose pins were moved from the agent's page.** An agent with a sandbox that should
+  run on Claude Code, Codex or OpenCode, or with memory on, may have been reset: open it and look
+  at its engine and memory. In Settings › Audit log such a change reads as an agent updated with
+  the engine or memory among its fields, at the time a pin was moved.
+- **Reload open pages after updating.**
+
+### Internal
+
+- Two pieces for running an agent on a repository's files without a sandbox, which nothing uses
+  yet: reading a tree and a file and making a commit through GitHub's API
+  ([#257](https://github.com/gateweavehq/agents/pull/257)), and a store for those files in the
+  conversation's own storage ([#258](https://github.com/gateweavehq/agents/pull/258)).
+
 ## [0.28.1] - 2026-11-16
 
 Puts back a guard that v0.28.0 dropped by mistake, and lets the schema generator run again.
