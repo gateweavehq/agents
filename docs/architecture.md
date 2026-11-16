@@ -845,11 +845,16 @@ with no repository and its own id as its key, and a row in `agent_definitions` b
     such a turn to work on. An engine other than Gateweave's loop, and an MCP server that runs
     as a local command, are refused as they are for any agent without a sandbox, in the same
     words. A repository still needs `sandbox` or `files`, so a client that knows nothing of the
-    setting and sends the repository alone is told why. One that sends neither, as the app's
-    form does for an agent without a sandbox, saves the agent with the setting off and no
-    repository: until the form carries every field of a definition (AGT-135), editing such an
-    agent in the app turns the setting off. A repository on GitLab is refused in the setting's
-    own words, not a sandbox's.
+    setting and sends the repository alone is told why. One that sends neither, as a page
+    loaded before the form carried every field (AGT-135) does for an agent without a sandbox,
+    saves the agent with the setting off and no repository. A repository on GitLab is refused in
+    the setting's own words, not a sandbox's.
+  - **In the app**, the form still has no control for it. An edit starts from the agent as it is
+    (`formInput` in `apps/web/src/lib/agent-input.ts`), so an agent that has `files` keeps it
+    and its repository through one; giving it a sandbox there turns `files` off, since it has
+    one or the other. Moving a pin (`moveAgentPin`) takes the pin alone, so it keeps both, and
+    refuses a version of an MCP server that runs as a local command, as for any agent without a
+    sandbox. It is not a turn, so the deployment's setting below has no say in it.
   - **A turn** (`beginTurn`) with `files` asks for no sandbox: `sandboxOfferTo`, the workspace's
     sandboxes, the day's minutes and the month's budget do not decide, `runs.sandbox` stays
     false, and the run counts no sandbox time. It carries `files: true`, the repository, and

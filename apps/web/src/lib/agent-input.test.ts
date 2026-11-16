@@ -5,7 +5,7 @@ import {
 	agentDefinitionInput,
 } from "@gateweave/agents-model";
 import { expect, it } from "vitest";
-import { inputOf } from "#/lib/agent-input";
+import { formInput, inputOf } from "#/lib/agent-input";
 
 const asset = (id: string, kind: Asset["kind"], version: number): Asset => ({
 	id,
@@ -57,6 +57,16 @@ const definition: AgentDefinition = {
 	repository: { id: "r-1", owner: "acme", name: "shop", removed: false },
 	engine: "claude-code",
 	memory: true,
+	// Never with a sandbox, so this one is at its default here and away from it below.
+	files: false,
+};
+
+/** An agent that works on its repository's files without a sandbox (AGT-122). */
+const onFiles: AgentDefinition = {
+	...definition,
+	sandbox: false,
+	engine: "gateweave",
+	files: true,
 };
 
 it("carries every field an agent's definition has", () => {
@@ -80,7 +90,49 @@ it("leaves no field to its default", () => {
 		repositoryId: "r-1",
 		engine: "claude-code",
 		memory: true,
+		files: false,
 	});
 	// What the server's validator makes of it is the same: nothing was filled in.
 	expect(agentDefinitionInput.parse(input)).toEqual(input);
+});
+
+it("carries files away from its default, with the repository", () => {
+	const input = inputOf(agent, onFiles);
+	expect(input).toMatchObject({ files: true, sandbox: false, repositoryId: "r-1" });
+	expect(agentDefinitionInput.parse(input)).toEqual(input);
+});
+
+/** What the form's controls hold when it opens on an agent and nothing is changed. */
+const untouched = (shown: AgentDefinition) => {
+	const { files: _files, ...whole } = inputOf(agent, shown);
+	return whole;
+};
+
+it("keeps files and the repository when the form saves an agent that has them", () => {
+	// The form has no control for `files`, and shows the repository only beside a sandbox.
+	const saved = formInput({ agent, definition: onFiles }, { ...untouched(onFiles), name: "Fixer" });
+	expect(saved).toEqual({ ...inputOf(agent, onFiles), name: "Fixer" });
+	expect(saved).toMatchObject({ files: true, sandbox: false, repositoryId: "r-1" });
+	expect(agentDefinitionInput.safeParse(saved).success).toBe(true);
+});
+
+it("turns files off when the form gives the agent a sandbox, which keeps the repository", () => {
+	const saved = formInput({ agent, definition: onFiles }, { ...untouched(onFiles), sandbox: true });
+	expect(saved).toMatchObject({ files: false, sandbox: true, repositoryId: "r-1" });
+	expect(agentDefinitionInput.safeParse(saved).success).toBe(true);
+});
+
+it("sends a repository only with a sandbox or files, and never turns files on", () => {
+	// An agent without either: the repository last chosen in the form does not go with it.
+	const plain = { ...definition, sandbox: false, engine: "gateweave" as const };
+	expect(
+		formInput({ agent, definition: plain }, { ...untouched(plain), repositoryId: "r-1" }),
+	).toMatchObject({ files: false, sandbox: false, repositoryId: null });
+	// An agent with a sandbox is saved as it was.
+	expect(formInput({ agent, definition }, untouched(definition))).toEqual(
+		inputOf(agent, definition),
+	);
+	// A new agent has no `files` to keep.
+	expect(formInput(null, untouched(definition))).toMatchObject({ files: false, sandbox: true });
+	expect(formInput(null, untouched(plain))).toMatchObject({ files: false, repositoryId: null });
 });

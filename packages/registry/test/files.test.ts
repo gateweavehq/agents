@@ -78,25 +78,32 @@ function storedDefinitions(stub: ReturnType<typeof registry>) {
 	);
 }
 
-/** A library copy of an MCP server that runs as a local command, as a scan stores one. */
-async function localServer(stub: ReturnType<typeof registry>, repository: string) {
+/** A server that runs as a local command, as `.mcp.json` has one. */
+const LOCAL = { command: "npx", args: ["-y", "@acme/mcp"] };
+
+/**
+ * A library copy of an MCP server a scan found in the repository's `.mcp.json`, stored as the
+ * scan stores it: a new library asset called `name`, or with `into`, a new version of that one.
+ */
+async function scannedServer(
+	stub: ReturnType<typeof registry>,
+	repository: string,
+	name: string,
+	server: object,
+	into?: string,
+) {
 	await stub.applyScan(repository, {
-		commit: "a".repeat(40),
-		scannedAt: 1_000,
+		commit: (into ? "b" : "a").repeat(40),
+		scannedAt: into ? 2_000 : 1_000,
 		agents: [],
 		assets: [
 			{
 				kind: "mcp-server",
-				key: ".mcp.json#local",
-				name: "local",
+				key: `.mcp.json#${name}`,
+				name,
 				description: null,
 				path: ".mcp.json",
-				files: [
-					{
-						path: ".mcp.json",
-						content: `${JSON.stringify({ command: "npx", args: ["-y", "@acme/mcp"] })}\n`,
-					},
-				],
+				files: [{ path: ".mcp.json", content: `${JSON.stringify(server)}\n` }],
 				metadata: {},
 			},
 		],
@@ -104,7 +111,7 @@ async function localServer(stub: ReturnType<typeof registry>, repository: string
 		files: [],
 	});
 	const [asset] = (await stub.getRepository(repository))?.assets ?? [];
-	return stub.addToLibrary(asset?.id ?? "", { name: "local" });
+	return stub.addToLibrary(asset?.id ?? "", into ? { libraryAssetId: into } : { name });
 }
 
 describe("an agent that works on files without a sandbox", () => {
@@ -210,7 +217,7 @@ describe("an agent that works on files without a sandbox", () => {
 	it("cannot pin an MCP server that runs as a local command, as an agent without a sandbox cannot", async () => {
 		const stub = registry();
 		const [site = ""] = await stub.syncRepositories([SITE]);
-		const local = await localServer(stub, site);
+		const local = await scannedServer(stub, site, "local", LOCAL);
 		const words =
 			"local runs as a local command, which starts in the agent's sandbox: turn the sandbox on";
 		await inside(stub, (instance) => {
@@ -221,12 +228,13 @@ describe("an agent that works on files without a sandbox", () => {
 		expect(await stub.listAgents()).toEqual([]);
 	});
 
-	it("is saved with the setting off by a form that knows nothing of it and sends no repository", async () => {
+	it("is saved with the setting off by an old page's payload, from before the form carried every field", async () => {
 		const stub = registry();
 		const [site = ""] = await stub.syncRepositories([SITE]);
 		const agent = await stub.createAgent(onFiles(site));
-		// What the app's form sends for an agent without a sandbox, until it carries every field
-		// (AGT-135): no `files`, and no repository. Nothing refuses it, so the setting goes.
+		// What the app's form sent for an agent without a sandbox before it carried every field
+		// (AGT-135), and what a page loaded before that deploy still sends: no `files`, and no
+		// repository. Nothing refuses it, so the setting goes. The form of today keeps both.
 		const old = { ...plain({ name: "Renamed" }), sandbox: false, repositoryId: null };
 		expect(old).not.toHaveProperty("files");
 		await expect(stub.updateAgent(agent.id, old)).resolves.toMatchObject({ name: "Renamed" });
@@ -553,5 +561,101 @@ describe("agents without the setting", () => {
 		expect(turn).toMatchObject({ sandbox: true, repository: { name: "site" } });
 		expect(turn).not.toHaveProperty("files");
 		expect(turn).not.toHaveProperty("steps");
+	});
+});
+
+describe("moving a pin of an agent that works on files without a sandbox", () => {
+	/** A files agent pinned to the first version of its instructions and of a remote MCP server. */
+	async function pinned(stub: ReturnType<typeof registry>, fields: Partial<AgentDefinitionInput>) {
+		const [site = ""] = await stub.syncRepositories([SITE]);
+		const rules = await stub.createLibraryAsset({
+			kind: "instructions",
+			name: "Rules",
+			text: "Be brief.\n",
+		});
+		const tracker = await scannedServer(stub, site, "tracker", {
+			type: "http",
+			url: "https://mcp.acme.dev/mcp",
+		});
+		const agent = await stub.createAgent(
+			plain({
+				repositoryId: site,
+				instructions: { assetId: rules, version: 1 },
+				mcpServers: [{ assetId: tracker, version: 1, tools: ["search"] }],
+				memory: true,
+				...fields,
+			}),
+		);
+		const [file] = (await stub.getAsset(rules))?.version.files ?? [];
+		await stub.editLibraryAsset({
+			libraryAssetId: rules,
+			files: [{ path: file?.path ?? "", content: "Be brief, and kind.\n" }],
+		});
+		// The server's second version runs as a local command, as a later scan found it changed.
+		expect(await scannedServer(stub, site, "tracker", LOCAL, tracker)).toBe(tracker);
+		expect((await stub.getAsset(tracker))?.asset.version).toBe(2);
+		return { site, rules, tracker, agent };
+	}
+
+	it("keeps the setting and the repository, and is no turn for the server to refuse", async () => {
+		const stub = registry();
+		const { site, rules, agent } = await pinned(stub, { files: true });
+		const rowsBefore = await storedDefinitions(stub);
+
+		// The test Worker sets nothing for `files`, so a turn of this agent would be refused here.
+		expect(await stub.moveAgentPin(agent.id, { assetId: rules, version: 2 })).toMatchObject({
+			field: "instructions",
+			from: 1,
+			version: 2,
+		});
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
+			files: true,
+			sandbox: false,
+			memory: true,
+			instructions: { version: 2 },
+			repository: { id: site },
+			mcpServers: [{ version: 1, tools: ["search"] }],
+		});
+		expect(await stub.agentSnapshot(agent.id)).toMatchObject({
+			files: true,
+			instructions: "Be brief, and kind.\n",
+		});
+		expect(await storedDefinitions(stub)).toEqual(
+			rowsBefore.map((row) => ({ ...row, instructions_version: 2 })),
+		);
+		expect(await stub.listRuns()).toEqual([]);
+		// The move did not let a turn through either.
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		expect(await stub.beginTurn(id, "Fix the typo")).toEqual({
+			status: "refused",
+			message: `${FILES_NOT_OFFERED}, so Builder cannot answer.`,
+		});
+	});
+
+	it("refuses a version that runs as a local command, as for an agent without a sandbox", async () => {
+		const words =
+			"tracker runs as a local command, which starts in the agent's sandbox: turn the sandbox on";
+		for (const fields of [{ files: true }, { repositoryId: null }]) {
+			const stub = registry();
+			const { tracker, agent } = await pinned(stub, fields);
+			const rowsBefore = await storedDefinitions(stub);
+			await inside(stub, (instance) => {
+				expect(() => instance.moveAgentPin(agent.id, { assetId: tracker, version: 2 })).toThrow(
+					words,
+				);
+			});
+			expect((await stub.getAgent(agent.id))?.definition?.mcpServers).toMatchObject([
+				{ version: 1, tools: ["search"] },
+			]);
+			expect(await storedDefinitions(stub)).toEqual(rowsBefore);
+		}
+		// An agent with a sandbox can start it, so its pin moves.
+		const stub = registry();
+		const { tracker, agent } = await pinned(stub, { sandbox: true });
+		expect(await stub.moveAgentPin(agent.id, { assetId: tracker, version: 2 })).toMatchObject({
+			field: "mcpServers",
+			version: 2,
+		});
 	});
 });

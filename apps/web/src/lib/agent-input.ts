@@ -1,6 +1,7 @@
 import type {
 	Agent,
 	AgentDefinition,
+	AgentDefinitionInput,
 	agentDefinitionInput,
 	PinnedAsset,
 } from "@gateweave/agents-model";
@@ -35,6 +36,46 @@ export function inputOf(agent: Agent, definition: AgentDefinition): WholeAgentIn
 		repositoryId: definition.repository?.id ?? null,
 		engine: definition.engine,
 		memory: definition.memory,
+		files: definition.files,
+	};
+}
+
+/** What the agent form's controls choose. It has none for `files` (AGT-122). */
+export type AgentFormChoices = Pick<
+	WholeAgentInput,
+	| "name"
+	| "description"
+	| "provider"
+	| "model"
+	| "instructions"
+	| "environment"
+	| "mcpServers"
+	| "sandbox"
+	| "engine"
+	| "memory"
+> & {
+	/** The repository chosen in the form, or the one the agent had; null when none. */
+	repositoryId: string | null;
+};
+
+/**
+ * What the agent form saves: the agent as it is, with what the form's controls chose. A field
+ * the form has no control for goes back as it was, so an edit never resets it (AGT-135).
+ *
+ * The form cannot turn `files` on. It stays on an agent that has it, with the repository, which
+ * goes with a sandbox or with `files`; giving the agent a sandbox turns it off, since an agent
+ * has one or the other.
+ */
+export function formInput(
+	current: { agent: Agent; definition: AgentDefinition } | null,
+	choices: AgentFormChoices,
+): AgentDefinitionInput {
+	const files = (current?.definition.files ?? false) && !choices.sandbox;
+	return {
+		...(current && inputOf(current.agent, current.definition)),
+		...choices,
+		files,
+		repositoryId: choices.sandbox || files ? choices.repositoryId : null,
 	};
 }
 

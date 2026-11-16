@@ -38,7 +38,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
-import { inputOf } from "#/lib/agent-input";
+import { formInput } from "#/lib/agent-input";
 import { getMcpServers, getModels, getRepositories } from "#/lib/registry";
 
 function message(error: unknown) {
@@ -192,10 +192,9 @@ export function AgentDialog({
 		const pin = pinFor(instructions, pinned, choices);
 		const environmentPin = pinFor(environment, pinnedEnv, sets);
 		try {
-			await onSave({
-				// An edit starts from the agent as it is, so a field this form has no control for yet
-				// goes back as it was instead of to its default (AGT-135).
-				...(agent && inputOf(agent.agent, agent.definition)),
+			// An edit starts from the agent as it is, so a field this form has no control for yet
+			// goes back as it was instead of to its default (AGT-135): `formInput`.
+			const input = formInput(agent ?? null, {
 				name: name.trim(),
 				description: description.trim() || null,
 				provider,
@@ -216,8 +215,9 @@ export function AgentDialog({
 				engine,
 				memory,
 				// The repository is checked out in the sandbox, so it goes with it.
-				repositoryId: sandbox && repositoryId !== "" ? repositoryId : null,
+				repositoryId: repositoryId !== "" ? repositoryId : null,
 			});
+			await onSave(input);
 			onClose();
 		} catch (failure) {
 			setError(message(failure));
