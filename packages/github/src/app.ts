@@ -264,6 +264,11 @@ export async function controlsInstallation(
 
 /** A REST call to the GitHub API. */
 export async function request(path: string, token: string, init: RequestInit = {}) {
+	return (await send(path, token, init)).json();
+}
+
+/** The same call, for a caller that reads the answer's body itself. */
+export async function send(path: string, token: string, init: RequestInit = {}): Promise<Response> {
 	let response: Response;
 	try {
 		response = await fetch(`${API_URL}${path}`, {
@@ -286,5 +291,5 @@ export async function request(path: string, token: string, init: RequestInit = {
 			`GitHub answered ${response.status}: ${body.slice(0, 200)}`,
 		);
 	}
-	return response.json();
+	return response;
 }

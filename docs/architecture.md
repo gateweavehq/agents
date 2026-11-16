@@ -468,7 +468,15 @@ cached per isolate, the OAuth web flow with PKCE, and webhook signatures. It nee
   Everyone else gets the same refusal as for an installation they cannot see. The token is not
   kept.
 - **Writing.** Commits, branches and pull requests through the REST API
-  (`packages/github/src/writes.ts`), for applying setups.
+  (`packages/github/src/writes.ts`), for applying setups. `commitChanges` there is not called
+  yet (AGT-122): it puts a change on a branch with no git, from a base commit, the files that
+  differ and the paths that are gone. A file keeps its mode, a symlink or a submodule is never
+  written over, the branch must be where its caller left it and is never forced, and each
+  refusal is a value: nothing to commit, the branch moved, a path that cannot be written
+  (`paths.ts`), or GitHub's own no with its status. `readTreeEntries` and `readBlob` in
+  `contents.ts` read what it needs: every entry's mode, and one blob's exact bytes under a size
+  limit. The tests' stand-in for GitHub (`test/fake-git.ts`, exported as
+  `@gateweave/agents-github/testing`) refuses what GitHub refuses.
 - **Staying in step.** Linking, and webhooks for installation and repository changes, list the
   installation's repositories and reconcile them into the registry: new ones appear, renamed ones
   keep their history (they are matched by GitHub's id), and ones the app no longer reaches are

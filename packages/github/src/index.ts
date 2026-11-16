@@ -12,13 +12,19 @@ export {
 	userInstallations,
 } from "./app";
 export {
+	type BlobRead,
 	type BranchHead,
 	branchHead,
+	gitBlobId,
 	type RepositoryName,
+	readBlob,
 	readTexts,
 	readTree,
+	readTreeEntries,
 	TEXTS_PER_REQUEST,
+	TREE_MODES,
 	type TreeEntry,
+	type TreeItem,
 } from "./contents";
 export { appJwt, importAppKey } from "./jwt";
 export {
@@ -29,10 +35,15 @@ export {
 	pkcePair,
 	TOKEN_URL,
 } from "./oauth";
+export { repositoryPathProblem, WORKFLOWS_FOLDER } from "./paths";
 export { verifyWebhook, type WebhookPayload, webhookPayload } from "./webhooks";
 export {
 	branchCommit,
+	type ChangesInput,
+	type ChangesOutcome,
+	type CommitAuthor,
 	type CommitInput,
+	commitChanges,
 	createBranch,
 	createCommit,
 	type FileChange,

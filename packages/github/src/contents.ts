@@ -2,7 +2,8 @@
 // in its tree, and the text of the files asked for. Texts come through GraphQL, many blobs per
 // request, so a scan stays within a Worker's subrequest limit.
 import { z } from "zod";
-import { GitHubError, request } from "./app";
+import { GitHubError, request, send } from "./app";
+import { fromBase64 } from "./encoding";
 
 export interface RepositoryName {
 	owner: string;
@@ -21,6 +22,30 @@ export interface TreeEntry {
 	size: number;
 	symlink: boolean;
 }
+
+/** What a tree's entry is, as Git writes it. */
+export const TREE_MODES = {
+	file: "100644",
+	executable: "100755",
+	symlink: "120000",
+	submodule: "160000",
+} as const;
+
+/** An entry of a tree with its mode: a file, an executable file, a symlink or a submodule. */
+export interface TreeItem {
+	path: string;
+	/** One of `TREE_MODES`, or whatever else an old repository holds. */
+	mode: string;
+	/** The blob's id. A symlink's blob holds its target; a submodule's id is the commit it pins. */
+	id: string;
+	/** The blob's size in bytes; 0 for a submodule. */
+	size: number;
+}
+
+/** A blob's bytes, or that it is larger than the caller will take. */
+export type BlobRead =
+	| { read: true; bytes: Uint8Array<ArrayBuffer>; size: number }
+	| { read: false; size: number | null };
 
 /** Blobs per GraphQL request. GitHub caps a query's cost, not its aliases; 50 stays well inside. */
 export const TEXTS_PER_REQUEST = 50;
@@ -45,6 +70,12 @@ const treeSchema = z.object({
 			size: z.number().int().nonnegative().optional(),
 		}),
 	),
+});
+
+const restBlobSchema = z.object({
+	content: z.string(),
+	encoding: z.literal("base64"),
+	size: z.number().int().nonnegative().nullable(),
 });
 
 const blobSchema = z
@@ -90,12 +121,7 @@ export async function readTree(
 	repository: RepositoryName,
 	tree: string,
 ): Promise<{ files: TreeEntry[]; truncated: boolean }> {
-	const found = treeSchema.parse(
-		await request(
-			`${repositoryPath(repository)}/git/trees/${objectId.parse(tree)}?recursive=1`,
-			token,
-		),
-	);
+	const found = await listTree(token, repository, tree);
 	const files: TreeEntry[] = [];
 	for (const entry of found.tree) {
 		if (entry.type !== "blob") continue;
@@ -107,6 +133,96 @@ export async function readTree(
 		});
 	}
 	return { files, truncated: found.truncated };
+}
+
+/**
+ * Every entry of a tree that is not a folder, at any depth, with its mode: what a commit made
+ * through the API has to know, so an executable file keeps its bit and a symlink or a submodule
+ * is not written over. `truncated` says GitHub cut the listing, as for `readTree`: a caller that
+ * would write must refuse then, since what it cannot see it cannot spare.
+ */
+export async function readTreeEntries(
+	token: string,
+	repository: RepositoryName,
+	tree: string,
+): Promise<{ entries: TreeItem[]; truncated: boolean }> {
+	const found = await listTree(token, repository, tree);
+	const entries: TreeItem[] = [];
+	for (const entry of found.tree) {
+		if (entry.type !== "blob" && entry.type !== "commit") continue;
+		entries.push({ path: entry.path, mode: entry.mode, id: entry.sha, size: entry.size ?? 0 });
+	}
+	return { entries, truncated: found.truncated };
+}
+
+async function listTree(token: string, repository: RepositoryName, tree: string) {
+	return treeSchema.parse(
+		await request(
+			`${repositoryPath(repository)}/git/trees/${objectId.parse(tree)}?recursive=1`,
+			token,
+		),
+	);
+}
+
+/** `git hash-object` of these bytes: the id Git and GitHub give the blob that holds them. */
+export async function gitBlobId(bytes: Uint8Array): Promise<string> {
+	const header = new TextEncoder().encode(`blob ${bytes.length}\0`);
+	const whole = new Uint8Array(header.length + bytes.length);
+	whole.set(header, 0);
+	whole.set(bytes, header.length);
+	const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", whole));
+	return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * One blob's exact bytes, by its id: a byte order mark, line ends and bytes that are not text
+ * come back as they are, which GraphQL's `text` does not promise. A blob over `maxBytes` is not
+ * returned, and no more of GitHub's answer is read than a blob of that size could take, so a
+ * file of 100 MB does not pass through memory to be refused.
+ */
+export async function readBlob(
+	token: string,
+	repository: RepositoryName,
+	blob: string,
+	maxBytes: number,
+): Promise<BlobRead> {
+	const id = objectId.parse(blob);
+	const response = await send(`${repositoryPath(repository)}/git/blobs/${id}`, token);
+	// Base64 is four characters to three bytes, GitHub breaks its lines with an escaped newline
+	// every sixty, and the rest of the answer is a few addresses.
+	const body = await textUpTo(response, Math.ceil(maxBytes * 1.5) + 4096);
+	if (body === null) return { read: false, size: null };
+	const found = restBlobSchema.parse(JSON.parse(body));
+	if (found.size !== null && found.size > maxBytes) return { read: false, size: found.size };
+	const bytes = fromBase64(found.content);
+	if (bytes.length > maxBytes) return { read: false, size: bytes.length };
+	if ((await gitBlobId(bytes)) !== id) {
+		throw new GitHubError(502, "GitHub answered with bytes that are not the blob asked for");
+	}
+	return { read: true, bytes, size: bytes.length };
+}
+
+/** The body as text, or null, with the rest unread, once it is longer than `limit` bytes. */
+async function textUpTo(response: Response, limit: number): Promise<string | null> {
+	if (Number(response.headers.get("content-length") ?? 0) > limit) {
+		await response.body?.cancel();
+		return null;
+	}
+	if (!response.body) return "";
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let text = "";
+	let length = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) return text + decoder.decode();
+		length += value.length;
+		if (length > limit) {
+			await reader.cancel();
+			return null;
+		}
+		text += decoder.decode(value, { stream: true });
+	}
 }
 
 /**
