@@ -8,6 +8,53 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.28.0] - 2026-11-16
+
+A server no longer needs a `SECRETS_KEY` set by hand before workspaces can keep their keys, and a
+database failure no longer shows or logs a statement's values. There is no migration in this
+release. **If you run your own server without a `SECRETS_KEY`, read the last section before
+updating: this release turns secret storage on for it.**
+
+### Added
+
+- **Secrets without a `SECRETS_KEY`.** A server with no `SECRETS_KEY` refused to keep a model
+  key, an environment secret or a GitLab token, which made adding one in the dashboard the first
+  hand step after the Deploy button. Such a server now encrypts under a key made from
+  `BETTER_AUTH_SECRET`, when that secret is at least 32 characters and varied enough. A
+  `SECRETS_KEY` that is set is always the one used. Once one is set, values kept without it are
+  encrypted again under it as they are next used.
+  ([#250](https://github.com/gateweavehq/agents/pull/250))
+- **From zero to a first pull request.** A page in the docs walks from the Deploy button to an
+  agent's first pull request, with what each step needs and the times that were measured.
+  ([#250](https://github.com/gateweavehq/agents/pull/250))
+
+### Changed
+
+- **A `SECRETS_KEY` that goes missing is named.** A workspace holding values encrypted with a
+  `SECRETS_KEY` the server no longer has keeps nothing new and says that the key is missing,
+  instead of asking for each value again. Putting the key back restores them.
+  ([#250](https://github.com/gateweavehq/agents/pull/250))
+
+### Fixed
+
+- **A failed database query no longer carries its values.** When a query failed for good, the
+  error held the statement and its values. A failed read of a session was logged with the
+  session's token among them, and a failed read for a page showed them on the error page. The
+  token alone does not sign anyone in: the cookie also carries a signature made with the
+  server's secret. A failure now carries a reference only. The log has the kind of failure and
+  the statement without its values under the same reference, and the page shows a plain sentence
+  with it. To see whether a server ever logged one, search its logs for `Failed query:`.
+  ([#249](https://github.com/gateweavehq/agents/pull/249))
+
+### If you run your own
+
+- **Without a `SECRETS_KEY`, this release turns secret storage on**, if your
+  `BETTER_AUTH_SECRET` is long and varied enough. One secret then both signs sessions and opens
+  what workspaces stored, and changing it makes all of that unreadable. Set a `SECRETS_KEY` for
+  anything beyond a first try, or set `SECRETS_FROM_AUTH_SECRET=off` to keep storage off as
+  before. [Self-hosting](docs/self-hosting.md#the-key-that-encrypts-workspaces-secrets) has both.
+- **With a `SECRETS_KEY`, nothing to do.**
+
 ## [0.27.2] - 2026-11-15
 
 A run that is still going opens on the first click, and a database read that fails in passing is
