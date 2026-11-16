@@ -384,6 +384,17 @@ describe("a Drizzle that is not as expected", () => {
 
 		expect(await session.prepareQuery().all()).toEqual(["a row"]);
 	});
+
+	// `pnpm auth:schema` reads the configuration in `auth/cli.ts`, whose database is no binding at
+	// all. Made with `createDb`, it was refused above and the generator stopped.
+	it("still loads the configuration the schema generator reads, whose database is no binding", async () => {
+		const { auth } = await import("../auth/cli");
+
+		expect(auth.options.plugins?.length).toBeGreaterThan(0);
+		// The oauth-provider tries its seed against it and fails, as it always has there: waited
+		// for, so that whatever it says is said inside this test.
+		await auth.$context;
+	});
 });
 
 // Better Auth's oauth-provider, which `mcp({ resource })` is built on, writes the resource into
