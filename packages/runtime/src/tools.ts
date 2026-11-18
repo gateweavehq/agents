@@ -5,18 +5,17 @@
  * the conversation's SQLite and keep the connection open. A server that runs as a local command
  * starts in the conversation's sandbox (`./local-servers.ts`).
  */
-import {
-	createMCPClient,
-	type MCPClient,
-	MCPClientError,
-	type OAuthClientProvider,
-	UnauthorizedError,
-} from "@ai-sdk/mcp";
+import { createMCPClient, type MCPClient, MCPClientError, UnauthorizedError } from "@ai-sdk/mcp";
 import { MCP_CHECK_LIMITS, type McpCheckResult, type TurnMcpServer } from "@gateweave/agents-model";
 import type { ToolSet } from "ai";
 import { z } from "zod";
 import { LocalServerError, type LocalServerPort, SandboxStdioTransport } from "./local-servers";
-import { OAuthSignInNeeded, SIGN_IN_AGAIN } from "./mcp-oauth";
+import {
+	OAuthRefreshWaitError,
+	OAuthSignInNeeded,
+	RegistryOAuthProvider,
+	SIGN_IN_AGAIN,
+} from "./mcp-oauth";
 import { failureForLogs } from "./models";
 import type { RunRecorder } from "./trace";
 
@@ -73,7 +72,7 @@ export const NO_SANDBOX_FOR_LOCAL_SERVER =
 	"It runs as a local command, and this turn has no sandbox to start it in";
 
 /** The OAuth client of a library server connected through OAuth, by its id (AGT-78). */
-export type OAuthProviders = (assetId: string) => OAuthClientProvider;
+export type OAuthProviders = (assetId: string) => RegistryOAuthProvider;
 
 async function connect(
 	server: TurnMcpServer,
@@ -125,13 +124,51 @@ async function connect(
 export async function checkMcpServer(
 	server: TurnMcpServer,
 	oauth: OAuthProviders | null = null,
-): Promise<McpCheckResult> {
+	signal?: AbortSignal,
+): Promise<
+	McpCheckResult & { kind?: "sign-in-again" | "temporary" | "http"; statusCode?: number }
+> {
 	if ("problem" in server) return { ok: false, error: server.problem };
 	if (server.transport === "stdio") return { ok: false, error: NO_SANDBOX_FOR_LOCAL_SERVER };
-	const { deadline, options } = timeLimit();
+	const { deadline, options } = timeLimit(signal);
+	let tokenEndpointFailure = false;
+	let invalidGrant = false;
+	const provider = server.oauth && oauth ? oauth(server.oauth) : null;
+	const checkFetch: typeof fetch = async (input, init) => {
+		const body = init?.body;
+		const refreshing =
+			typeof body === "string"
+				? body.includes("grant_type=refresh_token")
+				: body instanceof URLSearchParams && body.get("grant_type") === "refresh_token";
+		try {
+			const response = await fetchWithoutRedirects(
+				input,
+				refreshing
+					? { ...init, signal: init?.signal }
+					: { ...init, signal: init?.signal ?? options.signal },
+			);
+			if (refreshing && response.status >= 500) tokenEndpointFailure = true;
+			if (refreshing && response.status === 400) {
+				const answer = await response
+					.clone()
+					.json()
+					.catch(() => null);
+				invalidGrant =
+					typeof answer === "object" &&
+					answer !== null &&
+					"error" in answer &&
+					answer.error === "invalid_grant";
+			}
+			return response;
+		} catch (error) {
+			if (refreshing) tokenEndpointFailure = true;
+			throw error;
+		}
+	};
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
 	try {
-		opened = await openClient(server, options, null, oauth);
+		await provider?.tokens();
+		opened = await openClient(server, options, null, provider ? () => provider : null, checkFetch);
 		return {
 			ok: true,
 			tools: opened.definitions.tools.slice(0, MCP_CHECK_LIMITS.tools).map((tool) => ({
@@ -141,7 +178,28 @@ export async function checkMcpServer(
 		};
 	} catch (error) {
 		console.error("An MCP server check failed", { server: server.name, ...failureForLogs(error) });
-		return { ok: false, error: describeServerFailure(error, deadline) };
+		if (!provider) return { ok: false, error: describeServerFailure(error, deadline) };
+		const statusCode = MCPClientError.isInstance(error) ? error.statusCode : undefined;
+		const stored = await provider.storedTokens().catch(() => undefined);
+		const kind =
+			(stored === null && server.oauth) || invalidGrant
+				? "sign-in-again"
+				: tokenEndpointFailure ||
+						error instanceof OAuthSignInNeeded ||
+						error instanceof OAuthRefreshWaitError
+					? "temporary"
+					: "http";
+		return {
+			ok: false,
+			error:
+				kind === "temporary"
+					? "Its sign-in server did not answer; it will be checked again"
+					: kind === "sign-in-again"
+						? SIGN_IN_AGAIN
+						: describeServerFailure(error, deadline),
+			kind,
+			statusCode,
+		};
 	} finally {
 		await opened?.client.close().catch(() => {});
 	}
@@ -250,8 +308,11 @@ async function openClient(
 	options: { signal: AbortSignal },
 	sandbox: LocalServerPort | null = null,
 	oauth: OAuthProviders | null = null,
+	fetchFn: typeof fetch = fetchWithoutRedirects,
 ) {
 	let client: MCPClient | undefined;
+	const provider =
+		server.transport !== "stdio" && server.oauth && oauth ? oauth(server.oauth) : null;
 	try {
 		client = await createMCPClient({
 			clientName: "gateweave-agents",
@@ -266,8 +327,11 @@ async function openClient(
 							type: server.transport,
 							url: server.url,
 							headers: server.headers,
-							fetch: fetchWithoutRedirects,
-							...(server.oauth && oauth ? { authProvider: oauth(server.oauth) } : {}),
+							fetch:
+								provider instanceof RegistryOAuthProvider
+									? provider.fetchWithRefreshLease(fetchFn)
+									: fetchFn,
+							...(provider ? { authProvider: provider } : {}),
 						},
 			initializationOptions: options,
 		});
@@ -275,6 +339,8 @@ async function openClient(
 	} catch (error) {
 		await client?.close().catch(() => {});
 		throw error;
+	} finally {
+		if (provider instanceof RegistryOAuthProvider) await provider.releaseRefresh();
 	}
 }
 

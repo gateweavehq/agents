@@ -15,6 +15,7 @@ import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { AgentDialog } from "#/components/registry/agent-dialogs";
 import { KindLabel, RuntimeBadge } from "#/components/registry/labels";
+import { McpOAuthStatus, useMcpOAuthHealth } from "#/components/registry/mcp-oauth-health";
 import {
 	trackConnectedSearch,
 	useTrackConnectedNotice,
@@ -58,6 +59,8 @@ export const Route = createFileRoute("/$workspace/agents/$agentId")({
 
 function AgentPage() {
 	const data = Route.useLoaderData();
+	const { slug } = useWorkspace();
+	const health = useMcpOAuthHealth(slug, data?.definition ? [data.agent.id] : []);
 	const admin = isAdmin(useMyRole());
 	useDocumentTitle(data ? data.agent.name : "Agent");
 	const track = data?.definition?.mcpServers
@@ -89,7 +92,11 @@ function AgentPage() {
 					</div>
 				)}
 			</header>
-			{definition ? <Definition definition={definition} admin={admin} /> : <Configured />}
+			{definition ? (
+				<Definition definition={definition} admin={admin} health={health} />
+			) : (
+				<Configured />
+			)}
 			{definition && data.triggers && (
 				<Triggers
 					target={{ kind: "agent", agentId: agent.id }}
@@ -130,7 +137,15 @@ function ChatButton({ agentId }: { agentId: string }) {
 }
 
 /** The model and instructions of an agent run by Gateweave. */
-function Definition({ definition, admin }: { definition: AgentDefinition; admin: boolean }) {
+function Definition({
+	definition,
+	admin,
+	health,
+}: {
+	definition: AgentDefinition;
+	admin: boolean;
+	health: ReturnType<typeof useMcpOAuthHealth>;
+}) {
 	const { slug } = useWorkspace();
 	const data = Route.useLoaderData();
 	if (!data) return null;
@@ -307,7 +322,7 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 					<ul className="divide-y rounded-lg border text-sm">
 						{definition.mcpServers.map((server) => (
 							<PinRow key={server.asset.id} pin={server} admin={admin}>
-								<McpServerState server={server} />
+								<McpServerState server={server} health={health} />
 							</PinRow>
 						))}
 					</ul>
@@ -325,13 +340,33 @@ function Definition({ definition, admin }: { definition: AgentDefinition; admin:
 }
 
 /** Where the agent reaches a server, and the variables its headers need. */
-function McpServerState({ server }: { server: AgentMcpServer }) {
+function McpServerState({
+	server,
+	health,
+}: {
+	server: AgentMcpServer;
+	health: ReturnType<typeof useMcpOAuthHealth>;
+}) {
 	const { slug } = useWorkspace();
 	const { connection, variables } = server;
 	const missing = variables.filter((variable) => variable.state === "missing");
+	const oauth = health?.find((entry) => entry.assetId === server.asset.id);
 
 	return (
 		<div className="w-full space-y-1 text-xs text-muted-foreground">
+			{oauth && (
+				<p>
+					OAuth:{" "}
+					<McpOAuthStatus state={oauth.state} checkedAt={oauth.checkedAt} reason={oauth.reason} />.{" "}
+					<Link
+						to="/$workspace/mcp"
+						params={{ workspace: slug }}
+						className="underline underline-offset-2"
+					>
+						MCP page
+					</Link>
+				</p>
+			)}
 			{server.tools && (
 				<p>
 					Only: <span className="font-mono">{server.tools.join(", ")}</span>

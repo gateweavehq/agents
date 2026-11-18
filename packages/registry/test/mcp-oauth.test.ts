@@ -1,6 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
@@ -43,6 +43,104 @@ async function connect(stub: ReturnType<typeof registry>, server: string) {
 }
 
 describe("MCP servers connected through OAuth", () => {
+	it("opens nested JSON and warns without logging a rejected value", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		const nested = { jwks: [{ keys: [{ kid: "key-1", use: "sig" }] }] };
+		await stub.mcpOAuthSave(server, {
+			client: nested,
+			tokens: TOKENS,
+			authorizationServer: nested,
+		});
+		expect(await stub.mcpOAuthOpen(server)).toMatchObject({
+			client: nested,
+			authorizationServer: nested,
+		});
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			await stub.mcpOAuthSave(server, { client: "private-bad-value" });
+			expect((await stub.mcpOAuthOpen(server))?.client).toBeNull();
+			expect(warn).toHaveBeenCalledWith("mcp-oauth-invalid-json", { part: "client" });
+			expect(JSON.stringify(warn.mock.calls)).not.toContain("private-bad-value");
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it("keeps a running health lease during token rotation and rejects stale completion", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		const claim = await stub.mcpHealthClaim(server);
+		if (claim.kind !== "claimed") throw new Error("Expected a health lease");
+		await stub.mcpOAuthSave(server, {
+			tokens: { ...TOKENS, access_token: "new" },
+			expectedTokens: TOKENS,
+		});
+		expect((await stub.mcpHealthClaim(server)).kind).toBe("busy");
+		await stub.mcpHealthComplete(server, { state: "connected" }, claim.generation, claim.lease);
+		expect((await stub.mcpHealthClaim(server)).kind).toBe("cached");
+		await stub.mcpOAuthSave(server, {
+			tokens: null,
+			expectedTokens: { ...TOKENS, access_token: "new" },
+		});
+		expect((await stub.mcpHealthClaim(server)).kind).toBe("claimed");
+	});
+	it("does not clear rotated tokens from a concurrent refresh", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		const claim = await stub.mcpHealthClaim(server);
+		if (claim.kind !== "claimed") throw new Error("Health lease was not claimed");
+		await stub.mcpHealthComplete(
+			server,
+			{ state: "needs-reconnecting" },
+			claim.generation,
+			claim.lease,
+		);
+		expect((await stub.mcpHealthClaim(server)).kind).toBe("cached");
+		const fresh = { ...TOKENS, access_token: "fresh-access", refresh_token: "fresh-refresh" };
+		expect(await stub.mcpOAuthSave(server, { tokens: fresh })).toBe(true);
+		expect((await stub.mcpHealthClaim(server)).kind).toBe("claimed");
+		expect(await stub.mcpOAuthSave(server, { tokens: null, expectedTokens: TOKENS })).toBe(false);
+		expect((await stub.mcpOAuthOpen(server))?.tokens).toEqual(fresh);
+	});
+
+	it("shares the check lease across agents and rejects a completion from before an edit", async () => {
+		const { stub, server } = await workspace();
+		const first = await stub.mcpHealthClaim(server, "agent-one");
+		if (first.kind !== "claimed") throw new Error("Expected a lease");
+		expect((await stub.mcpHealthClaim(server, "agent-two")).kind).toBe("busy");
+		await stub.editMcpServer({
+			assetId: server,
+			transport: "http",
+			url: "https://new.example/mcp",
+			headers: [],
+		});
+		expect((await stub.mcpHealthClaim(server, "agent-two")).kind).toBe("busy");
+		await stub.mcpHealthComplete(
+			server,
+			{ state: "connected" },
+			first.generation,
+			first.lease,
+			Date.now(),
+			"agent-one",
+		);
+		const second = await stub.mcpHealthClaim(server, "agent-two");
+		if (second.kind !== "claimed") throw new Error("Expected a new lease");
+		await stub.mcpHealthComplete(
+			server,
+			{ state: "needs-reconnecting" },
+			second.generation,
+			second.lease,
+			Date.now(),
+			"agent-two",
+		);
+		expect((await stub.mcpHealthClaim(server, "agent-one")).kind).toBe("claimed");
+		expect(await stub.mcpHealthClaim(server, "agent-two")).toMatchObject({
+			kind: "cached",
+			state: "needs-reconnecting",
+		});
+	});
+
 	it("keep the flow's state single-use, for whoever started it, for ten minutes", async () => {
 		const { stub, server } = await workspace();
 		const begun = await stub.mcpOAuthBegin(server, ADA);

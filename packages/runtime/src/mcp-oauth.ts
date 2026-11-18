@@ -21,13 +21,29 @@ export interface OAuthStore {
 		verifier: string | null;
 		tokens: unknown;
 	} | null>;
+	mcpRefreshClaim?(assetId: string): Promise<{ kind: "claimed"; lease: string } | { kind: "busy" }>;
+	mcpRefreshRelease?(assetId: string, lease: string): Promise<void>;
 	mcpOAuthSave(
 		assetId: string,
-		parts: { client?: unknown; verifier?: string | null; tokens?: unknown },
+		parts: {
+			client?: unknown;
+			verifier?: string | null;
+			tokens?: unknown;
+			expectedTokens?: unknown;
+		},
 	): Promise<boolean>;
 }
 
 /** Why a turn cannot use a connection any more: someone has to sign in again. */
+const REFRESH_TIMEOUT_MS = 15_000;
+const REFRESH_WAIT_MS = 20_000;
+
+export class OAuthRefreshWaitError extends Error {
+	constructor() {
+		super("The sign-in server is busy; it will be checked again");
+	}
+}
+
 export const SIGN_IN_AGAIN =
 	"Its OAuth connection no longer works. An owner or admin can connect it again on the MCP page";
 
@@ -59,6 +75,7 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	readonly #assetId: string;
 	readonly #options: ProviderOptions;
 	#loaded: Awaited<ReturnType<OAuthStore["mcpOAuthOpen"]>> | undefined;
+	#refreshLease: string | undefined;
 
 	constructor(store: OAuthStore, assetId: string, options: ProviderOptions) {
 		this.#store = store;
@@ -88,8 +105,17 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 		return this.#loaded;
 	}
 
-	async #save(parts: { client?: unknown; verifier?: string | null; tokens?: unknown }) {
-		await this.#store.mcpOAuthSave(this.#assetId, parts);
+	async #save(parts: {
+		client?: unknown;
+		verifier?: string | null;
+		tokens?: unknown;
+		expectedTokens?: unknown;
+	}) {
+		const saved = await this.#store.mcpOAuthSave(this.#assetId, parts);
+		if (!saved) {
+			this.#loaded = await this.#store.mcpOAuthOpen(this.#assetId);
+			return;
+		}
 		const data = await this.#data();
 		if (data) this.#loaded = { ...data, ...parts } as typeof data;
 	}
@@ -106,16 +132,101 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 		await this.#save({ client });
 	}
 
+	async storedTokens(): Promise<unknown> {
+		return (await this.#store.mcpOAuthOpen(this.#assetId))?.tokens ?? null;
+	}
+
 	async tokens(): Promise<OAuthTokens | undefined> {
 		if (this.#options.freshSignIn) return undefined;
 		return ((await this.#data())?.tokens ?? undefined) as OAuthTokens | undefined;
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
-		await this.#save({ tokens });
+		try {
+			await this.#save({
+				tokens,
+				...(this.#options.freshSignIn ? {} : { expectedTokens: this.#loaded?.tokens }),
+			});
+		} finally {
+			await this.releaseRefresh();
+		}
+	}
+
+	async releaseRefresh(): Promise<void> {
+		const lease = this.#refreshLease;
+		this.#refreshLease = undefined;
+		if (lease) await this.#store.mcpRefreshRelease?.(this.#assetId, lease);
+	}
+
+	/** Serializes rotating refresh tokens across checks and turns for this connection. */
+	fetchWithRefreshLease(fetchFn: typeof fetch): typeof fetch {
+		return async (input, init) => {
+			const body = init?.body;
+			const form =
+				typeof body === "string"
+					? new URLSearchParams(body)
+					: body instanceof URLSearchParams
+						? body
+						: null;
+			if (form?.get("grant_type") !== "refresh_token" || !this.#store.mcpRefreshClaim)
+				return fetchFn(input, init);
+			const expected = form.get("refresh_token");
+			const loadedAccess = (await this.#data())?.tokens as OAuthTokens | null | undefined;
+			const deadline = Date.now() + REFRESH_WAIT_MS;
+			let delay = 100;
+			for (;;) {
+				if (init?.signal?.aborted) throw init.signal.reason;
+				if (Date.now() >= deadline) throw new OAuthRefreshWaitError();
+				const claim = await this.#store.mcpRefreshClaim(this.#assetId);
+				if (claim.kind === "busy") {
+					await new Promise<void>((resolve, reject) => {
+						const wait = Math.min(delay, Math.max(0, deadline - Date.now()));
+						const timer = setTimeout(() => {
+							init?.signal?.removeEventListener("abort", abort);
+							resolve();
+						}, wait);
+						const abort = () => {
+							clearTimeout(timer);
+							reject(init?.signal?.reason);
+						};
+						init?.signal?.addEventListener("abort", abort, { once: true });
+						if (init?.signal?.aborted) abort();
+					});
+					delay = Math.min(delay * 2, 1000);
+					continue;
+				}
+				this.#refreshLease = claim.lease;
+				try {
+					if (init?.signal?.aborted) throw init.signal.reason;
+					const fresh = await this.#store.mcpOAuthOpen(this.#assetId);
+					const tokens = fresh?.tokens as OAuthTokens | null | undefined;
+					this.#loaded = fresh;
+					if (tokens?.access_token && tokens.access_token !== loadedAccess?.access_token) {
+						await this.releaseRefresh();
+						return Response.json(tokens);
+					}
+					if (tokens?.refresh_token && tokens.refresh_token !== expected) {
+						await this.releaseRefresh();
+						return Response.json(tokens);
+					}
+					const response = await fetchFn(input, {
+						...init,
+						signal: init?.signal
+							? AbortSignal.any([init.signal, AbortSignal.timeout(REFRESH_TIMEOUT_MS)])
+							: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+					});
+					if (!response.ok) await this.releaseRefresh();
+					return response;
+				} catch (error) {
+					await this.releaseRefresh();
+					throw error;
+				}
+			}
+		};
 	}
 
 	async saveCodeVerifier(verifier: string): Promise<void> {
+		if (!this.#options.onRedirect) throw new OAuthSignInNeeded();
 		await this.#save({ verifier });
 	}
 
@@ -135,10 +246,17 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 		this.#options.onRedirect(url);
 	}
 
-	async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier"): Promise<void> {
+	async invalidateCredentials(
+		scope: "all" | "client" | "tokens" | "verifier",
+		context?: { tokens: OAuthTokens },
+	): Promise<void> {
 		if (scope === "all") await this.#save({ client: null, tokens: null, verifier: null });
 		else if (scope === "client") await this.#save({ client: null });
-		else if (scope === "tokens") await this.#save({ tokens: null });
+		else if (scope === "tokens")
+			await this.#save({
+				tokens: null,
+				expectedTokens: context?.tokens ?? (await this.#data())?.tokens,
+			});
 		else await this.#save({ verifier: null });
 	}
 }

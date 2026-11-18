@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
 import { FakeOAuthMcp } from "./fake-oauth-mcp";
+import { callServerFn } from "./server-fn";
 
 const origin = "https://agents.test";
 const server = new FakeOAuthMcp("mcp.oauth.test");
@@ -70,6 +71,114 @@ it("connects a server through its OAuth sign-in, with PKCE, and keeps the tokens
 	// A turn reaches the server with the connection.
 	expect(await registry.mcpCheckTarget(assetId)).toMatchObject({ oauth: assetId });
 	expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
+	const health = () =>
+		callServerFn(agents, origin, "getMcpOAuthHealth", {
+			data: { slug: "oauth-lab" },
+			cookie,
+			client: owner.headers["cf-connecting-ip"],
+			method: "GET",
+		});
+	const healthy = await health();
+	expect(healthy.text).toContain("connected");
+	expect(healthy.text).not.toContain("access-1");
+	expect(healthy.text).not.toContain("refresh-1");
+	const requestsAfterFirst = server.requests.length;
+	const cached = await health();
+	expect(cached.text).toContain("connected");
+	expect(server.requests.length).toBe(requestsAfterFirst);
+	const stale = async () => {
+		await registry.mcpOAuthSave(assetId, {
+			tokens: await registry.mcpOAuthOpen(assetId).then((open) => open?.tokens),
+		});
+	};
+
+	const agent = await registry.createAgent({
+		name: "Reviewer",
+		description: null,
+		provider: "anthropic",
+		model: "claude-sonnet-5-5",
+		instructions: null,
+		mcpServers: [{ assetId, version: 1, tools: null }],
+	});
+	const agentHealth = () =>
+		callServerFn(agents, origin, "getMcpOAuthHealth", {
+			data: { slug: "oauth-lab", agentIds: [agent.id] },
+			cookie,
+			client: owner.headers["cf-connecting-ip"],
+			method: "GET",
+		});
+	server.expireAccessTokens();
+	await stale();
+	const refreshBefore = server.requests.filter((request) => request === "POST /token").length;
+	const [refreshed, concurrent] = await Promise.all([health(), agentHealth()]);
+	expect(server.requests.filter((request) => request === "POST /token")).toHaveLength(
+		refreshBefore + 1,
+	);
+	expect(refreshed.text).toContain("connected");
+	expect(concurrent.text).toContain("connected");
+	expect(await registry.mcpOAuthOpen(assetId)).toMatchObject({
+		tokens: { access_token: "access-2" },
+	});
+	const requestsAfterRefresh = server.requests.length;
+	await health();
+	expect(server.requests.length).toBe(requestsAfterRefresh);
+	server.denyMcp(403);
+	await stale();
+	const forbidden = await health();
+	expect(forbidden.text).toContain("could-not-check");
+	expect(forbidden.text).not.toContain("needs-reconnecting");
+	server.denyMcp(null);
+
+	await registry.mcpOAuthSave(assetId, { verifier: "pending-sign-in" });
+	server.expireAccessTokens();
+	server.failNextRefresh("503");
+	await stale();
+	const unavailable = await health();
+	expect(unavailable.text).toContain("could-not-check");
+	expect(unavailable.text).not.toContain("needs-reconnecting");
+	expect(unavailable.text).toContain("Its sign-in server did not answer; it will be checked again");
+	expect((await registry.mcpOAuthOpen(assetId))?.verifier).toBe("pending-sign-in");
+	server.failNextRefresh("network");
+	await stale();
+	const network = await health();
+	expect(network.text).toContain("could-not-check");
+	expect(network.text).toContain("Its sign-in server did not answer; it will be checked again");
+	expect((await registry.mcpOAuthOpen(assetId))?.verifier).toBe("pending-sign-in");
+	server.failNextRefresh("malformed");
+	await stale();
+	const malformed = await health();
+	expect(malformed.text).toContain("could-not-check");
+	expect(malformed.text).toContain("Its sign-in server did not answer; it will be checked again");
+	const afterMalformedLease = await registry.mcpRefreshClaim(assetId);
+	expect(afterMalformedLease.kind).toBe("claimed");
+	if (afterMalformedLease.kind === "claimed")
+		await registry.mcpRefreshRelease(assetId, afterMalformedLease.lease);
+	server.failNextRefresh("503");
+	await stale();
+	const afterMalformed = await health();
+	expect(afterMalformed.text).toContain("could-not-check");
+	expect(afterMalformed.text).toContain(
+		"Its sign-in server did not answer; it will be checked again",
+	);
+
+	server.expireAccessTokens();
+	server.revokeRefreshTokens();
+	await stale();
+	const revoked = await health();
+	expect(revoked.text).toContain("needs-reconnecting");
+	expect(revoked.text).not.toContain("access-2");
+
+	const stranger = await signUp(agents, origin, "stranger-oauth-health");
+	const outside = await callServerFn(agents, origin, "getMcpOAuthHealth", {
+		data: { slug: "oauth-lab" },
+		cookie: stranger.headers.cookie,
+		client: stranger.headers["cf-connecting-ip"],
+		method: "GET",
+	});
+	expect(outside.text).not.toContain(assetId);
+	expect(outside.text).not.toContain("access-");
+	expect(JSON.stringify(agents.logs)).not.toContain("access-2");
+	expect(JSON.stringify(agents.logs)).not.toContain("refresh-2");
 });
 
 it("lets only the admin who started it finish, and nobody else start it", async () => {

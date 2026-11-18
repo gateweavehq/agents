@@ -9,6 +9,7 @@ import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-r
 import { Bot, Crown, MessagesSquare, Pencil, Plus, Trash2, Users, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { McpOAuthStatus, useMcpOAuthHealth } from "#/components/registry/mcp-oauth-health";
 import { AddEdgeDialog, AddMemberDialog, TeamDialog } from "#/components/registry/team-dialogs";
 import { EDGE_STYLES, EDGE_VERBS, TeamGraph } from "#/components/registry/team-graph";
 import { Triggers } from "#/components/registry/triggers";
@@ -63,6 +64,11 @@ function useSaveGraph() {
 function TeamPage() {
 	const { slug } = useWorkspace();
 	const data = Route.useLoaderData();
+	const health = useMcpOAuthHealth(
+		slug,
+		data?.detail.members.filter((member) => member.kind === "agent").map((member) => member.id) ??
+			[],
+	);
 	const admin = isAdmin(useMyRole());
 	useDocumentTitle(data ? data.detail.team.name : "Team");
 
@@ -120,7 +126,7 @@ function TeamPage() {
 				</div>
 				<ul className="divide-y rounded-lg border text-sm">
 					{members.map((member) => (
-						<MemberRow key={member.id} member={member} admin={admin} />
+						<MemberRow key={member.id} member={member} admin={admin} health={health} />
 					))}
 				</ul>
 			</section>
@@ -173,7 +179,15 @@ function sortedEdges(edges: TeamEdge[], members: TeamMember[]) {
 	);
 }
 
-function MemberRow({ member, admin }: { member: TeamMember; admin: boolean }) {
+function MemberRow({
+	member,
+	admin,
+	health,
+}: {
+	member: TeamMember;
+	admin: boolean;
+	health: ReturnType<typeof useMcpOAuthHealth>;
+}) {
 	const { slug } = useWorkspace();
 	const data = Route.useLoaderData();
 	const save = useSaveGraph();
@@ -247,6 +261,27 @@ function MemberRow({ member, admin }: { member: TeamMember; admin: boolean }) {
 							: `Agent · ${member.model}`
 						: `Team led by ${member.lead.name} · ${member.members === 1 ? "1 member" : `${member.members} members`}`}
 				</span>
+				{member.kind === "agent" &&
+					health
+						?.filter((entry) => entry.agents.some((agent) => agent.id === member.id))
+						.map((entry) => (
+							<span key={entry.assetId} className="block text-xs">
+								{entry.name}:{" "}
+								<McpOAuthStatus
+									state={entry.state}
+									checkedAt={entry.checkedAt}
+									reason={entry.reason}
+								/>
+								.{" "}
+								<Link
+									to="/$workspace/mcp"
+									params={{ workspace: slug }}
+									className="underline underline-offset-2"
+								>
+									MCP page
+								</Link>
+							</span>
+						))}
 			</span>
 			{isLead && (
 				<span className="inline-flex items-center gap-1 rounded-md border border-primary/40 px-1.5 py-0.5 text-xs">
