@@ -137,15 +137,32 @@ export async function runChecks(
 		const span = run.toolStarted(SANDBOX_SERVER, CHECK_TOOL, byteLength(command));
 		const started = now();
 		let answer: CommandResult | null;
+		let expired = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			answer = await sandbox.run(command, SANDBOX_REPOSITORY_PATH, limitSeconds);
+			answer = await Promise.race([
+				sandbox.run(command, SANDBOX_REPOSITORY_PATH, limitSeconds),
+				new Promise<null>((resolve) => {
+					timer = setTimeout(
+						() => {
+							expired = true;
+							resolve(null);
+						},
+						(limitSeconds + 10) * 1000,
+					);
+				}),
+			]);
 		} catch {
 			answer = null;
+		} finally {
+			clearTimeout(timer);
 		}
 		const seconds = Math.max(0, (now() - started) / 1000);
 		callSeconds += seconds;
 		spent.seconds += seconds;
-		const result = checkResult(command, answer, limitSeconds, seconds);
+		const result = expired
+			? { command, outcome: { kind: "timed-out" as const, limitSeconds }, seconds, tail: "" }
+			: checkResult(command, answer, limitSeconds, seconds);
 		results.push(result);
 		const passed = checkPassed(result);
 		run.toolEnded(span, {
@@ -470,6 +487,25 @@ export function withChecksSection(body: string, section: string): string {
 	return before === "" ? section : `${before}\n\n${section}`;
 }
 
+/** GitHub's body limit; UTF-8 bytes are a conservative bound for its character count. */
+const BODY_LIMIT = 65_536;
+
+export function pullRequestBody(body: string, section: string | null): string {
+	const compose = (model: string) =>
+		section === null ? withoutChecksSection(model) : withChecksSection(model, section);
+	const full = compose(body);
+	if (byteLength(full) <= BODY_LIMIT) return full;
+	const characters = Array.from(body);
+	let low = 0;
+	let high = characters.length;
+	while (low < high) {
+		const middle = Math.ceil((low + high) / 2);
+		if (byteLength(compose(characters.slice(0, middle).join(""))) <= BODY_LIMIT) low = middle;
+		else high = middle - 1;
+	}
+	return compose(characters.slice(0, low).join(""));
+}
+
 /**
  * The model's body with what it left open closed: a code block, an HTML comment or another of
  * the blocks Markdown hands to HTML until their end mark, a folded `<details>`. Left open, each
@@ -513,6 +549,10 @@ function closed(body: string): string {
 	for (let left = Math.min(opened - ended, MAX_FOLDS); left > 0; left -= 1) {
 		closers.push("</details>");
 	}
+	const pres = [...body.matchAll(/<pre(?:\s[^>]*)?>/gi)];
+	const lastPre = pres.at(-1)?.index ?? -1;
+	const lastPreEnd = [...body.matchAll(/<\/pre\s*>/gi)].at(-1)?.index ?? -1;
+	if (lastPre > lastPreEnd) closers.push("</pre>");
 	return closers.length === 0 ? body : `${body}\n${closers.join("\n")}`;
 }
 

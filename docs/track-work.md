@@ -162,14 +162,16 @@ and why it failed.
 
 **Where the commands come from.** Only from the repository's page in Agents, read each time the
 agent proposes its work. Not from a file in the repository, not from the agent's working tree,
-not from an issue's text: an agent cannot change what its own work is held to, and neither can
-whoever writes an issue. Reading them from a file on the default branch is not supported yet.
+not from an issue's text: the agent cannot change the list of commands, and neither can whoever
+writes an issue. The agent can change what those commands do by editing `package.json` scripts,
+and it is root in its sandbox. Reading them from a file on the default branch is not supported yet.
 
 The same holds for every engine: Claude Code, Codex and OpenCode open their pull requests with
 the same tool, so their work is checked the same way.
 
-The checks run on the agent's own machine. They tell a reviewer what ran there before the push;
-they are a first line in front of your repository's CI, not a replacement for it.
+The checks run on the agent's own machine. A `passed` result tells a reviewer what ran there before
+the push; it is only as good as that machine. This is a first line before your repository's CI,
+not a substitute for CI.
 
 ## Costs and limits
 

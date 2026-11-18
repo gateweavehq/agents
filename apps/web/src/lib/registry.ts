@@ -43,6 +43,7 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { changedFields, hostOf } from "#/lib/audit-events";
+import { saveChecksWithAudit } from "#/lib/repository-checks-audit";
 import type { FileDiff } from "#/lib/version-diff";
 
 const id = z.string().min(1).max(64);
@@ -69,7 +70,11 @@ async function managedOf(slug: string) {
 		import("#/server/registry"),
 		import("#/server/audit"),
 	]);
-	return { registry: registryFor(member.membership), audit: auditFor(member) };
+	return {
+		registry: registryFor(member.membership),
+		audit: auditFor(member),
+		workspaceId: member.membership.workspaceId,
+	};
 }
 
 /** The registry of the workspace `slug`, for changes only owners and admins may make. */
@@ -376,20 +381,21 @@ export const scanRepository = createServerFn({ method: "POST" })
 export const setRepositoryChecks = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), repositoryId: id, checks: repositoryChecksInput }))
 	.handler(async ({ data }): Promise<string[]> => {
-		const { registry, audit } = await managedOf(data.slug);
-		const set = await registry.setRepositoryChecks(data.repositoryId, data.checks);
-		if (!set) throw new Error("Repository not found");
-		const same =
-			set.before.length === set.checks.length &&
-			set.before.every((command, index) => command === set.checks[index]);
-		if (!same) {
-			await audit({
-				action: "repository.checksSet",
-				target: { type: "repository", id: data.repositoryId, label: set.repository },
-				detail: { checks: set.checks.length, before: set.before.length },
-			});
-		}
-		return set.checks;
+		const { registry, audit, workspaceId } = await managedOf(data.slug);
+		const { latestRepositoryChecksDigest } = await import("#/server/audit");
+		const checks = await saveChecksWithAudit(
+			data.checks,
+			() => registry.setRepositoryChecks(data.repositoryId, data.checks),
+			() => latestRepositoryChecksDigest(workspaceId, data.repositoryId),
+			(set, digest) =>
+				audit({
+					action: "repository.checksSet",
+					target: { type: "repository", id: data.repositoryId, label: set.repository },
+					detail: { checks: set.checks.length, before: set.before.length, digest },
+				}),
+		);
+		if (!checks) throw new Error("Repository not found");
+		return checks;
 	});
 
 /** Every project, with the repositories they can be given. */

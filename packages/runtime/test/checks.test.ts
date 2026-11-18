@@ -6,7 +6,7 @@
 import { CHECK_LIMITS, type PullRequestOutcome } from "@gateweave/agents-model";
 import { asSchema } from "ai";
 import { describe, expect, it, vi } from "vitest";
-import { lastBytes, withChecksSection, withoutChecksSection } from "../src/checks";
+import { lastBytes, runChecks, withChecksSection, withoutChecksSection } from "../src/checks";
 import { pullRequestTools } from "../src/pull-requests";
 import type { RunRecorder } from "../src/trace";
 import { type CommandAnswer, MemorySandbox } from "./fake-sandbox";
@@ -179,6 +179,51 @@ describe("a repository without checks", () => {
 });
 
 describe("a repository's checks", () => {
+	it("a stream that never closes times out at the outer deadline and ends its span", async () => {
+		vi.useFakeTimers();
+		try {
+			let rejectRun: ((error: Error) => void) | undefined;
+			const ended: { error: string | null }[] = [];
+			const spent = { failedRounds: 0, seconds: 0 };
+			const running = runChecks(
+				["pnpm test"],
+				{
+					run: () =>
+						new Promise((_, reject) => {
+							rejectRun = reject;
+						}),
+					changedSince: async () => null,
+				},
+				"1".repeat(40),
+				{
+					toolStarted: () => "span",
+					toolEnded: (_span: string, result: { error: string | null }) => {
+						ended.push(result);
+					},
+				} as unknown as RunRecorder,
+				spent,
+			);
+			await vi.advanceTimersByTimeAsync((CHECK_LIMITS.commandSeconds + 10) * 1000);
+			const round = await running;
+			expect(round.status).toBe("failed");
+			expect(round.results[0]?.outcome).toEqual({
+				kind: "timed-out",
+				limitSeconds: CHECK_LIMITS.commandSeconds,
+			});
+			expect(round.results[0]?.seconds).toBe(CHECK_LIMITS.commandSeconds + 10);
+			expect(spent.seconds).toBe(CHECK_LIMITS.commandSeconds + 10);
+			expect(ended).toEqual([
+				{
+					outputBytes: 0,
+					error: `It timed out: it was stopped after ${CHECK_LIMITS.commandSeconds} seconds`,
+				},
+			]);
+			rejectRun?.(new Error("stream closed late"));
+			await Promise.resolve();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 	it("R2: run in the repository's root on the commit, in order, before that commit is pushed", async () => {
 		const { sandbox, proposed, call } = setup(["pnpm check", "pnpm test"]);
 		const outcome = await call();
@@ -634,6 +679,7 @@ describe("a repository's checks", () => {
 		expect(after("Passed:\n\n```")).toBe("Passed:\n\n```\n```");
 		expect(after("````md\n```\nstill open")).toBe("````md\n```\nstill open\n````");
 		expect(after("   ~~~~ text\n~~~\n")).toBe("   ~~~~ text\n~~~\n~~~~");
+		expect(after("Done.\n\n<pre>unclosed")).toBe("Done.\n\n<pre>unclosed\n</pre>");
 		// Several at once: each gets its closer.
 		expect(after("```\n<!--\n<details>")).toBe("```\n<!--\n<details>\n```\n-->\n</details>");
 	});
@@ -700,6 +746,17 @@ describe("a repository's checks", () => {
 		const { proposed, call } = setup([command]);
 		await call();
 		expect(proposed[0]?.body).toContain(`- \`\`\` ${command} \`\`\`: passed, exit code 0, 0.0 s`);
+	});
+
+	it("keeps the checks section intact within GitHub's body limit", async () => {
+		const commands = Array.from({ length: 5 }, () => "`".repeat(300));
+		const { proposed, call } = setup(commands);
+		await call({ title: "T", body: "é".repeat(60_000) });
+		const body = proposed[0]?.body ?? "";
+		expect(new TextEncoder().encode(body).length).toBeLessThanOrEqual(65_536);
+		expect(body).toContain("## Checks run by Gateweave");
+		expect(body).toContain(`- ${"`".repeat(301)} ${"`".repeat(300)} ${"`".repeat(301)}: passed`);
+		expect(body.endsWith(WRITTEN_BY)).toBe(true);
 	});
 
 	it("R5: a check stopped at its time limit is timed out, never passed, whatever its exit code", async () => {
