@@ -169,6 +169,12 @@ const writtenHints = {
 	skill: "A SKILL.md, with name and description in its front matter",
 } as const;
 
+const writtenKindDescriptions = {
+	instructions: "What an agent always reads, such as AGENTS.md, CLAUDE.md or rules.",
+	prompt: "A prompt or slash command an agent can use.",
+	skill: "Steps for a specific task. Cannot be pinned as agent instructions.",
+} as const;
+
 /** Writes a new library asset: a kind, a name and its text. `onCreated` gets its id. */
 export function NewLibraryAssetDialog({
 	onCreated,
@@ -178,7 +184,7 @@ export function NewLibraryAssetDialog({
 	onClose: () => void;
 }) {
 	const { slug } = useWorkspace();
-	const [kind, setKind] = useState<(typeof WRITTEN_ASSET_KINDS)[number]>("skill");
+	const [kind, setKind] = useState<(typeof WRITTEN_ASSET_KINDS)[number] | null>(null);
 	const [name, setName] = useState("");
 	const [text, setText] = useState("");
 	const [pending, setPending] = useState(false);
@@ -186,6 +192,7 @@ export function NewLibraryAssetDialog({
 
 	async function onSubmit(event: FormEvent) {
 		event.preventDefault();
+		if (!kind) return;
 		setPending(true);
 		setError(null);
 		try {
@@ -212,46 +219,56 @@ export function NewLibraryAssetDialog({
 							is the next version.
 						</DialogDescription>
 					</DialogHeader>
-					<div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
-						<div className="space-y-1.5">
-							<Label htmlFor="new-asset-kind">Kind</Label>
-							<select
-								id="new-asset-kind"
-								value={kind}
-								onChange={(event) => {
-									const next = WRITTEN_ASSET_KINDS.find((k) => k === event.target.value);
-									if (next) setKind(next);
-								}}
-								className="h-9 w-full rounded-md border bg-transparent px-2 text-sm"
-							>
-								{WRITTEN_ASSET_KINDS.map((option) => (
-									<option key={option} value={option}>
-										{ASSET_KIND_NAMES[option]}
-									</option>
-								))}
-							</select>
+					<fieldset className="space-y-2">
+						<legend className="text-sm font-medium">Kind</legend>
+						<div className="grid gap-2 sm:grid-cols-3">
+							{WRITTEN_ASSET_KINDS.map((option) => (
+								<Label
+									key={option}
+									className="flex items-start gap-2 rounded-md border p-3 font-normal"
+								>
+									<input
+										type="radio"
+										name="new-asset-kind"
+										value={option}
+										checked={kind === option}
+										onChange={() => setKind(option)}
+										className="mt-1"
+									/>
+									<span>
+										<span className="block font-medium">{ASSET_KIND_NAMES[option]}</span>
+										<span className="block text-xs text-muted-foreground">
+											{writtenKindDescriptions[option]}
+										</span>
+									</span>
+								</Label>
+							))}
 						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor="new-asset-name">Name</Label>
-							<Input
-								id="new-asset-name"
-								value={name}
-								onChange={(event) => setName(event.target.value)}
-								maxLength={200}
-							/>
-						</div>
-					</div>
-					<div className="space-y-1.5">
-						<Label htmlFor="new-asset-text">Text</Label>
-						<Textarea
-							id="new-asset-text"
-							value={text}
-							onChange={(event) => setText(event.target.value)}
-							className="min-h-64 font-mono text-xs leading-relaxed"
-							spellCheck={false}
-						/>
-						<p className="text-xs text-muted-foreground">{writtenHints[kind]}</p>
-					</div>
+					</fieldset>
+					{kind && (
+						<>
+							<div className="space-y-1.5">
+								<Label htmlFor="new-asset-name">Name</Label>
+								<Input
+									id="new-asset-name"
+									value={name}
+									onChange={(event) => setName(event.target.value)}
+									maxLength={200}
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<Label htmlFor="new-asset-text">Text</Label>
+								<Textarea
+									id="new-asset-text"
+									value={text}
+									onChange={(event) => setText(event.target.value)}
+									className="min-h-64 font-mono text-xs leading-relaxed"
+									spellCheck={false}
+								/>
+								<p className="text-xs text-muted-foreground">{writtenHints[kind]}</p>
+							</div>
+						</>
+					)}
 					{error && (
 						<p role="alert" className="text-sm text-destructive">
 							{error}
@@ -261,7 +278,7 @@ export function NewLibraryAssetDialog({
 						<Button type="button" variant="outline" onClick={onClose} disabled={pending}>
 							Cancel
 						</Button>
-						<Button type="submit" disabled={pending || name.trim() === "" || text === ""}>
+						<Button type="submit" disabled={pending || !kind || name.trim() === "" || text === ""}>
 							Create
 						</Button>
 					</DialogFooter>
