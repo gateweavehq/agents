@@ -29,6 +29,11 @@ export interface ModelPrice extends Rates {
 	long?: Rates & { above: number };
 	/** The day these prices start (UTC), for a change the provider announced ahead. */
 	since?: string;
+	/**
+	 * The day these prices end (UTC), for a model the provider removes then. Until that day its
+	 * runs still cost this and still count toward a limit; it is listed nowhere (`pricedModels`).
+	 */
+	until?: string;
 }
 
 /** The tokens a single model request used. Cache reads and writes are counted in `input`. */
@@ -165,7 +170,8 @@ export const MODEL_PRICES: Record<ModelProvider, Record<string, ModelPrice | Mod
 		"gemini-2.5-flash-lite": { input: 0.1, output: 0.4, cacheRead: 0.01 },
 	},
 	// Checked 2026-11-18, on each model's page. The deployment pays these, not the workspace.
-	// A model Cloudflare removes leaves this list too (`WORKERS_AI_REMOVED` in `./workers-ai.ts`).
+	// A model Cloudflare removes (`WORKERS_AI_REMOVED` in `./workers-ai.ts`) keeps its prices until
+	// that day, since it answers until then and its runs count toward `WORKERS_AI_DAILY_DOLLARS`.
 	"workers-ai": {
 		"@cf/meta/llama-4-scout-17b-16e-instruct": { input: 0.27, output: 0.85, cacheRead: 0.27 },
 		"@cf/openai/gpt-oss-120b": { input: 0.35, output: 0.75, cacheRead: 0.35 },
@@ -175,6 +181,13 @@ export const MODEL_PRICES: Record<ModelProvider, Record<string, ModelPrice | Mod
 		"@cf/qwen/qwen3.8-27b": { input: 0.45, output: 3.2, cacheRead: 0.05 },
 		"@cf/google/gemma-4-26b-a4b-it": { input: 0.1, output: 0.3, cacheRead: 0.1 },
 		"@cf/zai-org/glm-5.3": { input: 1.4, output: 4.4, cacheRead: 0.26 },
+		"@cf/qwen/qwen3-30b-a3b-fp8": {
+			input: 0.0509,
+			output: 0.335,
+			cacheRead: 0.0509,
+			until: "2026-11-20",
+		},
+		"@cf/moonshotai/kimi-k2.6": { input: 0.95, output: 4, cacheRead: 0.16, until: "2026-11-20" },
 	},
 };
 
@@ -190,7 +203,18 @@ export function priceOf(provider: ModelProvider, model: string, at: number): Mod
 	if (!listed) return null;
 	const day = new Date(at).toISOString().slice(0, 10);
 	const periods = Array.isArray(listed) ? listed : [listed];
-	return periods.findLast((period) => period.since === undefined || period.since <= day) ?? null;
+	const price = periods.findLast((period) => period.since === undefined || period.since <= day);
+	return price && (price.until === undefined || day < price.until) ? price : null;
+}
+
+/**
+ * The models of a provider to choose from where its own list cannot be asked for (the demo): the
+ * ones with prices, without any whose prices end, which the provider is removing.
+ */
+export function pricedModels(provider: ModelProvider): string[] {
+	return Object.entries(MODEL_PRICES[provider])
+		.filter(([, listed]) => [listed].flat().every((price) => price.until === undefined))
+		.map(([model]) => model);
 }
 
 /**

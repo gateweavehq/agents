@@ -58,8 +58,8 @@ export function workersAiDailyLimit(settings: WorkersAiSettings): number | null 
 /**
  * The text models Cloudflare has removed from Workers AI, or has said it will, with the day (UTC)
  * each stops answering: from then on a request for one fails with HTTP 410 and error 5028. None is
- * offered, priced or suggested anywhere (`apps/web/src/lib/removed-models.test.ts` reads the
- * repository for them), and an agent still
+ * offered or suggested anywhere (`apps/web/src/lib/removed-models.test.ts` reads the repository
+ * for them), one that had prices keeps them only until its day (`./prices.ts`), and an agent still
  * set to one says so when it runs (`describeFailure` in the runtime). An agent's model is never
  * changed for it: an owner or admin chose it, and another costs something else.
  *

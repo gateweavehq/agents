@@ -806,10 +806,12 @@ production leaves it off for now; a self-hoster turns it on.
   typed.
 - **Prices** for eight models are in `MODEL_PRICES` (`packages/model/src/prices.ts`), from each
   model's page. Other Workers AI models get no estimate, as an unlisted model of any provider
-  does.
+  does. A model Cloudflare is removing keeps its prices until that day (`until`), because it
+  answers until then and a run without a cost would not count toward `WORKERS_AI_DAILY_DOLLARS`;
+  `pricedModels`, which the demo lists, leaves it out.
 - **Removed models.** Cloudflare retires models, and a request for one then fails with HTTP 410
   and error 5028. `WORKERS_AI_REMOVED` (`packages/model/src/workers-ai.ts`) lists the ones it has
-  announced, with the day: the lists above leave them out, they have no prices, and no dialog or
+  announced, with the day: the lists above leave them out, their prices end that day, and no dialog or
   page suggests one, which `apps/web/src/lib/removed-models.test.ts` checks across the
   repository. An agent still set to one keeps its model: `describeFailure` turns the 410 or the
   5028 into "Cloudflare removed … from Workers AI on 20 November 2026. Choose another model in

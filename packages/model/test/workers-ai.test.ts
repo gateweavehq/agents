@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	MODEL_PRICES,
+	pricedModels,
 	priceOf,
 	WORKERS_AI_REMOVED,
 	workersAiRemoved,
@@ -24,13 +25,16 @@ describe("the Workers AI models Cloudflare removed", () => {
 		expect(workersAiRemoved("toString")).toBe(false);
 	});
 
-	it("have no prices, so nothing estimates a run on one or lists it on the demo", () => {
+	it("are not listed on the demo, and have prices only until their day", () => {
 		// The demo's model picker lists the models that have prices.
-		const priced = Object.keys(MODEL_PRICES["workers-ai"]);
-		expect(priced.length).toBeGreaterThan(0);
-		for (const model of Object.keys(WORKERS_AI_REMOVED)) {
-			expect(priced, model).not.toContain(model);
-			expect(priceOf("workers-ai", model, Date.parse("2026-11-01T00:00:00Z")), model).toBeNull();
+		const listed = pricedModels("workers-ai");
+		expect(listed.length).toBeGreaterThan(0);
+		for (const [model, day] of Object.entries(WORKERS_AI_REMOVED)) {
+			expect(listed, model).not.toContain(model);
+			expect(priceOf("workers-ai", model, Date.parse(`${day}T00:00:00Z`)), model).toBeNull();
+			// One that had prices keeps them to the day and no longer, so its runs count until then.
+			const priced = MODEL_PRICES["workers-ai"][model];
+			if (priced !== undefined) expect([priced].flat().at(-1)?.until, model).toBe(day);
 		}
 	});
 

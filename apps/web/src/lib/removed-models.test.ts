@@ -31,7 +31,30 @@ const TEXT =
 	/\.(?:[cm]?[jt]sx?|json|jsonc|md|mdx|ya?ml|toml|sql|sh|example)$|(?:^|[\\/])Dockerfile$/;
 /** The list itself, which has to name them. Tests may too, to show what a removed model does. */
 const LIST = "packages/model/src/workers-ai.ts";
+/** The prices, which may keep a removed model's until its day, in an entry that says `until`. */
+const PRICES = "packages/model/src/prices.ts";
 const TESTS = /(?:^|\/)(?:test|e2e|smoke)\/|\.test\.tsx?$/;
+
+/**
+ * Where `text` names `model`. An id that goes on is another model (`…-fp8-fast`, `…-k2.6.1`); a
+ * period that ends a sentence, before a space, a quote, a bracket or the end, is not part of one.
+ */
+function namings(text: string, model: string): number[] {
+	const found: number[] = [];
+	for (let at = text.indexOf(model); at !== -1; at = text.indexOf(model, at + 1)) {
+		const next = text[at + model.length] ?? "";
+		const after = text[at + model.length + 1] ?? "";
+		if (/[\w-]/.test(next)) continue;
+		if (next === "." && !/^$|[\s"'`)\]}>]/.test(after)) continue;
+		found.push(at);
+	}
+	return found;
+}
+
+/** Whether the prices entry that begins at `at` ends on a day, as a removed model's must. */
+function ends(text: string, at: number): boolean {
+	return text.slice(at, text.indexOf("}", at)).includes("until:");
+}
 
 function files(path: string): string[] {
 	if (!statSync(path).isDirectory()) return [path];
@@ -61,13 +84,21 @@ it("names no model Cloudflare removed from Workers AI, anywhere it offers or rec
 	for (const { path, name } of read) {
 		const text = readFileSync(path, "utf8");
 		for (const model of removed) {
-			// An id that only begins like a removed one is another model (`…-fp8` and `…-fp8-fast`).
-			for (let at = text.indexOf(model); at !== -1; at = text.indexOf(model, at + 1)) {
-				if (/[\w.-]/.test(text[at + model.length] ?? "")) continue;
-				found.push(`${name}: ${model}`);
-				break;
-			}
+			const at = namings(text, model).filter((place) => name !== PRICES || !ends(text, place));
+			if (at.length > 0) found.push(`${name}: ${model}`);
 		}
 	}
 	expect(found).toEqual([]);
+});
+
+it("finds a removed model at the end of a sentence, and not another model that begins like it", () => {
+	const kimi = "@cf/moonshotai/kimi-k2.6";
+	expect(namings(`Use ${kimi}. It triages well.`, kimi)).toEqual([4]);
+	expect(namings(`Use ${kimi}.`, kimi)).toEqual([4]);
+	expect(namings(`(\`${kimi}\`), "${kimi}." and (${kimi}.)`, kimi)).toHaveLength(3);
+	expect(namings(`${kimi}-fast, ${kimi}.1 and ${kimi}_x`, kimi)).toEqual([]);
+	expect(namings(`${kimi}.1, then ${kimi}`, kimi)).toHaveLength(1);
+	// In the prices, only an entry that ends on a day may name one.
+	const priced = `"${kimi}": { input: 1, until: "2026-11-20" },\n"${kimi}": { input: 1 },`;
+	expect(namings(priced, kimi).map((place) => ends(priced, place))).toEqual([true, false]);
 });

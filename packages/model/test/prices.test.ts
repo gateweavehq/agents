@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { MODEL_PRICES, priceOf, requestCost } from "../src";
+import { MODEL_PRICES, pricedModels, priceOf, requestCost } from "../src";
 
 const day = (date: string) => Date.parse(`${date}T12:00:00Z`);
 const NOW = day("2026-10-28");
@@ -78,6 +78,33 @@ it("lists sensible prices", () => {
 	}
 });
 
+// Cloudflare removes Kimi K2.6 and Qwen3 30B on 2026-11-20. Until then they answer, and an agent
+// saved with one still spends the deployment's money, so its runs must still count.
+it("prices a model its provider is removing until the day it goes, and lists it nowhere", () => {
+	const million = tokens(1_000_000, 1_000_000);
+	const kimi = "@cf/moonshotai/kimi-k2.6";
+	const qwen = "@cf/qwen/qwen3-30b-a3b-fp8";
+	expect(requestCost("workers-ai", kimi, million, day("2026-11-19"))).toBe(4_950_000);
+	expect(requestCost("workers-ai", qwen, million, day("2026-11-19"))).toBe(385_900);
+	// Kimi's cached rate still applies.
+	expect(requestCost("workers-ai", kimi, tokens(1_000_000, 0, 500_000), day("2026-11-19"))).toBe(
+		475_000 + 80_000,
+	);
+	// To the last second of the day before, and not after.
+	expect(priceOf("workers-ai", kimi, Date.parse("2026-11-19T23:59:59Z"))?.input).toBe(0.95);
+	expect(priceOf("workers-ai", kimi, Date.parse("2026-11-20T00:00:00Z"))).toBeNull();
+	expect(requestCost("workers-ai", qwen, million, day("2026-11-20"))).toBeNull();
+
+	// The demo's model picker lists these.
+	const listed = pricedModels("workers-ai");
+	expect(listed).toContain("@cf/deepseek-ai/deepseek-v4.1-flash-1017");
+	expect(listed).not.toContain(kimi);
+	expect(listed).not.toContain(qwen);
+	expect(pricedModels("anthropic")).toContain("claude-sonnet-5-5");
+	// A price that changes on a day is still a model to choose.
+	expect(pricedModels("google")).toContain("gemini-4-argon");
+});
+
 it("prices the Workers AI models the catalog lists, and no others", () => {
 	const at = day("2026-11-18");
 	// A million tokens in and out, at the catalog's per-million rates.
@@ -103,10 +130,6 @@ it("prices the Workers AI models the catalog lists, and no others", () => {
 			at,
 		),
 	).toBe(150_000 + 3_000);
-	// The two Cloudflare removed on 20 November 2026 have no prices, on any day.
-	for (const removed of ["@cf/moonshotai/kimi-k2.6", "@cf/qwen/qwen3-30b-a3b-fp8"]) {
-		expect(requestCost("workers-ai", removed, million, day("2026-10-29"))).toBeNull();
-	}
 	expect(
 		requestCost("workers-ai", "@cf/openai/gpt-oss-20b", tokens(1_000_000, 0, 500_000), at),
 	).toBe(200_000);

@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
 	MAX_WORKSPACE_SANDBOXES,
+	requestCost,
 	SANDBOX_BUDGET_SPENT,
 	SANDBOX_DAY_USED,
 	SANDBOX_IDLE_MINUTES,
@@ -264,6 +265,43 @@ describe("turns with Workers AI", () => {
 		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "twenty" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Again")).toHaveProperty("status", "refused");
 		});
+	});
+
+	// Cloudflare removes Kimi K2.6 on 2026-11-20. Until then it answers and the deployment pays, so
+	// a run on it must have a cost: the day's sum skips a run without one, and the limit with it.
+	it("count a run on a model Cloudflare is removing, until its day, toward the daily limit", async () => {
+		const KIMI = "@cf/moonshotai/kimi-k2.6";
+		const stub = registry();
+		const agent = await stub.createAgent({
+			name: "Coder",
+			description: null,
+			provider: "workers-ai",
+			model: KIMI,
+			instructions: null,
+		});
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		// What the runtime records for a request of 400,000 tokens in and 30,000 out on 19 November.
+		const tokens = { input: 400_000, output: 30_000, cacheRead: 0, cacheWrite: 0 };
+		const cost = requestCost("workers-ai", KIMI, tokens, Date.parse("2026-11-19T12:00:00Z"));
+		expect(cost).toBe(500_000);
+		await stub.finishRun(first.runId, {
+			status: "succeeded",
+			error: null,
+			steps: 1,
+			inputTokens: tokens.input,
+			outputTokens: tokens.output,
+			cachedInputTokens: 0,
+			cost,
+			endedAt: Date.now(),
+		});
+		expect(await stub.workersAiSpentToday()).toBeCloseTo(0.5, 6);
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "0.5" }, async (instance) => {
+			expect(await instance.beginTurn(id, "Again")).toHaveProperty("status", "refused");
+		});
+		// From the day it is gone, a request would fail and nothing is priced.
+		expect(requestCost("workers-ai", KIMI, tokens, Date.parse("2026-11-20T00:00:00Z"))).toBeNull();
 	});
 
 	it("are refused up front on a server that did not turn it on", async () => {

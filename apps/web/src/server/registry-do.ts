@@ -1,10 +1,12 @@
 import {
 	KEYED_PROVIDERS,
 	type MemoryAgentEvent,
-	MODEL_PRICES,
+	MODEL_PROVIDERS,
+	type ModelProvider,
 	type ProviderKey,
 	type ProviderModel,
 	type ProviderRefusal,
+	pricedModels,
 	type SandboxBudgetPassed,
 	type TriggerTurnOutcome,
 } from "@gateweave/agents-model";
@@ -80,8 +82,8 @@ export class RegistryDO extends Registry {
 	/** On the demo, the models the app has prices for, without asking the provider. */
 	override async listModels(provider: string): Promise<ProviderModel[] | ProviderRefusal> {
 		if (!demoEnabled()) return super.listModels(provider);
-		const prices = (MODEL_PRICES as Record<string, Record<string, unknown> | undefined>)[provider];
-		return Object.keys(prices ?? {}).map((model) => ({ id: model, name: model }));
+		if (!(MODEL_PROVIDERS as readonly string[]).includes(provider)) return [];
+		return pricedModels(provider as ModelProvider).map((model) => ({ id: model, name: model }));
 	}
 
 	override removeProviderKey(provider: string): boolean {

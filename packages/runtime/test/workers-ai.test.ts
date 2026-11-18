@@ -231,6 +231,15 @@ describe("a conversation with a Workers AI agent", () => {
 			"Workers AI could not answer.",
 		);
 		expect(describeFailure(agent, failure(400, "5028"))).toBe("Workers AI could not answer.");
+		// The code is a number or a string of digits. Nothing else is converted: a list would pass
+		// as its one member, and an object whose `toString` is not a function would throw here, in
+		// the callback that closes the failed run.
+		expect(describeFailure(agent, failure(400, { errors: [{ code: "5028" }] }))).toBe(said);
+		for (const code of [[5028], ["5028"], { toString: 1, valueOf: 1 }, "5028.0", " 5028", true]) {
+			expect(describeFailure(agent, failure(400, { errors: [{ code }], error: { code } }))).toBe(
+				"Workers AI could not answer.",
+			);
+		}
 		expect(describeFailure({ provider: "openai", model: "gpt-5" }, failure(410, ""))).toBe(
 			"OpenAI could not answer.",
 		);

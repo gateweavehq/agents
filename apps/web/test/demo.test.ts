@@ -302,6 +302,12 @@ describe("on the demo deployment", () => {
 		]);
 		const models = await registry.listModels("anthropic");
 		expect(Array.isArray(models) && models.map((model) => model.id)).toContain("claude-sonnet-5-5");
+		// Workers AI's too, without the ones Cloudflare is removing, which keep prices until the day.
+		const offered = await registry.listModels("workers-ai");
+		const ids = Array.isArray(offered) ? offered.map((model) => model.id) : [];
+		expect(ids).toContain("@cf/deepseek-ai/deepseek-v4.1-flash-1017");
+		expect(ids).not.toContain("@cf/moonshotai/kimi-k2.6");
+		expect(ids).not.toContain("@cf/qwen/qwen3-30b-a3b-fp8");
 		expect(agents.outbound.filter((url) => new URL(url).host in MODEL_HOSTS)).toEqual([]);
 	});
 

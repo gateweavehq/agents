@@ -278,11 +278,13 @@ function workersAiErrorCodes(cause: unknown): number[] {
 	if (typeof body !== "object" || body === null) return [];
 	const { errors, error } = body as { errors?: unknown; error?: unknown };
 	return [...(Array.isArray(errors) ? errors : []), error]
-		.map((found) =>
-			typeof found === "object" && found !== null
-				? Number((found as { code?: unknown }).code)
-				: NaN,
-		)
+		.map((found) => {
+			const code =
+				typeof found === "object" && found !== null ? (found as { code?: unknown }).code : null;
+			// A number, or a string of digits: anything else would be converted by its own code.
+			if (typeof code === "number") return code;
+			return typeof code === "string" && /^\d+$/.test(code) ? Number(code) : Number.NaN;
+		})
 		.filter(Number.isInteger);
 }
 

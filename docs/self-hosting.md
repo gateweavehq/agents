@@ -413,7 +413,8 @@ stop answering on 20 November 2026, among them Kimi K2.6 and K2.7 Code, GLM-5.2,
 DeepSeek V4 Flash and Pro, Nemotron 3 and Qwen3 30B; the changelog entry of 5 November 2026 lists
 them all.
 
-Agents leaves the models Cloudflare has announced out of its model lists and its prices. An agent
+Agents leaves the models Cloudflare has announced out of its model lists, and prices their runs
+until that day, so they count toward `WORKERS_AI_DAILY_DOLLARS` to the end. An agent
 that is still set to one keeps it, and its runs then fail with "Cloudflare removed … from Workers
 AI on 20 November 2026. Choose another model in the agent's settings." Nothing changes an
 agent's model for you, because the next one costs something else: an owner or admin opens the
