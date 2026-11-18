@@ -24,6 +24,7 @@ import {
 } from "@gateweave/agents-model";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
+import { ModelPicker } from "#/components/registry/model-picker";
 import { Button } from "#/components/ui/button";
 import { Checkbox } from "#/components/ui/checkbox";
 import {
@@ -258,7 +259,7 @@ export function AgentDialog({
 							rows={2}
 						/>
 					</div>
-					<div className="grid grid-cols-2 gap-3">
+					<div className="space-y-3">
 						<div className="space-y-2">
 							<Label htmlFor="agent-provider">Provider</Label>
 							<select
@@ -275,28 +276,13 @@ export function AgentDialog({
 								))}
 							</select>
 						</div>
-						<div className="space-y-2">
-							<Label htmlFor="agent-model">Model</Label>
-							<Input
-								id="agent-model"
-								list="agent-models"
-								value={model}
-								onChange={(event) => setModel(event.target.value)}
-								maxLength={200}
-								spellCheck={false}
-								autoComplete="off"
-								required
-							/>
-							{Array.isArray(models) && (
-								<datalist id="agent-models">
-									{models.map((option) => (
-										<option key={option.id} value={option.id}>
-											{option.name}
-										</option>
-									))}
-								</datalist>
-							)}
-						</div>
+						<ModelPicker
+							provider={provider}
+							models={models}
+							value={model}
+							current={agent?.definition.provider === provider ? agent.definition.model : undefined}
+							onChange={setModel}
+						/>
 					</div>
 					<ModelsHint provider={provider} usable={usable} models={models} />
 					<div className="space-y-2">
