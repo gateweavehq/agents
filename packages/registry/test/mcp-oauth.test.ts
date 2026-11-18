@@ -138,6 +138,76 @@ describe("MCP servers connected through OAuth", () => {
 		expect((await stub.mcpOAuthOpen(server))?.tokens).toMatchObject({ access_token: "rotated" });
 	});
 
+	it("rejects a conditional save when newer tokens land during the open", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		const fresh = { ...TOKENS, access_token: "newer" };
+		await runInDurableObject(stub, async (instance: RegistryDO) => {
+			const decrypt = crypto.subtle.decrypt.bind(crypto.subtle);
+			let injected = false;
+			const spy = vi.spyOn(crypto.subtle, "decrypt").mockImplementation(async (...args) => {
+				if (!injected) {
+					injected = true;
+					await instance.mcpOAuthSave(server, { tokens: fresh });
+				}
+				return decrypt(...args);
+			});
+			try {
+				expect(await instance.mcpOAuthSave(server, { tokens: null, expectedTokens: TOKENS })).toBe(
+					false,
+				);
+			} finally {
+				spy.mockRestore();
+			}
+		});
+		expect((await stub.mcpOAuthOpen(server))?.tokens).toEqual(fresh);
+	});
+
+	it("compares token objects regardless of key order and undefined values", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		expect(
+			await stub.mcpOAuthSave(server, {
+				tokens: null,
+				expectedTokens: {
+					token_type: "Bearer",
+					refresh_token: "acme-refresh",
+					access_token: "acme-access-token",
+					id_token: undefined,
+				},
+			}),
+		).toBe(true);
+		expect((await stub.mcpOAuthOpen(server))?.tokens).toBeNull();
+	});
+
+	it("allows background clears and registration after an abandoned sign-in expires", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		await stub.mcpOAuthBegin(server, ADA);
+		await stub.mcpOAuthSave(server, { verifier: "pending" });
+		const clear = () =>
+			stub.mcpOAuthSave(server, {
+				client: null,
+				tokens: null,
+				expectedClient: { client_id: "gateweave" },
+				expectedTokens: TOKENS,
+				unlessSigningIn: true,
+			});
+		expect(await clear()).toBe(false);
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec(
+				"UPDATE mcp_oauth SET state_expires_at = 1 WHERE asset_id = ?",
+				server,
+			);
+		});
+		expect((await stub.mcpOAuthOpen(server))?.verifier).toBeNull();
+		expect(await clear()).toBe(true);
+		expect(
+			await stub.mcpOAuthSave(server, { client: { client_id: "fresh" }, unlessSigningIn: true }),
+		).toBe(true);
+		expect((await stub.mcpOAuthOpen(server))?.client).toEqual({ client_id: "fresh" });
+	});
+
 	it("does not clear an active sign-in's client or tokens", async () => {
 		const { stub, server } = await workspace();
 		await connect(stub, server);

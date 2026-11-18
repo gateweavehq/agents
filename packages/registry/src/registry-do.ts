@@ -254,6 +254,7 @@ import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary }
 import {
 	beginOAuth,
 	forgetOAuth,
+	type McpOAuthRow,
 	markConnected,
 	oauthPlace,
 	oauthRow,
@@ -1065,15 +1066,19 @@ export class RegistryDO extends DurableObject {
 		const asset = id.parse(assetId);
 		const row = oauthRow(this.#db, asset);
 		if (!row) return null;
+		return (await this.#openMcpOAuth(asset, row)).value;
+	}
+
+	async #openMcpOAuth(asset: string, row: McpOAuthRow) {
 		const sealer = await this.#sealerOf();
-		if ("unavailable" in sealer) return null;
+		if ("unavailable" in sealer) return { value: null, sealed: null };
 		const open = async (part: "client" | "verifier" | "tokens", sealed: string | null) => {
-			if (sealed === null) return null;
+			if (sealed === null) return { value: null, sealed: null };
 			try {
 				const opened = await this.#open(sealer, oauthPlace(asset, part), sealed);
-				return JSON.parse(opened.plaintext) as unknown;
+				return { value: JSON.parse(opened.plaintext) as unknown, sealed: opened.sealed };
 			} catch {
-				return null;
+				return { value: null, sealed };
 			}
 		};
 		const jsonObject = (value: unknown, part: string): McpOAuthJson | null => {
@@ -1082,41 +1087,57 @@ export class RegistryDO extends DurableObject {
 			if (value !== null) console.warn("mcp-oauth-invalid-json", { part });
 			return null;
 		};
+		const client = await open("client", row.sealedClient);
+		const verifier =
+			row.stateExpiresAt !== null && row.stateExpiresAt > Date.now()
+				? await open("verifier", row.sealedVerifier)
+				: { value: null, sealed: row.sealedVerifier };
+		const tokens = await open("tokens", row.sealedTokens);
 		return {
-			serverUrl: row.serverUrl,
-			authorizationServer: jsonObject(row.authorizationServer, "authorizationServer"),
-			client: jsonObject(await open("client", row.sealedClient), "client"),
-			verifier: (await open("verifier", row.sealedVerifier)) as string | null,
-			tokens: jsonObject(await open("tokens", row.sealedTokens), "tokens"),
+			value: {
+				serverUrl: row.serverUrl,
+				authorizationServer: jsonObject(row.authorizationServer, "authorizationServer"),
+				client: jsonObject(client.value, "client"),
+				verifier: verifier.value as string | null,
+				tokens: jsonObject(tokens.value, "tokens"),
+			},
+			sealed: { client: client.sealed, verifier: verifier.sealed, tokens: tokens.sealed },
 		};
 	}
 
 	/** Keeps, sealed, what the OAuth client saves for a server; null clears a part. */
 	async mcpOAuthSave(assetId: string, parts: McpOAuthParts): Promise<boolean> {
 		const asset = id.parse(assetId);
+		const baseline = oauthRow(this.#db, asset);
+		let openedSealed: {
+			client: string | null;
+			verifier: string | null;
+			tokens: string | null;
+		} | null = null;
 		if (
 			parts.expectedTokens !== undefined ||
 			parts.expectedClient !== undefined ||
 			parts.expectedVerifier !== undefined
 		) {
-			const opened = await this.mcpOAuthOpen(asset);
+			const openedResult = baseline && (await this.#openMcpOAuth(asset, baseline));
+			const opened = openedResult?.value;
+			openedSealed = openedResult?.sealed ?? null;
 			if (
 				parts.expectedTokens !== undefined &&
-				JSON.stringify(opened?.tokens ?? null) !== JSON.stringify(parts.expectedTokens)
+				canonicalOAuthJson(opened?.tokens ?? null) !== canonicalOAuthJson(parts.expectedTokens)
 			)
 				return false;
 			if (
 				parts.expectedClient !== undefined &&
-				JSON.stringify(opened?.client ?? null) !== JSON.stringify(parts.expectedClient)
+				canonicalOAuthJson(opened?.client ?? null) !== canonicalOAuthJson(parts.expectedClient)
 			)
 				return false;
 			if (parts.expectedVerifier !== undefined && opened?.verifier !== parts.expectedVerifier)
 				return false;
 		}
-		const baseline = oauthRow(this.#db, asset);
-		const prior = baseline?.sealedTokens;
-		const priorClient = baseline?.sealedClient;
-		const priorVerifier = baseline?.sealedVerifier;
+		const prior = openedSealed?.tokens ?? baseline?.sealedTokens;
+		const priorClient = openedSealed?.client ?? baseline?.sealedClient;
+		const priorVerifier = openedSealed?.verifier ?? baseline?.sealedVerifier;
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return false;
 		const seal = async (part: "client" | "verifier" | "tokens", value: unknown) =>
@@ -1142,7 +1163,13 @@ export class RegistryDO extends DurableObject {
 			if (parts.expectedClient !== undefined && current?.sealedClient !== priorClient) return false;
 			if (parts.expectedVerifier !== undefined && current?.sealedVerifier !== priorVerifier)
 				return false;
-			if (parts.unlessSigningIn && (current?.state !== null || current?.sealedVerifier !== null))
+			if (
+				parts.unlessSigningIn &&
+				current?.stateExpiresAt !== null &&
+				current?.stateExpiresAt !== undefined &&
+				current.stateExpiresAt > Date.now() &&
+				(current.state !== null || current.sealedVerifier !== null)
+			)
 				return false;
 			return saveOAuth(this.#db, asset, defined);
 		});
@@ -3201,6 +3228,22 @@ async function sameSecret(expected: string, given: string): Promise<boolean> {
 
 /** What the OAuth client kept for a server, opened for the app's provider. */
 const mcpOAuthJson = z.record(z.string(), z.json());
+
+function canonicalOAuthJson(value: unknown): string | undefined {
+	const ordered = (item: unknown): unknown => {
+		if (Array.isArray(item)) return item.map(ordered);
+		if (item !== null && typeof item === "object") {
+			return Object.fromEntries(
+				Object.entries(item)
+					.filter(([, entry]) => entry !== undefined)
+					.sort(([left], [right]) => left.localeCompare(right))
+					.map(([key, entry]) => [key, ordered(entry)]),
+			);
+		}
+		return item;
+	};
+	return JSON.stringify(ordered(value));
+}
 type McpOAuthScalar = string | number | boolean | null;
 type McpOAuthJson = Record<string, McpOAuthScalar | string[] | Record<string, McpOAuthScalar>>;
 

@@ -14,6 +14,8 @@ export class FakeOAuthMcp {
 	readonly #refresh = new Map<string, number>();
 	readonly #valid = new Set<string>();
 	#issued = 0;
+	#registered = 0;
+	#deadClients = new Set<string>();
 	#refreshFailure: "503" | "network" | "invalid-client" | "malformed" | null = null;
 	#deniedStatus: 401 | 403 | null = null;
 	#refreshDelayMs = 0;
@@ -72,6 +74,10 @@ export class FakeOAuthMcp {
 		this.#refreshFailure = kind;
 	}
 
+	rejectClient(clientId: string) {
+		this.#deadClients.add(clientId);
+	}
+
 	denyMcp(status: 401 | 403 | null) {
 		this.#deniedStatus = status;
 	}
@@ -96,8 +102,9 @@ export class FakeOAuthMcp {
 		}
 		if (url.pathname === "/register" && request.method === "POST") {
 			const metadata = (await request.json()) as Record<string, unknown>;
+			this.#registered++;
 			return Response.json(
-				{ ...metadata, client_id: "client-1", client_id_issued_at: 1 },
+				{ ...metadata, client_id: `client-${this.#registered}`, client_id_issued_at: 1 },
 				{ status: 201 },
 			);
 		}
@@ -114,6 +121,8 @@ export class FakeOAuthMcp {
 			const grant = this.#codes.get(code);
 			this.#codes.delete(code);
 			if (!grant || grant.redirect !== form.get("redirect_uri")) return refuse();
+			if (this.#deadClients.has(grant.client))
+				return Response.json({ error: "invalid_client" }, { status: 400 });
 			const digest = await crypto.subtle.digest(
 				"SHA-256",
 				new TextEncoder().encode(String(form.get("code_verifier") ?? "")),

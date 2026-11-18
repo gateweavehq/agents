@@ -147,6 +147,7 @@ it("honors the caller abort before claiming, while a sent refresh can finish", a
 	const controller = new AbortController();
 	let claims = 0;
 	let finish: ((response: Response) => void) | undefined;
+	let saved: unknown;
 	const store: OAuthStore = {
 		mcpOAuthOpen: async () => ({
 			serverUrl: "https://example.test/mcp",
@@ -154,7 +155,10 @@ it("honors the caller abort before claiming, while a sent refresh can finish", a
 			verifier: null,
 			tokens: { access_token: "old", refresh_token: "same" },
 		}),
-		mcpOAuthSave: async () => true,
+		mcpOAuthSave: async (_, parts) => {
+			saved = parts.tokens;
+			return true;
+		},
 		mcpRefreshClaim: async () => {
 			claims++;
 			return { kind: "claimed", lease: crypto.randomUUID() };
@@ -171,9 +175,15 @@ it("honors the caller abort before claiming, while a sent refresh can finish", a
 	).rejects.toThrow("stopped");
 	expect(claims).toBe(0);
 	const sent = provider.fetchWithRefreshLease(
-		async () =>
-			new Promise<Response>((resolve) => {
+		async (_input, init) =>
+			new Promise<Response>((resolve, reject) => {
 				finish = resolve;
+				init?.signal?.addEventListener(
+					"abort",
+					() => reject(new DOMException("Aborted", "AbortError")),
+					{ once: true },
+				);
+				if (init?.signal?.aborted) reject(new DOMException("Aborted", "AbortError"));
 			}),
 		controller.signal,
 	)("https://example.test/token", { body: "grant_type=refresh_token&refresh_token=same" });
@@ -181,7 +191,12 @@ it("honors the caller abort before claiming, while a sent refresh can finish", a
 	expect(finish).toBeDefined();
 	controller.abort(new Error("late"));
 	finish?.(Response.json({ access_token: "new", refresh_token: "next" }));
-	expect((await sent).ok).toBe(true);
+	const response = await sent;
+	expect(response.ok).toBe(true);
+	await provider.saveTokens(
+		(await response.json()) as { access_token: string; token_type: string },
+	);
+	expect(saved).toMatchObject({ access_token: "new", refresh_token: "next" });
 });
 
 it("does not clear credentials or a verifier during a health check client rejection", async () => {
@@ -332,6 +347,43 @@ it("adopts a concurrent refresh even when the refresh token does not rotate", as
 });
 
 describe("an MCP server connected through OAuth", () => {
+	it("registers a new client after a finish-time invalid_client", async () => {
+		const server = new FakeOAuthMcp("mcp.oauth.test");
+		fakeModel(() => anthropicStream("unused"), { "mcp.oauth.test": server.handle });
+		const registry = env.REGISTRY.getByName(crypto.randomUUID());
+		const assetId = await registry.createMcpServer({
+			name: "tracker",
+			transport: "http",
+			url: server.mcpUrl,
+			headers: [],
+		});
+		const begin = async () => {
+			const begun = await registry.mcpOAuthBegin(assetId, "user-ada");
+			if ("status" in begun) throw new Error(begun.message);
+			const state = `workspace.${assetId}.${begun.state}`;
+			const url = await startOAuth(registry, assetId, {
+				serverUrl: begun.serverUrl,
+				redirectUrl: REDIRECT,
+				state,
+			});
+			if (!url) throw new Error("Expected a sign-in URL");
+			const { code } = server.approve(url.href);
+			expect(await registry.mcpOAuthTakeState(assetId, begun.state, "user-ada")).toBe(true);
+			return { serverUrl: begun.serverUrl, redirectUrl: REDIRECT, code, state };
+		};
+		const first = await begin();
+		server.rejectClient("client-1");
+		await expect(finishOAuth(registry, assetId, first)).rejects.toThrow();
+		expect((await registry.mcpOAuthOpen(assetId))?.client).toBeNull();
+		expect((await registry.mcpOAuthOpen(assetId))?.verifier).toBeNull();
+		const second = await begin();
+		expect((await registry.mcpOAuthOpen(assetId))?.client).toMatchObject({ client_id: "client-2" });
+		await finishOAuth(registry, assetId, second);
+		expect((await registry.mcpOAuthOpen(assetId))?.tokens).toMatchObject({
+			access_token: "access-1",
+		});
+	});
+
 	it("is reached with its token, which a turn refreshes when it stops working", async () => {
 		const server = new FakeOAuthMcp("mcp.oauth.test");
 		const requests = fakeModel(

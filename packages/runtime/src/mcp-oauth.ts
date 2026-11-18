@@ -384,13 +384,27 @@ export async function finishOAuth(
 		state: flow.state,
 		freshSignIn: true,
 	});
-	const result = await auth(provider, {
-		serverUrl: flow.serverUrl,
-		fetchFn: fetchWithoutRedirects,
-		authorizationCode: flow.code,
-		callbackState: flow.state,
-		...(flow.issuer ? { callbackIssuer: flow.issuer } : {}),
-	});
+	const before = await store.mcpOAuthOpen(assetId);
+	let result: Awaited<ReturnType<typeof auth>>;
+	try {
+		result = await auth(provider, {
+			serverUrl: flow.serverUrl,
+			fetchFn: fetchWithoutRedirects,
+			authorizationCode: flow.code,
+			callbackState: flow.state,
+			...(flow.issuer ? { callbackIssuer: flow.issuer } : {}),
+		});
+	} catch (error) {
+		const code = (error as { constructor?: { errorCode?: string } }).constructor?.errorCode;
+		await store.mcpOAuthSave(assetId, {
+			verifier: null,
+			expectedVerifier: before?.verifier ?? null,
+			...(code === "invalid_client" || code === "unauthorized_client"
+				? { client: null, expectedClient: before?.client ?? null }
+				: {}),
+		});
+		throw error;
+	}
 	if (result !== "AUTHORIZED") throw new Error("The server did not grant access");
 	// The verifier was for this sign-in alone.
 	await store.mcpOAuthSave(assetId, { verifier: null });

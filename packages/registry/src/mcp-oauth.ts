@@ -70,7 +70,7 @@ export function takeState(
 	const row = oauthRow(db, assetId);
 	if (!row || row.state === null) return false;
 	db.update(mcpOAuth)
-		.set({ state: null, stateBy: null, stateExpiresAt: null })
+		.set({ state: null, stateBy: null })
 		.where(eq(mcpOAuth.assetId, assetId))
 		.run();
 	return (
