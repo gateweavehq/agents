@@ -8,6 +8,29 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.29.0] - 2026-11-18
+
+Library assets are easier to reuse in a coding agent, and a sign-in redirect stays on this site
+even when its path contains dot segments. There is no migration in this release.
+
+### Added
+
+- **Copy the text of a library asset.** A stored prompt has a Copy prompt button, a Markdown file
+  has Copy Markdown, and another stored text file has Copy file. An asset without stored content
+  has no copy action. A failed clipboard write tells the person to select the visible text.
+  ([#268](https://github.com/gateweavehq/agents/pull/268))
+
+### Fixed
+
+- **Sign-in cannot return to another site through a resolved path.** A path whose dot segments
+  become `//example.com` or `/\\example.com` is refused after resolution. Ordinary same-site
+  parent segments still work.
+  ([#266](https://github.com/gateweavehq/agents/pull/266))
+
+### If you run your own
+
+- **Update.** No database migration or new environment variable is required.
+
 ## [0.28.3] - 2026-11-18
 
 Cloudflare removes sixteen Workers AI models on 20 November 2026: Agents stops offering them and
