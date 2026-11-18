@@ -8,6 +8,55 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.28.3] - 2026-11-18
+
+Cloudflare removes sixteen Workers AI models on 20 November 2026: Agents stops offering them and
+says so when an agent still set to one runs. There is no migration in this release.
+
+### Fixed
+
+- **No list offers a Workers AI model that Cloudflare is removing.** The agent dialog, Connect
+  Track and Settings › Models leave out the sixteen models that stop answering on 20 November
+  2026, among them `@cf/moonshotai/kimi-k2.6`, which the triage guide recommended, and
+  `@cf/qwen/qwen3-30b-a3b-fp8`. Work on Track issues now starts from
+  `@cf/deepseek-ai/deepseek-v4.1-flash-1017` when the provider is Workers AI.
+  ([#263](https://github.com/gateweavehq/agents/pull/263))
+- **An agent whose model was removed says what happened.** Its run used to end with "Workers AI
+  could not answer." It now says that Cloudflare removed the model and to choose another in the
+  agent's settings. ([#263](https://github.com/gateweavehq/agents/pull/263))
+- **A run's trace names the agent a turn was delegated to**, where it printed the agent's id.
+  ([#262](https://github.com/gateweavehq/agents/pull/262))
+- **A turn shows as running from the moment it is sent.** While a sandbox started, the chat looked
+  idle and had no Stop button, and a stop pressed in those seconds was not heard. It now stops the
+  turn. ([#262](https://github.com/gateweavehq/agents/pull/262))
+- **The audit log's sentence for a pin move names both versions.**
+  ([#262](https://github.com/gateweavehq/agents/pull/262))
+
+### Changed
+
+- **The ready-made Gateweave Mail setup's skill** follows Mail 0.2.0, where an agent sends on its
+  own unless an owner or admin chooses a list or approval for everything, and gains the section on
+  templates. A workspace that already added the setup keeps the skill it has until it adds the
+  setup again. ([#264](https://github.com/gateweavehq/agents/pull/264))
+
+### If you run your own
+
+- **Change agents that run on a removed model before 20 November 2026.** The removed models are
+  `@cf/moonshotai/kimi-k2.6`, `@cf/moonshotai/kimi-k2.7-code`, `@cf/zai-org/glm-5.2`,
+  `@cf/zai-org/glm-5.3-flash`, `@cf/deepseek-ai/deepseek-v4-flash-0731`,
+  `@cf/deepseek-ai/deepseek-v4-pro-0813`, `@cf/nvidia/nemotron-3-120b-a12b`,
+  `@cf/qwen/qwen3-30b-a3b-fp8`, `@cf/qwen/qwq-32b` and seven older ones
+  ([the full list](https://developers.cloudflare.com/changelog/post/2026-11-05-planned-model-deprecations/)).
+  Agents does not change an agent's model for you, because prices differ: open the agent under
+  **Agents**, choose **Edit**, and pick another model.
+- Until that day a run on Kimi K2.6 or Qwen3 30B still works, and still counts toward
+  `WORKERS_AI_DAILY_DOLLARS`.
+
+### Internal
+
+- An agent's setting for working on files without a sandbox, kept dark.
+  ([#259](https://github.com/gateweavehq/agents/pull/259))
+
 ## [0.28.2] - 2026-11-16
 
 Fixes "Use vN" on an agent's page, which reset the agent's engine and memory. There is no
