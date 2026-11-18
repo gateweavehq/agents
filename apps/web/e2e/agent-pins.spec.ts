@@ -14,7 +14,7 @@ test("moving an agent's pin to the newest version leaves its engine and memory a
 	await waitForHydration(page);
 	await page.getByRole("button", { name: "New", exact: true }).click();
 	const writing = page.getByRole("dialog");
-	await writing.getByLabel("Kind").selectOption("instructions");
+	await writing.getByRole("radio", { name: /^Instructions/ }).check();
 	await writing.getByLabel("Name").fill("Rules");
 	await writing.getByLabel("Text").fill("Be brief.\n");
 	await writing.getByRole("button", { name: "Create", exact: true }).click();

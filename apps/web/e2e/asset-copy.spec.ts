@@ -23,7 +23,7 @@ test("copies prompt and Markdown asset text for use outside the app", async ({ p
 		await waitForHydration(page);
 		await page.getByRole("button", { name: "New", exact: true }).click();
 		const writing = page.getByRole("dialog");
-		await writing.getByLabel("Kind").selectOption(kind);
+		await writing.getByRole("radio", { name: new RegExp(`^${kind}`, "i") }).check();
 		await writing.getByLabel("Name").fill(name);
 		await writing.getByLabel("Text").fill(content);
 		await writing.getByRole("button", { name: "Create", exact: true }).click();
