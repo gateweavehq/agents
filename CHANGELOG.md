@@ -20,7 +20,8 @@ release has one migration in the workspace registry, which adds a column with a 
   `open_pull_request`, the tool runs them in the sandbox on the committed tree before anything is
   pushed. If one fails, times out or cannot run, nothing is opened and the agent is told which
   failed, with the end of its output, so it can fix it and try again. After three failed rounds in
-  a run the pull request is opened as a draft that says which check failed.
+  a run the pull request is opened as a draft that says which check failed. If a run has used up
+  its time for checks before that, the next call opens a draft that says the checks were not run.
   ([#267](https://github.com/gateweavehq/agents/pull/267))
 - **The pull request says what ran.** Its description ends with a section written by the tool,
   not the model: each command, its exit code and how long it took. A copy of that section written
