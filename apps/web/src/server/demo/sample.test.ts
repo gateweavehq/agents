@@ -1,5 +1,6 @@
-import { type ModelSpan, scanResult } from "@gateweave/agents-model";
+import { type EdgeSpan, type ModelSpan, scanResult } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
+import { edgeCallTitle } from "#/lib/trace-text";
 import { type MadeAgent, pastHistory, sampleScan, sampleWiki } from "./sample";
 import { DEMO_AGENTS, SAMPLE_REPOSITORIES, WIKI } from "./sample-data";
 
@@ -101,8 +102,26 @@ describe("the sample history", () => {
 			const parent = traces.get(run.parent?.parentRunId ?? "");
 			const edge = parent?.spans.find((span) => span.id === run.parent?.parentSpanId);
 			expect(edge).toMatchObject({ kind: "edge", edge: "delegate", childRunId: run.id });
-			expect(edge && "to" in edge ? edge.to : null).toBe(run.agentId);
 		}
+	});
+
+	it("names each hand-off by the member it went to, as the runtime does, never by an id", () => {
+		const made = Object.values(agents());
+		const runs = history.runs.map((run) => ({
+			id: run.id,
+			agentName: made.find((each) => each.id === run.agentId)?.agent.name ?? "",
+		}));
+		const titles = history.objects
+			.flatMap((object) => object.runs.flatMap((run) => run.spans))
+			.filter((span): span is EdgeSpan => span.kind === "edge")
+			.map((span) => {
+				expect(made.map((each) => each.id)).not.toContain(span.to);
+				// The name is the one of the agent whose run the call started.
+				expect(span.to).toBe(runs.find((run) => run.id === span.childRunId)?.agentName);
+				const { call, member } = edgeCallTitle(span, runs);
+				return `${call} ${member}`;
+			});
+		expect(titles.sort()).toEqual(["Delegate to Code reviewer", "Delegate to Docs writer"]);
 	});
 });
 

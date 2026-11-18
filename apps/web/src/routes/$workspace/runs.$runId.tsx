@@ -30,6 +30,7 @@ import { formatDateTime } from "#/lib/dates";
 import { useRefreshWhile } from "#/lib/refresh";
 import { getRun, type RunEntry, replayRun } from "#/lib/runs";
 import { useDocumentTitle } from "#/lib/title";
+import { edgeCallTitle, MEMBER_GONE } from "#/lib/trace-text";
 import { formatBytes, formatCost, formatDuration, formatTokens } from "#/lib/usage";
 import { cn } from "#/lib/utils";
 
@@ -307,13 +308,6 @@ const EDGE_REACHED: Record<TeamEdgeKind, string> = {
 	report: "Reported to by",
 };
 
-/** What a call over an edge did, before the name of the member it went to. */
-const EDGE_CALLS: Record<TeamEdgeKind, string> = {
-	delegate: "Delegate to",
-	ask: "Ask",
-	report: "Report to",
-};
-
 const SPAN_COLORS: Record<RunSpan["status"], string> = {
 	running: "bg-sky-500",
 	ok: "bg-emerald-500",
@@ -375,7 +369,7 @@ function Timeline({
 		<ol className="divide-y rounded-lg border">
 			{trace.map((span) => {
 				const spanEnd = span.endedAt ?? end;
-				const { title, meta, details } = describeSpan(span, spanEnd);
+				const { title, meta, details } = describeSpan(span, spanEnd, nested);
 				return (
 					<li
 						key={span.id}
@@ -445,20 +439,23 @@ function Timeline({
 function describeSpan(
 	span: RunSpan,
 	spanEnd: number,
+	nested: RunEntry[],
 ): { title: ReactNode; meta: string; details: ReactNode[] } {
 	const duration = formatDuration(spanEnd - span.startedAt);
 	switch (span.kind) {
-		case "edge":
+		case "edge": {
+			const { call, member } = edgeCallTitle(span, nested);
 			return {
 				title: (
 					<>
-						{EDGE_CALLS[span.edge]} <span className="font-medium">{span.to}</span>
+						{call} {member === null ? MEMBER_GONE : <span className="font-medium">{member}</span>}
 					</>
 				),
 				meta: duration,
 				// The run it started shows below, with its link.
 				details: [],
 			};
+		}
 		case "connect":
 			return {
 				title: (

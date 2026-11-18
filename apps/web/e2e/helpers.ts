@@ -67,7 +67,7 @@ export const AGENT = "Check agent";
  * Saves an Anthropic key and makes an agent that uses it. The key is made up, so a turn gets as far
  * as Anthropic refusing it: what someone wrote is stored by then, which is what these tests read.
  */
-export async function addAgent(page: Page, slug: string): Promise<void> {
+export async function addAgent(page: Page, slug: string, servers: string[] = []): Promise<void> {
 	await page.goto(`/${slug}/settings/models`);
 	await waitForHydration(page);
 	const row = page.getByRole("listitem").filter({ hasText: "Anthropic" }).first();
@@ -85,6 +85,7 @@ export async function addAgent(page: Page, slug: string): Promise<void> {
 	await dialog.getByLabel("Name").fill(AGENT);
 	await dialog.getByLabel("Provider").selectOption("anthropic");
 	await dialog.getByLabel("Model", { exact: true }).fill("claude-sonnet-5-5");
+	for (const server of servers) await dialog.getByRole("checkbox", { name: server }).check();
 	await dialog.getByRole("button", { name: "Create agent" }).click();
 	await expect(dialog).toBeHidden();
 }

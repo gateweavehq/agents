@@ -465,6 +465,34 @@ describe("an agent whose engine is Claude Code", () => {
 		expect((await machine.seen()).stops).toBe(1);
 	});
 
+	it("never starts Claude Code in a turn stopped while it was getting ready", async () => {
+		// The server never answers, so the turn waits for it with nothing of its reply sent yet.
+		const asked: Request[] = [];
+		const silent = (request: Request) => {
+			asked.push(request);
+			return new Promise<Response>((_resolve, reject) => {
+				const giveUp = () => reject(request.signal.reason ?? new Error("Aborted"));
+				if (request.signal.aborted) giveUp();
+				else request.signal.addEventListener("abort", giveUp, { once: true });
+			});
+		};
+		fakeModel(() => new Response(null, { status: 500 }), { "mcp.acme.dev": silent });
+		const { registry, stub, machine } = await conversation({ servers: [ACME] });
+		await machine.scriptEngine({
+			lines: [INIT, assistant("msg_1", { type: "text", text: "Done." }, { input_tokens: 1 })],
+		});
+		const socket = await connect(stub);
+		const id = crypto.randomUUID();
+		const turn = ask(socket, "Take your time", id);
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
+		await turn;
+		socket.close();
+
+		await vi.waitFor(async () => expect((await registry.listRuns())[0]?.status).toBe("stopped"));
+		expect((await machine.seen()).engine).toEqual([]);
+	});
+
 	it("serves its MCP servers' tools to Claude Code while the turn runs, and only then", async () => {
 		const query = "the words a person typed";
 		const acme = new FakeMcpServer([SEARCH], (_name, input) => ({

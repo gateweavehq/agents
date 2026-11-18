@@ -171,10 +171,11 @@ export function auditSentence(event: AuditEvent, people: People): string {
 		case "agent.created":
 			return `created the agent ${label}`;
 		case "agent.updated": {
-			// A pin moved by itself names its asset and where it went.
+			// A pin moved by itself names its asset, where it went, and where from when the entry says.
 			const asset = text(detail.asset);
 			if (asset && typeof detail.version === "number") {
-				return `moved the agent ${label} to v${detail.version} of ${asset}`;
+				const from = typeof detail.from === "number" ? `from v${detail.from} ` : "";
+				return `moved the agent ${label} ${from}to v${detail.version} of ${asset}`;
 			}
 			return `changed the agent ${label}'s ${fieldsOf(detail.fields)}`;
 		}
