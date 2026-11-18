@@ -11,12 +11,14 @@ import {
 	repositoryUrl,
 	ScanStatus,
 } from "#/components/registry/labels";
+import { RepositoryChecks } from "#/components/registry/repository-checks";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
 import { useRefreshWhile } from "#/lib/refresh";
-import { getRepository, scanRepository } from "#/lib/registry";
+import { getRepository, scanRepository, setRepositoryChecks } from "#/lib/registry";
+import { saveChecksAndRefresh } from "#/lib/repository-checks";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/repositories/$repositoryId")({
@@ -171,6 +173,9 @@ function RepositoryPage() {
 				</section>
 			)}
 
+			{/* Sandboxes check out GitHub repositories only, so only theirs have work to check. */}
+			{repository.provider === "github" && <Checks />}
+
 			{applied.length > 0 && <AppliedSetups />}
 			{applications.length > 0 && <Applications />}
 
@@ -190,6 +195,35 @@ function RepositoryPage() {
 				</section>
 			)}
 		</div>
+	);
+}
+
+/** The repository's checks, which owners and admins set here. */
+function Checks() {
+	const router = useRouter();
+	const { workspace } = Route.useParams();
+	const admin = isAdmin(useMyRole());
+	const detail = Route.useLoaderData();
+	if (!detail) return null;
+	// The repository whose checks are shown is the one a save writes to, whatever the address
+	// says by the time it is sent.
+	const { id: repositoryId, checks } = detail.repository;
+	return (
+		<RepositoryChecks
+			// The form starts over when the page goes on to another repository, whose checks may
+			// read the same. For the one repository it keeps its draft through a refresh of the
+			// page, and takes the saved checks itself when the draft has no edits.
+			key={repositoryId}
+			checks={checks}
+			admin={admin}
+			onSave={async (next) => {
+				await saveChecksAndRefresh(
+					next,
+					(checks) => setRepositoryChecks({ data: { slug: workspace, repositoryId, checks } }),
+					(options) => router.invalidate(options),
+				);
+			}}
+		/>
 	);
 }
 

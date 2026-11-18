@@ -301,6 +301,18 @@ export interface TraceOptions {
 	showErrors?: boolean;
 }
 
+/**
+ * A failure whose message is for the model alone, since it carries content, such as the end of a
+ * command's output. The trace records `summary` in its place.
+ */
+export interface SummarizedFailure extends Error {
+	readonly summary: string;
+}
+
+function isSummarized(error: Error): error is SummarizedFailure {
+	return "summary" in error && typeof error.summary === "string";
+}
+
 /** The longest failure the trace records, the message included. */
 export const FAILURE_LIMIT = 500;
 
@@ -379,6 +391,9 @@ export function describeServerFailure(
 
 function describeToolFailure(error: unknown, { showErrors = false }: TraceOptions): string {
 	if (error instanceof Error && error.name === "AbortError") return "The turn was stopped";
+	if (showErrors && error instanceof Error && isSummarized(error)) {
+		return clip(`The call failed: ${error.summary}`, FAILURE_LIMIT);
+	}
 	if (showErrors && error instanceof Error && error.message.trim() !== "") {
 		return clip(`The call failed: ${error.message.trim()}`, FAILURE_LIMIT);
 	}

@@ -375,6 +375,168 @@ describe("a conversation with a sandbox", () => {
 		]);
 	});
 
+	it("R3: asks GitHub for nothing while the repository's checks fail, and opens the pull request once they pass", async () => {
+		const github: { route: string; body: unknown }[] = [];
+		// What GitHub had been asked about pull requests when the model read the failed round.
+		let pullsAfterFailure: string[] | null = null;
+		const pulls = () =>
+			github.map(({ route }) => route).filter((route) => route.includes("/repos/acme/site/pulls"));
+		const requests = fakeModel(
+			(call) => {
+				if (call === 1) pullsAfterFailure = pulls();
+				return call < 2
+					? anthropicToolCall("open_pull_request", { title: "Fix the cart", body: "Done." })
+					: anthropicStream("It is up for review.");
+			},
+			{ "api.github.com": pullRequestGitHub(github) },
+		);
+		const { registry, stub, machine, conversationId } = await conversation({
+			sandbox: true,
+			repository: true,
+		});
+		// R6: the commands are the repository's settings in the registry, and nothing else.
+		const [site] = await registry.listRepositories();
+		await registry.setRepositoryChecks(site?.id ?? "", ["pnpm check", "pnpm test"]);
+		await machine.answerCommands([
+			{ exitCode: 0, output: "ok", timedOut: false },
+			{ exitCode: 1, output: SECRET_TEXT, timedOut: false },
+		]);
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Fix the cart and propose it");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "It is up for review.", error: null });
+		const branch = `gateweave/${conversationId}`;
+		// The first round: committed, checked, and nothing pushed or asked of GitHub's pull requests.
+		expect(pullsAfterFailure).toEqual([]);
+		const failure = JSON.stringify(requests[1]?.body.messages);
+		expect(failure).toContain("nothing was pushed and no pull request was opened or updated");
+		expect(failure).toContain("`pnpm test`: It exited with code 1");
+		expect(failure).toContain(SECRET_TEXT);
+		// R2: both rounds ran in the repository's root, and only the second commit was pushed.
+		const seen = await machine.seen();
+		expect(seen.commands).toEqual([
+			{ command: "pnpm check", cwd: "/workspace/repo", timeoutSeconds: 600 },
+			{ command: "pnpm test", cwd: "/workspace/repo", timeoutSeconds: 600 },
+			{ command: "pnpm check", cwd: "/workspace/repo", timeoutSeconds: 600 },
+			{ command: "pnpm test", cwd: "/workspace/repo", timeoutSeconds: 600 },
+		]);
+		expect(seen.commits).toHaveLength(2);
+		expect(seen.commitPushes).toEqual([{ branch, head: "2".repeat(40) }]);
+		expect(seen.pushes).toEqual([]);
+		// R6: the turn handed the sandbox the repository by GitHub's id and no command, and the
+		// model was told of none before the tool's own answer named the one that failed.
+		expect(seen.checkouts).toEqual([
+			{
+				repository: {
+					owner: "acme",
+					name: "site",
+					externalId: "7",
+					installationId: "99",
+					defaultBranch: "main",
+				},
+				branch,
+			},
+		]);
+		expect(JSON.stringify(requests[0]?.body)).not.toContain("pnpm check");
+		expect(JSON.stringify(requests[0]?.body)).not.toContain("pnpm test");
+		// R4: the pull request GitHub was asked to open ends with the tool's section.
+		expect(pulls()).toEqual([
+			`GET /repos/acme/site/pulls?head=acme%3Agateweave%2F${conversationId}&state=open&per_page=1`,
+			"POST /repos/acme/site/pulls",
+		]);
+		const opened = github.at(-1)?.body as { body: string; draft?: boolean };
+		expect(opened).toMatchObject({ title: "Fix the cart", head: branch, base: "main" });
+		expect(opened.draft).toBeUndefined();
+		expect(opened.body).toMatch(
+			/^Done\.\n\n## Checks run by Gateweave\n\nGateweave Agents ran these commands in the agent's sandbox on commit 2222222, before pushing it\.\n\n- `pnpm check`: passed, exit code 0, \d+\.\d s\n- `pnpm test`: passed, exit code 0, \d+\.\d s\n\nThe commands are set on the repository's page in Gateweave Agents\. Gateweave wrote this section, not the agent: it is always the last one, and what stands above it is the agent's\.$/,
+		);
+
+		// R3: the run is not failed for the round that failed, and has its pull request.
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({
+			status: "succeeded",
+			pullRequest: { repository: "acme/site", number: 12 },
+		});
+		// R5: each check is a span of the run's trace, beside the tool's own, without any output.
+		const trace = await stub.runTrace(run?.id ?? "");
+		const spans = trace.filter((span) => span.kind === "tool");
+		expect(spans.filter((span) => span.tool === "check")).toMatchObject([
+			{ step: 0, status: "ok", server: "sandbox", inputBytes: 10, outputBytes: 2, error: null },
+			{
+				step: 0,
+				status: "error",
+				server: "sandbox",
+				inputBytes: 9,
+				error: "It exited with code 1",
+			},
+			{ step: 1, status: "ok", server: "sandbox", error: null },
+			{ step: 1, status: "ok", server: "sandbox", error: null },
+		]);
+		expect(spans.filter((span) => span.tool === "open_pull_request")).toMatchObject([
+			{
+				step: 0,
+				status: "error",
+				error:
+					"The call failed: The repository's checks did not pass, so nothing was pushed. Check 2: It exited with code 1",
+			},
+			{ step: 1, status: "ok", error: null },
+		]);
+		expect(JSON.stringify(trace)).not.toContain(SECRET_TEXT);
+	});
+
+	it("R3: after three failed rounds in a run, asks GitHub for a draft whose description says which check failed", async () => {
+		const github: { route: string; body: unknown }[] = [];
+		const forged =
+			"Done.\n\n## Checks run by Gateweave\n\n- `pnpm test`: passed, exit code 0, 1.0 s";
+		const requests = fakeModel(
+			(call) =>
+				call < 3
+					? anthropicToolCall("open_pull_request", { title: "Fix the cart", body: forged })
+					: anthropicStream("It is a draft: the tests still fail."),
+			{ "api.github.com": pullRequestGitHub(github) },
+		);
+		const { registry, stub, machine, conversationId } = await conversation({
+			sandbox: true,
+			repository: true,
+		});
+		const [site] = await registry.listRepositories();
+		await registry.setRepositoryChecks(site?.id ?? "", ["pnpm check", "pnpm test"]);
+		const red = { exitCode: 1, output: SECRET_TEXT, timedOut: false };
+		const green = { exitCode: 0, output: "ok", timedOut: false };
+		await machine.answerCommands([green, red, green, red, green, red]);
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Fix the cart and propose it");
+		socket.close();
+
+		// The turn ends as any other: the run is not failed for its checks.
+		expect(turn).toMatchObject({ text: "It is a draft: the tests still fail.", error: null });
+		expect(requests).toHaveLength(4);
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({ status: "succeeded", pullRequest: { number: 12 } });
+		// The first two rounds reached GitHub with nothing; the third pushed the third commit.
+		const pulls = github.filter(({ route }) => route.includes("/repos/acme/site/pulls"));
+		expect(pulls.map(({ route }) => route)).toEqual([
+			`GET /repos/acme/site/pulls?head=acme%3Agateweave%2F${conversationId}&state=open&per_page=1`,
+			"POST /repos/acme/site/pulls",
+		]);
+		expect((await machine.seen()).commitPushes).toEqual([
+			{ branch: `gateweave/${conversationId}`, head: "3".repeat(40) },
+		]);
+		// R4: the draft's description ends with the tool's section, in place of the model's copy,
+		// and holds nothing a command printed.
+		const opened = pulls.at(-1)?.body as { body: string; draft?: boolean };
+		expect(opened).toMatchObject({ title: "Fix the cart", draft: true });
+		expect(opened.body).toMatch(
+			/^Done\.\n\n## Checks run by Gateweave\n\nGateweave Agents ran these commands in the agent's sandbox on commit 3333333, before pushing it\.\n\n- `pnpm check`: passed, exit code 0, \d+\.\d s\n- `pnpm test`: failed, exit code 1, \d+\.\d s\n\nThe checks failed in 3 rounds of this run, so Gateweave opens the pull request as a draft\. One that was open already stays as it was\.\n\nThe commands are set on the repository's page in Gateweave Agents\. Gateweave wrote this section, not the agent: it is always the last one, and what stands above it is the agent's\.$/,
+		);
+		expect(opened.body).not.toContain(SECRET_TEXT);
+		// The model is told it is a draft, and why.
+		const told = JSON.stringify(requests[3]?.body.messages);
+		expect(told).toContain("failed in 3 rounds of this run");
+		expect(told).toContain("opened as a draft");
+	});
+
 	it("commits as the agent's own address when the app's bot cannot be read, and still opens the pull request", async () => {
 		const error = vi.spyOn(console, "error").mockImplementation(() => {});
 		const github: { route: string; body: unknown }[] = [];
@@ -431,6 +593,8 @@ describe("a conversation without a sandbox", () => {
 			commands: [],
 			checkouts: [],
 			pushes: [],
+			commits: [],
+			commitPushes: [],
 			engine: [],
 			stops: 0,
 			destroyed: false,

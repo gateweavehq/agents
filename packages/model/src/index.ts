@@ -1,3 +1,4 @@
+export * from "./checks";
 export * from "./edge-tools";
 export type * from "./entities";
 export * from "./files";

@@ -75,6 +75,11 @@ export const repositories = sqliteTable(
 			.$type<ScanProblem[]>()
 			.notNull()
 			.default(sql`'[]'`),
+		/**
+		 * The commands `open_pull_request` runs on an agent's work before it pushes it (AGT-142), in
+		 * order. Only an owner or admin sets them: a scan of the repository never does.
+		 */
+		checks: text("checks", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
 		createdAt: integer("created_at").notNull(),
 		updatedAt: integer("updated_at").notNull(),
 		/** Set when the connection no longer reaches it. What it held is kept for when it returns. */

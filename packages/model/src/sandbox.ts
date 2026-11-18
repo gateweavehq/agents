@@ -186,4 +186,13 @@ export interface PullRequestOutcome {
 	opened: boolean;
 	/** The commit the branch is at now. */
 	head: string;
+	/**
+	 * How the repository's checks went (`./checks.ts`), when it has any: all passed, some did not
+	 * and the pull request says which, or they could not run. Left out when none are set.
+	 */
+	checks?: "passed" | "failed" | "not run";
+	/** Whether the tool asked for a draft, as it does when the checks did not pass. */
+	draft?: boolean;
+	/** What the model should know of the checks, in words. */
+	note?: string;
 }

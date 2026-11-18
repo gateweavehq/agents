@@ -51,6 +51,11 @@ export interface Repository {
 	/** The most urgent drift among the setups applied to it; null when none was merged there. */
 	drift: DriftState | null;
 	problems: ScanProblem[];
+	/**
+	 * The commands `open_pull_request` runs on an agent's work here before it pushes it, in order
+	 * (`./checks.ts`). None unless an owner or admin set some.
+	 */
+	checks: string[];
 	createdAt: number;
 	updatedAt: number;
 }

@@ -1,4 +1,5 @@
 export { type BackupRow, readForBackup } from "./backup";
+export type { ChecksSet } from "./checks";
 export type { ConversationTurn } from "./conversations";
 export { configuredJurisdiction, objectsIn } from "./jurisdiction";
 export {

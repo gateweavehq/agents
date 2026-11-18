@@ -51,6 +51,8 @@ export const AUDIT_ACTIONS = [
 	"setup.updated",
 	"setup.deleted",
 	"setup.applied",
+	// What runs on an agent's work before its pull request: commands, so who set them is kept.
+	"repository.checksSet",
 	// Deletions.
 	"project.deleted",
 	"library.removed",
@@ -80,6 +82,7 @@ export const AUDIT_TARGET_TYPES = [
 	"agent",
 	"team",
 	"setup",
+	"repository",
 	"project",
 	"asset",
 	"memory",

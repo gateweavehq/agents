@@ -405,6 +405,25 @@ after its conversation's last turn. To keep the bill in hand:
   the most it can cost, so Cloudflare's bill stays under the budget. Set `SANDBOX_ALERT_EMAIL` to
   hear at 80% and at 100%.
 
+#### Checks before a pull request
+
+A workspace's owner or admin can give a repository checks: commands such as `pnpm test` that
+Agents runs in the sandbox on an agent's work before it pushes it. They are set on the
+repository's page under **Repositories**, one command to a line, and kept in the workspace's
+registry. There is no setting for whoever runs the server, and no file in the repository names
+them yet. [Work on Track issues](track-work.md#checks-before-a-pull-request) says what happens
+when one fails and what the section **Checks run by Gateweave** at the end of a pull request
+means.
+
+A command may run for 10 minutes, the checks of one pull request call for 20 and those of one run
+for 40. That time is sandbox time like any other: it counts toward `SANDBOX_DAILY_MINUTES` and
+`SANDBOX_MONTHLY_BUDGET`, which still decide whether a run starts at all. A repository without
+checks uses none of it. The commands run with the sandbox's network: package registries and the
+repository itself, nothing else.
+
+The update that adds checks changes each workspace's registry by itself when the workspace is
+next used (one column, empty for every repository). Nothing is to be done by hand.
+
 ### When Cloudflare removes a Workers AI model
 
 Cloudflare retires Workers AI models, with a few weeks' notice in its

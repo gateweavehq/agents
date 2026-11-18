@@ -237,7 +237,7 @@ describe("a sandbox's way out", () => {
 		});
 
 		it("lets the push open_pull_request makes through, with a token that writes", () => {
-			const push = { branch: "gateweave/c-1", from: null };
+			const push = { branch: "gateweave/c-1", from: null, head: "b".repeat(40) };
 			expect(
 				git("GET", "https://github.com/acme/site.git/info/refs?service=git-receive-pack", push),
 			).toEqual({ allow: true, credentials: "write" });
@@ -322,8 +322,8 @@ describe("a sandbox's way out", () => {
 		it("lets a push make or move the conversation's branch, and nothing else", () => {
 			const branch = "gateweave/c-1";
 			const update = (ref: string, from: string, to: string) => [{ ref, from, to }];
-			const first: PushWindow = { branch, from: null };
-			const again: PushWindow = { branch, from: sha("b") };
+			const first: PushWindow = { branch, from: null, head: sha("b") };
+			const again: PushWindow = { branch, from: sha("b"), head: sha("c") };
 			expect(checkPush(update(`refs/heads/${branch}`, ZERO, sha("b")), first)).toBeNull();
 			expect(checkPush(update(`refs/heads/${branch}`, sha("b"), sha("c")), again)).toBeNull();
 			// A branch GitHub deleted, as a merged pull request's, is made again.
@@ -349,6 +349,24 @@ describe("a sandbox's way out", () => {
 				"Someone else pushed to gateweave/c-1, and this sandbox does not push over their commits";
 			expect(checkPush(update(`refs/heads/${branch}`, sha("e"), sha("c")), again)).toBe(theirs);
 			expect(checkPush(update(`refs/heads/${branch}`, sha("e"), sha("c")), first)).toBe(theirs);
+		});
+
+		it("R2: lets through the push of the one commit the tool is proposing, and of no other while the window is open", () => {
+			const branch = "gateweave/c-1";
+			const update = (from: string, to: string) => [{ ref: `refs/heads/${branch}`, from, to }];
+			// The window is for the commit the repository's checks ran on. A command the agent left
+			// running can start a push of its own while it is open, with any commit it likes.
+			const first: PushWindow = { branch, from: null, head: sha("b") };
+			const again: PushWindow = { branch, from: sha("b"), head: sha("c") };
+			const other = "This sandbox pushes only the commit open_pull_request is proposing";
+			expect(checkPush(update(ZERO, sha("b")), first)).toBeNull();
+			expect(checkPush(update(ZERO, sha("d")), first)).toBe(other);
+			expect(checkPush(update(sha("b"), sha("c")), again)).toBeNull();
+			expect(checkPush(update(sha("b"), sha("d")), again)).toBe(other);
+			// Nor the commit the branch has already, as a push back to it would be.
+			expect(checkPush(update(sha("b"), sha("b")), again)).toBe(other);
+			// A branch GitHub deleted is made again only at that commit.
+			expect(checkPush(update(ZERO, sha("d")), again)).toBe(other);
 		});
 
 		it("carries the token as GitHub takes it, and the request as git sent it", async () => {

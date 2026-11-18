@@ -92,6 +92,8 @@ import {
 } from "./models";
 import { OpenCodeTurn } from "./opencode";
 import {
+	type CheckPort,
+	type ChecksOptions,
 	COMMIT_EMAIL,
 	type CommitAuthor,
 	gitHubPullRequests,
@@ -116,7 +118,7 @@ interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 }
 
 /** What a conversation reaches of its sandbox over RPC. */
-interface Sandbox extends CheckoutPort, PushPort, EnginePort, LocalServerPort {
+interface Sandbox extends CheckoutPort, PushPort, CheckPort, EnginePort, LocalServerPort {
 	destroy(): Promise<void>;
 }
 
@@ -662,6 +664,7 @@ ${runPageNote(runs, turn.runId)}`
 			...(sandbox && checkedOut && repository && github
 				? pullRequestTools({
 						sandbox,
+						checks: this.#checks(registry, repository, sandbox),
 						ready: checkedOut.ready,
 						github,
 						repository,
@@ -803,6 +806,9 @@ ${runPageNote(runs, turn.runId)}`
 					...(checkedOut && repository && github
 						? pullRequestTools({
 								sandbox,
+								// The CLI's pull request is made by the same tool, so its work is held to
+								// the repository's checks as the work of Gateweave's own loop is.
+								checks: this.#checks(registry, repository, sandbox),
 								ready: checkedOut.ready,
 								github,
 								repository,
@@ -945,6 +951,19 @@ ${runPageNote(runs, turn.runId)}`
 		const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
 		if (!appId || !privateKey) return null;
 		return gitHubPullRequests(sharedApp({ appId, privateKey }), repository);
+	}
+
+	/**
+	 * The repository's checks for `open_pull_request` (AGT-142): the commands as the registry holds
+	 * them when the tool is called, asked by the id GitHub gave the repository the turn began with,
+	 * and the sandbox they run in. The registry is the only place they are read from.
+	 */
+	#checks(
+		registry: DurableObjectStub<RegistryDO>,
+		repository: SandboxRepository,
+		sandbox: CheckPort,
+	): ChecksOptions {
+		return { commands: () => registry.repositoryChecks(repository.externalId), sandbox };
 	}
 
 	/**

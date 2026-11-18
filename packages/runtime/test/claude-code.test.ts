@@ -627,6 +627,94 @@ describe("an agent whose engine is Claude Code", () => {
 		expect(trace.filter((span) => span.kind === "tool")).toEqual([]);
 	});
 
+	it("R7: holds Claude Code's pull request to the repository's checks, since it opens it with the same tool", async () => {
+		const github: string[] = [];
+		fakeModel(() => new Response(null, { status: 500 }), {
+			"api.github.com": async (request) => {
+				const url = new URL(request.url);
+				github.push(`${request.method} ${url.pathname}`);
+				if (url.pathname === "/app") return Response.json({ slug: "gateweave-agents" });
+				if (url.pathname.startsWith("/users/")) {
+					return Response.json({ id: 141_234, login: "gateweave-agents[bot]" });
+				}
+				if (url.pathname.endsWith("/access_tokens")) {
+					const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+					return Response.json({ token: "ghs_pulls", expires_at: expiresAt }, { status: 201 });
+				}
+				if (request.method === "GET") return Response.json([]);
+				return Response.json(
+					{
+						number: 12,
+						html_url: "https://github.com/acme/site/pull/12",
+						state: "open",
+						merged_at: null,
+						head: { sha: "2".repeat(40) },
+					},
+					{ status: 201 },
+				);
+			},
+		});
+		const { registry, stub, machine, conversationId } = await conversation({ repository: true });
+		const [site] = await registry.listRepositories();
+		await registry.setRepositoryChecks(site?.id ?? "", ["pnpm test"]);
+		await machine.answerCommands([{ exitCode: 1, output: "1 test failed", timedOut: false }]);
+		await machine.scriptEngine({ lines: [INIT], untilStopped: true });
+		const socket = await connect(stub);
+		const id = crypto.randomUUID();
+		const turn = ask(socket, "Fix the cart and propose it", id);
+		await vi.waitFor(async () => expect((await machine.seen()).engine).toHaveLength(1), {
+			timeout: 10_000,
+		});
+		const token = (await machine.seen()).engine[0]?.access.tools?.token ?? "";
+		const client = await createMCPClient({
+			transport: {
+				type: "http",
+				url: ENGINE_TOOLS_URL,
+				fetch: (input, init) =>
+					stub.engineTools(
+						token,
+						toolsRequest(new Request(input, { ...init, redirect: "manual" })),
+					),
+			},
+		});
+		const propose = () =>
+			client.callTool({
+				name: "open_pull_request",
+				arguments: { title: "Fix the cart", body: "Done." },
+			});
+
+		// The CLI's first call: the check fails, so nothing is pushed and GitHub hears of no pull
+		// request. The CLI reads why, as Gateweave's own loop would.
+		const failed = await propose();
+		expect(failed.isError).toBe(true);
+		expect(JSON.stringify(failed.content)).toContain(
+			"nothing was pushed and no pull request was opened or updated",
+		);
+		expect(JSON.stringify(failed.content)).toContain("1 test failed");
+		expect((await machine.seen()).commitPushes).toEqual([]);
+		expect(github.filter((route) => route.includes("/pulls"))).toEqual([]);
+
+		// Its second: the check passes, and the commit it ran on is pushed and proposed.
+		const opened = await propose();
+		expect(opened.isError).toBeFalsy();
+		expect(JSON.stringify(opened.content)).toContain("https://github.com/acme/site/pull/12");
+		expect((await machine.seen()).commitPushes).toEqual([
+			{ branch: `gateweave/${conversationId}`, head: "2".repeat(40) },
+		]);
+		expect(github.filter((route) => route.includes("/pulls"))).toEqual([
+			"GET /repos/acme/site/pulls",
+			"POST /repos/acme/site/pulls",
+		]);
+		await client.close();
+		socket.send(JSON.stringify({ type: "cf_agent_chat_request_cancel", id }));
+		await turn;
+		socket.close();
+		// The run was stopped by the person, not failed by the round of checks that failed.
+		await vi.waitFor(async () => expect((await registry.listRuns())[0]?.status).toBe("stopped"), {
+			timeout: 10_000,
+		});
+	});
+
 	it("offers Claude Code no MCP server when the turn has no tools", async () => {
 		const { stub, machine } = await conversation();
 		await machine.scriptEngine({ lines: LISTING });

@@ -26,6 +26,7 @@ import {
 } from "@gateweave/agents-model";
 import { objectsIn } from "@gateweave/agents-registry";
 import type { CheckoutResult } from "./checkout";
+import type { Comparison } from "./checks";
 import { claudeCodeCommand } from "./claude-code";
 import { CODEX_SESSIONS, codexCommand } from "./codex";
 import { toolsRequest } from "./engine-tools";
@@ -40,6 +41,7 @@ import {
 	type SandboxEngine,
 	TIMED_OUT_STATUS,
 } from "./engines";
+import { changedSince, commitWork, type Git, isCommitId, pushArguments } from "./git-work";
 import type { LocalCommand, LocalServerPort } from "./local-servers";
 import type { EngineMeter } from "./meter";
 import { readAtMost, sendModelRequest } from "./model-requests";
@@ -67,7 +69,7 @@ import {
 	withGitHubToken,
 } from "./outbound";
 import { clipOutput } from "./output";
-import type { CommitAuthor, PushResult } from "./pull-requests";
+import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
 import {
 	type CommandResult,
 	IDLE_MINUTES,
@@ -158,15 +160,7 @@ const EXIT_WAIT_MS = 5_000;
 /** Most bytes of the end of the engine's log that `engineExit` reads. */
 const LOG_TAIL_BYTES = 4_096;
 
-/** The environment a commit is made with: the author, as both its author and its committer. */
-export function commitEnvironment(author: CommitAuthor): Record<string, string> {
-	return {
-		GIT_AUTHOR_NAME: author.name,
-		GIT_AUTHOR_EMAIL: author.email,
-		GIT_COMMITTER_NAME: author.name,
-		GIT_COMMITTER_EMAIL: author.email,
-	};
-}
+export { commitEnvironment } from "./git-work";
 
 /** What `SandboxOutbound` is made with: the sandbox whose requests it decides on. */
 interface OutboundProps {
@@ -321,6 +315,18 @@ export class RunnerSandbox
 	 * request, which lets it through while this lasts.
 	 */
 	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
+		const committed = await this.commit(message, author);
+		if ("error" in committed) return committed;
+		return this.pushCommit(branch, committed.head);
+	}
+
+	/**
+	 * The first half of `push`: commits every change in the checkout with `message`, unless there
+	 * are none to commit, and says which commit the work is at. Refuses when the work has no commit
+	 * the default branch does not. `open_pull_request` calls it alone when the repository has
+	 * checks, which run on this commit before `pushCommit` pushes it.
+	 */
+	async commit(message: string, author: CommitAuthor): Promise<CommitResult> {
 		const repository = this.#repository();
 		if (!repository) return { error: "This sandbox has no repository checked out." };
 		const container = await this.#ready();
@@ -329,47 +335,45 @@ export class RunnerSandbox
 				error: `${repository.owner}/${repository.name} is not checked out in this sandbox.`,
 			};
 		}
-		const git = (args: string[], seconds = 60, env: Record<string, string> = {}) =>
+		return commitWork(this.#git(container), repository.defaultBranch, message, author);
+	}
+
+	/** Git in the checkout, as `./git-work.ts` runs it. */
+	#git(container: Container): Git {
+		return (args, seconds = 60, env = {}) =>
 			this.#exec(container, ["git", ...args], SANDBOX_REPOSITORY_PATH, seconds, env);
-		const added = await git(["add", "--all"]);
-		if (added.exitCode !== 0) return { error: `The changes could not be added.\n${added.output}` };
-		// Exits 1 when something is staged.
-		const staged = await git(["diff", "--cached", "--quiet"]);
-		if (staged.exitCode === 1) {
-			// The repository's own hooks run, as they would for a person.
-			const committed = await git(
-				["commit", "--quiet", "--message", message],
-				120,
-				commitEnvironment(author),
-			);
-			if (committed.exitCode !== 0) {
-				return { error: `The changes could not be committed.\n${committed.output}` };
-			}
-		} else if (staged.exitCode !== 0) {
-			return { error: `The changes could not be read.\n${staged.output}` };
-		}
-		const base = `origin/${repository.defaultBranch}`;
-		const ahead = await git(["rev-list", "--count", `${base}..HEAD`]);
-		if (ahead.exitCode !== 0) {
-			return { error: `The work could not be compared with ${base}.\n${ahead.output}` };
-		}
-		if (Number.parseInt(ahead.output.trim(), 10) === 0) {
-			return {
-				error: `There is nothing to propose: the work has no commit that ${repository.defaultBranch} does not.`,
-			};
-		}
-		const head = (await git(["rev-parse", "HEAD"])).output.trim();
+	}
+
+	/**
+	 * Whether the checkout still is the commit `head` (`changedSince` in `./git-work.ts`).
+	 * `open_pull_request` asks after each of the repository's checks that passed, since they run
+	 * in the checkout and not on the commit itself.
+	 */
+	async changedSince(head: string): Promise<Comparison> {
+		return changedSince(this.#git(await this.#ready()), head);
+	}
+
+	/**
+	 * The second half of `push`: pushes the commit `head` to `branch`, unless the branch has it
+	 * already, and commits nothing. It names the commit and not `HEAD`, so what changed in the
+	 * checkout after `commit`, while the repository's checks ran, is not in the push.
+	 */
+	async pushCommit(branch: string, head: string): Promise<PushResult> {
+		const repository = this.#repository();
+		if (!repository) return { error: "This sandbox has no repository checked out." };
+		if (!isCommitId(head)) return { error: "That is not a commit of this sandbox's." };
+		const container = await this.#ready();
 		const pushed = this.ctx.storage.kv.get<string>(PUSHED_KEY) ?? null;
 		if (head === pushed) return { head, pushed: false };
-		this.#push = { branch, from: pushed };
+		// The window is for this commit alone: `SandboxOutbound` refuses the push of any other.
+		const window: PushWindow = { branch, from: pushed, head };
+		this.#push = window;
 		let result: CommandResult;
 		try {
-			result = await git(
-				["push", "--porcelain", "origin", `HEAD:refs/heads/${branch}`],
-				PUSH_SECONDS,
-			);
+			result = await this.#git(container)(pushArguments(branch, head), PUSH_SECONDS);
 		} finally {
-			this.#push = null;
+			// Only its own: a push that outlives its turn must not close the window of the next.
+			if (this.#push === window) this.#push = null;
 		}
 		if (result.exitCode !== 0) {
 			if (/\[rejected\]|non-fast-forward|fetch first/.test(result.output)) {

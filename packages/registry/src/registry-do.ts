@@ -79,6 +79,7 @@ import {
 	type RememberInput,
 	type RememberOutcome,
 	type Repository,
+	type RepositoryChecksInput,
 	type RepositoryDetail,
 	type RepositoryInput,
 	type Run,
@@ -89,6 +90,7 @@ import {
 	type RunUsage,
 	recallInput,
 	rememberInput,
+	repositoryChecksInput,
 	repositoryInput,
 	runCursor,
 	runFinish,
@@ -182,6 +184,7 @@ import {
 	saveApplication,
 } from "./apply";
 import { type BackupRow, readForBackup } from "./backup";
+import { type ChecksSet, checksOfRepository, setRepositoryChecks } from "./checks";
 import {
 	type ConversationTurn,
 	conversationParties,
@@ -548,6 +551,26 @@ export class RegistryDO extends DurableObject {
 
 	getRepository(repositoryId: string): RepositoryDetail | null {
 		return getRepository(this.#db, id.parse(repositoryId));
+	}
+
+	/**
+	 * Gives a repository exactly these checks, which `open_pull_request` runs on an agent's work
+	 * before it pushes it (AGT-142). The app calls it for an owner or admin only. Returns what the
+	 * repository had before and has now, or null when the workspace has no such repository.
+	 */
+	setRepositoryChecks(repositoryId: string, checks: RepositoryChecksInput): ChecksSet | null {
+		const repository = id.parse(repositoryId);
+		const data = repositoryChecksInput.parse(checks);
+		return this.#write(() => setRepositoryChecks(this.#db, repository, data, Date.now()));
+	}
+
+	/**
+	 * The checks of the GitHub repository a conversation's sandbox has checked out, as they are set
+	 * now. The runtime asks at each `open_pull_request`, by the id GitHub gave the repository, so
+	 * the commands never come from the turn, the sandbox or the model.
+	 */
+	repositoryChecks(externalId: string): string[] {
+		return checksOfRepository(this.#db, z.string().min(1).max(100).parse(externalId));
 	}
 
 	listAgents(): Agent[] {

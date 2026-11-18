@@ -108,6 +108,8 @@ export interface RegistryStub {
 	overview(): Promise<Overview>;
 	listRepositories(): Promise<Repository[]>;
 	getRepository(repositoryId: string): Promise<RepositoryDetail | null>;
+	/** A GitHub repository's checks, by the id GitHub gave it, as the runtime asks for them. */
+	repositoryChecks(externalId: string): Promise<string[]>;
 	getAssetVersion(assetId: string): Promise<AssetVersion | null>;
 	requestScans(repositoryIds: string[], force?: boolean): Promise<number>;
 	syncRepositories(inputs: RepositoryInput[]): Promise<string[]>;

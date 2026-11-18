@@ -444,12 +444,18 @@ export interface GitRepository {
 
 /**
  * The one push a sandbox may make, while `open_pull_request` makes it (`RunnerSandbox.push`): the
- * conversation's branch, from where the conversation last left it.
+ * conversation's branch, from where the conversation last left it, to the one commit the tool is
+ * pushing.
  */
 export interface PushWindow {
 	branch: string;
 	/** The commit the conversation last pushed to the branch; null before its first push. */
 	from: string | null;
+	/**
+	 * The commit the tool pushes: the one the repository's checks ran on, when it has any. A push
+	 * of anything else that a command starts while the window is open is refused.
+	 */
+	head: string;
 }
 
 /** What a sandbox's git reaches on GitHub: its repository, and the push under way, if any. */
@@ -595,8 +601,10 @@ export function pushedRefs(body: Uint8Array): RefUpdate[] | null {
 
 /**
  * Why a push is refused, or null when it is the one update its window allows: the branch, made or
- * moved on from the commit the conversation left it at. So a push never deletes the branch, never
- * touches another ref, and never drops commits someone else pushed to it since.
+ * moved on from the commit the conversation left it at, to the commit the tool is pushing. So a
+ * push never deletes the branch, never touches another ref, never drops commits someone else
+ * pushed to it since, and never puts another commit there than the one the window is for: a
+ * `git push` the agent starts while the window is open gets no further than its own would.
  */
 export function checkPush(updates: RefUpdate[] | null, push: PushWindow): string | null {
 	const only = `This sandbox pushes only to ${push.branch}`;
@@ -606,6 +614,9 @@ export function checkPush(updates: RefUpdate[] | null, push: PushWindow): string
 	if (NO_OBJECT.test(update.to)) return `This sandbox does not delete ${push.branch}`;
 	if (!NO_OBJECT.test(update.from) && update.from !== push.from) {
 		return `Someone else pushed to ${push.branch}, and this sandbox does not push over their commits`;
+	}
+	if (update.to !== push.head) {
+		return `This sandbox pushes only the commit ${PULL_REQUEST_TOOL} is proposing`;
 	}
 	return null;
 }

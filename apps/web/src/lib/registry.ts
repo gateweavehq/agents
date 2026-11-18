@@ -26,6 +26,7 @@ import {
 	type RepositoryDetail,
 	type RunnableAgent,
 	type RunUsage,
+	repositoryChecksInput,
 	type Setup,
 	type SetupDetail,
 	type SetupEntry,
@@ -363,6 +364,32 @@ export const scanRepository = createServerFn({ method: "POST" })
 		const registry = await registryOf(data.slug);
 		if (!registry) throw new Error("Workspace not found");
 		return (await registry.requestScans([data.repositoryId], true)) > 0;
+	});
+
+/**
+ * Gives a repository exactly these checks (AGT-142): the commands `open_pull_request` runs on an
+ * agent's work there before it pushes it. They run on a machine and decide what a pull request
+ * says of itself, so only owners and admins set them, and the audit log keeps who changed them
+ * and how many there were, before and after. Not the commands: the log keeps no free text, and
+ * what ran is in each pull request.
+ */
+export const setRepositoryChecks = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), repositoryId: id, checks: repositoryChecksInput }))
+	.handler(async ({ data }): Promise<string[]> => {
+		const { registry, audit } = await managedOf(data.slug);
+		const set = await registry.setRepositoryChecks(data.repositoryId, data.checks);
+		if (!set) throw new Error("Repository not found");
+		const same =
+			set.before.length === set.checks.length &&
+			set.before.every((command, index) => command === set.checks[index]);
+		if (!same) {
+			await audit({
+				action: "repository.checksSet",
+				target: { type: "repository", id: data.repositoryId, label: set.repository },
+				detail: { checks: set.checks.length, before: set.before.length },
+			});
+		}
+		return set.checks;
 	});
 
 /** Every project, with the repositories they can be given. */

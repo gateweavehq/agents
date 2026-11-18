@@ -482,7 +482,7 @@ export async function moveBranch(
 export async function openPullRequest(
 	token: string,
 	repository: RepositoryName,
-	input: { title: string; body: string; head: string; base: string },
+	input: { title: string; body: string; head: string; base: string; draft?: boolean },
 ): Promise<PullRequest> {
 	return toPullRequest(
 		pullSchema.parse(

@@ -7,10 +7,17 @@
 import { DurableObject, env } from "cloudflare:workers";
 import type { SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
+import type { Comparison } from "../src/checks";
 import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
 import type { LocalCommand, LocalServerPort } from "../src/local-servers";
 import { type EngineMeter, meterModelRequest } from "../src/meter";
-import type { CommitAuthor, PushPort, PushResult } from "../src/pull-requests";
+import type {
+	CheckPort,
+	CommitAuthor,
+	CommitResult,
+	PushPort,
+	PushResult,
+} from "../src/pull-requests";
 import type { CommandResult, ReadResult, WriteResult } from "../src/sandbox-tools";
 
 export interface RanCommand {
@@ -30,21 +37,78 @@ export interface Push {
 	author: CommitAuthor;
 }
 
-export class MemorySandbox implements CheckoutPort, PushPort {
+/** A commit `open_pull_request` asked for before the repository's checks. */
+export interface Commit {
+	message: string;
+	author: CommitAuthor;
+}
+
+/** The push of one commit, which `open_pull_request` asks for after the repository's checks. */
+export interface CommitPush {
+	branch: string;
+	head: string;
+}
+
+/** What a command answers; with `seconds`, how long it took by the sandbox's clock. */
+export type CommandAnswer = (CommandResult & { seconds?: number }) | Error;
+
+export class MemorySandbox implements CheckoutPort, PushPort, CheckPort {
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
 	readonly checkouts: Checkout[] = [];
-	/** What the next commands answer, in order; then each exits 0 and prints its command line. */
-	readonly answers: CommandResult[] = [];
+	/**
+	 * What the next commands answer, in order; then each exits 0 and prints its command line. An
+	 * error is thrown, as a sandbox that could not run the command throws.
+	 */
+	readonly answers: CommandAnswer[] = [];
 	/** What the next checkouts answer, in order; then each checks out. */
 	readonly checkoutAnswers: CheckoutResult[] = [];
 	readonly pushes: Push[] = [];
 	/** What the next pushes answer, in order; then each pushes a new commit. */
 	readonly pushAnswers: PushResult[] = [];
+	readonly commits: Commit[] = [];
+	/** What the next commits answer, in order; then each makes a new commit. */
+	readonly commitAnswers: CommitResult[] = [];
+	readonly commitPushes: CommitPush[] = [];
+	/**
+	 * How the checkout compares with its commit the next times it is asked; then, and for a
+	 * null, it is the commit. An error is thrown, as a sandbox that cannot say throws.
+	 */
+	readonly changes: (Comparison | Error)[] = [];
+	/** A clock for the tests that time commands: each command moves it by its `seconds`. */
+	clock = 1_000_000;
+	/** What was asked of it that changes or runs something, in order. */
+	readonly log: string[] = [];
 
 	async run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult> {
 		this.commands.push({ command, cwd, timeoutSeconds });
-		return this.answers.shift() ?? { exitCode: 0, output: `ran: ${command}`, timedOut: false };
+		this.log.push(`run ${command}`);
+		const answer = this.answers.shift();
+		if (answer instanceof Error) throw answer;
+		if (!answer) return { exitCode: 0, output: `ran: ${command}`, timedOut: false };
+		const { seconds = 0, ...result } = answer;
+		this.clock += seconds * 1000;
+		return result;
+	}
+
+	async commit(message: string, author: CommitAuthor): Promise<CommitResult> {
+		this.commits.push({ message, author });
+		this.log.push("commit");
+		const head = String(this.commits.length).repeat(40).slice(0, 40);
+		return this.commitAnswers.shift() ?? { head };
+	}
+
+	async changedSince(head: string): Promise<Comparison> {
+		this.log.push(`compare ${head.slice(0, 7)}`);
+		const answer = this.changes.shift() ?? null;
+		if (answer instanceof Error) throw answer;
+		return answer;
+	}
+
+	async pushCommit(branch: string, head: string): Promise<PushResult> {
+		this.commitPushes.push({ branch, head });
+		this.log.push(`push ${head.slice(0, 7)}`);
+		return this.pushAnswers.shift() ?? { head, pushed: true };
 	}
 
 	async readFile(path: string): Promise<ReadResult> {
@@ -64,6 +128,7 @@ export class MemorySandbox implements CheckoutPort, PushPort {
 
 	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
 		this.pushes.push({ branch, message, author });
+		this.log.push("commit and push");
 		const head = String(this.pushes.length).repeat(40).slice(0, 40);
 		return this.pushAnswers.shift() ?? { head, pushed: true };
 	}
@@ -180,7 +245,7 @@ async function closed(writer: { close(): Promise<void> }): Promise<void> {
 
 export class FakeSandbox
 	extends DurableObject
-	implements CheckoutPort, PushPort, EnginePort, LocalServerPort
+	implements CheckoutPort, PushPort, CheckPort, EnginePort, LocalServerPort
 {
 	readonly #memory = new MemorySandbox();
 	#destroyed = false;
@@ -209,6 +274,28 @@ export class FakeSandbox
 
 	push(branch: string, message: string, author: CommitAuthor) {
 		return this.#memory.push(branch, message, author);
+	}
+
+	commit(message: string, author: CommitAuthor) {
+		return this.#memory.commit(message, author);
+	}
+
+	changedSince(head: string) {
+		return this.#memory.changedSince(head);
+	}
+
+	pushCommit(branch: string, head: string) {
+		return this.#memory.pushCommit(branch, head);
+	}
+
+	/** How the checkout compares with its commit the next times it is asked. */
+	answerChanges(changes: Comparison[]): void {
+		this.#memory.changes.push(...changes);
+	}
+
+	/** What the next commands answer, in order: for a test that fails the repository's checks. */
+	answerCommands(answers: CommandResult[]): void {
+		this.#memory.answers.push(...answers);
 	}
 
 	/** The local MCP servers started, with the methods each heard, and whether each has exited. */
@@ -302,6 +389,8 @@ export class FakeSandbox
 			commands: this.#memory.commands,
 			checkouts: this.#memory.checkouts,
 			pushes: this.#memory.pushes,
+			commits: this.#memory.commits,
+			commitPushes: this.#memory.commitPushes,
 			engine: this.#jobs,
 			stops: this.#stops,
 			destroyed: this.#destroyed,
