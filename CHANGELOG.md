@@ -8,6 +8,40 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.30.0] - 2026-11-18
+
+An agent's pull request can now be held to the repository's own checks before it exists. This
+release has one migration in the workspace registry, which adds a column with a default.
+
+### Added
+
+- **Checks before a pull request.** An owner or admin can give a repository up to five check
+  commands on its page, each one line, such as `pnpm check` or `pnpm test`. When an agent calls
+  `open_pull_request`, the tool runs them in the sandbox on the committed tree before anything is
+  pushed. If one fails, times out or cannot run, nothing is opened and the agent is told which
+  failed, with the end of its output, so it can fix it and try again. After three failed rounds in
+  a run the pull request is opened as a draft that says which check failed. If a run has used up
+  its time for checks before that, the next call opens a draft that says the checks were not run.
+  ([#267](https://github.com/gateweavehq/agents/pull/267))
+- **The pull request says what ran.** Its description ends with a section written by the tool,
+  not the model: each command, its exit code and how long it took. A copy of that section written
+  by the model is removed. ([#267](https://github.com/gateweavehq/agents/pull/267))
+
+### Worth knowing
+
+- **The checks are a first line before CI, not a replacement for it.** The list of commands comes
+  only from the repository's settings: an agent, a file in the repository or an issue's text
+  cannot change it. What the commands run is the repository's own code, which the agent has
+  edited, inside the agent's sandbox. ([#270](https://github.com/gateweavehq/agents/pull/270))
+- A check may take ten minutes, the checks of one call twenty, and those of one run forty. The
+  time counts as sandbox time.
+- A repository with no checks behaves as before, and its pull requests gain no section.
+
+### If you run your own
+
+- **Update.** The migration is in each workspace's registry and runs by itself when the workspace
+  is next used; there is no step for you.
+
 ## [0.29.0] - 2026-11-18
 
 Library assets are easier to reuse in a coding agent, and a sign-in redirect stays on this site
