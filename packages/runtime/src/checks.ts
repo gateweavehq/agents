@@ -487,23 +487,40 @@ export function withChecksSection(body: string, section: string): string {
 	return before === "" ? section : `${before}\n\n${section}`;
 }
 
-/** GitHub's body limit; UTF-8 bytes are a conservative bound for its character count. */
+/**
+ * GitHub's limit on a body, in characters. It is measured with a string's length, in UTF-16
+ * units, which are never fewer than code points: the bound holds whichever of the two GitHub
+ * counts.
+ */
 const BODY_LIMIT = 65_536;
 
+/** The line that ends the model's part when it was cut to make room for the tool's section. */
+export const SHORTENED =
+	"_The description above was shortened to fit GitHub's length limit for a pull request._";
+
+/**
+ * The body the pull request is opened with. Without checks it is the model's body as it was,
+ * less any forged section, whatever its length. With checks, the tool's section must be shown
+ * whole, so when the two do not fit together, the model's part is cut, at a code point, and says
+ * so in a fixed line rather than ending mid-sentence in silence.
+ */
 export function pullRequestBody(body: string, section: string | null): string {
-	const compose = (model: string) =>
-		section === null ? withoutChecksSection(model) : withChecksSection(model, section);
-	const full = compose(body);
-	if (byteLength(full) <= BODY_LIMIT) return full;
+	if (section === null) return withoutChecksSection(body);
+	const full = withChecksSection(body, section);
+	if (full.length <= BODY_LIMIT) return full;
+	const shortened = (model: string) => {
+		const before = closed(withoutChecksSection(model).trimEnd());
+		return `${before === "" ? "" : `${before}\n\n`}${SHORTENED}\n\n${section}`;
+	};
 	const characters = Array.from(body);
 	let low = 0;
 	let high = characters.length;
 	while (low < high) {
 		const middle = Math.ceil((low + high) / 2);
-		if (byteLength(compose(characters.slice(0, middle).join(""))) <= BODY_LIMIT) low = middle;
+		if (shortened(characters.slice(0, middle).join("")).length <= BODY_LIMIT) low = middle;
 		else high = middle - 1;
 	}
-	return compose(characters.slice(0, low).join(""));
+	return shortened(characters.slice(0, low).join(""));
 }
 
 /**
