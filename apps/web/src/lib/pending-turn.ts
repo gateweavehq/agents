@@ -17,8 +17,9 @@ export function stopFrame(id: string): string {
 /**
  * The pending turn after one more frame from the conversation's socket. The server keeps a socket
  * that asked for a turn to pick up waiting (`cf_agent_stream_pending`), and always follows up: the
- * reply began (`cf_agent_stream_resuming`, or a frame of the reply itself), or the turn ended with
- * no reply (`cf_agent_stream_resume_none`). Returns `pending` itself when nothing changed.
+ * reply began (`cf_agent_stream_resuming`, or a frame of the reply itself, each with the request's
+ * id), or the turns ended with no reply (`cf_agent_stream_resume_none`). Returns `pending` itself
+ * when nothing changed.
  */
 export function pendingTurnAfter(pending: PendingTurn, frame: string): PendingTurn {
 	// Most frames are a reply's, and long: only these are worth reading.
@@ -35,12 +36,19 @@ export function pendingTurnAfter(pending: PendingTurn, frame: string): PendingTu
 			const id = typeof data.id === "string" ? data.id : null;
 			return pending !== null && pending.id === id ? pending : { id };
 		}
-		case "cf_agent_stream_resuming":
 		case "cf_agent_stream_resume_none":
+			// It names no turn: the server sends it once every turn it took has ended.
 			return null;
+		case "cf_agent_stream_resuming":
 		case "cf_agent_use_chat_response":
-			// Another turn's frame says nothing of this one.
-			return pending === null || pending.id === null || pending.id === data.id ? null : pending;
+			// Another turn's frame says nothing of this one: the server names the latest turn it
+			// took as pending, and an earlier one, queued before it, replies first.
+			return pending === null ||
+				pending.id === null ||
+				typeof data.id !== "string" ||
+				pending.id === data.id
+				? null
+				: pending;
 		default:
 			return pending;
 	}

@@ -60,6 +60,25 @@ async function expectStoppedRun(page: Page, slug: string) {
 async function holdFirstAnswer(context: BrowserContext) {
 	const held: (() => void)[] = [];
 	let holding = true;
+	// The page counts the answers its sockets have handed to every listener, so a test can tell that
+	// the chat has heard one. The count goes up in a task of its own, after the listeners have run.
+	await context.addInitScript(() => {
+		const counts = window as unknown as { answersHeard?: number };
+		counts.answersHeard = 0;
+		const Socket = window.WebSocket;
+		window.WebSocket = class extends Socket {
+			constructor(url: string | URL, protocols?: string | string[]) {
+				super(url, protocols);
+				this.addEventListener("message", (event) => {
+					if (typeof event.data !== "string") return;
+					if (!event.data.includes("cf_agent_stream_resume_none")) return;
+					setTimeout(() => {
+						counts.answersHeard = (counts.answersHeard ?? 0) + 1;
+					}, 0);
+				});
+			}
+		};
+	});
 	await context.routeWebSocket(/\/api\/chat\//, (socket) => {
 		const server = socket.connectToServer();
 		socket.onMessage((message) => server.send(message));
@@ -71,9 +90,26 @@ async function holdFirstAnswer(context: BrowserContext) {
 	});
 	return {
 		held: () => held.length,
-		release: () => {
+		/** Lets the answers through, and waits until the page has heard them and drawn what follows. */
+		release: async (page: Page) => {
 			holding = false;
-			for (const pass of held.splice(0)) pass();
+			const passed = held.splice(0);
+			for (const pass of passed) pass();
+			await page.waitForFunction(
+				(count) => ((window as unknown as { answersHeard?: number }).answersHeard ?? 0) >= count,
+				passed.length,
+			);
+			// Whatever the chat made of them is on the page once its hook has passed its state on,
+			// which it holds back for 50 ms at most, and the page has drawn a frame after that.
+			await page.evaluate(
+				() =>
+					new Promise<void>((resolve) =>
+						setTimeout(
+							() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+							100,
+						),
+					),
+			);
 		},
 	};
 }
@@ -99,8 +135,7 @@ test("a turn shows as running from the moment it is sent, and stops before its r
 		// The socket now hears that no turn was running when it opened. That is about the time
 		// before the message, and the turn it started still runs.
 		expect(answer.held()).toBeGreaterThan(0);
-		answer.release();
-		await page.waitForTimeout(1_000);
+		await answer.release(page);
 		await expect(stop).toBeVisible();
 		await expect(stop).toBeEnabled();
 		await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);

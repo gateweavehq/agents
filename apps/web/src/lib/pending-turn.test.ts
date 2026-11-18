@@ -29,6 +29,20 @@ describe("a turn whose reply has not begun", () => {
 		expect(pendingTurnAfter({ id: null }, frame(reply))).toBeNull();
 	});
 
+	it("goes on waiting while a turn queued before it replies", () => {
+		// The server named the latest turn it took as pending, and the earlier one begins first.
+		const earlier = frame({ type: "cf_agent_stream_resuming", id: "request-0" });
+		expect(pendingTurnAfter(waiting, earlier)).toBe(waiting);
+		// Its own reply ends the wait, and so does hearing that every turn ended without one.
+		expect(
+			pendingTurnAfter(waiting, frame({ type: "cf_agent_stream_resuming", id: "request-1" })),
+		).toBeNull();
+		expect(pendingTurnAfter(waiting, frame({ type: "cf_agent_stream_resume_none" }))).toBeNull();
+		// A turn the server did not name cannot be told from the one that replies.
+		expect(pendingTurnAfter({ id: null }, earlier)).toBeNull();
+		expect(pendingTurnAfter(waiting, frame({ type: "cf_agent_stream_resuming" }))).toBeNull();
+	});
+
 	it("is not ended by another turn's reply, nor by frames about anything else", () => {
 		const other = { type: "cf_agent_use_chat_response", id: "request-0", body: "", done: true };
 		expect(pendingTurnAfter(waiting, frame(other))).toBe(waiting);
