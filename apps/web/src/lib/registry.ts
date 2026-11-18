@@ -796,7 +796,7 @@ export const getMcpOAuthHealth = createServerFn({ method: "GET" })
 		const registry = await registryOf(data.slug);
 		if (!registry) return null;
 		const [
-			{ checkOAuthHealth, waitForHealthLease },
+			{ cacheableHealthResult, checkOAuthHealth, healthAgentId, waitForHealthLease },
 			{ checkMcpServer, RegistryOAuthProvider },
 			{ waitUntil },
 		] = await Promise.all([
@@ -809,12 +809,15 @@ export const getMcpOAuthHealth = createServerFn({ method: "GET" })
 			servers,
 			async (assetId, signal) => {
 				const entry = servers.find((server) => server.asset.id === assetId);
-				const agentId = data.agentIds?.find((candidate) =>
-					entry?.agents.some((agent) => agent.id === candidate),
-				);
+				if (entry?.oauth?.current && (await registry.mcpOAuthOpen(assetId))?.tokens === null)
+					return { ok: false, error: "Needs reconnecting", kind: "sign-in-again" as const };
+				const agentId = healthAgentId(entry, data.agentIds);
 				const claim = await waitForHealthLease(
 					async () => await registry.mcpHealthClaim(assetId, agentId),
 					signal,
+					async (claim) => {
+						if (claim.kind === "claimed") await registry.mcpHealthRelease(assetId, claim.lease);
+					},
 				);
 				if (!claim) return { ok: false, error: "Timed out", kind: "temporary" as const };
 				if (claim.kind === "cached") {
@@ -832,12 +835,13 @@ export const getMcpOAuthHealth = createServerFn({ method: "GET" })
 				}
 				const claimed = claim.kind === "claimed" ? claim : undefined;
 				let result: Awaited<ReturnType<typeof checkMcpServer>>;
+				const beforeTokens = (await registry.mcpOAuthOpen(assetId).catch(() => null))?.tokens;
 				try {
 					const target = await registry.mcpCheckTarget(assetId, agentId);
 					result = target
 						? await checkMcpServer(
 								target,
-								(id) => new RegistryOAuthProvider(registry, id, {}),
+								(id) => new RegistryOAuthProvider(registry, id, { healthCheck: true }),
 								signal,
 							)
 						: { ok: false as const, error: "It could not be reached", kind: "temporary" as const };
@@ -848,8 +852,14 @@ export const getMcpOAuthHealth = createServerFn({ method: "GET" })
 						kind: "temporary" as const,
 					};
 				}
+				let completed = false;
 				try {
-					await registry.mcpHealthComplete(
+					const afterTokens = (await registry.mcpOAuthOpen(assetId))?.tokens;
+					if (!cacheableHealthResult(beforeTokens, afterTokens, result))
+						return afterTokens === null && !result.ok && result.kind === "sign-in-again"
+							? result
+							: { ok: false, error: "Could not check", kind: "temporary" as const };
+					completed = await registry.mcpHealthComplete(
 						assetId,
 						{
 							state: result.ok
@@ -867,6 +877,8 @@ export const getMcpOAuthHealth = createServerFn({ method: "GET" })
 				} finally {
 					if (claimed) await registry.mcpHealthRelease(assetId, claimed.lease);
 				}
+				// A changed connection makes this probe's result stale, even for this caller.
+				if (!completed) return { ok: false, error: "Could not check", kind: "temporary" as const };
 				return result;
 			},
 			{ agentIds: data.agentIds, hold: (work) => waitUntil(work) },

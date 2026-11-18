@@ -1,7 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { McpOAuthStatus } from "./mcp-oauth-health";
+import { healthRequestKey, McpOAuthStatus } from "./mcp-oauth-health";
+
+it("changes the health request key when a pinned OAuth server is added", () => {
+	const before = healthRequestKey("workspace", ["agent"], ["server-one"]);
+	const after = healthRequestKey("workspace", ["agent"], ["server-one", "server-two"]);
+	expect(after).not.toBe(before);
+});
 
 it("uses the same connection words for MCP, agent and team pages", () => {
 	const shown = (state: Parameters<typeof McpOAuthStatus>[0]["state"]) =>

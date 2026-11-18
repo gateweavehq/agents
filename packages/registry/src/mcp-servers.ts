@@ -603,7 +603,7 @@ export function listMcpServers(db: Db): McpServerEntry[] {
 					}
 				: null,
 			oauth:
-				oauth?.sealedTokens && oauth.connectedBy !== null && oauth.connectedAt !== null
+				oauth && oauth.connectedBy !== null && oauth.connectedAt !== null
 					? {
 							connectedBy: oauth.connectedBy,
 							connectedAt: oauth.connectedAt,

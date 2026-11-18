@@ -60,7 +60,11 @@ export const Route = createFileRoute("/$workspace/agents/$agentId")({
 function AgentPage() {
 	const data = Route.useLoaderData();
 	const { slug } = useWorkspace();
-	const health = useMcpOAuthHealth(slug, data?.definition ? [data.agent.id] : []);
+	const health = useMcpOAuthHealth(
+		slug,
+		data?.definition ? [data.agent.id] : [],
+		data?.definition?.mcpServers.map((server) => server.asset.id),
+	);
 	const admin = isAdmin(useMyRole());
 	useDocumentTitle(data ? data.agent.name : "Agent");
 	const track = data?.definition?.mcpServers

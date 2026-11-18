@@ -1,6 +1,11 @@
 import type { McpServerEntry } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
-import { checkOAuthHealth, waitForHealthLease } from "./mcp-health";
+import {
+	cacheableHealthResult,
+	checkOAuthHealth,
+	healthAgentId,
+	waitForHealthLease,
+} from "./mcp-health";
 
 const secret = "access-token-must-not-leave";
 const signInAgain =
@@ -18,6 +23,22 @@ function server(assetId: string, agentId: string): McpServerEntry {
 }
 
 describe("MCP OAuth health", () => {
+	it("shares a server cache unless its headers use an agent environment", () => {
+		const entry = server("one", "agent");
+		expect(healthAgentId(entry, ["agent"])).toBeUndefined();
+		entry.variables = ["API_TOKEN"];
+		expect(healthAgentId(entry, ["agent"])).toBe("agent");
+	});
+	it("does not cache invalid grant after another refresh stored new tokens", () => {
+		const old = { access_token: "old", refresh_token: "spent" };
+		const rotated = { access_token: "new", refresh_token: "rotated" };
+		expect(
+			cacheableHealthResult(old, rotated, { ok: false, error: "invalid grant", kind: "temporary" }),
+		).toBe(false);
+		expect(
+			cacheableHealthResult(old, old, { ok: false, error: "invalid grant", kind: "sign-in-again" }),
+		).toBe(true);
+	});
 	it("keeps a healthy or refreshable connection connected, without returning a token", async () => {
 		const results = await checkOAuthHealth([server("one", "agent")], async () => ({
 			ok: true,
@@ -109,6 +130,33 @@ describe("MCP OAuth health", () => {
 });
 
 describe("health lease wait", () => {
+	it("does not claim after abort and releases a claim granted during abort", async () => {
+		const controller = new AbortController();
+		let calls = 0;
+		controller.abort();
+		expect(
+			await waitForHealthLease(async () => {
+				calls++;
+				return { kind: "claimed" as const };
+			}, controller.signal),
+		).toBeNull();
+		expect(calls).toBe(0);
+		const pending = new AbortController();
+		let released = false;
+		expect(
+			await waitForHealthLease(
+				async () => {
+					pending.abort();
+					return { kind: "claimed" as const };
+				},
+				pending.signal,
+				async () => {
+					released = true;
+				},
+			),
+		).toBeNull();
+		expect(released).toBe(true);
+	});
 	it("backs off instead of polling the registry every 50 ms", async () => {
 		let calls = 0;
 		const started = Date.now();

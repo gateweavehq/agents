@@ -3,11 +3,22 @@ import { toast } from "sonner";
 import { getMcpOAuthHealth } from "#/lib/registry";
 import type { McpOAuthHealth, McpOAuthHealthState } from "#/server/mcp-health";
 
+export function healthRequestKey(slug: string, agentIds?: string[], serverIds?: string[]): string {
+	return JSON.stringify([slug, agentIds ?? null, serverIds ?? null]);
+}
+
 /** Checks on page load, without delaying the page's first paint. */
-export function useMcpOAuthHealth(slug: string, agentIds?: string[]): McpOAuthHealth[] | null {
+export function useMcpOAuthHealth(
+	slug: string,
+	agentIds?: string[],
+	serverIds?: string[],
+): McpOAuthHealth[] | null {
 	const ids = agentIds?.join(",");
+	const servers = healthRequestKey(slug, agentIds, serverIds);
 	const [health, setHealth] = useState<McpOAuthHealth[] | null>(null);
 	useEffect(() => {
+		// A changed set of pinned servers needs another check even when the agent id is stable.
+		void servers;
 		let live = true;
 		setHealth(null);
 		void getMcpOAuthHealth({
@@ -25,7 +36,7 @@ export function useMcpOAuthHealth(slug: string, agentIds?: string[]): McpOAuthHe
 		return () => {
 			live = false;
 		};
-	}, [slug, ids]);
+	}, [slug, ids, servers]);
 	return health;
 }
 

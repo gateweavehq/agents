@@ -1,21 +1,51 @@
 import { env } from "cloudflare:workers";
 import { getAgentByName } from "agents";
+import type { ToolSet } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeOAuthMcp } from "../../../apps/web/test/fake-oauth-mcp";
 import {
 	checkMcpServer,
 	conversationName,
 	finishOAuth,
+	OAuthSignInNeeded,
 	RegistryOAuthProvider,
 	startOAuth,
 } from "../src";
 import type { OAuthStore } from "../src/mcp-oauth";
+import { traced } from "../src/tools";
+import type { RunRecorder } from "../src/trace";
 import { anthropicStream, anthropicToolCall, ask, connect, fakeModel, KEY } from "./support";
 
 const REDIRECT = "https://agents.test/api/mcp-oauth/callback";
 
 afterEach(() => {
 	vi.restoreAllMocks();
+});
+
+it("invalidates cached health when a connected tool later needs sign-in", async () => {
+	let invalidated = false;
+	const run = {
+		toolStarted: () => "span",
+		toolEnded: () => {},
+	} as unknown as RunRecorder;
+	const tool = traced(
+		{
+			execute: async () => {
+				throw new OAuthSignInNeeded();
+			},
+		} as unknown as ToolSet[string],
+		"server",
+		"tool",
+		run,
+		{
+			onSignInFailure: async () => {
+				invalidated = true;
+			},
+		},
+	);
+	const execute = tool.execute as unknown as (input: unknown, options: unknown) => Promise<unknown>;
+	await expect(execute({}, { toolCallId: "call", messages: [] })).rejects.toThrow();
+	expect(invalidated).toBe(true);
 });
 
 it("releases a refresh lease after a malformed successful response", async () => {
@@ -50,10 +80,46 @@ it("releases a refresh lease after a malformed successful response", async () =>
 		body: "grant_type=refresh_token&refresh_token=same",
 	});
 	await expect(response.json()).rejects.toThrow();
-	await provider.releaseRefresh();
 	expect(lease).toBeNull();
 	await provider.releaseRefresh();
 	expect(lease).toBeNull();
+});
+
+it("does not restore tokens cleared while waiting for a refresh lease", async () => {
+	let tokens: { access_token: string; refresh_token: string } | null = {
+		access_token: "old",
+		refresh_token: "old-refresh",
+	};
+	let requests = 0;
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({
+			serverUrl: "https://example.test/mcp",
+			client: null,
+			verifier: null,
+			tokens,
+		}),
+		mcpOAuthSave: async (_, parts) => {
+			tokens = parts.tokens as typeof tokens;
+			return true;
+		},
+		mcpRefreshClaim: async () => {
+			tokens = null;
+			return { kind: "claimed", lease: crypto.randomUUID() };
+		},
+		mcpRefreshRelease: async () => {},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", {});
+	await provider.tokens();
+	await expect(
+		provider.fetchWithRefreshLease(async () => {
+			requests++;
+			return Response.json({ access_token: "new" });
+		})("https://example.test/token", {
+			body: "grant_type=refresh_token&refresh_token=old-refresh",
+		}),
+	).rejects.toThrow();
+	expect(requests).toBe(0);
+	expect(tokens).toBeNull();
 });
 
 it("stops a refresh waiter on abort", async () => {
@@ -75,6 +141,125 @@ it("stops a refresh waiter on abort", async () => {
 	});
 	controller.abort(new Error("cancelled"));
 	await expect(waiting).rejects.toThrow("cancelled");
+});
+
+it("honors the caller abort before claiming, while a sent refresh can finish", async () => {
+	const controller = new AbortController();
+	let claims = 0;
+	let finish: ((response: Response) => void) | undefined;
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({
+			serverUrl: "https://example.test/mcp",
+			client: null,
+			verifier: null,
+			tokens: { access_token: "old", refresh_token: "same" },
+		}),
+		mcpOAuthSave: async () => true,
+		mcpRefreshClaim: async () => {
+			claims++;
+			return { kind: "claimed", lease: crypto.randomUUID() };
+		},
+		mcpRefreshRelease: async () => {},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", {});
+	const aborted = new AbortController();
+	aborted.abort(new Error("stopped"));
+	await expect(
+		provider.fetchWithRefreshLease(fetch, aborted.signal)("https://example.test/token", {
+			body: "grant_type=refresh_token&refresh_token=same",
+		}),
+	).rejects.toThrow("stopped");
+	expect(claims).toBe(0);
+	const sent = provider.fetchWithRefreshLease(
+		async () =>
+			new Promise<Response>((resolve) => {
+				finish = resolve;
+			}),
+		controller.signal,
+	)("https://example.test/token", { body: "grant_type=refresh_token&refresh_token=same" });
+	for (let i = 0; i < 10 && !finish; i++) await Promise.resolve();
+	expect(finish).toBeDefined();
+	controller.abort(new Error("late"));
+	finish?.(Response.json({ access_token: "new", refresh_token: "next" }));
+	expect((await sent).ok).toBe(true);
+});
+
+it("does not clear credentials or a verifier during a health check client rejection", async () => {
+	let saves = 0;
+	let tokens = { access_token: "old" };
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({
+			serverUrl: "https://example.test/mcp",
+			client: { client_id: "old" },
+			verifier: "signing-in",
+			tokens,
+		}),
+		mcpOAuthSave: async () => {
+			saves++;
+			return true;
+		},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", { healthCheck: true });
+	await provider.clientInformation();
+	tokens = { access_token: "new" };
+	await provider.invalidateCredentials("all");
+	expect(provider.clientRejected).toBe(true);
+	expect(saves).toBe(0);
+	expect(tokens.access_token).toBe("new");
+});
+
+it("a turn's invalidation compares the credentials it sent with newer saved credentials", async () => {
+	let client: unknown = { client_id: "old" };
+	let tokens: unknown = { access_token: "old" };
+	let verifier: string | null = null;
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({ serverUrl: "https://example.test/mcp", client, tokens, verifier }),
+		mcpOAuthSave: async (_, parts) => {
+			if (parts.unlessSigningIn && verifier) return false;
+			if (
+				JSON.stringify(parts.expectedClient) !== JSON.stringify(client) ||
+				JSON.stringify(parts.expectedTokens) !== JSON.stringify(tokens)
+			)
+				return false;
+			client = parts.client;
+			tokens = parts.tokens;
+			return true;
+		},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", {});
+	await provider.clientInformation();
+	client = { client_id: "new" };
+	tokens = { access_token: "new" };
+	await provider.invalidateCredentials("all");
+	expect(client).toEqual({ client_id: "new" });
+	expect(tokens).toEqual({ access_token: "new" });
+	verifier = "pending-sign-in";
+	await provider.invalidateCredentials("all");
+	expect(verifier).toBe("pending-sign-in");
+});
+
+it("each invalidation scope compares the client and token snapshot", async () => {
+	const saved: Parameters<OAuthStore["mcpOAuthSave"]>[1][] = [];
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({
+			serverUrl: "https://example.test/mcp",
+			client: { client_id: "client" },
+			tokens: { access_token: "token" },
+			verifier: "verifier",
+		}),
+		mcpOAuthSave: async (_, parts) => {
+			saved.push(parts);
+			return false;
+		},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", { onRedirect: () => {} });
+	for (const scope of ["all", "client", "tokens", "verifier"] as const)
+		await provider.invalidateCredentials(scope);
+	for (const parts of saved) {
+		expect(parts.expectedClient).toEqual({ client_id: "client" });
+		expect(parts.expectedTokens).toEqual({ access_token: "token" });
+	}
+	expect(saved.at(-1)?.expectedVerifier).toBe("verifier");
 });
 
 it("caps a refresh wait with a temporary error", async () => {
@@ -249,10 +434,20 @@ describe("an MCP server connected through OAuth", () => {
 		);
 		expect(failed).toMatchObject({
 			ok: false,
-			kind: "sign-in-again",
-			error: expect.stringContaining("connect it again"),
+			kind: "temporary",
+			error: expect.stringContaining("will be checked again"),
 		});
-		expect(await registry.mcpOAuthOpen(assetId)).toMatchObject({ tokens: null });
+		expect(await registry.mcpOAuthOpen(assetId)).toMatchObject({
+			tokens: { access_token: "access-4", refresh_token: "refresh-2" },
+		});
+		await registry.mcpOAuthSave(assetId, {
+			tokens: { access_token: "rejected", token_type: "Bearer" },
+		});
+		const noRefresh = await checkMcpServer(
+			target,
+			(id) => new RegistryOAuthProvider(registry, id, {}),
+		);
+		expect(noRefresh).toMatchObject({ ok: false, kind: "sign-in-again" });
 		// The model never saw a token of the connection's but in the tool's own answer.
 		expect(JSON.stringify(requests[0]?.body)).not.toContain("refresh-");
 	});

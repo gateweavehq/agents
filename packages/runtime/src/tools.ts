@@ -51,10 +51,17 @@ export async function connectTools(
 	for (const server of connected) {
 		if (!server) continue;
 		clients.push(server.client);
+		const oauthAssetId = server.oauthAssetId;
 		for (const [name, tool] of Object.entries(server.tools)) {
 			const toolName = toolNameOf(server.name, name);
 			// Names that only differ in characters a provider refuses: the first one wins.
-			if (!(toolName in tools)) tools[toolName] = traced(tool, server.name, name, run);
+			if (!(toolName in tools))
+				tools[toolName] = traced(tool, server.name, name, run, {
+					onSignInFailure:
+						oauthAssetId && oauth
+							? async () => await oauth(oauthAssetId).invalidateHealth()
+							: undefined,
+				});
 		}
 	}
 	let closing: Promise<void> | undefined;
@@ -103,10 +110,18 @@ async function connect(
 				: definitions,
 		);
 		run.serverConnected(span, Object.keys(tools).length);
-		return { name: server.name, client, tools };
+		return {
+			name: server.name,
+			client,
+			tools,
+			oauthAssetId: server.transport === "stdio" ? undefined : server.oauth,
+		};
 	} catch (error) {
 		await opened?.client.close().catch(() => {});
-		run.serverFailed(span, describeServerFailure(error, deadline, server.transport === "stdio"));
+		const failure = describeServerFailure(error, deadline, server.transport === "stdio");
+		if (failure === SIGN_IN_AGAIN && server.transport !== "stdio" && server.oauth && oauth)
+			await oauth(server.oauth).invalidateHealth();
+		run.serverFailed(span, failure);
 		console.error("An MCP server did not connect", {
 			server: server.name,
 			...failureForLogs(error),
@@ -134,6 +149,7 @@ export async function checkMcpServer(
 	let tokenEndpointFailure = false;
 	let invalidGrant = false;
 	const provider = server.oauth && oauth ? oauth(server.oauth) : null;
+	provider?.markHealthCheck();
 	const checkFetch: typeof fetch = async (input, init) => {
 		const body = init?.body;
 		const refreshing =
@@ -166,9 +182,16 @@ export async function checkMcpServer(
 		}
 	};
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
+	let initialTokens: unknown;
 	try {
-		await provider?.tokens();
+		initialTokens = await provider?.tokens();
 		opened = await openClient(server, options, null, provider ? () => provider : null, checkFetch);
+		if (provider?.clientRejected)
+			return {
+				ok: false,
+				error: "Its sign-in server did not answer; it will be checked again",
+				kind: "temporary",
+			};
 		return {
 			ok: true,
 			tools: opened.definitions.tools.slice(0, MCP_CHECK_LIMITS.tools).map((tool) => ({
@@ -181,10 +204,21 @@ export async function checkMcpServer(
 		if (!provider) return { ok: false, error: describeServerFailure(error, deadline) };
 		const statusCode = MCPClientError.isInstance(error) ? error.statusCode : undefined;
 		const stored = await provider.storedTokens().catch(() => undefined);
+		const staleGrant =
+			invalidGrant && stored !== null && JSON.stringify(stored) !== JSON.stringify(initialTokens);
+		const noRefreshToken =
+			initialTokens !== null &&
+			typeof initialTokens === "object" &&
+			initialTokens !== undefined &&
+			!("refresh_token" in initialTokens);
 		const kind =
-			(stored === null && server.oauth) || invalidGrant
+			(stored === null && server.oauth && !provider.clientRejected) ||
+			(invalidGrant && !staleGrant && !provider.clientRejected) ||
+			(error instanceof OAuthSignInNeeded && noRefreshToken)
 				? "sign-in-again"
-				: tokenEndpointFailure ||
+				: provider.clientRejected ||
+						staleGrant ||
+						tokenEndpointFailure ||
 						error instanceof OAuthSignInNeeded ||
 						error instanceof OAuthRefreshWaitError
 					? "temporary"
@@ -329,7 +363,7 @@ async function openClient(
 							headers: server.headers,
 							fetch:
 								provider instanceof RegistryOAuthProvider
-									? provider.fetchWithRefreshLease(fetchFn)
+									? provider.fetchWithRefreshLease(fetchFn, options.signal)
 									: fetchFn,
 							...(provider ? { authProvider: provider } : {}),
 						},
@@ -365,6 +399,7 @@ const fetchWithoutRedirects: typeof fetch = (input, init) =>
 export interface TraceOptions {
 	/** Record the message the tool threw, not only that the call failed. */
 	showErrors?: boolean;
+	onSignInFailure?: () => Promise<void>;
 }
 
 /**
@@ -404,7 +439,10 @@ export function traced(
 				});
 				return output;
 			} catch (error) {
-				run.toolEnded(span, { error: describeToolFailure(error, options) });
+				const failure = describeToolFailure(error, options);
+				run.toolEnded(span, { error: failure });
+				if (error instanceof OAuthSignInNeeded || error instanceof UnauthorizedError)
+					await options.onSignInFailure?.();
 				throw error;
 			}
 		},

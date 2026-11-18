@@ -1012,7 +1012,7 @@ export class RegistryDO extends DurableObject {
 		lease: string,
 		checkedAt = Date.now(),
 		agentId?: string,
-	): void {
+	): boolean {
 		const connection = id.parse(assetId);
 		const agent = agentId === undefined ? undefined : id.parse(agentId);
 		const parsedGeneration = z.number().int().nonnegative().parse(generation);
@@ -1026,17 +1026,22 @@ export class RegistryDO extends DurableObject {
 			.parse(result);
 		const current = this.#mcpHealthRunning.get(connection);
 		if (!current || current.lease !== parsedLease || current.generation !== parsedGeneration)
-			return;
+			return false;
 		this.#mcpHealthRunning.delete(connection);
-		if (generation !== (this.#mcpHealthGeneration.get(connection) ?? 0)) return;
+		if (generation !== (this.#mcpHealthGeneration.get(connection) ?? 0)) return false;
 		const key = `${connection}:${agent ?? ""}`;
 		this.#mcpHealth.set(key, { ...data, checkedAt: checked });
+		return true;
 	}
 
 	mcpHealthRelease(assetId: string, lease: string): void {
 		const asset = id.parse(assetId);
 		if (this.#mcpHealthRunning.get(asset)?.lease === z.uuid().parse(lease))
 			this.#mcpHealthRunning.delete(asset);
+	}
+
+	mcpHealthInvalidate(assetId: string): void {
+		this.#clearMcpHealth(id.parse(assetId));
 	}
 
 	mcpRefreshClaim(assetId: string): { kind: "claimed"; lease: string } | { kind: "busy" } {
@@ -1089,13 +1094,29 @@ export class RegistryDO extends DurableObject {
 	/** Keeps, sealed, what the OAuth client saves for a server; null clears a part. */
 	async mcpOAuthSave(assetId: string, parts: McpOAuthParts): Promise<boolean> {
 		const asset = id.parse(assetId);
-		const prior =
-			parts.expectedTokens === undefined ? undefined : oauthRow(this.#db, asset)?.sealedTokens;
-		if (parts.expectedTokens !== undefined) {
+		if (
+			parts.expectedTokens !== undefined ||
+			parts.expectedClient !== undefined ||
+			parts.expectedVerifier !== undefined
+		) {
 			const opened = await this.mcpOAuthOpen(asset);
-			if (JSON.stringify(opened?.tokens ?? null) !== JSON.stringify(parts.expectedTokens))
+			if (
+				parts.expectedTokens !== undefined &&
+				JSON.stringify(opened?.tokens ?? null) !== JSON.stringify(parts.expectedTokens)
+			)
+				return false;
+			if (
+				parts.expectedClient !== undefined &&
+				JSON.stringify(opened?.client ?? null) !== JSON.stringify(parts.expectedClient)
+			)
+				return false;
+			if (parts.expectedVerifier !== undefined && opened?.verifier !== parts.expectedVerifier)
 				return false;
 		}
+		const baseline = oauthRow(this.#db, asset);
+		const prior = baseline?.sealedTokens;
+		const priorClient = baseline?.sealedClient;
+		const priorVerifier = baseline?.sealedVerifier;
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return false;
 		const seal = async (part: "client" | "verifier" | "tokens", value: unknown) =>
@@ -1116,7 +1137,13 @@ export class RegistryDO extends DurableObject {
 			Object.entries(sealed).filter(([, value]) => value !== undefined),
 		);
 		const saved = this.#write(() => {
-			if (prior !== undefined && oauthRow(this.#db, asset)?.sealedTokens !== prior) return false;
+			const current = oauthRow(this.#db, asset);
+			if (parts.expectedTokens !== undefined && current?.sealedTokens !== prior) return false;
+			if (parts.expectedClient !== undefined && current?.sealedClient !== priorClient) return false;
+			if (parts.expectedVerifier !== undefined && current?.sealedVerifier !== priorVerifier)
+				return false;
+			if (parts.unlessSigningIn && (current?.state !== null || current?.sealedVerifier !== null))
+				return false;
 			return saveOAuth(this.#db, asset, defined);
 		});
 		if (
@@ -3192,6 +3219,9 @@ export interface McpOAuthParts {
 	tokens?: unknown;
 	/** Only change tokens if this attempt still owns the stored version. */
 	expectedTokens?: unknown;
+	expectedClient?: unknown;
+	expectedVerifier?: string | null;
+	unlessSigningIn?: boolean;
 	authorizationServer?: Record<string, unknown> | null;
 }
 

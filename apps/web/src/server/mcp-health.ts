@@ -26,6 +26,24 @@ export function healthState(check: HealthProbe): McpOAuthHealthState {
 	return check.kind === "sign-in-again" ? "needs-reconnecting" : "could-not-check";
 }
 
+/** Headers with environment values can differ between agents; other requests share one cache. */
+export function healthAgentId(
+	server: McpServerEntry | undefined,
+	agentIds?: string[],
+): string | undefined {
+	if (!server?.variables.length) return undefined;
+	return agentIds?.find((candidate) => server.agents.some((agent) => agent.id === candidate));
+}
+
+/** A failed probe must not outlive a concurrent token save or clear. */
+export function cacheableHealthResult(
+	before: unknown,
+	after: unknown,
+	check: HealthProbe,
+): boolean {
+	return check.ok || JSON.stringify(before) === JSON.stringify(after);
+}
+
 /** Checks current OAuth connections only, with a per-server deadline and bounded parallelism. */
 export async function checkOAuthHealth(
 	servers: McpServerEntry[],
@@ -92,10 +110,16 @@ export async function checkOAuthHealth(
 export async function waitForHealthLease<T extends { kind: "busy" | "cached" | "claimed" }>(
 	claim: () => Promise<T>,
 	signal: AbortSignal,
+	release: (claim: T) => Promise<void> = async () => {},
 ): Promise<T | null> {
 	let delay = 100;
 	for (;;) {
+		if (signal.aborted) return null;
 		const result = await claim();
+		if (signal.aborted) {
+			if (result.kind === "claimed") await release(result);
+			return null;
+		}
 		if (result.kind !== "busy") return result;
 		if (signal.aborted) return null;
 		await new Promise((resolve) => setTimeout(resolve, delay));

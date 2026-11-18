@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
+import { sealerFor } from "../src/secrets";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -43,6 +44,118 @@ async function connect(stub: ReturnType<typeof registry>, server: string) {
 }
 
 describe("MCP servers connected through OAuth", () => {
+	it("retains connection metadata when tokens are cleared, then removes it on disconnect", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		await stub.mcpOAuthSave(server, { tokens: null, expectedTokens: TOKENS });
+		expect(
+			(await stub.listMcpServers()).find((item) => item.asset.id === server)?.oauth?.current,
+		).toBe(true);
+		await stub.mcpOAuthDisconnect(server);
+		expect(
+			(await stub.listMcpServers()).find((item) => item.asset.id === server)?.oauth,
+		).toBeNull();
+	});
+
+	it("rejects a stale health completion and invalidates a turn's cached result", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		const first = await stub.mcpHealthClaim(server);
+		if (first.kind !== "claimed") throw new Error("Expected a lease");
+		await stub.mcpOAuthSave(server, { tokens: null, expectedTokens: TOKENS });
+		expect(
+			await stub.mcpHealthComplete(server, { state: "connected" }, first.generation, first.lease),
+		).toBe(false);
+		const second = await stub.mcpHealthClaim(server);
+		if (second.kind !== "claimed") throw new Error("Expected another lease");
+		expect(
+			await stub.mcpHealthComplete(
+				server,
+				{ state: "needs-reconnecting" },
+				second.generation,
+				second.lease,
+			),
+		).toBe(true);
+		expect((await stub.mcpHealthClaim(server)).kind).toBe("cached");
+		await stub.mcpHealthInvalidate(server);
+		expect((await stub.mcpHealthClaim(server)).kind).toBe("claimed");
+	});
+
+	it("compares both client and tokens before clearing credentials", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		await stub.mcpOAuthSave(server, {
+			client: { client_id: "new" },
+			tokens: { ...TOKENS, access_token: "new" },
+		});
+		expect(
+			await stub.mcpOAuthSave(server, {
+				client: null,
+				tokens: null,
+				expectedClient: { client_id: "gateweave" },
+				expectedTokens: TOKENS,
+			}),
+		).toBe(false);
+		expect(await stub.mcpOAuthOpen(server)).toMatchObject({
+			client: { client_id: "new" },
+			tokens: { access_token: "new" },
+		});
+	});
+
+	it("does not clear a verifier that a newer sign-in saved", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		await stub.mcpOAuthSave(server, { verifier: "first" });
+		await stub.mcpOAuthSave(server, { verifier: "new-sign-in" });
+		expect(await stub.mcpOAuthSave(server, { verifier: null, expectedVerifier: "first" })).toBe(
+			false,
+		);
+		expect((await stub.mcpOAuthOpen(server))?.verifier).toBe("new-sign-in");
+	});
+
+	it("accepts a conditional save after opening renews fallback-key tokens", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		await runInDurableObject(stub, async (_instance: RegistryDO, state) => {
+			const sealer = await sealerFor(
+				{ BETTER_AUTH_SECRET: "test-only-auth-secret-that-signs-nothing-0123" },
+				state.id.toString(),
+			);
+			if ("unavailable" in sealer) throw new Error(sealer.unavailable);
+			const sealed = await sealer.seal(`mcp-oauth/${server}/tokens`, JSON.stringify(TOKENS));
+			state.storage.sql.exec(
+				"UPDATE mcp_oauth SET sealed_tokens = ? WHERE asset_id = ?",
+				sealed,
+				server,
+			);
+		});
+		expect(
+			await stub.mcpOAuthSave(server, {
+				tokens: { ...TOKENS, access_token: "rotated" },
+				expectedTokens: TOKENS,
+			}),
+		).toBe(true);
+		expect((await stub.mcpOAuthOpen(server))?.tokens).toMatchObject({ access_token: "rotated" });
+	});
+
+	it("does not clear an active sign-in's client or tokens", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		await stub.mcpOAuthBegin(server, ADA);
+		expect(
+			await stub.mcpOAuthSave(server, {
+				client: null,
+				tokens: null,
+				expectedClient: { client_id: "gateweave" },
+				expectedTokens: TOKENS,
+				unlessSigningIn: true,
+			}),
+		).toBe(false);
+		expect(await stub.mcpOAuthOpen(server)).toMatchObject({
+			client: { client_id: "gateweave" },
+			tokens: TOKENS,
+		});
+	});
 	it("opens nested JSON and warns without logging a rejected value", async () => {
 		const { stub, server } = await workspace();
 		await connect(stub, server);

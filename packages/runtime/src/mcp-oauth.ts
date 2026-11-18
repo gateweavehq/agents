@@ -12,6 +12,27 @@ import {
 	type OAuthClientProvider,
 	type OAuthTokens,
 } from "@ai-sdk/mcp";
+import { z } from "zod";
+
+const safeUrl = z
+	.string()
+	.url()
+	.refine((value) => {
+		if (!URL.canParse(value)) return false;
+		return !["javascript:", "data:", "vbscript:"].includes(new URL(value).protocol);
+	});
+
+const refreshResponse = z.object({
+	access_token: z.string(),
+	token_type: z.string(),
+	refresh_token: z.string().optional(),
+	id_token: z.string().optional(),
+	expires_in: z.number().optional(),
+	scope: z.string().optional(),
+	issuer: safeUrl.optional(),
+	authorization_server: safeUrl.optional(),
+	token_endpoint: safeUrl.optional(),
+});
 
 /** What the registry keeps for a server, as `mcpOAuthOpen` and `mcpOAuthSave` take and give it. */
 export interface OAuthStore {
@@ -23,6 +44,7 @@ export interface OAuthStore {
 	} | null>;
 	mcpRefreshClaim?(assetId: string): Promise<{ kind: "claimed"; lease: string } | { kind: "busy" }>;
 	mcpRefreshRelease?(assetId: string, lease: string): Promise<void>;
+	mcpHealthInvalidate?(assetId: string): Promise<void>;
 	mcpOAuthSave(
 		assetId: string,
 		parts: {
@@ -30,6 +52,9 @@ export interface OAuthStore {
 			verifier?: string | null;
 			tokens?: unknown;
 			expectedTokens?: unknown;
+			expectedClient?: unknown;
+			expectedVerifier?: string | null;
+			unlessSigningIn?: boolean;
 		},
 	): Promise<boolean>;
 }
@@ -68,6 +93,7 @@ export interface ProviderOptions {
 	 * themselves rather than refreshing the earlier person's tokens.
 	 */
 	freshSignIn?: boolean;
+	healthCheck?: boolean;
 }
 
 export class RegistryOAuthProvider implements OAuthClientProvider {
@@ -76,6 +102,21 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	readonly #options: ProviderOptions;
 	#loaded: Awaited<ReturnType<OAuthStore["mcpOAuthOpen"]>> | undefined;
 	#refreshLease: string | undefined;
+	#refreshSource: unknown | undefined;
+	#clientRejected = false;
+	#healthCheck = false;
+
+	get clientRejected(): boolean {
+		return this.#clientRejected;
+	}
+
+	async invalidateHealth(): Promise<void> {
+		await this.#store.mcpHealthInvalidate?.(this.#assetId);
+	}
+
+	markHealthCheck(): void {
+		this.#healthCheck = true;
+	}
 
 	constructor(store: OAuthStore, assetId: string, options: ProviderOptions) {
 		this.#store = store;
@@ -110,6 +151,9 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 		verifier?: string | null;
 		tokens?: unknown;
 		expectedTokens?: unknown;
+		expectedClient?: unknown;
+		expectedVerifier?: string | null;
+		unlessSigningIn?: boolean;
 	}) {
 		const saved = await this.#store.mcpOAuthSave(this.#assetId, parts);
 		if (!saved) {
@@ -129,7 +173,7 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveClientInformation(client: OAuthClientInformation): Promise<void> {
-		await this.#save({ client });
+		await this.#save({ client, ...(!this.#options.onRedirect ? { unlessSigningIn: true } : {}) });
 	}
 
 	async storedTokens(): Promise<unknown> {
@@ -145,9 +189,12 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 		try {
 			await this.#save({
 				tokens,
-				...(this.#options.freshSignIn ? {} : { expectedTokens: this.#loaded?.tokens }),
+				...(this.#options.freshSignIn
+					? {}
+					: { expectedTokens: this.#refreshSource ?? this.#loaded?.tokens }),
 			});
 		} finally {
+			this.#refreshSource = undefined;
 			await this.releaseRefresh();
 		}
 	}
@@ -159,8 +206,13 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	}
 
 	/** Serializes rotating refresh tokens across checks and turns for this connection. */
-	fetchWithRefreshLease(fetchFn: typeof fetch): typeof fetch {
+	fetchWithRefreshLease(fetchFn: typeof fetch, callerSignal?: AbortSignal): typeof fetch {
 		return async (input, init) => {
+			const waitSignal = callerSignal
+				? init?.signal
+					? AbortSignal.any([callerSignal, init.signal])
+					: callerSignal
+				: init?.signal;
 			const body = init?.body;
 			const form =
 				typeof body === "string"
@@ -175,32 +227,33 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 			const deadline = Date.now() + REFRESH_WAIT_MS;
 			let delay = 100;
 			for (;;) {
-				if (init?.signal?.aborted) throw init.signal.reason;
+				if (waitSignal?.aborted) throw waitSignal.reason;
 				if (Date.now() >= deadline) throw new OAuthRefreshWaitError();
 				const claim = await this.#store.mcpRefreshClaim(this.#assetId);
 				if (claim.kind === "busy") {
 					await new Promise<void>((resolve, reject) => {
 						const wait = Math.min(delay, Math.max(0, deadline - Date.now()));
 						const timer = setTimeout(() => {
-							init?.signal?.removeEventListener("abort", abort);
+							waitSignal?.removeEventListener("abort", abort);
 							resolve();
 						}, wait);
 						const abort = () => {
 							clearTimeout(timer);
-							reject(init?.signal?.reason);
+							reject(waitSignal?.reason);
 						};
-						init?.signal?.addEventListener("abort", abort, { once: true });
-						if (init?.signal?.aborted) abort();
+						waitSignal?.addEventListener("abort", abort, { once: true });
+						if (waitSignal?.aborted) abort();
 					});
 					delay = Math.min(delay * 2, 1000);
 					continue;
 				}
 				this.#refreshLease = claim.lease;
 				try {
-					if (init?.signal?.aborted) throw init.signal.reason;
+					if (waitSignal?.aborted) throw waitSignal.reason;
 					const fresh = await this.#store.mcpOAuthOpen(this.#assetId);
 					const tokens = fresh?.tokens as OAuthTokens | null | undefined;
 					this.#loaded = fresh;
+					if (!tokens) throw new OAuthSignInNeeded();
 					if (tokens?.access_token && tokens.access_token !== loadedAccess?.access_token) {
 						await this.releaseRefresh();
 						return Response.json(tokens);
@@ -209,15 +262,28 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 						await this.releaseRefresh();
 						return Response.json(tokens);
 					}
+					this.#refreshSource = loadedAccess;
 					const response = await fetchFn(input, {
 						...init,
-						signal: init?.signal
-							? AbortSignal.any([init.signal, AbortSignal.timeout(REFRESH_TIMEOUT_MS)])
-							: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+						signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
 					});
-					if (!response.ok) await this.releaseRefresh();
+					if (!response.ok) {
+						this.#refreshSource = undefined;
+						await this.releaseRefresh();
+					}
+					if (response.ok) {
+						const parsed = await response
+							.clone()
+							.json()
+							.catch(() => null);
+						if (!refreshResponse.safeParse(parsed).success) {
+							this.#refreshSource = undefined;
+							await this.releaseRefresh();
+						}
+					}
 					return response;
 				} catch (error) {
+					this.#refreshSource = undefined;
 					await this.releaseRefresh();
 					throw error;
 				}
@@ -250,14 +316,37 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 		scope: "all" | "client" | "tokens" | "verifier",
 		context?: { tokens: OAuthTokens },
 	): Promise<void> {
-		if (scope === "all") await this.#save({ client: null, tokens: null, verifier: null });
-		else if (scope === "client") await this.#save({ client: null });
+		const sent = await this.#data();
+		if (scope === "all") {
+			this.#clientRejected = true;
+			if (this.#options.healthCheck || this.#healthCheck) return;
+			await this.#save({
+				client: null,
+				tokens: null,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: sent?.tokens ?? null,
+				unlessSigningIn: true,
+			});
+		} else if (scope === "client")
+			await this.#save({
+				client: null,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: sent?.tokens ?? null,
+				unlessSigningIn: true,
+			});
 		else if (scope === "tokens")
 			await this.#save({
 				tokens: null,
-				expectedTokens: context?.tokens ?? (await this.#data())?.tokens,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: context?.tokens ?? sent?.tokens ?? null,
 			});
-		else await this.#save({ verifier: null });
+		else if (this.#options.onRedirect)
+			await this.#save({
+				verifier: null,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: sent?.tokens ?? null,
+				expectedVerifier: sent?.verifier ?? null,
+			});
 	}
 }
 
