@@ -30,7 +30,12 @@ const OTHER = "\u0000other";
 
 /** A model to start from for each provider, if the provider lists it: coding takes a capable one, triage a fast one. */
 const SUGGESTED_MODELS: Record<TrackConnectPurpose, Partial<Record<ModelProvider, string>>> = {
-	work: { anthropic: "claude-sonnet-5-5", openai: "gpt-5.5" },
+	work: {
+		anthropic: "claude-sonnet-5-5",
+		openai: "gpt-5.5",
+		// Calls tools, with the catalog's largest context (1,048,576 tokens), checked 2026-11-18.
+		"workers-ai": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+	},
 	triage: {
 		anthropic: "claude-haiku-5-5",
 		"workers-ai": "@cf/meta/llama-4-scout-17b-16e-instruct",

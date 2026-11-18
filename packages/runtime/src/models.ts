@@ -35,6 +35,7 @@ import {
 	type WorkersAiSettings,
 	workersAiAccount,
 	workersAiBaseUrl,
+	workersAiRemovedMessage,
 } from "@gateweave/agents-model";
 import { APICallError, type LanguageModel, RetryError } from "ai";
 import { forwardedHeaders } from "./outbound";
@@ -230,6 +231,10 @@ export function describeFailure(
 	const cause = RetryError.isInstance(error) ? error.lastError : error;
 	const status = APICallError.isInstance(cause) ? cause.statusCode : undefined;
 	if (!isKeyedProvider(agent.provider)) {
+		// A model Cloudflare removed never answers again, so trying later is the wrong advice.
+		if (status === 410 || workersAiErrorCodes(cause).includes(MODEL_DEPRECATED)) {
+			return workersAiRemovedMessage(agent.model);
+		}
 		// The deployment's token and account are the server's to fix, not the workspace's.
 		if (status === 401 || status === 403) {
 			return `${name} refused this server's token. Whoever runs the server can check WORKERS_AI_TOKEN.`;
@@ -250,6 +255,35 @@ export function describeFailure(
 		return `${name} could not answer just now. Try again shortly.`;
 	}
 	return `${name} could not answer.`;
+}
+
+/**
+ * Workers AI's code for a model it has removed ("Model deprecated", sent with HTTP 410), checked
+ * 2026-11-18: https://developers.cloudflare.com/workers-ai/platform/errors/
+ */
+const MODEL_DEPRECATED = 5028;
+
+/**
+ * The error codes in what Workers AI answered, which names them in `errors` (Cloudflare's API) or
+ * in `error` (its OpenAI-compatible one). Only the numbers are read, never the words beside them.
+ */
+function workersAiErrorCodes(cause: unknown): number[] {
+	if (!APICallError.isInstance(cause) || typeof cause.responseBody !== "string") return [];
+	let body: unknown;
+	try {
+		body = JSON.parse(cause.responseBody);
+	} catch {
+		return [];
+	}
+	if (typeof body !== "object" || body === null) return [];
+	const { errors, error } = body as { errors?: unknown; error?: unknown };
+	return [...(Array.isArray(errors) ? errors : []), error]
+		.map((found) =>
+			typeof found === "object" && found !== null
+				? Number((found as { code?: unknown }).code)
+				: NaN,
+		)
+		.filter(Number.isInteger);
 }
 
 /** What a failure may put in the logs: never a message, which could repeat part of the key. */

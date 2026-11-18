@@ -9,6 +9,7 @@ const TOKEN = "workers-ai-deployment-token-not-a-real-one";
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const SCOUT = "@cf/meta/llama-4-scout-17b-16e-instruct";
 const NO_TOOLS = "@cf/meta/llama-2-7b-chat-int8";
+const REMOVED = "@cf/moonshotai/kimi-k2.6";
 const COMPLETIONS = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/v1/chat/completions`;
 const SEARCH = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/models/search?task=Text+Generation&per_page=200`;
 
@@ -20,6 +21,8 @@ models.workersAi = {
 		{ name: SCOUT, functionCalling: true },
 		{ name: "@cf/openai/gpt-oss-20b", functionCalling: true },
 		{ name: NO_TOOLS, functionCalling: false },
+		// Cloudflare's catalog lists a model until the day it removes it (this one on 2026-11-20).
+		{ name: REMOVED, functionCalling: true },
 	],
 };
 
@@ -151,6 +154,8 @@ it("shows Settings > Models that the server offers Workers AI, with models that 
 	expect(html).toContain("@cf/openai/gpt-oss-20b");
 	// A model that cannot call tools is no use to an agent.
 	expect(html).not.toContain(NO_TOOLS);
+	// Nor is one Cloudflare is removing, which an agent should not start on.
+	expect(html).not.toContain(REMOVED);
 	// Keys are for the providers that have them: no row, button or form for Workers AI.
 	expect(html).toContain("Anthropic");
 	expect(html.match(/Add key/g)).toHaveLength(3);

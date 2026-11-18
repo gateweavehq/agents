@@ -1,10 +1,10 @@
 import { env } from "cloudflare:workers";
 import type { AgentSnapshot } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
-import { generateText } from "ai";
+import { APICallError, generateText } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName, listWorkersAiModels } from "../src";
-import { languageModel } from "../src/models";
+import { describeFailure, languageModel } from "../src/models";
 import { FakeMcpServer } from "./fake-mcp";
 import { ask, completionStream, connect, fakeModel } from "./support";
 
@@ -15,6 +15,8 @@ afterEach(() => {
 const TOKEN = "workers-ai-test-token-not-a-real-one";
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 const SCOUT = "@cf/meta/llama-4-scout-17b-16e-instruct";
+/** One of the models Cloudflare removed on 2026-11-20, which agents were saved with. */
+const KIMI = "@cf/moonshotai/kimi-k2.6";
 const COMPLETIONS = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}/ai/v1/chat/completions`;
 const FOUND = "what the tool found for them";
 const settings = { WORKERS_AI_TOKEN: TOKEN, CLOUDFLARE_ACCOUNT_ID: ACCOUNT };
@@ -30,7 +32,7 @@ const SEARCH = {
 };
 
 /** A conversation with a Workers AI agent that pins one MCP server, and no key in the workspace. */
-async function conversation() {
+async function conversation(model = SCOUT) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
 	const server = await registry.createMcpServer({
@@ -43,7 +45,7 @@ async function conversation() {
 		name: "Scout",
 		description: null,
 		provider: "workers-ai",
-		model: SCOUT,
+		model,
 		instructions: null,
 		mcpServers: [{ assetId: server, version: 1 }],
 	});
@@ -172,6 +174,67 @@ describe("a conversation with a Workers AI agent", () => {
 		const [run] = await registry.listRuns();
 		expect(run).toMatchObject({ status: "failed", inputTokens: 0 });
 	});
+
+	// Cloudflare removed sixteen models on 2026-11-20. An agent saved with one keeps it, since an
+	// owner chose it and the next one costs something else, so its run has to say what to do.
+	it("says Cloudflare removed the agent's model, and when, for a 410 or its error 5028", async () => {
+		const said =
+			"Cloudflare removed @cf/moonshotai/kimi-k2.6 from Workers AI on 20 November 2026. Choose another model in the agent's settings.";
+
+		const acme = new FakeMcpServer([SEARCH], () => ({ content: [{ type: "text", text: FOUND }] }));
+		const requests = fakeModel(
+			() =>
+				Response.json(
+					{
+						success: false,
+						errors: [{ code: 5028, message: `${KIMI} was deprecated on 2026-11-20. ${TOKEN}` }],
+					},
+					{ status: 410 },
+				),
+			{ "mcp.acme.dev": acme.handle },
+		);
+		const { registry, stub } = await conversation(KIMI);
+		const socket = await connect(stub);
+		const turn = await ask(socket, "Hello");
+		socket.close();
+		expect(turn.error).toBe(said);
+		expect(turn.raw.join("")).not.toContain(TOKEN);
+		// Asked once: a model that is gone is not tried again.
+		expect(requests.map((request) => request.url)).toEqual([COMPLETIONS]);
+		expect(requests[0]?.body).toMatchObject({ model: KIMI });
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({ status: "failed", model: KIMI, error: said });
+		// The agent is as its owner left it.
+		expect((await registry.listAgents())[0]).toMatchObject({ model: KIMI });
+
+		const agent = { provider: "workers-ai", model: KIMI } as const;
+		const failure = (status: number, body: unknown) =>
+			new APICallError({
+				message: "refused",
+				url: COMPLETIONS,
+				requestBodyValues: {},
+				statusCode: status,
+				responseBody: typeof body === "string" ? body : JSON.stringify(body),
+			});
+		// The status alone, the code alone (as a gateway may pass it on), and the OpenAI-compatible shape.
+		expect(describeFailure(agent, failure(410, "gone"))).toBe(said);
+		expect(describeFailure(agent, failure(400, { errors: [{ code: 5028 }] }))).toBe(said);
+		expect(describeFailure(agent, failure(400, { error: { code: 5028 } }))).toBe(said);
+		// A model the list does not know yet is still told apart from a passing failure.
+		expect(
+			describeFailure({ provider: "workers-ai", model: "@cf/acme/gone" }, failure(410, "")),
+		).toBe(
+			"Cloudflare removed @cf/acme/gone from Workers AI. Choose another model in the agent's settings.",
+		);
+		// Any other refusal reads as before, and another provider's 410 is not Cloudflare's.
+		expect(describeFailure(agent, failure(400, { errors: [{ code: 5007 }] }))).toBe(
+			"Workers AI could not answer.",
+		);
+		expect(describeFailure(agent, failure(400, "5028"))).toBe("Workers AI could not answer.");
+		expect(describeFailure({ provider: "openai", model: "gpt-5" }, failure(410, ""))).toBe(
+			"OpenAI could not answer.",
+		);
+	});
 });
 
 describe("the Workers AI model", () => {
@@ -278,6 +341,25 @@ describe("listing Workers AI's models", () => {
 		expect(requests).toHaveLength(1);
 		expect(requests[0]?.url).toBe(SEARCH_URL);
 		expect(requests[0]?.headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
+	});
+
+	it("leaves out a model Cloudflare is removing, though the catalog still lists it", async () => {
+		const { fetcher } = catalog(200, {
+			success: true,
+			result: [
+				model(KIMI, "true"),
+				model(SCOUT, "true"),
+				model("@cf/qwen/qwen3-30b-a3b-fp8", "true"),
+				// Another model, whose id only begins like a removed one.
+				model("@cf/meta/llama-3.1-8b-instruct-fp8-fast", "true"),
+			],
+			result_info: { page: 1, per_page: 200, total_pages: 1 },
+		});
+		const listed = await listWorkersAiModels(settings, fetcher);
+		expect(listed.ok && listed.models.map((found) => found.id)).toEqual([
+			SCOUT,
+			"@cf/meta/llama-3.1-8b-instruct-fp8-fast",
+		]);
 	});
 
 	it("reads on while the catalog has more pages", async () => {

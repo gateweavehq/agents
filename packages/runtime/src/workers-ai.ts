@@ -14,6 +14,7 @@ import {
 	WORKERS_AI_NOT_OFFERED,
 	type WorkersAiSettings,
 	workersAiAccount,
+	workersAiRemoved,
 } from "@gateweave/agents-model";
 
 export type WorkersAiModels =
@@ -27,7 +28,7 @@ const MAX_PAGES = 5;
 
 /**
  * The text generation models that can call tools, which agents need, or why Cloudflare would not
- * say. Models are in the catalog's order.
+ * say. Models are in the catalog's order, without the ones Cloudflare has said it is removing.
  */
 export async function listWorkersAiModels(
 	settings: WorkersAiSettings,
@@ -73,6 +74,8 @@ export async function listWorkersAiModels(
 		for (const item of list(found.result)) {
 			const model = record(item);
 			if (typeof model.name !== "string" || !callsTools(model.properties)) continue;
+			// The catalog lists a model until the day Cloudflare removes it; an agent should not start on one.
+			if (workersAiRemoved(model.name)) continue;
 			models.push({ id: model.name, name: model.name });
 		}
 		const info = record(found.result_info);

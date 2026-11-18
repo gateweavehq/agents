@@ -55,6 +55,71 @@ export function workersAiDailyLimit(settings: WorkersAiSettings): number | null 
 	return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
+/**
+ * The text models Cloudflare has removed from Workers AI, or has said it will, with the day (UTC)
+ * each stops answering: from then on a request for one fails with HTTP 410 and error 5028. None is
+ * offered, priced or suggested anywhere (`apps/web/src/lib/removed-models.test.ts` reads the
+ * repository for them), and an agent still
+ * set to one says so when it runs (`describeFailure` in the runtime). An agent's model is never
+ * changed for it: an owner or admin chose it, and another costs something else.
+ *
+ * The next removal is a line here.
+ *
+ * - https://developers.cloudflare.com/changelog/post/2026-11-05-planned-model-deprecations/
+ *   (read 2026-11-18; the day was moved from 15 to 20 November)
+ */
+export const WORKERS_AI_REMOVED: Readonly<Record<string, string>> = {
+	"@cf/deepseek-ai/deepseek-r1-distill-qwen-32b": "2026-11-20",
+	"@cf/deepseek-ai/deepseek-v4-flash-0731": "2026-11-20",
+	"@cf/deepseek-ai/deepseek-v4-pro-0813": "2026-11-20",
+	"@cf/google/gemma-2b-it-lora": "2026-11-20",
+	"@cf/google/gemma-7b-it-lora": "2026-11-20",
+	"@cf/meta-llama/llama-2-7b-chat-hf-lora": "2026-11-20",
+	"@cf/meta/llama-3.1-8b-instruct-fp8": "2026-11-20",
+	"@cf/meta/llama-3.2-1b-instruct": "2026-11-20",
+	"@cf/meta/llama-3.2-3b-instruct": "2026-11-20",
+	"@cf/moonshotai/kimi-k2.6": "2026-11-20",
+	"@cf/moonshotai/kimi-k2.7-code": "2026-11-20",
+	"@cf/nvidia/nemotron-3-120b-a12b": "2026-11-20",
+	"@cf/qwen/qwen3-30b-a3b-fp8": "2026-11-20",
+	"@cf/qwen/qwq-32b": "2026-11-20",
+	"@cf/zai-org/glm-5.2": "2026-11-20",
+	"@cf/zai-org/glm-5.3-flash": "2026-11-20",
+};
+
+const MONTHS = [
+	"January",
+	"February",
+	"March",
+	"April",
+	"May",
+	"June",
+	"July",
+	"August",
+	"September",
+	"October",
+	"November",
+	"December",
+];
+
+/** Whether Cloudflare has removed a Workers AI model, or has said it will. */
+export function workersAiRemoved(model: string): boolean {
+	return Object.hasOwn(WORKERS_AI_REMOVED, model);
+}
+
+/**
+ * What an agent says when Cloudflare answers that its model is gone: what happened and what to
+ * do, with the day when the model is one of `WORKERS_AI_REMOVED`.
+ */
+export function workersAiRemovedMessage(model: string): string {
+	const day = Object.hasOwn(WORKERS_AI_REMOVED, model) ? WORKERS_AI_REMOVED[model] : undefined;
+	const [year, month, date] = (day ?? "").split("-").map(Number);
+	const named = MONTHS[(month ?? 0) - 1];
+	// Written out rather than left to the runtime's locale data: "20 November 2026".
+	const when = named === undefined ? "" : ` on ${date} ${named} ${year}`;
+	return `Cloudflare removed ${model} from Workers AI${when}. Choose another model in the agent's settings.`;
+}
+
 /** Why an agent that uses Workers AI cannot answer on a server that did not turn it on. */
 export const WORKERS_AI_NOT_OFFERED = "This server does not offer Workers AI";
 

@@ -405,6 +405,21 @@ after its conversation's last turn. To keep the bill in hand:
   the most it can cost, so Cloudflare's bill stays under the budget. Set `SANDBOX_ALERT_EMAIL` to
   hear at 80% and at 100%.
 
+### When Cloudflare removes a Workers AI model
+
+Cloudflare retires Workers AI models, with a few weeks' notice in its
+[changelog](https://developers.cloudflare.com/changelog/product/workers-ai/). Sixteen text models
+stop answering on 20 November 2026, among them Kimi K2.6 and K2.7 Code, GLM-5.2, GLM-5.3 Flash,
+DeepSeek V4 Flash and Pro, Nemotron 3 and Qwen3 30B; the changelog entry of 5 November 2026 lists
+them all.
+
+Agents leaves the models Cloudflare has announced out of its model lists and its prices. An agent
+that is still set to one keeps it, and its runs then fail with "Cloudflare removed … from Workers
+AI on 20 November 2026. Choose another model in the agent's settings." Nothing changes an
+agent's model for you, because the next one costs something else: an owner or admin opens the
+agent under **Agents**, chooses **Edit**, and picks another model. Failed runs on the Runs page
+show which agents are left.
+
 ### Usage across workspaces
 
 Each workspace sees its own runs on its Usage and Runs pages. To see every workspace's usage

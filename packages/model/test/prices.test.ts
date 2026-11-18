@@ -79,7 +79,7 @@ it("lists sensible prices", () => {
 });
 
 it("prices the Workers AI models the catalog lists, and no others", () => {
-	const at = day("2026-10-29");
+	const at = day("2026-11-18");
 	// A million tokens in and out, at the catalog's per-million rates.
 	const million = tokens(1_000_000, 1_000_000);
 	expect(requestCost("workers-ai", "@cf/meta/llama-4-scout-17b-16e-instruct", million, at)).toBe(
@@ -87,13 +87,26 @@ it("prices the Workers AI models the catalog lists, and no others", () => {
 	);
 	expect(requestCost("workers-ai", "@cf/openai/gpt-oss-120b", million, at)).toBe(1_100_000);
 	expect(requestCost("workers-ai", "@cf/openai/gpt-oss-20b", million, at)).toBe(500_000);
-	expect(requestCost("workers-ai", "@cf/qwen/qwen3-30b-a3b-fp8", million, at)).toBe(385_900);
 	expect(requestCost("workers-ai", "@cf/zai-org/glm-4.7-flash", million, at)).toBe(460_500);
-	expect(requestCost("workers-ai", "@cf/moonshotai/kimi-k2.6", million, at)).toBe(4_950_000);
-	// Kimi lists a cached rate; the other models bill cached input as input.
+	expect(requestCost("workers-ai", "@cf/deepseek-ai/deepseek-v4.1-flash-1017", million, at)).toBe(
+		1_500_000,
+	);
+	expect(requestCost("workers-ai", "@cf/qwen/qwen3.8-27b", million, at)).toBe(3_650_000);
+	expect(requestCost("workers-ai", "@cf/google/gemma-4-26b-a4b-it", million, at)).toBe(400_000);
+	expect(requestCost("workers-ai", "@cf/zai-org/glm-5.3", million, at)).toBe(5_800_000);
+	// DeepSeek lists a cached rate; a model that lists none bills cached input as input.
 	expect(
-		requestCost("workers-ai", "@cf/moonshotai/kimi-k2.6", tokens(1_000_000, 0, 500_000), at),
-	).toBe(475_000 + 80_000);
+		requestCost(
+			"workers-ai",
+			"@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+			tokens(1_000_000, 0, 500_000),
+			at,
+		),
+	).toBe(150_000 + 3_000);
+	// The two Cloudflare removed on 20 November 2026 have no prices, on any day.
+	for (const removed of ["@cf/moonshotai/kimi-k2.6", "@cf/qwen/qwen3-30b-a3b-fp8"]) {
+		expect(requestCost("workers-ai", removed, million, day("2026-10-29"))).toBeNull();
+	}
 	expect(
 		requestCost("workers-ai", "@cf/openai/gpt-oss-20b", tokens(1_000_000, 0, 500_000), at),
 	).toBe(200_000);

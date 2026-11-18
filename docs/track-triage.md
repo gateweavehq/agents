@@ -53,8 +53,9 @@ your browser, choose **Set it up by hand** in the dialog and follow the steps be
    - **Agent key**: the key from step 1.
    - **Provider and model**: a fast model does the job, such as Claude Haiku. The workspace
      needs a key for the provider (**Settings → Model providers**) before the agent can answer.
-     Workers AI needs none where the server offers it, which it pays for itself; Kimi K2.6
-     (`@cf/moonshotai/kimi-k2.6`) triages well there.
+     Workers AI needs none where the server offers it, which it pays for itself; the dialog
+     starts from Llama 4 Scout (`@cf/meta/llama-4-scout-17b-16e-instruct`) there, and DeepSeek
+     V4.1 Flash (`@cf/deepseek-ai/deepseek-v4.1-flash-1017`) is the larger choice.
 3. Choose **Set up**. Agents first asks Track's MCP server, with the key, for its tools, so a
    wrong address or key is reported at once and nothing is made. Then it makes everything below
    in one go.
@@ -104,9 +105,9 @@ direct while priority waits for a person, for example.
 ## Costs and limits
 
 Each new issue is one run, on your workspace's provider key (or, for Workers AI, the server's
-account), and shows under **Runs** with its tokens and cost. A run on Kimi K2.6 costs about a
-cent. The trigger starts at most 50 runs a day. Change that on the agent's page, or
-pause the trigger there.
+account), and shows under **Runs** with its tokens and cost. On the Workers AI models named
+above a run costs about a cent or less. The trigger starts at most 50 runs a day. Change that
+on the agent's page, or pause the trigger there.
 
 ## When it does not work
 
@@ -116,3 +117,6 @@ pause the trigger there.
   answered. A 401 means the secret in Agents is not the webhook's: paste Track's again.
 - **Deliveries that failed** say why under the trigger, such as a missing provider key. The run's
   page shows what the agent did.
+- **"Cloudflare removed … from Workers AI"**: the agent's model is gone. Cloudflare removed
+  sixteen on 20 November 2026, Kimi K2.6 among them, which this page used to suggest. Choose
+  another model in the agent's settings; nothing changes it for you, since prices differ.
