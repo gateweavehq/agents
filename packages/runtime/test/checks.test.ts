@@ -356,7 +356,7 @@ describe("a repository's checks", () => {
 			return run(...asked);
 		});
 		await expect(call(undefined, turn.signal)).rejects.toMatchObject({ name: "AbortError" });
-		expect(sandbox.log).toEqual(["commit", "run pnpm check", "compare 1111111"]);
+		expect(sandbox.log).toEqual(["commit", "run pnpm check"]);
 		expect(proposed).toEqual([]);
 		expect(spans[0]?.ended).toEqual({ error: "The turn was stopped" });
 
@@ -371,10 +371,11 @@ describe("a repository's checks", () => {
 		await expect(last.call(undefined, stopped.signal)).rejects.toMatchObject({
 			name: "AbortError",
 		});
-		expect(last.sandbox.log).toEqual(["commit", "run pnpm test", "compare 1111111"]);
+		expect(last.sandbox.log).toEqual(["commit", "run pnpm test"]);
 		expect(last.proposed).toEqual([]);
+	});
 
-		// Stopped while the checkout is compared after the last check: the same.
+	it("R2: a turn stopped during checkout comparison pushes and proposes nothing", async () => {
 		const compared = setup(["pnpm test"]);
 		const late = new AbortController();
 		vi.spyOn(compared.sandbox, "changedSince").mockImplementationOnce(async () => {
@@ -384,6 +385,7 @@ describe("a repository's checks", () => {
 		await expect(compared.call(undefined, late.signal)).rejects.toMatchObject({
 			name: "AbortError",
 		});
+		expect(compared.sandbox.log).toEqual(["commit", "run pnpm test"]);
 		expect(compared.sandbox.commitPushes).toEqual([]);
 		expect(compared.proposed).toEqual([]);
 	});

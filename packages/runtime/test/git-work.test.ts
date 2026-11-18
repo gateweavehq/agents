@@ -27,7 +27,10 @@ describe("a checkout after the repository's checks", () => {
 		const { git, commands } = recordingGit();
 		expect(await changedSince(git, HEAD)).toBeNull();
 		// Untracked files count, one by one; ignored ones are left out by git itself.
-		expect(commands()).toEqual(["rev-parse HEAD", "status --porcelain --untracked-files=all"]);
+		expect(commands()).toEqual([
+			"rev-parse HEAD",
+			"status --porcelain --untracked-files=all --ignore-submodules=none",
+		]);
 	});
 
 	it("R2: is not the commit when a file changed or appeared, and says which, twenty at most", async () => {

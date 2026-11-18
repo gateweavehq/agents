@@ -8,6 +8,7 @@ import {
 	checksOfText,
 	checksProblem,
 	draftAfterRefresh,
+	maySaveDraft,
 } from "#/lib/repository-checks";
 
 const MINUTES = CHECK_LIMITS.commandSeconds / 60;
@@ -39,22 +40,27 @@ export function RepositoryChecks({
 	const saved = checks.join("\n");
 	const [draft, setDraft] = useState<ChecksDraft>({ text: saved, base: saved });
 	const [pending, setPending] = useState(false);
+	const [confirmedSaved, setConfirmedSaved] = useState<string | null>(null);
 	// The saved list can change under the form: a save of this form's own, someone else's, or a
 	// refresh of the page. A draft without edits follows it; one with edits stays, and says so.
 	const { text, base, stale } = draftAfterRefresh(draft, saved);
 	if (base !== draft.base) setDraft({ text, base });
-	const setText = (next: string) => setDraft({ text: next, base });
+	const setText = (next: string) => {
+		setDraft({ text: next, base });
+		setConfirmedSaved(null);
+	};
 	const problem = checksProblem(text);
 	const changed = checksOfText(text).join("\n") !== saved;
 
 	async function onSubmit(event: FormEvent) {
 		event.preventDefault();
-		if (problem !== null) return;
+		if (pending || problem !== null || !maySaveDraft(stale, saved, confirmedSaved)) return;
 		setPending(true);
 		try {
 			const next = checksOfText(text);
 			await onSave(next);
 			setDraft({ text: next.join("\n"), base: next.join("\n") });
+			setConfirmedSaved(null);
 			toast.success(next.length === 0 ? "Checks removed" : "Checks saved");
 		} catch (error) {
 			toast.error("Could not save the checks", {
@@ -107,20 +113,41 @@ export function RepositoryChecks({
 							`One command to a line, at most ${CHECK_LIMITS.commands}, each run with bash in the repository's root. Leave it empty for no checks.`}
 					</p>
 					{stale && (
-						<p role="status" className="text-xs text-muted-foreground">
-							The saved checks changed while you were editing. Saving replaces them with what is
-							here.{" "}
+						<div role="status" className="space-y-2 text-xs text-muted-foreground">
+							<p>The saved checks changed while you were editing. The current saved checks are:</p>
+							<pre className="whitespace-pre-wrap break-all rounded border p-2">
+								{saved || "(none)"}
+							</pre>
+							<p>Replacing them removes any commands absent from your draft.</p>
 							<button
 								type="button"
 								className="underline underline-offset-2"
-								onClick={() => setDraft({ text: saved, base: saved })}
+								onClick={() => {
+									setDraft({ text: saved, base: saved });
+									setConfirmedSaved(null);
+								}}
 							>
 								Show the saved checks instead
 							</button>
-						</p>
+							{confirmedSaved !== saved && (
+								<button
+									type="button"
+									className="ml-3 underline underline-offset-2"
+									onClick={() => setConfirmedSaved(saved)}
+								>
+									Review and replace saved checks
+								</button>
+							)}
+						</div>
 					)}
-					<Button type="submit" size="sm" disabled={pending || problem !== null || !changed}>
-						{pending ? "Saving checks…" : "Save checks"}
+					<Button
+						type="submit"
+						size="sm"
+						disabled={
+							pending || problem !== null || !changed || !maySaveDraft(stale, saved, confirmedSaved)
+						}
+					>
+						{pending ? "Saving checks…" : stale ? "Confirm replacement" : "Save checks"}
 					</Button>
 				</form>
 			) : checks.length === 0 ? (

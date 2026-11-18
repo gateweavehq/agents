@@ -35,6 +35,25 @@ export function draftAfterRefresh(
 	return { ...draft, stale: true };
 }
 
+/** A stale draft may replace the saved list only after that exact list was reviewed. */
+export function maySaveDraft(
+	stale: boolean,
+	saved: string,
+	confirmedSaved: string | null,
+): boolean {
+	return !stale || confirmedSaved === saved;
+}
+
+/** Wait for the saved list to reach the route before the form adopts it as its baseline. */
+export async function saveChecksAndRefresh(
+	checks: string[],
+	save: (checks: string[]) => Promise<unknown>,
+	invalidate: (options: { sync: true }) => Promise<void>,
+): Promise<void> {
+	await save(checks);
+	await invalidate({ sync: true });
+}
+
 /** Why the form's text cannot be saved, in the schema's own words; null when it can. */
 export function checksProblem(text: string): string | null {
 	const read = repositoryChecksInput.safeParse(checksOfText(text));

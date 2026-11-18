@@ -156,6 +156,7 @@ export async function runChecks(
 			stopped = EARLIER_FAILED;
 			continue;
 		}
+		signal?.throwIfAborted();
 		// After each check that passed, not only the last: one that changed a file which a later
 		// one puts back would leave the checkout looking like the commit at the end.
 		off = await compared(sandbox, head);

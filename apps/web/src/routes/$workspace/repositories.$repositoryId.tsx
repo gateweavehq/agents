@@ -18,6 +18,7 @@ import { Notice } from "#/components/workspace/notice";
 import { formatDateTime, formatRelative } from "#/lib/dates";
 import { useRefreshWhile } from "#/lib/refresh";
 import { getRepository, scanRepository, setRepositoryChecks } from "#/lib/registry";
+import { saveChecksAndRefresh } from "#/lib/repository-checks";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/repositories/$repositoryId")({
@@ -216,8 +217,11 @@ function Checks() {
 			checks={checks}
 			admin={admin}
 			onSave={async (next) => {
-				await setRepositoryChecks({ data: { slug: workspace, repositoryId, checks: next } });
-				await router.invalidate();
+				await saveChecksAndRefresh(
+					next,
+					(checks) => setRepositoryChecks({ data: { slug: workspace, repositoryId, checks } }),
+					(options) => router.invalidate(options),
+				);
 			}}
 		/>
 	);

@@ -1,6 +1,12 @@
 import { CHECK_ONE_LINE } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
-import { checksOfText, checksProblem, draftAfterRefresh } from "./repository-checks";
+import {
+	checksOfText,
+	checksProblem,
+	draftAfterRefresh,
+	maySaveDraft,
+	saveChecksAndRefresh,
+} from "./repository-checks";
 
 describe("the form for a repository's checks", () => {
 	it("R1: reads one command to a line, without blank lines or the space around each", () => {
@@ -47,5 +53,36 @@ describe("the form for a repository's checks", () => {
 			base,
 			stale: true,
 		});
+	});
+
+	it("R1: a stale draft cannot replace unseen checks or a newer saved list", () => {
+		expect(maySaveDraft(false, "pnpm lint", null)).toBe(true);
+		expect(maySaveDraft(true, "pnpm lint", null)).toBe(false);
+		expect(maySaveDraft(true, "pnpm lint", "pnpm lint")).toBe(true);
+		expect(maySaveDraft(true, "pnpm test", "pnpm lint")).toBe(false);
+	});
+
+	it("R1: waits for the refreshed saved list before a save completes", async () => {
+		const events: string[] = [];
+		let finishRefresh: (() => void) | undefined;
+		const refresh = new Promise<void>((resolve) => {
+			finishRefresh = resolve;
+		});
+		const saving = saveChecksAndRefresh(
+			["pnpm test"],
+			async (checks) => {
+				events.push(`saved ${checks.join(",")}`);
+			},
+			async (options) => {
+				events.push(`refresh ${options.sync}`);
+				await refresh;
+			},
+		).then(() => events.push("complete"));
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(events).toEqual(["saved pnpm test", "refresh true"]);
+		finishRefresh?.();
+		await saving;
+		expect(events).toEqual(["saved pnpm test", "refresh true", "complete"]);
 	});
 });

@@ -92,7 +92,12 @@ export async function changedSince(git: Git, head: string): Promise<Comparison> 
 	const at = await git(["rev-parse", "HEAD"]);
 	if (at.exitCode !== 0) return { unverified: "The checkout's commit could not be read." };
 	if (at.output.trim() !== head) return { changed: "A new commit was made while the checks ran." };
-	const status = await git(["status", "--porcelain", "--untracked-files=all"]);
+	const status = await git([
+		"status",
+		"--porcelain",
+		"--untracked-files=all",
+		"--ignore-submodules=none",
+	]);
 	if (status.exitCode !== 0) return { unverified: "The checkout's changes could not be read." };
 	const changed = status.output.split("\n").filter((line) => line.trim() !== "");
 	if (changed.length === 0) return null;
