@@ -71,6 +71,30 @@ export function auditFor(member: Member): (record: AuditRecord) => Promise<void>
 	};
 }
 
+/** The newest recorded list for a repository, used to repair an audit write lost after a save. */
+export async function latestRepositoryChecksDigest(
+	workspaceId: string,
+	repositoryId: string,
+): Promise<string | null> {
+	const { db } = await import("./auth");
+	const table = schema.auditEvent;
+	const row = await db
+		.select({ detail: table.detail })
+		.from(table)
+		.where(
+			and(
+				eq(table.organizationId, workspaceId),
+				eq(table.action, "repository.checksSet"),
+				eq(table.targetType, "repository"),
+				eq(table.targetId, repositoryId),
+			),
+		)
+		.orderBy(desc(table.id))
+		.limit(1)
+		.get();
+	return typeof row?.detail.digest === "string" ? row.detail.digest : null;
+}
+
 /** A page of the workspace's log, the newest first, with everyone its events name. */
 export async function readAuditPage(
 	db: Database,

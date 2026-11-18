@@ -40,9 +40,8 @@ import {
 	describeFailedRound,
 	describeOutcome,
 	NO_SANDBOX,
+	pullRequestBody,
 	runChecks,
-	withChecksSection,
-	withoutChecksSection,
 } from "./checks";
 import { failureForLogs } from "./models";
 import { SANDBOX_SERVER } from "./sandbox-tools";
@@ -253,8 +252,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		if ("error" in pushed) throw new Error(pushed.error);
 		// The model's own copy of the section goes whether checks are set or not: the heading is
 		// the tool's, and a reader takes what stands under it as the tool's word.
-		const written =
-			section === null ? withoutChecksSection(body) : withChecksSection(body, section);
+		const written = pullRequestBody(body, section);
 		let made: Awaited<ReturnType<PullRequestPort["propose"]>>;
 		try {
 			made = await github.propose({

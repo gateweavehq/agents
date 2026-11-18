@@ -6,7 +6,13 @@
 import { CHECK_LIMITS, type PullRequestOutcome } from "@gateweave/agents-model";
 import { asSchema } from "ai";
 import { describe, expect, it, vi } from "vitest";
-import { lastBytes, withChecksSection, withoutChecksSection } from "../src/checks";
+import {
+	lastBytes,
+	runChecks,
+	SHORTENED,
+	withChecksSection,
+	withoutChecksSection,
+} from "../src/checks";
 import { pullRequestTools } from "../src/pull-requests";
 import type { RunRecorder } from "../src/trace";
 import { type CommandAnswer, MemorySandbox } from "./fake-sandbox";
@@ -179,6 +185,51 @@ describe("a repository without checks", () => {
 });
 
 describe("a repository's checks", () => {
+	it("a stream that never closes times out at the outer deadline and ends its span", async () => {
+		vi.useFakeTimers();
+		try {
+			let rejectRun: ((error: Error) => void) | undefined;
+			const ended: { error: string | null }[] = [];
+			const spent = { failedRounds: 0, seconds: 0 };
+			const running = runChecks(
+				["pnpm test"],
+				{
+					run: () =>
+						new Promise((_, reject) => {
+							rejectRun = reject;
+						}),
+					changedSince: async () => null,
+				},
+				"1".repeat(40),
+				{
+					toolStarted: () => "span",
+					toolEnded: (_span: string, result: { error: string | null }) => {
+						ended.push(result);
+					},
+				} as unknown as RunRecorder,
+				spent,
+			);
+			await vi.advanceTimersByTimeAsync((CHECK_LIMITS.commandSeconds + 10) * 1000);
+			const round = await running;
+			expect(round.status).toBe("failed");
+			expect(round.results[0]?.outcome).toEqual({
+				kind: "timed-out",
+				limitSeconds: CHECK_LIMITS.commandSeconds,
+			});
+			expect(round.results[0]?.seconds).toBe(CHECK_LIMITS.commandSeconds + 10);
+			expect(spent.seconds).toBe(CHECK_LIMITS.commandSeconds + 10);
+			expect(ended).toEqual([
+				{
+					outputBytes: 0,
+					error: `It timed out: it was stopped after ${CHECK_LIMITS.commandSeconds} seconds`,
+				},
+			]);
+			rejectRun?.(new Error("stream closed late"));
+			await Promise.resolve();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 	it("R2: run in the repository's root on the commit, in order, before that commit is pushed", async () => {
 		const { sandbox, proposed, call } = setup(["pnpm check", "pnpm test"]);
 		const outcome = await call();
@@ -634,6 +685,7 @@ describe("a repository's checks", () => {
 		expect(after("Passed:\n\n```")).toBe("Passed:\n\n```\n```");
 		expect(after("````md\n```\nstill open")).toBe("````md\n```\nstill open\n````");
 		expect(after("   ~~~~ text\n~~~\n")).toBe("   ~~~~ text\n~~~\n~~~~");
+		expect(after("Done.\n\n<pre>unclosed")).toBe("Done.\n\n<pre>unclosed\n</pre>");
 		// Several at once: each gets its closer.
 		expect(after("```\n<!--\n<details>")).toBe("```\n<!--\n<details>\n```\n-->\n</details>");
 	});
@@ -700,6 +752,39 @@ describe("a repository's checks", () => {
 		const { proposed, call } = setup([command]);
 		await call();
 		expect(proposed[0]?.body).toContain(`- \`\`\` ${command} \`\`\`: passed, exit code 0, 0.0 s`);
+	});
+
+	it("keeps the checks section intact within GitHub's body limit, and says the model's part was cut", async () => {
+		const commands = Array.from({ length: 5 }, () => "`".repeat(300));
+		const { proposed, call } = setup(commands);
+		// Each emoji is two UTF-16 units: the cut must fall between them, never inside one.
+		await call({ title: "T", body: "😀".repeat(40_000) });
+		const body = proposed[0]?.body ?? "";
+		expect(body.length).toBeLessThanOrEqual(65_536);
+		expect(body).toContain(`😀\n\n${SHORTENED}\n\n## Checks run by Gateweave`);
+		expect(body).toContain(`- ${"`".repeat(301)} ${"`".repeat(300)} ${"`".repeat(301)}: passed`);
+		expect(body.endsWith(WRITTEN_BY)).toBe(true);
+		expect(body).not.toMatch(
+			/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
+		);
+	});
+
+	it("does not cut a body GitHub takes as it is: its limit is in characters, not bytes", async () => {
+		// 30,000 characters is 90,000 bytes in UTF-8, and well within GitHub's 65,536 characters.
+		const long = "漢".repeat(30_000);
+		const { proposed, call } = setup(["pnpm test"]);
+		await call({ title: "T", body: long });
+		const body = proposed[0]?.body ?? "";
+		expect(body.startsWith(`${long}\n\n## Checks run by Gateweave`)).toBe(true);
+		expect(body).not.toContain(SHORTENED);
+	});
+
+	it("R7: a repository without checks gets the model's body as it is, whatever its length", async () => {
+		const long = "é".repeat(40_000);
+		expect(new TextEncoder().encode(long).length).toBeGreaterThan(65_536);
+		const { proposed, call } = setup([]);
+		await call({ title: "T", body: long });
+		expect(proposed[0]?.body).toBe(long);
 	});
 
 	it("R5: a check stopped at its time limit is timed out, never passed, whatever its exit code", async () => {

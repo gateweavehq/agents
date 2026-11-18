@@ -108,7 +108,9 @@ it("R1: only an owner or admin sets a repository's checks; a member and a strang
 	expect(await registry.repositoryChecks("7")).toEqual(["pnpm test"]);
 
 	// The log keeps who changed them and how many there were, and no command: a command is free
-	// text, which the log holds none of. Saving the same list again is no change.
+	// text, which the log holds none of, only a digest of the list that lets a retry find a lost
+	// entry. Saving the same list again is no change.
+	const digest = expect.stringMatching(/^[0-9a-f]{64}$/);
 	const same = await setChecks(admin, slug, repositoryId, ["pnpm test"]);
 	expect(same.failed, same.text).toBe(false);
 	const entries = await auditOf(workspaceId);
@@ -117,13 +119,13 @@ it("R1: only an owner or admin sets a repository's checks; a member and a strang
 			by: owner.userId,
 			action: "repository.checksSet",
 			target: `repository:${repositoryId}:acme/site`,
-			detail: { checks: 2, before: 0 },
+			detail: { checks: 2, before: 0, digest },
 		},
 		{
 			by: admin.userId,
 			action: "repository.checksSet",
 			target: `repository:${repositoryId}:acme/site`,
-			detail: { checks: 1, before: 2 },
+			detail: { checks: 1, before: 2, digest },
 		},
 	]);
 	expect(JSON.stringify(entries)).not.toContain("pnpm");

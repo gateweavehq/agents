@@ -33,6 +33,11 @@ describe("the docs on a repository's checks (AGT-142)", () => {
 		expect(text).toContain("says `not run`, with the reason");
 		// Where the commands come from, and what is not built.
 		expect(text).toContain("Only from the repository's page in Agents");
+		expect(text).toContain("the agent cannot change the list of commands");
+		expect(text).toContain("editing `package.json` scripts");
+		expect(text).toContain("it is root in its sandbox");
+		expect(text).toContain("only as good as that machine");
+		expect(text).toContain("not a substitute for CI");
 		expect(text).toContain("Reading them from a file on the default branch is not supported yet.");
 		expect(text).toContain("Claude Code, Codex and OpenCode");
 	});
