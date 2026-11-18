@@ -8,7 +8,7 @@ import {
 	repositoryPathOf,
 } from "@gateweave/agents-model";
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { Library, Pencil, Trash2 } from "lucide-react";
+import { Copy, Library, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -205,6 +205,7 @@ function AssetPage() {
 						<FileView
 							key={file.path}
 							file={file}
+							kind={asset.kind}
 							repository={repository}
 							commit={version.commit}
 							path={
@@ -460,23 +461,50 @@ function MetadataRows({ metadata }: { metadata: Metadata }) {
 
 function FileView({
 	file,
+	kind,
 	repository,
 	commit,
 	path,
 }: {
 	file: AssetFile;
+	kind: Asset["kind"];
 	repository: Repository | null;
 	commit: string | null;
 	/** Where the file sits in the repository, if the asset is in one. */
 	path: string | null;
 }) {
 	const onGitHub = repository && commit && path ? fileUrl(repository, commit, path) : null;
+	const copyLabel =
+		kind === "prompt" ? "Copy prompt" : /\.mdx?$/i.test(file.path) ? "Copy Markdown" : "Copy file";
+
+	async function copy() {
+		if (file.content === null) return;
+		try {
+			await navigator.clipboard.writeText(file.content);
+			toast.success(`${file.path} copied`);
+		} catch {
+			toast.error("Copying did not work; select the text instead");
+		}
+	}
 
 	return (
 		<figure className="overflow-hidden rounded-lg border">
 			<figcaption className="flex items-center gap-3 border-b bg-muted/40 px-3 py-2 text-xs">
 				<span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
 				<span className="text-muted-foreground tabular-nums">{sizes.format(file.size / 1000)}</span>
+				{file.content !== null && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="h-7 px-2 text-xs"
+						aria-label={`${copyLabel} from ${file.path}`}
+						onClick={copy}
+					>
+						<Copy />
+						{copyLabel}
+					</Button>
+				)}
 				{onGitHub && (
 					<a href={onGitHub} target="_blank" rel="noreferrer" className="hover:underline">
 						GitHub
