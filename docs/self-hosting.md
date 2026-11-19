@@ -413,7 +413,7 @@ Agents runs in the sandbox on an agent's work before it pushes it. They are set 
 repository's page under **Repositories**, one command to a line, and kept in the workspace's
 registry. There is no setting for whoever runs the server, and no file in the repository names
 them yet. [Work on Track issues](track-work.md#checks-before-a-pull-request) says what happens
-when one fails and what the section **Checks run by Gateweave** at the end of a pull request
+when one fails and what the section **Checks run by Gateweave** near the end of a pull request
 means.
 
 A command may run for 10 minutes, the checks of one pull request call for 20 and those of one run
@@ -424,6 +424,19 @@ repository itself, nothing else.
 
 The update that adds checks changes each workspace's registry by itself when the workspace is
 next used (one column, empty for every repository). Nothing is to be done by hand.
+
+#### AI disclosure on GitHub
+
+To support EU AI Act Article 50 transparency, every pull request an agent opens or updates
+ends with ``Written and opened by `<agent name>`, an AI agent in Gateweave Agents.`` and the
+machine-readable comment `<!-- AI-Disclosure: mode=machine-generated -->`. If the cleaned name is
+empty, the sentence is `Written and opened by an AI agent in Gateweave Agents.` The disclosure
+follows the checks section when there is one.
+
+Agent commits carry the `Assisted-by: Gateweave Agents:<model id>` trailer and use the
+agent's bot identity as author and committer. If the engine chooses its own model, the
+trailer uses the engine's name. Commits already on a remote are never rewritten.
+The disclosure and trailer cannot be turned off.
 
 ### When Cloudflare removes a Workers AI model
 

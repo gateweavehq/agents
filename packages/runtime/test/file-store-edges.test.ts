@@ -149,7 +149,7 @@ describe("bytes that are not text", () => {
 			expect(await store.search({ pattern: "Si", path: REPO, ignoreCase: false })).toEqual({
 				error: unread,
 			});
-			expect(await store.push(BRANCH, "Broken", AUTHOR)).toEqual({
+			expect(await store.push(BRANCH, "Broken", AUTHOR, "model-1")).toEqual({
 				error: `${unread} Nothing was proposed. Write the file again, or delete it.`,
 			});
 			expect(fake.branches.has(BRANCH)).toBe(false);
@@ -170,11 +170,14 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 		await checkedOut(FILES, async ({ fake, store, storage }) => {
 			await store.writeFile(`${REPO}/README.md`, "# One\n");
 			await store.deleteFile(`${REPO}/docs/guide.md`);
-			const first = await store.push(BRANCH, "One", AUTHOR);
+			const first = await store.push(BRANCH, "One", AUTHOR, "model-1");
 			if ("error" in first) throw new Error(first.error);
 			forget(storage, null);
 
-			expect(await store.push(BRANCH, "One", AUTHOR)).toEqual({ head: first.head, pushed: false });
+			expect(await store.push(BRANCH, "One", AUTHOR, "model-1")).toEqual({
+				head: first.head,
+				pushed: false,
+			});
 			expect(fake.branches.get(BRANCH)).toBe(first.head);
 			expect(noted(storage)).toBe(first.head);
 		});
@@ -183,15 +186,18 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 	it("is taken for its own and built on, when the work has gone on since", async () => {
 		await checkedOut(FILES, async ({ fake, store, storage }) => {
 			await store.writeFile(`${REPO}/README.md`, "# One\n");
-			const first = await store.push(BRANCH, "One", AUTHOR);
+			const first = await store.push(BRANCH, "One", AUTHOR, "model-1");
 			if ("error" in first) throw new Error(first.error);
 			forget(storage, null);
 
 			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
-			const second = await store.push(BRANCH, "Two", AUTHOR);
+			const second = await store.push(BRANCH, "Two", AUTHOR, "model-1");
 			if ("error" in second) throw new Error(second.error);
 			expect(second.pushed).toBe(true);
-			expect(fake.commitAt(BRANCH)).toMatchObject({ message: "Two", parents: [first.head] });
+			expect(fake.commitAt(BRANCH)).toMatchObject({
+				message: "Two\n\nAssisted-by: Gateweave Agents:model-1",
+				parents: [first.head],
+			});
 			expect(fake.filesAt(BRANCH)).toEqual({
 				...FILES,
 				"README.md": "# One\n",
@@ -201,9 +207,12 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 			// The same for a later push whose note fell back to the one before it.
 			forget(storage, first.head);
 			await store.deleteFile(`${REPO}/src/index.ts`);
-			const third = await store.push(BRANCH, "Three", AUTHOR);
+			const third = await store.push(BRANCH, "Three", AUTHOR, "model-1");
 			if ("error" in third) throw new Error(third.error);
-			expect(fake.commitAt(BRANCH)).toMatchObject({ message: "Three", parents: [second.head] });
+			expect(fake.commitAt(BRANCH)).toMatchObject({
+				message: "Three\n\nAssisted-by: Gateweave Agents:model-1",
+				parents: [second.head],
+			});
 			expect(noted(storage)).toBe(third.head);
 		});
 	});
@@ -213,12 +222,12 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 			`The branch ${branch} holds a commit this conversation did not make, so the work was not put over it.`;
 		await checkedOut(FILES, async ({ fake, store, storage }) => {
 			await store.writeFile(`${REPO}/README.md`, "# One\n");
-			const first = await store.push(BRANCH, "One", AUTHOR);
+			const first = await store.push(BRANCH, "One", AUTHOR, "model-1");
 			if ("error" in first) throw new Error(first.error);
 			forget(storage, null);
 			// The conversation changed the file again: the commit no longer holds its work.
 			await store.writeFile(`${REPO}/README.md`, "# Two\n");
-			expect(await store.push(BRANCH, "Two", AUTHOR)).toEqual({ error: theirs(BRANCH) });
+			expect(await store.push(BRANCH, "Two", AUTHOR, "model-1")).toEqual({ error: theirs(BRANCH) });
 			expect(fake.branches.get(BRANCH)).toBe(first.head);
 			expect(noted(storage)).toBeNull();
 		});
@@ -226,12 +235,12 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 		await checkedOut(FILES, async ({ fake, store, storage }) => {
 			// Two commits ahead of the note: only one directly on it is looked at.
 			await store.writeFile(`${REPO}/README.md`, "# One\n");
-			await store.push(BRANCH, "One", AUTHOR);
+			await store.push(BRANCH, "One", AUTHOR, "model-1");
 			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
-			const second = await store.push(BRANCH, "Two", AUTHOR);
+			const second = await store.push(BRANCH, "Two", AUTHOR, "model-1");
 			if ("error" in second) throw new Error(second.error);
 			forget(storage, null);
-			expect(await store.push(BRANCH, "Two", AUTHOR)).toEqual({ error: theirs(BRANCH) });
+			expect(await store.push(BRANCH, "Two", AUTHOR, "model-1")).toEqual({ error: theirs(BRANCH) });
 			expect(fake.branches.get(BRANCH)).toBe(second.head);
 		});
 
@@ -244,7 +253,7 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 			const made = await fake.push(BRANCH, "README.md", "# One\n");
 			await store.writeFile(`${REPO}/README.md`, "# One\n");
 			await store.writeFile(`${REPO}/docs/guide.md`, "# Other\n");
-			const pushed = await store.push(BRANCH, "Mine", AUTHOR);
+			const pushed = await store.push(BRANCH, "Mine", AUTHOR, "model-1");
 			expect(fake.commitAt(BRANCH)?.parents).toEqual([made]);
 			expect(pushed).toMatchObject({ pushed: true });
 			expect(fake.filesAt(BRANCH)).toEqual({
@@ -274,15 +283,15 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 	it("is someone else's when it puts back a file the conversation changed", async () => {
 		await checkedOut(FILES, async ({ fake, store, storage }) => {
 			await store.writeFile(`${REPO}/README.md`, "# Mine\n");
-			const first = await store.push(BRANCH, "Mine", AUTHOR);
+			const first = await store.push(BRANCH, "Mine", AUTHOR, "model-1");
 			if ("error" in first) throw new Error(first.error);
 			// Someone reverts it on the branch: the file is the base's again, which is not what
 			// the conversation's commit before it held, and not what this push would leave.
 			const reverted = await fake.push(BRANCH, "README.md", FILES["README.md"] ?? "");
 
-			expect(await store.push(BRANCH, "Mine again", AUTHOR)).toEqual({ error: theirs });
+			expect(await store.push(BRANCH, "Mine again", AUTHOR, "model-1")).toEqual({ error: theirs });
 			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
-			expect(await store.push(BRANCH, "And more", AUTHOR)).toEqual({ error: theirs });
+			expect(await store.push(BRANCH, "And more", AUTHOR, "model-1")).toEqual({ error: theirs });
 			expect(fake.branches.get(BRANCH)).toBe(reverted);
 			expect(fake.filesAt(BRANCH)).toEqual(FILES);
 			expect(noted(storage)).toBe(first.head);
@@ -292,11 +301,13 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 	it("is someone else's when it restores a file the conversation deleted", async () => {
 		await checkedOut(FILES, async ({ fake, store }) => {
 			await store.deleteFile(`${REPO}/docs/guide.md`);
-			expect(await store.push(BRANCH, "Drop the guide", AUTHOR)).toMatchObject({ pushed: true });
+			expect(await store.push(BRANCH, "Drop the guide", AUTHOR, "model-1")).toMatchObject({
+				pushed: true,
+			});
 			const restored = await fake.push(BRANCH, "docs/guide.md", FILES["docs/guide.md"] ?? "");
 
 			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
-			expect(await store.push(BRANCH, "And more", AUTHOR)).toEqual({ error: theirs });
+			expect(await store.push(BRANCH, "And more", AUTHOR, "model-1")).toEqual({ error: theirs });
 			expect(fake.branches.get(BRANCH)).toBe(restored);
 			expect(fake.filesAt(BRANCH)).toEqual(FILES);
 		});
@@ -305,11 +316,13 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 	it("is someone else's when it removes a file the conversation added", async () => {
 		await checkedOut(FILES, async ({ fake, store }) => {
 			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
-			expect(await store.push(BRANCH, "Add a page", AUTHOR)).toMatchObject({ pushed: true });
+			expect(await store.push(BRANCH, "Add a page", AUTHOR, "model-1")).toMatchObject({
+				pushed: true,
+			});
 			const taken = await removed(fake, "docs/new.md");
 
 			await store.writeFile(`${REPO}/README.md`, "# Mine\n");
-			expect(await store.push(BRANCH, "And more", AUTHOR)).toEqual({ error: theirs });
+			expect(await store.push(BRANCH, "And more", AUTHOR, "model-1")).toEqual({ error: theirs });
 			expect(fake.branches.get(BRANCH)).toBe(taken);
 			expect(fake.filesAt(BRANCH)).toEqual(FILES);
 		});
@@ -328,7 +341,7 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 			fake.branches.set(BRANCH, made);
 
 			await store.writeFile(`${REPO}/docs/new.md`, "new\n");
-			expect(await store.push(BRANCH, "Mine", AUTHOR)).toEqual({ error: theirs });
+			expect(await store.push(BRANCH, "Mine", AUTHOR, "model-1")).toEqual({ error: theirs });
 			expect(fake.branches.get(BRANCH)).toBe(made);
 			expect(fake.modesAt(BRANCH)["README.md"]).toBe("100755");
 		});
@@ -339,12 +352,12 @@ describe("a commit GitHub took and the conversation has no note of", () => {
 		await checkedOut(FILES, async ({ fake, store }) => {
 			const taken = await removed(fake, "src/index.ts");
 			await store.writeFile(`${REPO}/README.md`, "# Mine\n");
-			expect(await store.push(BRANCH, "Mine", AUTHOR)).toEqual({ error: theirs });
+			expect(await store.push(BRANCH, "Mine", AUTHOR, "model-1")).toEqual({ error: theirs });
 			expect(fake.branches.get(BRANCH)).toBe(taken);
 
 			// Once the push deletes that file too, the commit holds nothing the push would undo.
 			await store.deleteFile(`${REPO}/src/index.ts`);
-			expect(await store.push(BRANCH, "Mine", AUTHOR)).toMatchObject({ pushed: true });
+			expect(await store.push(BRANCH, "Mine", AUTHOR, "model-1")).toMatchObject({ pushed: true });
 			expect(fake.commitAt(BRANCH)?.parents).toEqual([taken]);
 			const { "src/index.ts": _gone, ...rest } = FILES;
 			expect(fake.filesAt(BRANCH)).toEqual({ ...rest, "README.md": "# Mine\n" });
@@ -371,7 +384,7 @@ describe("a name that changes only in case", () => {
 				error: expect.stringContaining(`differs only in case from ${REPO}/Readme.md`),
 			});
 
-			expect(await store.push(BRANCH, "Rename", AUTHOR)).toMatchObject({ pushed: true });
+			expect(await store.push(BRANCH, "Rename", AUTHOR, "model-1")).toMatchObject({ pushed: true });
 			expect(fake.filesAt(BRANCH)).toEqual({
 				"Readme.md": "# Renamed\n",
 				"Docs/guide.md": "# Guide\n",
@@ -393,7 +406,7 @@ describe("what GitHub refuses, told as what it is", () => {
 			);
 			expect(await store.readFile(`${REPO}/README.md`)).toEqual({ error: LIMITED });
 			await store.writeFile(`${REPO}/new.md`, "new\n");
-			expect(await store.push(BRANCH, "New", AUTHOR)).toEqual({ error: LIMITED });
+			expect(await store.push(BRANCH, "New", AUTHOR, "model-1")).toEqual({ error: LIMITED });
 
 			// A 403 that names no limit is the permission it says it is.
 			answering(fake, (route) =>
@@ -451,7 +464,7 @@ describe("what GitHub refuses, told as what it is", () => {
 				);
 			});
 			await store.writeFile(`${REPO}/new.md`, "new\n");
-			const pushed = await store.push(BRANCH, "New", AUTHOR);
+			const pushed = await store.push(BRANCH, "New", AUTHOR, "model-1");
 			expect(pushed).toEqual({
 				error:
 					"GitHub gave the workspace's GitHub App no access to write to acme/site: the app does not hold the Contents permission, read and write, or no longer reaches the repository. An owner or admin can check its permissions.",
@@ -478,7 +491,7 @@ describe("what GitHub refuses, told as what it is", () => {
 					: undefined,
 			);
 			await store.writeFile(`${REPO}/new.md`, "new\n");
-			const pushed = await store.push(BRANCH, "New", AUTHOR);
+			const pushed = await store.push(BRANCH, "New", AUTHOR, "model-1");
 			expect(pushed).toEqual({
 				error:
 					'GitHub refused the change: GitHub answered 422: {"message":"Bearer [token] may not name that author"}',
@@ -697,7 +710,7 @@ describe("calls that run side by side", () => {
 			]);
 			expect(rowCounts(storage).changes).toBe(3);
 			// What was kept can be proposed.
-			expect(await store.push(BRANCH, "Rename", AUTHOR)).toMatchObject({ pushed: true });
+			expect(await store.push(BRANCH, "Rename", AUTHOR, "model-1")).toMatchObject({ pushed: true });
 			expect(Object.keys(fake.filesAt(BRANCH)).sort()).toEqual(
 				["Readme.md", "docs/guide.md", "new", "src/index.ts"].sort(),
 			);

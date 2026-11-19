@@ -1300,17 +1300,21 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     run pushes the work and opens the pull request as a draft; the run is not failed for it. An
     open pull request stays as it is: the REST API opens drafts but does not make one of an open
     pull request.
-  - The body ends with a section the tool writes (`checksSection`): each command, its exit code
-    and duration, and the commit. Its heading (`CHECKS_HEADING`) is the tool's: a line of the
+  - Before the AI disclosure, the body includes a section the tool writes (`checksSection`)
+    with each command, its exit code and duration, and the commit. Its heading (`CHECKS_HEADING`) is the tool's: a line of the
     model's body that is the heading, however it is marked up, is removed with what follows it up
     to the next heading, whether the repository has checks or not. That removal is by the line's
     letters, without its tags, links and character references (`withoutChecksSection`); it is not
     a Markdown renderer, and a heading made to look the same in some other way gets past it. So
     the guarantee is the section's place, which the section states: the tool's is appended after
-    everything the model wrote, and is the last one. For that to hold on the page, what the body
+    everything the model wrote and is the last section. For that to hold on the page, what the body
     left open is closed first (`closed`): a code fence, an HTML comment, processing instruction,
     CDATA or declaration, and a `<details>`, each of which would otherwise take the section in
-    and show it as code or not at all. Nothing of a command's output goes into the body.
+    and show it as code or not at all. A text with a tag in it is followed by the line
+    `<!-- " ' -->`: a tag left unfinished in an HTML block, such as `<div title="cut`, would take
+    what follows into an attribute, and the line ends it whatever quote is open, while it is a
+    comment, which shows nothing, where none is. The tool cannot tell which lines Markdown passes
+    on as HTML, so it does not try. Nothing of a command's output goes into the body.
   - A command gets 10 minutes, a call's checks 20 and a run's 40, counted where the tools are made
     for the turn. A command stopped at its limit is timed out, never passed. Checks a call has no
     time left for fail the round; when the run has none left before a round begins, the checks
@@ -1550,6 +1554,19 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     schema and records nothing without the turn's token, or once the turn has ended.
   - A turn's CLI can end a moment before its last request is reported, so the turn waits up to
     five seconds for the requests still open before it closes the run.
+
+### AI disclosure on GitHub
+
+To support EU AI Act Article 50 transparency, every pull request an agent opens or updates
+ends with ``Written and opened by `<agent name>`, an AI agent in Gateweave Agents.`` and the
+machine-readable comment `<!-- AI-Disclosure: mode=machine-generated -->`. If the cleaned name is
+empty, the sentence is `Written and opened by an AI agent in Gateweave Agents.` The disclosure
+follows the checks section when there is one.
+
+Agent commits carry the `Assisted-by: Gateweave Agents:<model id>` trailer and use the
+agent's bot identity as author and committer. If the engine chooses its own model, the
+trailer uses the engine's name. Commits already on a remote are never rewritten.
+The disclosure and trailer cannot be turned off.
 
 ## Chat
 

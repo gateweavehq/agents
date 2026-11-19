@@ -213,6 +213,7 @@ function listing(session: string): object[] {
 
 const JOB: EngineJob = {
 	engine: "opencode",
+	author: { name: "Builder", email: "bot@users.noreply.github.com" },
 	prompt: "And the folders?",
 	history: "The person: List the files",
 	system: "Be brief.",
@@ -238,7 +239,7 @@ async function linesOf(stream: ReadableStream<Uint8Array>): Promise<Record<strin
 }
 
 describe("a turn on OpenCode's server", () => {
-	it("starts a session with the conversation so far, and prints the turn as `opencode run` does", async () => {
+	it("R9: starts with the bot identity and conversation history and streams the turn's events", async () => {
 		const server = new FakeServer();
 		server.onPrompt = listing;
 		const turn = await startOpenCodeTurn(server, JOB, undefined);
@@ -263,7 +264,15 @@ describe("a turn on OpenCode's server", () => {
 		await turn.ended;
 		expect(turn).toMatchObject({ session: "ses_1", logFrom: 42 });
 
-		expect(server.ensured).toEqual([openCodeSettings(JOB)]);
+		expect(server.ensured).toEqual([
+			{
+				...openCodeSettings(JOB),
+				GIT_AUTHOR_NAME: "Builder",
+				GIT_AUTHOR_EMAIL: "bot@users.noreply.github.com",
+				GIT_COMMITTER_NAME: "Builder",
+				GIT_COMMITTER_EMAIL: "bot@users.noreply.github.com",
+			},
+		]);
 		expect(server.requested("POST", "/session")[0]?.body).toEqual({
 			title: OPENCODE_SESSION_TITLE,
 			permission: [
@@ -320,7 +329,13 @@ describe("a turn on OpenCode's server", () => {
 		expect(paths.indexOf("POST /mcp/gateweave/connect")).toBeLessThan(
 			paths.indexOf("POST /session/ses_1/prompt_async"),
 		);
-		expect(server.ensured[0]).toEqual(openCodeSettings(job));
+		expect(server.ensured[0]).toEqual({
+			...openCodeSettings(job),
+			GIT_AUTHOR_NAME: JOB.author.name,
+			GIT_AUTHOR_EMAIL: JOB.author.email,
+			GIT_COMMITTER_NAME: JOB.author.name,
+			GIT_COMMITTER_EMAIL: JOB.author.email,
+		});
 	});
 
 	it("waits for a server that has just started", async () => {

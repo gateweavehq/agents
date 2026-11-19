@@ -65,7 +65,7 @@ export type PushResult = { head: string; pushed: boolean } | { error: string };
 
 /** A sandbox that pushes the conversation's branch. `RunnerSandbox` is the real one. */
 export interface PushPort {
-	push(branch: string, message: string, author: CommitAuthor): Promise<PushResult>;
+	push(branch: string, message: string, author: CommitAuthor, model: string): Promise<PushResult>;
 }
 
 /** How a commit went: the commit the checkout is at, or why there is none to propose. */
@@ -77,7 +77,7 @@ export type CommitResult = { head: string } | { error: string };
  */
 export interface CheckPort extends CheckRunner {
 	/** Commits every change, unless there is none, and says which commit the work is at. */
-	commit(message: string, author: CommitAuthor): Promise<CommitResult>;
+	commit(message: string, author: CommitAuthor, model: string): Promise<CommitResult>;
 	/**
 	 * Pushes `head` to `branch` and commits nothing: what a check, or anything else on the machine,
 	 * changed since the commit stays out of the push.
@@ -148,7 +148,12 @@ export interface PullRequestToolOptions {
 	github: PullRequestPort;
 	repository: SandboxRepository;
 	branch: string;
-	/** Who the commit is by. Asked only when a push happens, since it may take a lookup. */
+	agentName: string;
+	model: string;
+	/**
+	 * Who the commit is by. Gateweave's own loop asks only when a push happens, since it may take a
+	 * lookup; an engine turn knows it already, as the engine commits under the same identity.
+	 */
 	author: () => Promise<CommitAuthor>;
 	/** Puts the pull request on the run. */
 	record: (outcome: PullRequestOutcome) => Promise<void>;
@@ -157,7 +162,19 @@ export interface PullRequestToolOptions {
 
 /** `open_pull_request`, traced in `run` like the sandbox's other tools. */
 export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
-	const { sandbox, checks, ready, github, repository, branch, author, record, run } = options;
+	const {
+		sandbox,
+		checks,
+		ready,
+		github,
+		repository,
+		branch,
+		agentName,
+		model,
+		author,
+		record,
+		run,
+	} = options;
 	const name = `${repository.owner}/${repository.name}`;
 	// The tools are made once for a turn, which is one run: what its calls spent adds up here.
 	const spent: ChecksSpent = { failedRounds: 0, seconds: 0 };
@@ -179,7 +196,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		title: string,
 		signal: AbortSignal | undefined,
 	): Promise<{ pushed: PushResult; round: CheckRound; head: string }> => {
-		const committed = await machine.commit(title, await author());
+		const committed = await machine.commit(title, await author(), model);
 		if ("error" in committed) throw new Error(committed.error);
 		const round = await runChecks(commands, machine, committed.head, run, spent, {
 			now: checks?.now,
@@ -233,9 +250,9 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		let section: string | null = null;
 		let about: Pick<PullRequestOutcome, "checks" | "draft" | "note"> = {};
 		if (commands.length === 0) {
-			pushed = await sandbox.push(branch, title, await author());
+			pushed = await sandbox.push(branch, title, await author(), model);
 		} else if (!checks?.sandbox) {
-			pushed = await sandbox.push(branch, title, await author());
+			pushed = await sandbox.push(branch, title, await author(), model);
 			section = checksNotRunSection(NO_SANDBOX);
 			about = { checks: "not run", draft: false };
 		} else {
@@ -253,7 +270,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		if ("error" in pushed) throw new Error(pushed.error);
 		// The model's own copy of the section goes whether checks are set or not: the heading is
 		// the tool's, and a reader takes what stands under it as the tool's word.
-		const written = pullRequestBody(body, section);
+		const written = pullRequestBody(body, section, agentName);
 		let made: Awaited<ReturnType<PullRequestPort["propose"]>>;
 		try {
 			made = await github.propose({

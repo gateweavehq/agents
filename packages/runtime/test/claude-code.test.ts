@@ -627,7 +627,7 @@ describe("an agent whose engine is Claude Code", () => {
 		expect(trace.filter((span) => span.kind === "tool")).toEqual([]);
 	});
 
-	it("R7: holds Claude Code's pull request to the repository's checks, since it opens it with the same tool", async () => {
+	it("R8/R9: Claude Code proposes with the configured model and the same bot identity it runs with", async () => {
 		const github: string[] = [];
 		fakeModel(() => new Response(null, { status: 500 }), {
 			"api.github.com": async (request) => {
@@ -669,7 +669,12 @@ describe("an agent whose engine is Claude Code", () => {
 		await vi.waitFor(async () => expect((await machine.seen()).engine).toHaveLength(1), {
 			timeout: 10_000,
 		});
-		const token = (await machine.seen()).engine[0]?.access.tools?.token ?? "";
+		const [job] = (await machine.seen()).engine;
+		expect(job?.author).toEqual({
+			name: "Builder",
+			email: "141234+gateweave-agents[bot]@users.noreply.github.com",
+		});
+		const token = job?.access.tools?.token ?? "";
 		const client = await createMCPClient({
 			transport: {
 				type: "http",
@@ -702,7 +707,12 @@ describe("an agent whose engine is Claude Code", () => {
 		const opened = await propose();
 		expect(opened.isError).toBeFalsy();
 		expect(JSON.stringify(opened.content)).toContain("https://github.com/acme/site/pull/12");
-		expect((await machine.seen()).commitPushes).toEqual([
+		const seen = await machine.seen();
+		expect(seen.commits).toEqual([
+			{ message: "Fix the cart", author: job?.author, model: "claude-sonnet-5-5" },
+			{ message: "Fix the cart", author: job?.author, model: "claude-sonnet-5-5" },
+		]);
+		expect(seen.commitPushes).toEqual([
 			{ branch: `gateweave/${conversationId}`, head: "2".repeat(40) },
 		]);
 		expect(github.filter((route) => route.includes("/pulls"))).toEqual([
@@ -757,8 +767,9 @@ describe("Claude Code's command", () => {
 		expect(argv[argv.indexOf("--allowedTools") + 1]).not.toContain("mcp__");
 	});
 
-	it("makes every model it would choose the agent's, since the sandbox calls no other", () => {
+	it("R9: makes every model it would choose the agent's, since the sandbox calls no other", () => {
 		const job = {
+			author: { name: "Builder", email: "bot@users.noreply.github.com" },
 			engine: "claude-code" as const,
 			prompt: "List the files",
 			history: null,
@@ -774,6 +785,12 @@ describe("Claude Code's command", () => {
 			},
 		};
 		const { argv, env } = claudeCodeCommand(job, "s", false);
+		expect(env).toMatchObject({
+			GIT_AUTHOR_NAME: "Builder",
+			GIT_AUTHOR_EMAIL: "bot@users.noreply.github.com",
+			GIT_COMMITTER_NAME: "Builder",
+			GIT_COMMITTER_EMAIL: "bot@users.noreply.github.com",
+		});
 		expect(argv[argv.indexOf("--model") + 1]).toBe("claude-sonnet-5-5");
 		expect(env).toMatchObject(CLAUDE_CODE_ENV);
 		expect(env).toMatchObject({

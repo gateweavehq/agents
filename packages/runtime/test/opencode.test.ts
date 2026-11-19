@@ -429,6 +429,7 @@ describe("an agent whose engine is OpenCode", () => {
 describe("OpenCode's settings", () => {
 	const job: EngineJob = {
 		engine: "opencode",
+		author: { name: "Builder", email: "bot@users.noreply.github.com" },
 		prompt: "And the folders?",
 		history: "The person: List the files",
 		system: "Be brief.",
