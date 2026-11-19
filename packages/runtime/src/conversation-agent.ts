@@ -3,6 +3,7 @@ import { sharedApp } from "@gateweave/agents-github";
 import {
 	type AgentSnapshot,
 	conversationBranch,
+	EDGE_PART,
 	ENGINE_NAMES,
 	MAX_SANDBOX_STEPS,
 	MAX_STEPS,
@@ -721,7 +722,11 @@ ${runPageNote(runs, turn.runId)}`
 									run,
 								)
 							: {}),
-						...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
+						...edgeTools(edges, (edge, text, { toolCallId }, signal) =>
+							this.#takeEdge(run, edge, text, signal, (runId) =>
+								writer.write({ type: EDGE_PART, data: { toolCallId, runId } }),
+							),
+						),
 					};
 					const system = [
 						agent.instructions,
@@ -886,8 +891,12 @@ ${runPageNote(runs, turn.runId)}`
 								run,
 							})
 						: {}),
-					...edgeTools(edges, (edge, text, edgeSignal) =>
-						this.#takeEdge(run, edge, text, edgeSignal),
+					// An engine's chat knows the call by the engine's own id, not by the id the MCP path hands
+					// the tool, so the part names the tool and its text for it to match.
+					...edgeTools(edges, (edge, text, { toolName }, edgeSignal) =>
+						this.#takeEdge(run, edge, text, edgeSignal, (runId) =>
+							writer.write({ type: EDGE_PART, data: { toolName, text, runId } }),
+						),
 					),
 				};
 				const offered = Object.keys(tools).length > 0;
@@ -984,6 +993,7 @@ ${runPageNote(runs, turn.runId)}`
 		edge: TurnEdge,
 		text: string,
 		signal?: AbortSignal,
+		note?: (nestedRunId: string) => void,
 	): Promise<string> {
 		const env = this.env as unknown as RuntimeEnv;
 		const { workspaceId } = this.#parties();
@@ -1013,6 +1023,8 @@ ${runPageNote(runs, turn.runId)}`
 		}
 		const error = "error" in outcome ? outcome.error : null;
 		run.edgeEnded(span, { childRunId: outcome.runId, error });
+		// The reply's call names the run it started, so the chat can open that run's page.
+		if (outcome.runId !== null) note?.(outcome.runId);
 		if ("error" in outcome) {
 			// A turn the registry refused leaves a conversation it never heard of.
 			if (outcome.runId === null) await nested.destroy().catch(() => {});
