@@ -14,6 +14,13 @@ export class FakeOAuthMcp {
 	readonly #refresh = new Map<string, number>();
 	readonly #valid = new Set<string>();
 	#issued = 0;
+	#registered = 0;
+	#deadClients = new Set<string>();
+	#refreshFailure: "503" | "network" | "invalid-client" | "malformed" | null = null;
+	#deniedStatus: 401 | 403 | null = null;
+	#invalidBearer = false;
+	#refreshDelayMs = 0;
+	#nonRotatingRefresh = false;
 
 	constructor(host: string) {
 		this.origin = `https://${host}`;
@@ -51,6 +58,37 @@ export class FakeOAuthMcp {
 		this.#valid.clear();
 	}
 
+	/** Revokes every refresh token as the provider can after a person removes the grant. */
+	revokeRefreshTokens() {
+		this.#refresh.clear();
+	}
+
+	delayRefresh(ms: number) {
+		this.#refreshDelayMs = ms;
+	}
+
+	keepRefreshToken() {
+		this.#nonRotatingRefresh = true;
+	}
+
+	failNextRefresh(kind: "503" | "network" | "invalid-client" | "malformed") {
+		this.#refreshFailure = kind;
+	}
+
+	rejectClient(clientId: string) {
+		this.#deadClients.add(clientId);
+	}
+
+	denyMcp(status: 401 | 403 | null) {
+		this.#deniedStatus = status;
+		this.#invalidBearer = false;
+	}
+
+	denyInvalidBearer() {
+		this.#deniedStatus = 401;
+		this.#invalidBearer = true;
+	}
+
 	handle = async (request: Request): Promise<Response> => {
 		const url = new URL(request.url);
 		this.requests.push(`${request.method} ${url.pathname}`);
@@ -71,8 +109,9 @@ export class FakeOAuthMcp {
 		}
 		if (url.pathname === "/register" && request.method === "POST") {
 			const metadata = (await request.json()) as Record<string, unknown>;
+			this.#registered++;
 			return Response.json(
-				{ ...metadata, client_id: "client-1", client_id_issued_at: 1 },
+				{ ...metadata, client_id: `client-${this.#registered}`, client_id_issued_at: 1 },
 				{ status: 201 },
 			);
 		}
@@ -89,6 +128,8 @@ export class FakeOAuthMcp {
 			const grant = this.#codes.get(code);
 			this.#codes.delete(code);
 			if (!grant || grant.redirect !== form.get("redirect_uri")) return refuse();
+			if (this.#deadClients.has(grant.client))
+				return Response.json({ error: "invalid_client" }, { status: 400 });
 			const digest = await crypto.subtle.digest(
 				"SHA-256",
 				new TextEncoder().encode(String(form.get("code_verifier") ?? "")),
@@ -101,18 +142,27 @@ export class FakeOAuthMcp {
 			return Response.json(this.#tokens());
 		}
 		if (form.get("grant_type") === "refresh_token") {
+			if (this.#refreshDelayMs)
+				await new Promise((resolve) => setTimeout(resolve, this.#refreshDelayMs));
+			const failure = this.#refreshFailure;
+			this.#refreshFailure = null;
+			if (failure === "503") return new Response("Unavailable", { status: 503 });
+			if (failure === "network") throw new Error("Network failure");
+			if (failure === "malformed") return new Response("not JSON", { status: 200 });
+			if (failure === "invalid-client")
+				return Response.json({ error: "invalid_client" }, { status: 400 });
 			const refresh = String(form.get("refresh_token") ?? "");
 			if (!this.#refresh.has(refresh)) return refuse();
-			this.#refresh.delete(refresh);
-			return Response.json(this.#tokens());
+			if (!this.#nonRotatingRefresh) this.#refresh.delete(refresh);
+			return Response.json(this.#tokens(this.#nonRotatingRefresh ? refresh : undefined));
 		}
 		return refuse();
 	}
 
-	#tokens() {
+	#tokens(refreshToken?: string) {
 		this.#issued += 1;
 		const access = `access-${this.#issued}`;
-		const refresh = `refresh-${this.#issued}`;
+		const refresh = refreshToken ?? `refresh-${this.#issued}`;
 		this.#valid.add(access);
 		this.#refresh.set(refresh, this.#issued);
 		return { access_token: access, refresh_token: refresh, token_type: "Bearer", expires_in: 3600 };
@@ -121,6 +171,15 @@ export class FakeOAuthMcp {
 	async #mcp(request: Request): Promise<Response> {
 		const bearer = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
 		this.bearers.push(bearer);
+		if (this.#deniedStatus)
+			return new Response("Policy denied", {
+				status: this.#deniedStatus,
+				headers: this.#invalidBearer
+					? {
+							"www-authenticate": `Bearer resource_metadata="${this.origin}/.well-known/oauth-protected-resource", error="invalid_token"`,
+						}
+					: {},
+			});
 		if (!this.#valid.has(bearer)) {
 			return new Response("Unauthorized", {
 				status: 401,

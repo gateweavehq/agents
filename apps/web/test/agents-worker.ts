@@ -150,7 +150,15 @@ export interface RegistryStub {
 	editMcpServer(input: McpServerEditInput): Promise<number>;
 	listMcpServers(): Promise<McpServerEntry[]>;
 	mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null>;
-	mcpOAuthOpen(assetId: string): Promise<{ serverUrl: string; tokens: unknown } | null>;
+	mcpOAuthOpen(
+		assetId: string,
+	): Promise<{ serverUrl: string; verifier: string | null; tokens: unknown } | null>;
+	mcpRefreshClaim(assetId: string): Promise<{ kind: "claimed"; lease: string } | { kind: "busy" }>;
+	mcpRefreshRelease(assetId: string, lease: string): Promise<void>;
+	mcpOAuthSave(
+		assetId: string,
+		parts: { verifier?: string | null; tokens?: unknown },
+	): Promise<boolean>;
 	mcpOAuthBegin(
 		assetId: string,
 		by: string,

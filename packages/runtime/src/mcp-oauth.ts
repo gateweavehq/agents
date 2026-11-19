@@ -12,6 +12,27 @@ import {
 	type OAuthClientProvider,
 	type OAuthTokens,
 } from "@ai-sdk/mcp";
+import { z } from "zod";
+
+const safeUrl = z
+	.string()
+	.url()
+	.refine((value) => {
+		if (!URL.canParse(value)) return false;
+		return !["javascript:", "data:", "vbscript:"].includes(new URL(value).protocol);
+	});
+
+const refreshResponse = z.object({
+	access_token: z.string(),
+	token_type: z.string(),
+	refresh_token: z.string().optional(),
+	id_token: z.string().optional(),
+	expires_in: z.number().optional(),
+	scope: z.string().optional(),
+	issuer: safeUrl.optional(),
+	authorization_server: safeUrl.optional(),
+	token_endpoint: safeUrl.optional(),
+});
 
 /** What the registry keeps for a server, as `mcpOAuthOpen` and `mcpOAuthSave` take and give it. */
 export interface OAuthStore {
@@ -21,13 +42,33 @@ export interface OAuthStore {
 		verifier: string | null;
 		tokens: unknown;
 	} | null>;
+	mcpRefreshClaim?(assetId: string): Promise<{ kind: "claimed"; lease: string } | { kind: "busy" }>;
+	mcpRefreshRelease?(assetId: string, lease: string): Promise<void>;
+	mcpHealthInvalidate?(assetId: string): Promise<void>;
 	mcpOAuthSave(
 		assetId: string,
-		parts: { client?: unknown; verifier?: string | null; tokens?: unknown },
+		parts: {
+			client?: unknown;
+			verifier?: string | null;
+			tokens?: unknown;
+			expectedTokens?: unknown;
+			expectedClient?: unknown;
+			expectedVerifier?: string | null;
+			unlessSigningIn?: boolean;
+		},
 	): Promise<boolean>;
 }
 
 /** Why a turn cannot use a connection any more: someone has to sign in again. */
+const REFRESH_TIMEOUT_MS = 15_000;
+const REFRESH_WAIT_MS = 20_000;
+
+export class OAuthRefreshWaitError extends Error {
+	constructor() {
+		super("The sign-in server is busy; it will be checked again");
+	}
+}
+
 export const SIGN_IN_AGAIN =
 	"Its OAuth connection no longer works. An owner or admin can connect it again on the MCP page";
 
@@ -52,6 +93,9 @@ export interface ProviderOptions {
 	 * themselves rather than refreshing the earlier person's tokens.
 	 */
 	freshSignIn?: boolean;
+	healthCheck?: boolean;
+	/** The URL whose credentials this provider may open. */
+	serverUrl?: string;
 }
 
 export class RegistryOAuthProvider implements OAuthClientProvider {
@@ -59,6 +103,28 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	readonly #assetId: string;
 	readonly #options: ProviderOptions;
 	#loaded: Awaited<ReturnType<OAuthStore["mcpOAuthOpen"]>> | undefined;
+	#refreshLease: string | undefined;
+	#refreshSource: unknown | undefined;
+	#adoptedRefresh = false;
+	#clientRejected = false;
+	#healthCheck = false;
+	#serverUrl: string | undefined;
+
+	bindServerUrl(serverUrl: string): void {
+		this.#serverUrl = serverUrl;
+	}
+
+	get clientRejected(): boolean {
+		return this.#clientRejected;
+	}
+
+	async invalidateHealth(): Promise<void> {
+		await this.#store.mcpHealthInvalidate?.(this.#assetId);
+	}
+
+	markHealthCheck(): void {
+		this.#healthCheck = true;
+	}
 
 	constructor(store: OAuthStore, assetId: string, options: ProviderOptions) {
 		this.#store = store;
@@ -85,11 +151,29 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 
 	async #data() {
 		this.#loaded ??= await this.#store.mcpOAuthOpen(this.#assetId);
+		this.#assertServer(this.#loaded);
 		return this.#loaded;
 	}
 
-	async #save(parts: { client?: unknown; verifier?: string | null; tokens?: unknown }) {
-		await this.#store.mcpOAuthSave(this.#assetId, parts);
+	#assertServer(data: Awaited<ReturnType<OAuthStore["mcpOAuthOpen"]>>) {
+		const target = this.#serverUrl ?? this.#options.serverUrl;
+		if (data && target && data.serverUrl !== target) throw new OAuthSignInNeeded();
+	}
+
+	async #save(parts: {
+		client?: unknown;
+		verifier?: string | null;
+		tokens?: unknown;
+		expectedTokens?: unknown;
+		expectedClient?: unknown;
+		expectedVerifier?: string | null;
+		unlessSigningIn?: boolean;
+	}) {
+		const saved = await this.#store.mcpOAuthSave(this.#assetId, parts);
+		if (!saved) {
+			this.#loaded = await this.#store.mcpOAuthOpen(this.#assetId);
+			return;
+		}
 		const data = await this.#data();
 		if (data) this.#loaded = { ...data, ...parts } as typeof data;
 	}
@@ -103,7 +187,13 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveClientInformation(client: OAuthClientInformation): Promise<void> {
-		await this.#save({ client });
+		await this.#save({ client, ...(!this.#options.onRedirect ? { unlessSigningIn: true } : {}) });
+	}
+
+	async storedTokens(): Promise<unknown> {
+		const data = await this.#store.mcpOAuthOpen(this.#assetId);
+		this.#assertServer(data);
+		return data?.tokens ?? null;
 	}
 
 	async tokens(): Promise<OAuthTokens | undefined> {
@@ -112,10 +202,119 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	}
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
-		await this.#save({ tokens });
+		try {
+			if (this.#adoptedRefresh) return;
+			await this.#save({
+				tokens,
+				...(this.#options.freshSignIn
+					? {}
+					: { expectedTokens: this.#refreshSource ?? this.#loaded?.tokens }),
+			});
+		} finally {
+			this.#adoptedRefresh = false;
+			this.#refreshSource = undefined;
+			await this.releaseRefresh();
+		}
+	}
+
+	async releaseRefresh(): Promise<void> {
+		const lease = this.#refreshLease;
+		this.#refreshLease = undefined;
+		if (lease) await this.#store.mcpRefreshRelease?.(this.#assetId, lease);
+	}
+
+	/** Serializes rotating refresh tokens across checks and turns for this connection. */
+	fetchWithRefreshLease(fetchFn: typeof fetch, callerSignal?: AbortSignal): typeof fetch {
+		return async (input, init) => {
+			const waitSignal = callerSignal
+				? init?.signal
+					? AbortSignal.any([callerSignal, init.signal])
+					: callerSignal
+				: init?.signal;
+			const body = init?.body;
+			const form =
+				typeof body === "string"
+					? new URLSearchParams(body)
+					: body instanceof URLSearchParams
+						? body
+						: null;
+			if (form?.get("grant_type") !== "refresh_token" || !this.#store.mcpRefreshClaim)
+				return fetchFn(input, init);
+			const expected = form.get("refresh_token");
+			const loadedAccess = (await this.#data())?.tokens as OAuthTokens | null | undefined;
+			const deadline = Date.now() + REFRESH_WAIT_MS;
+			let delay = 100;
+			for (;;) {
+				if (waitSignal?.aborted) throw waitSignal.reason;
+				if (Date.now() >= deadline) throw new OAuthRefreshWaitError();
+				const claim = await this.#store.mcpRefreshClaim(this.#assetId);
+				if (claim.kind === "busy") {
+					await new Promise<void>((resolve, reject) => {
+						const wait = Math.min(delay, Math.max(0, deadline - Date.now()));
+						const timer = setTimeout(() => {
+							waitSignal?.removeEventListener("abort", abort);
+							resolve();
+						}, wait);
+						const abort = () => {
+							clearTimeout(timer);
+							reject(waitSignal?.reason);
+						};
+						waitSignal?.addEventListener("abort", abort, { once: true });
+						if (waitSignal?.aborted) abort();
+					});
+					delay = Math.min(delay * 2, 1000);
+					continue;
+				}
+				this.#refreshLease = claim.lease;
+				try {
+					if (waitSignal?.aborted) throw waitSignal.reason;
+					const fresh = await this.#store.mcpOAuthOpen(this.#assetId);
+					this.#assertServer(fresh);
+					const tokens = fresh?.tokens as OAuthTokens | null | undefined;
+					this.#loaded = fresh;
+					if (!tokens) throw new OAuthSignInNeeded();
+					if (tokens?.access_token && tokens.access_token !== loadedAccess?.access_token) {
+						this.#adoptedRefresh = true;
+						await this.releaseRefresh();
+						return Response.json(tokens);
+					}
+					if (tokens?.refresh_token && tokens.refresh_token !== expected) {
+						this.#adoptedRefresh = true;
+						await this.releaseRefresh();
+						return Response.json(tokens);
+					}
+					this.#refreshSource = loadedAccess;
+					if (waitSignal?.aborted) throw waitSignal.reason;
+					const response = await fetchFn(input, {
+						...init,
+						signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+					});
+					if (!response.ok) {
+						this.#refreshSource = undefined;
+						await this.releaseRefresh();
+					}
+					if (response.ok) {
+						const parsed = await response
+							.clone()
+							.json()
+							.catch(() => null);
+						if (!refreshResponse.safeParse(parsed).success) {
+							this.#refreshSource = undefined;
+							await this.releaseRefresh();
+						}
+					}
+					return response;
+				} catch (error) {
+					this.#refreshSource = undefined;
+					await this.releaseRefresh();
+					throw error;
+				}
+			}
+		};
 	}
 
 	async saveCodeVerifier(verifier: string): Promise<void> {
+		if (!this.#options.onRedirect) throw new OAuthSignInNeeded();
 		await this.#save({ verifier });
 	}
 
@@ -135,11 +334,41 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 		this.#options.onRedirect(url);
 	}
 
-	async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier"): Promise<void> {
-		if (scope === "all") await this.#save({ client: null, tokens: null, verifier: null });
-		else if (scope === "client") await this.#save({ client: null });
-		else if (scope === "tokens") await this.#save({ tokens: null });
-		else await this.#save({ verifier: null });
+	async invalidateCredentials(
+		scope: "all" | "client" | "tokens" | "verifier",
+		context?: { tokens: OAuthTokens },
+	): Promise<void> {
+		const sent = await this.#data();
+		if (scope === "all") {
+			this.#clientRejected = true;
+			if (this.#options.healthCheck || this.#healthCheck) return;
+			await this.#save({
+				client: null,
+				tokens: null,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: sent?.tokens ?? null,
+				unlessSigningIn: true,
+			});
+		} else if (scope === "client")
+			await this.#save({
+				client: null,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: sent?.tokens ?? null,
+				unlessSigningIn: true,
+			});
+		else if (scope === "tokens")
+			await this.#save({
+				tokens: null,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: context?.tokens ?? sent?.tokens ?? null,
+			});
+		else if (this.#options.onRedirect)
+			await this.#save({
+				verifier: null,
+				expectedClient: sent?.client ?? null,
+				expectedTokens: sent?.tokens ?? null,
+				expectedVerifier: sent?.verifier ?? null,
+			});
 	}
 }
 
@@ -158,6 +387,7 @@ export async function startOAuth(
 		redirectUrl: flow.redirectUrl,
 		state: flow.state,
 		freshSignIn: true,
+		serverUrl: flow.serverUrl,
 		onRedirect: (url) => {
 			destination = url;
 		},
@@ -176,14 +406,29 @@ export async function finishOAuth(
 		redirectUrl: flow.redirectUrl,
 		state: flow.state,
 		freshSignIn: true,
-	});
-	const result = await auth(provider, {
 		serverUrl: flow.serverUrl,
-		fetchFn: fetchWithoutRedirects,
-		authorizationCode: flow.code,
-		callbackState: flow.state,
-		...(flow.issuer ? { callbackIssuer: flow.issuer } : {}),
 	});
+	const before = await store.mcpOAuthOpen(assetId);
+	let result: Awaited<ReturnType<typeof auth>>;
+	try {
+		result = await auth(provider, {
+			serverUrl: flow.serverUrl,
+			fetchFn: fetchWithoutRedirects,
+			authorizationCode: flow.code,
+			callbackState: flow.state,
+			...(flow.issuer ? { callbackIssuer: flow.issuer } : {}),
+		});
+	} catch (error) {
+		const code = (error as { constructor?: { errorCode?: string } }).constructor?.errorCode;
+		await store.mcpOAuthSave(assetId, {
+			verifier: null,
+			expectedVerifier: before?.verifier ?? null,
+			...(code === "invalid_client" || code === "unauthorized_client"
+				? { client: null, expectedClient: before?.client ?? null }
+				: {}),
+		});
+		throw error;
+	}
 	if (result !== "AUTHORIZED") throw new Error("The server did not grant access");
 	// The verifier was for this sign-in alone.
 	await store.mcpOAuthSave(assetId, { verifier: null });

@@ -3,6 +3,7 @@ import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-r
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { McpOAuthStatus, useMcpOAuthHealth } from "#/components/registry/mcp-oauth-health";
 import { Button } from "#/components/ui/button";
 import { isAdmin, useMyRole, useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
@@ -34,6 +35,7 @@ function message(error: unknown) {
 function McpPage() {
 	const servers = Route.useLoaderData();
 	const { slug } = useWorkspace();
+	const health = useMcpOAuthHealth(slug);
 	const { oauth } = Route.useSearch();
 	const navigate = useNavigate();
 	useDocumentTitle("MCP servers");
@@ -82,7 +84,7 @@ function McpPage() {
 			) : (
 				<ul className="space-y-6">
 					{servers.map((server) => (
-						<ServerCard key={server.asset.id} server={server} />
+						<ServerCard key={server.asset.id} server={server} health={health} />
 					))}
 				</ul>
 			)}
@@ -90,7 +92,13 @@ function McpPage() {
 	);
 }
 
-function ServerCard({ server }: { server: McpServerEntry }) {
+function ServerCard({
+	server,
+	health,
+}: {
+	server: McpServerEntry;
+	health: ReturnType<typeof useMcpOAuthHealth>;
+}) {
 	const { slug } = useWorkspace();
 	const { asset, connection, variables, agents, check } = server;
 
@@ -136,7 +144,7 @@ function ServerCard({ server }: { server: McpServerEntry }) {
 			)}
 
 			{!("problem" in connection) && connection.transport !== "stdio" && (
-				<OAuthConnection server={server} />
+				<OAuthConnection server={server} health={health} />
 			)}
 
 			<section aria-label={`Variables of ${asset.name}`} className="space-y-1">
@@ -193,12 +201,19 @@ function ServerCard({ server }: { server: McpServerEntry }) {
  * The workspace's OAuth connection to a remote server (AGT-78): who made it, and Connect or
  * Disconnect for owners and admins. Connecting sends them through the server's own sign-in.
  */
-function OAuthConnection({ server }: { server: McpServerEntry }) {
+function OAuthConnection({
+	server,
+	health,
+}: {
+	server: McpServerEntry;
+	health: ReturnType<typeof useMcpOAuthHealth>;
+}) {
 	const { slug } = useWorkspace();
 	const router = useRouter();
 	const admin = isAdmin(useMyRole());
 	const [pending, setPending] = useState(false);
 	const { oauth, asset } = server;
+	const healthEntry = health?.find((entry) => entry.assetId === asset.id);
 	const connect = `/api/mcp-oauth/connect?${new URLSearchParams({ workspace: slug, server: asset.id })}`;
 
 	async function disconnect() {
@@ -225,7 +240,13 @@ function OAuthConnection({ server }: { server: McpServerEntry }) {
 							<span className="text-muted-foreground" title={formatDateTime(oauth.connectedAt)}>
 								{formatRelative(oauth.connectedAt)}
 							</span>
-							. Agents that pin it act as them on the server.
+							. Agents that pin it act as them on the server.{" "}
+							<McpOAuthStatus
+								state={healthEntry?.state ?? (health ? "could-not-check" : "checking")}
+								checkedAt={healthEntry?.checkedAt}
+								reason={healthEntry?.reason}
+							/>
+							.
 						</>
 					) : (
 						<span className="text-amber-600 dark:text-amber-500">

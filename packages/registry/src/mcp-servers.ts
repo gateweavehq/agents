@@ -520,6 +520,7 @@ function liveServer(db: Db, assetId: string) {
 export function mcpCheckPlan(
 	db: Db,
 	assetId: string,
+	preferredAgentId?: string,
 ): {
 	assetId: string;
 	name: string;
@@ -529,7 +530,10 @@ export function mcpCheckPlan(
 	const asset = liveServer(db, assetId);
 	if (!asset) return null;
 	const users = pinners(db, assetId);
-	const agent = users.find((user) => user.version === asset.version) ?? users[0];
+	const agent = preferredAgentId
+		? users.find((user) => user.id === preferredAgentId)
+		: (users.find((user) => user.version === asset.version) ?? users[0]);
+	if (preferredAgentId && !agent) return null;
 	return {
 		assetId: asset.id,
 		name: asset.name,
@@ -599,7 +603,7 @@ export function listMcpServers(db: Db): McpServerEntry[] {
 					}
 				: null,
 			oauth:
-				oauth?.sealedTokens && oauth.connectedBy !== null && oauth.connectedAt !== null
+				oauth && oauth.connectedBy !== null && oauth.connectedAt !== null
 					? {
 							connectedBy: oauth.connectedBy,
 							connectedAt: oauth.connectedAt,

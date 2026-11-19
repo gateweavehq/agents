@@ -45,6 +45,7 @@ import { z } from "zod";
 import { changedFields, hostOf } from "#/lib/audit-events";
 import { saveChecksWithAudit } from "#/lib/repository-checks-audit";
 import type { FileDiff } from "#/lib/version-diff";
+import type { McpOAuthHealth } from "#/server/mcp-health";
 
 const id = z.string().min(1).max(64);
 
@@ -785,6 +786,119 @@ export const getMcpServers = createServerFn({ method: "GET" })
 						},
 					}
 				: server,
+		);
+	});
+
+/** Checks only this workspace's current OAuth connections when a page needs their state. */
+export const getMcpOAuthHealth = createServerFn({ method: "GET" })
+	.validator(z.object({ slug: z.string().min(1), agentIds: z.array(id).max(1000).optional() }))
+	.handler(async ({ data }): Promise<McpOAuthHealth[] | null> => {
+		const registry = await registryOf(data.slug);
+		if (!registry) return null;
+		const [
+			{
+				cacheableHealthResult,
+				checkOAuthHealth,
+				currentMissingCredentials,
+				healthAgentId,
+				waitForHealthLease,
+			},
+			{ checkMcpServer, RegistryOAuthProvider },
+			{ waitUntil },
+		] = await Promise.all([
+			import("#/server/mcp-health"),
+			import("@gateweave/agents-runtime"),
+			import("cloudflare:workers"),
+		]);
+		const servers = await registry.listMcpServers();
+		return checkOAuthHealth(
+			servers,
+			async (assetId, signal) => {
+				const entry = servers.find((server) => server.asset.id === assetId);
+				const agentId = healthAgentId(entry, data.agentIds);
+				const claim = await waitForHealthLease(
+					async () => await registry.mcpHealthClaim(assetId, agentId),
+					signal,
+					async (claim) => {
+						if (claim.kind === "claimed") await registry.mcpHealthRelease(assetId, claim.lease);
+					},
+				);
+				if (!claim) return { ok: false, error: "Timed out", kind: "temporary" as const };
+				if (claim.kind === "cached") {
+					return claim.state === "connected"
+						? { ok: true as const, tools: [], checkedAt: claim.checkedAt }
+						: {
+								ok: false as const,
+								error: claim.reason ?? "Could not check",
+								kind:
+									claim.state === "needs-reconnecting"
+										? ("sign-in-again" as const)
+										: ("temporary" as const),
+								checkedAt: claim.checkedAt,
+							};
+				}
+				const claimed = claim.kind === "claimed" ? claim : undefined;
+				let result: Awaited<ReturnType<typeof checkMcpServer>>;
+				let checkedUrl: string | undefined;
+				const beforeTokens = (await registry.mcpOAuthOpen(assetId).catch(() => null))?.tokens;
+				try {
+					const target =
+						beforeTokens === null ? null : await registry.mcpCheckTarget(assetId, agentId);
+					checkedUrl = target && "url" in target ? target.url : undefined;
+					result =
+						beforeTokens === null
+							? { ok: false, error: "Needs reconnecting", kind: "sign-in-again" }
+							: target
+								? await checkMcpServer(
+										target,
+										(id) => new RegistryOAuthProvider(registry, id, { healthCheck: true }),
+										signal,
+									)
+								: {
+										ok: false as const,
+										error: "It could not be reached",
+										kind: "temporary" as const,
+									};
+				} catch {
+					result = {
+						ok: false as const,
+						error: "It could not be reached",
+						kind: "temporary" as const,
+					};
+				}
+				let completed = false;
+				let checkedAt: number | undefined;
+				try {
+					const after = await registry.mcpOAuthOpen(assetId);
+					const afterTokens = after?.tokens;
+					if (!cacheableHealthResult(beforeTokens, afterTokens, result))
+						return currentMissingCredentials(checkedUrl, after?.serverUrl, afterTokens, result)
+							? result
+							: { ok: false, error: "Could not check", kind: "temporary" as const };
+					checkedAt = Date.now();
+					completed = await registry.mcpHealthComplete(
+						assetId,
+						{
+							state: result.ok
+								? "connected"
+								: result.kind === "sign-in-again"
+									? "needs-reconnecting"
+									: "could-not-check",
+							...(!result.ok ? { reason: result.error } : {}),
+						},
+						claimed?.generation ?? 0,
+						claimed?.lease ?? "",
+						checkedAt,
+						agentId,
+					);
+				} finally {
+					if (claimed) await registry.mcpHealthRelease(assetId, claimed.lease);
+				}
+				// A changed connection makes this probe's result stale, even for this caller.
+				if (!completed) return { ok: false, error: "Could not check", kind: "temporary" as const };
+				return { ...result, checkedAt };
+			},
+			{ agentIds: data.agentIds, hold: (work) => waitUntil(work) },
 		);
 	});
 

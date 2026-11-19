@@ -254,6 +254,7 @@ import { addToLibrary, createLibraryAsset, editLibraryAsset, removeFromLibrary }
 import {
 	beginOAuth,
 	forgetOAuth,
+	type McpOAuthRow,
 	markConnected,
 	oauthPlace,
 	oauthRow,
@@ -495,6 +496,29 @@ const DESTROYS_PER_ALARM = 10;
  */
 export class RegistryDO extends DurableObject {
 	readonly #db: Db;
+	readonly #mcpHealth = new Map<
+		string,
+		{
+			state: "connected" | "needs-reconnecting" | "could-not-check";
+			checkedAt: number;
+			reason?: string;
+		}
+	>();
+	readonly #mcpHealthRunning = new Map<
+		string,
+		{ started: number; lease: string; generation: number }
+	>();
+	readonly #mcpHealthGeneration = new Map<string, number>();
+	readonly #mcpRefreshRunning = new Map<string, { started: number; lease: string }>();
+	#clearMcpHealth(assetId: string): void {
+		for (const key of this.#mcpHealth.keys()) {
+			if (key.startsWith(`${assetId}:`)) this.#mcpHealth.delete(key);
+		}
+		this.#mcpHealthGeneration.set(assetId, (this.#mcpHealthGeneration.get(assetId) ?? 0) + 1);
+	}
+	#clearAllMcpHealth(): void {
+		for (const server of listMcpServers(this.#db)) this.#clearMcpHealth(server.asset.id);
+	}
 	/** Setups being applied, by repository and setup, so one is not applied twice at once. */
 	readonly #applying = new Set<string>();
 	/** Seals this workspace's secrets, made on first use. */
@@ -733,13 +757,17 @@ export class RegistryDO extends DurableObject {
 
 	updateAgent(agentId: string, input: AgentDefinitionInput): Agent | null {
 		const data = agentDefinitionInput.parse(input);
-		return this.#write(() => updateAgent(this.#db, id.parse(agentId), data, Date.now()));
+		const updated = this.#write(() => updateAgent(this.#db, id.parse(agentId), data, Date.now()));
+		if (updated) this.#clearAllMcpHealth();
+		return updated;
 	}
 
 	/** Moves one pin to another version of its asset; the rest of the agent stays as it is. */
 	moveAgentPin(agentId: string, pin: AgentPinInput): MovedPin | null {
 		const data = agentPinInput.parse(pin);
-		return this.#write(() => moveAgentPin(this.#db, id.parse(agentId), data, Date.now()));
+		const moved = this.#write(() => moveAgentPin(this.#db, id.parse(agentId), data, Date.now()));
+		if (moved) this.#clearAllMcpHealth();
+		return moved;
 	}
 
 	removeAgent(agentId: string): boolean {
@@ -812,7 +840,9 @@ export class RegistryDO extends DurableObject {
 	/** Saves a set's variables and secret names as its next version. Returns its current version. */
 	editEnvSet(input: EnvSetEditInput): number {
 		const data = envSetEditInput.parse(input);
-		return this.#write(() => editEnvSet(this.#db, data, Date.now()));
+		const version = this.#write(() => editEnvSet(this.#db, data, Date.now()));
+		this.#clearAllMcpHealth();
+		return version;
 	}
 
 	// MCP servers in the library, written through their settings so that headers only name
@@ -827,7 +857,9 @@ export class RegistryDO extends DurableObject {
 	/** Saves a library MCP server's settings as its next version. Returns its current version. */
 	editMcpServer(input: McpServerEditInput): number {
 		const data = mcpServerEditInput.parse(input);
-		return this.#write(() => editMcpServer(this.#db, data, Date.now()));
+		const version = this.#write(() => editMcpServer(this.#db, data, Date.now()));
+		this.#clearMcpHealth(data.assetId);
+		return version;
 	}
 
 	/** The live library MCP servers with how an agent reaches each, who pins it and its last check. */
@@ -840,8 +872,8 @@ export class RegistryDO extends DurableObject {
 	 * that pins it: for the runtime alone, like `beginTurn`. No server function may return it
 	 * to a browser. Null when no live library MCP server has this id.
 	 */
-	async mcpCheckTarget(assetId: string): Promise<TurnMcpServer | null> {
-		const plan = mcpCheckPlan(this.#db, id.parse(assetId));
+	async mcpCheckTarget(assetId: string, agentId?: string): Promise<TurnMcpServer | null> {
+		const plan = mcpCheckPlan(this.#db, id.parse(assetId), agentId ? id.parse(agentId) : undefined);
 		if (!plan) return null;
 		const environment = plan.agentId ? await this.#openEnvironment(plan.agentId) : null;
 		const server = { assetId: plan.assetId, name: plan.name, reading: plan.reading, tools: null };
@@ -948,37 +980,168 @@ export class RegistryDO extends DurableObject {
 		}
 	}
 
-	/**
-	 * What the OAuth client kept for a server, opened, for the app's provider in this request's
-	 * memory: like `beginTurn`'s key, never for a page. Null when there is nothing.
-	 */
+	/** A workspace-wide lease lets concurrent pages reuse one OAuth health check. */
+	mcpHealthClaim(
+		assetId: string,
+		agentId?: string,
+	):
+		| {
+				kind: "cached";
+				state: "connected" | "needs-reconnecting" | "could-not-check";
+				checkedAt: number;
+				reason?: string;
+		  }
+		| { kind: "busy" }
+		| { kind: "claimed"; generation: number; lease: string } {
+		const asset = `${id.parse(assetId)}:${agentId ? id.parse(agentId) : ""}`;
+		const now = Date.now();
+		const cached = this.#mcpHealth.get(asset);
+		if (cached && now - cached.checkedAt < 5 * 60_000) return { kind: "cached", ...cached };
+		const connection = id.parse(assetId);
+		const started = this.#mcpHealthRunning.get(connection);
+		if (started && now - started.started < 45_000) return { kind: "busy" };
+		const generation = this.#mcpHealthGeneration.get(connection) ?? 0;
+		const lease = crypto.randomUUID();
+		this.#mcpHealthRunning.set(connection, { started: now, lease, generation });
+		return { kind: "claimed", generation, lease };
+	}
+
+	mcpHealthComplete(
+		assetId: string,
+		result: { state: "connected" | "needs-reconnecting" | "could-not-check"; reason?: string },
+		generation: number,
+		lease: string,
+		checkedAt = Date.now(),
+		agentId?: string,
+	): boolean {
+		const connection = id.parse(assetId);
+		const agent = agentId === undefined ? undefined : id.parse(agentId);
+		const parsedGeneration = z.number().int().nonnegative().parse(generation);
+		const parsedLease = z.uuid().parse(lease);
+		const checked = z.number().finite().parse(checkedAt);
+		const data = z
+			.object({
+				state: z.enum(["connected", "needs-reconnecting", "could-not-check"]),
+				reason: z.string().max(1000).optional(),
+			})
+			.parse(result);
+		const current = this.#mcpHealthRunning.get(connection);
+		if (!current || current.lease !== parsedLease || current.generation !== parsedGeneration)
+			return false;
+		this.#mcpHealthRunning.delete(connection);
+		if (generation !== (this.#mcpHealthGeneration.get(connection) ?? 0)) return false;
+		const key = `${connection}:${agent ?? ""}`;
+		this.#mcpHealth.set(key, { ...data, checkedAt: checked });
+		return true;
+	}
+
+	mcpHealthRelease(assetId: string, lease: string): void {
+		const asset = id.parse(assetId);
+		if (this.#mcpHealthRunning.get(asset)?.lease === z.uuid().parse(lease))
+			this.#mcpHealthRunning.delete(asset);
+	}
+
+	mcpHealthInvalidate(assetId: string): void {
+		this.#clearMcpHealth(id.parse(assetId));
+	}
+
+	mcpRefreshClaim(assetId: string): { kind: "claimed"; lease: string } | { kind: "busy" } {
+		const asset = id.parse(assetId);
+		const now = Date.now();
+		const current = this.#mcpRefreshRunning.get(asset);
+		if (current && now - current.started < 45_000) return { kind: "busy" };
+		const lease = crypto.randomUUID();
+		this.#mcpRefreshRunning.set(asset, { started: now, lease });
+		return { kind: "claimed", lease };
+	}
+
+	mcpRefreshRelease(assetId: string, lease: string): void {
+		const asset = id.parse(assetId);
+		if (this.#mcpRefreshRunning.get(asset)?.lease === z.uuid().parse(lease))
+			this.#mcpRefreshRunning.delete(asset);
+	}
+
+	/** What the OAuth client kept for a server, opened only in server-side memory. */
 	async mcpOAuthOpen(assetId: string): Promise<McpOAuthOpened | null> {
 		const asset = id.parse(assetId);
 		const row = oauthRow(this.#db, asset);
 		if (!row) return null;
+		return (await this.#openMcpOAuth(asset, row)).value;
+	}
+
+	async #openMcpOAuth(asset: string, row: McpOAuthRow) {
 		const sealer = await this.#sealerOf();
-		if ("unavailable" in sealer) return null;
+		if ("unavailable" in sealer) return { value: null, sealed: null };
 		const open = async (part: "client" | "verifier" | "tokens", sealed: string | null) => {
-			if (sealed === null) return null;
+			if (sealed === null) return { value: null, sealed: null };
 			try {
 				const opened = await this.#open(sealer, oauthPlace(asset, part), sealed);
-				return JSON.parse(opened.plaintext) as unknown;
+				return { value: JSON.parse(opened.plaintext) as unknown, sealed: opened.sealed };
 			} catch {
-				return null;
+				return { value: null, sealed };
 			}
 		};
+		const jsonObject = (value: unknown, part: string): McpOAuthJson | null => {
+			const parsed = mcpOAuthJson.safeParse(value);
+			if (parsed.success) return parsed.data as McpOAuthJson;
+			if (value !== null) console.warn("mcp-oauth-invalid-json", { part });
+			return null;
+		};
+		const client = await open("client", row.sealedClient);
+		const verifier =
+			row.stateExpiresAt !== null && row.stateExpiresAt > Date.now()
+				? await open("verifier", row.sealedVerifier)
+				: { value: null, sealed: row.sealedVerifier };
+		const tokens = await open("tokens", row.sealedTokens);
 		return {
-			serverUrl: row.serverUrl,
-			authorizationServer: row.authorizationServer,
-			client: await open("client", row.sealedClient),
-			verifier: (await open("verifier", row.sealedVerifier)) as string | null,
-			tokens: await open("tokens", row.sealedTokens),
+			value: {
+				serverUrl: row.serverUrl,
+				authorizationServer: jsonObject(row.authorizationServer, "authorizationServer"),
+				client: jsonObject(client.value, "client"),
+				verifier: verifier.value as string | null,
+				tokens: jsonObject(tokens.value, "tokens"),
+			},
+			sealed: { client: client.sealed, verifier: verifier.sealed, tokens: tokens.sealed },
 		};
 	}
 
 	/** Keeps, sealed, what the OAuth client saves for a server; null clears a part. */
 	async mcpOAuthSave(assetId: string, parts: McpOAuthParts): Promise<boolean> {
+		return this.#mcpOAuthSave(assetId, parts, true);
+	}
+
+	async #mcpOAuthSave(assetId: string, parts: McpOAuthParts, retry: boolean): Promise<boolean> {
 		const asset = id.parse(assetId);
+		const baseline = oauthRow(this.#db, asset);
+		let openedSealed: {
+			client: string | null;
+			verifier: string | null;
+			tokens: string | null;
+		} | null = null;
+		if (
+			parts.expectedTokens !== undefined ||
+			parts.expectedClient !== undefined ||
+			parts.expectedVerifier !== undefined
+		) {
+			const openedResult = baseline && (await this.#openMcpOAuth(asset, baseline));
+			const opened = openedResult?.value;
+			openedSealed = openedResult?.sealed ?? null;
+			if (
+				parts.expectedTokens !== undefined &&
+				canonicalOAuthJson(opened?.tokens ?? null) !== canonicalOAuthJson(parts.expectedTokens)
+			)
+				return false;
+			if (
+				parts.expectedClient !== undefined &&
+				canonicalOAuthJson(opened?.client ?? null) !== canonicalOAuthJson(parts.expectedClient)
+			)
+				return false;
+			if (parts.expectedVerifier !== undefined && opened?.verifier !== parts.expectedVerifier)
+				return false;
+		}
+		const prior = openedSealed?.tokens ?? baseline?.sealedTokens;
+		const priorClient = openedSealed?.client ?? baseline?.sealedClient;
+		const priorVerifier = openedSealed?.verifier ?? baseline?.sealedVerifier;
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return false;
 		const seal = async (part: "client" | "verifier" | "tokens", value: unknown) =>
@@ -998,7 +1161,38 @@ export class RegistryDO extends DurableObject {
 		const defined = Object.fromEntries(
 			Object.entries(sealed).filter(([, value]) => value !== undefined),
 		);
-		return this.#write(() => saveOAuth(this.#db, asset, defined));
+		const saved = this.#write(() => {
+			const current = oauthRow(this.#db, asset);
+			if (parts.expectedTokens !== undefined && current?.sealedTokens !== prior) return false;
+			if (parts.expectedClient !== undefined && current?.sealedClient !== priorClient) return false;
+			if (parts.expectedVerifier !== undefined && current?.sealedVerifier !== priorVerifier)
+				return false;
+			if (
+				parts.unlessSigningIn &&
+				current?.stateExpiresAt !== null &&
+				current?.stateExpiresAt !== undefined &&
+				current.stateExpiresAt > Date.now() &&
+				(current.state !== null || current.sealedVerifier !== null)
+			)
+				return false;
+			return saveOAuth(this.#db, asset, defined);
+		});
+		if (!saved && retry && openedSealed) {
+			const current = oauthRow(this.#db, asset);
+			if (
+				(parts.expectedTokens !== undefined && current?.sealedTokens !== prior) ||
+				(parts.expectedClient !== undefined && current?.sealedClient !== priorClient) ||
+				(parts.expectedVerifier !== undefined && current?.sealedVerifier !== priorVerifier)
+			)
+				return this.#mcpOAuthSave(assetId, parts, false);
+		}
+		if (
+			saved &&
+			parts.tokens !== undefined &&
+			(parts.tokens === null || parts.expectedTokens === undefined)
+		)
+			this.#clearMcpHealth(asset);
+		return saved;
 	}
 
 	/** Marks a server connected by `by`, once the flow kept its first tokens. */
@@ -1006,19 +1200,24 @@ export class RegistryDO extends DurableObject {
 		const asset = id.parse(assetId);
 		const member = id.parse(by);
 		this.#write(() => markConnected(this.#db, asset, member, Date.now()));
+		this.#clearMcpHealth(asset);
 	}
 
 	/** Forgets a server's OAuth connection. False when it had none. */
 	mcpOAuthDisconnect(assetId: string): boolean {
 		const asset = id.parse(assetId);
-		return this.#write(() => forgetOAuth(this.#db, asset));
+		const removed = this.#write(() => forgetOAuth(this.#db, asset));
+		if (removed) this.#clearMcpHealth(asset);
+		return removed;
 	}
 
 	/** Keeps how checking a server went as its last check. Null when it is not in the library. */
 	recordMcpCheck(assetId: string, result: McpCheckResult): McpCheck | null {
 		const asset = id.parse(assetId);
 		const data = mcpCheckResult.parse(result);
-		return this.#write(() => recordMcpCheck(this.#db, asset, data, Date.now()));
+		const check = this.#write(() => recordMcpCheck(this.#db, asset, data, Date.now()));
+		if (check) this.#clearMcpHealth(asset);
+		return check;
 	}
 
 	/** Stores a secret's value, sealed, in place of the earlier one. */
@@ -1032,6 +1231,7 @@ export class RegistryDO extends DurableObject {
 		const sealed = await sealer.seal(secretPlace(assetId, name), value);
 		const now = Date.now();
 		this.#write(() => storeEnvSecret(this.#db, { assetId, name, sealed, setBy: by }, now));
+		this.#clearAllMcpHealth();
 		return { name, state: "set", setBy: by, setAt: now, contested: null };
 	}
 
@@ -1039,7 +1239,9 @@ export class RegistryDO extends DurableObject {
 	removeEnvSecret(assetId: string, name: string): boolean {
 		const set = id.parse(assetId);
 		const secret = envName.parse(name);
-		return this.#write(() => removeEnvSecret(this.#db, set, secret));
+		const removed = this.#write(() => removeEnvSecret(this.#db, set, secret));
+		if (removed) this.#clearAllMcpHealth();
+		return removed;
 	}
 
 	/**
@@ -3038,12 +3240,32 @@ async function sameSecret(expected: string, given: string): Promise<boolean> {
 }
 
 /** What the OAuth client kept for a server, opened for the app's provider. */
+const mcpOAuthJson = z.record(z.string(), z.json());
+
+function canonicalOAuthJson(value: unknown): string | undefined {
+	const ordered = (item: unknown): unknown => {
+		if (Array.isArray(item)) return item.map(ordered);
+		if (item !== null && typeof item === "object") {
+			return Object.fromEntries(
+				Object.entries(item)
+					.filter(([, entry]) => entry !== undefined)
+					.sort(([left], [right]) => left.localeCompare(right))
+					.map(([key, entry]) => [key, ordered(entry)]),
+			);
+		}
+		return item;
+	};
+	return JSON.stringify(ordered(value));
+}
+type McpOAuthScalar = string | number | boolean | null;
+type McpOAuthJson = Record<string, McpOAuthScalar | string[] | Record<string, McpOAuthScalar>>;
+
 export interface McpOAuthOpened {
 	serverUrl: string;
-	authorizationServer: Record<string, unknown> | null;
-	client: unknown;
+	authorizationServer: McpOAuthJson | null;
+	client: McpOAuthJson | null;
 	verifier: string | null;
-	tokens: unknown;
+	tokens: McpOAuthJson | null;
 }
 
 /** What the OAuth client saves; a part left out stays, and null clears it. */
@@ -3051,6 +3273,11 @@ export interface McpOAuthParts {
 	client?: unknown;
 	verifier?: string | null;
 	tokens?: unknown;
+	/** Only change tokens if this attempt still owns the stored version. */
+	expectedTokens?: unknown;
+	expectedClient?: unknown;
+	expectedVerifier?: string | null;
+	unlessSigningIn?: boolean;
 	authorizationServer?: Record<string, unknown> | null;
 }
 
