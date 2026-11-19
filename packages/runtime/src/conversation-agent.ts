@@ -59,7 +59,6 @@ import {
 	convertToModelMessages,
 	createUIMessageStream,
 	createUIMessageStreamResponse,
-	stepCountIs,
 	streamText,
 	type ToolSet,
 	toUIMessageStream,
@@ -668,7 +667,7 @@ ${runPageNote(runs, turn.runId)}`
 				};
 				let toolbox: Awaited<ReturnType<typeof connectTools>> | null = null;
 				const end = async (
-					status: "succeeded" | "failed" | "stopped",
+					status: "succeeded" | "failed" | "stopped" | "step-limit",
 					error: string | null = null,
 				) => {
 					if (error !== null) this.#failure = error;
@@ -735,6 +734,8 @@ ${runPageNote(runs, turn.runId)}`
 					]
 						.filter((part) => typeof part === "string")
 						.join("\n\n");
+					const maxSteps = sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS;
+					let reachedStepLimit = false;
 					const result = streamText({
 						model: this.modelFor(agent, key, {
 							workspace: workspaceId,
@@ -752,7 +753,10 @@ ${runPageNote(runs, turn.runId)}`
 							ignoreIncompleteToolCalls: true,
 						}),
 						tools,
-						stopWhen: stepCountIs(sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS),
+						stopWhen: ({ steps }) => {
+							reachedStepLimit = steps.length >= maxSteps;
+							return reachedStepLimit;
+						},
 						abortSignal: options?.abortSignal,
 						onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
 						onStepEnd: (step) => run.stepEnded(step),
@@ -761,7 +765,9 @@ ${runPageNote(runs, turn.runId)}`
 						onEnd: ({ finishReason }) =>
 							finishReason === "error"
 								? end("failed", `${agent.name} could not finish its answer.`)
-								: end("succeeded"),
+								: reachedStepLimit
+									? end("step-limit", `The run reached its limit of ${maxSteps} model requests.`)
+									: end("succeeded"),
 						onAbort: () => end("stopped"),
 						onError: ({ error }) => end("failed", describeFailure(agent, error)),
 					});

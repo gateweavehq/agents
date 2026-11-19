@@ -1620,9 +1620,10 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
   to the conversation without being secret: it goes when the conversation is deleted, and admins
   can read it while it lasts.
 - **The runtime closes the run** once, from whichever of the AI SDK's `onEnd`, `onAbort` and
-  `onError` comes first: `succeeded`, `failed` (with our sentence, never the provider's),
-  or `stopped`. It sums the model spans and reports them with `finishRun`, which changes only a run
-  still `running`, so a late or repeated report changes nothing.
+  `onError` comes first. A run is `succeeded`, `failed` (with the app's own sentence), `stopped`, or
+  `step-limit` when its request budget prevents another model call. It sums the model spans and
+  reports them with `finishRun`, which changes only a run still `running`, so a late or repeated
+  report changes nothing.
 - **A restart can cut a run short.** When a conversation wakes, it closes the runs it finds still
   open as `interrupted`, at the last moment its trace saw them move, and reports them. A
   conversation nobody opens again never wakes, so the registry marks runs older than an hour

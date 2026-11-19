@@ -128,7 +128,14 @@ function RunPage() {
 				)}
 			</header>
 			{run.error && (
-				<p className="whitespace-pre-wrap break-words rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+				<p
+					className={cn(
+						"whitespace-pre-wrap break-words rounded-lg border p-3 text-sm",
+						run.status === "step-limit"
+							? "border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+							: "border-destructive/40 bg-destructive/5 text-destructive",
+					)}
+				>
 					{run.error}
 				</p>
 			)}
