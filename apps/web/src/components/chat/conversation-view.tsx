@@ -549,20 +549,30 @@ function Message({
 	);
 }
 
+/** How often a reply's run is read again while it still runs. */
+const RUN_POLL_MS = 2_000;
+
 /** What the reply's run used, and the way to its page. */
 function RunLine({ slug, runId }: { slug: string; runId: string }) {
 	const [run, setRun] = useState<RunSummary | null | undefined>(undefined);
 	useEffect(() => {
 		let live = true;
-		runSummary({ data: { slug, runId } })
-			.then((summary) => {
-				if (live) setRun(summary);
-			})
-			.catch(() => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const load = async () => {
+			try {
+				const summary = await runSummary({ data: { slug, runId } });
+				if (!live) return;
+				setRun(summary);
+				// A reply mounts while its turn still streams, so its run's numbers move until it ends.
+				if (summary?.status === "running") timer = setTimeout(load, RUN_POLL_MS);
+			} catch {
 				if (live) setRun(null);
-			});
+			}
+		};
+		void load();
 		return () => {
 			live = false;
+			if (timer !== undefined) clearTimeout(timer);
 		};
 	}, [slug, runId]);
 	if (!run) return null;
