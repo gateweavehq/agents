@@ -94,6 +94,8 @@ describe("protectResource", () => {
 			'resource_metadata="https://agents.example.com/.well-known/oauth-protected-resource',
 		);
 		expect(challenge).toContain('scope="agents offline_access"');
+		// No token is not a bad token: the client has nothing to refresh, so it is not told one failed.
+		expect(challenge).not.toContain("error=");
 		expect(await response.json()).toMatchObject({ jsonrpc: "2.0", error: { code: -32000 } });
 		expect(seen).toEqual([]);
 	});
@@ -109,6 +111,8 @@ describe("protectResource", () => {
 
 		expect(response.status).toBe(401);
 		expect(response.headers.get("www-authenticate")).toContain("resource_metadata=");
+		// RFC 6750 §3.1, and what Better Auth itself answers since 1.7.22.
+		expect(response.headers.get("www-authenticate")).toContain('error="invalid_token"');
 		expect(seen).toEqual([]);
 	});
 
@@ -118,6 +122,7 @@ describe("protectResource", () => {
 		const response = await handle(request(`Bearer ${expired}`));
 
 		expect(response.status).toBe(401);
+		expect(response.headers.get("www-authenticate")).toContain('error="invalid_token"');
 		expect(await response.json()).toMatchObject({ error: { message: "token expired" } });
 	});
 
