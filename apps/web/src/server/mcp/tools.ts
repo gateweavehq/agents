@@ -1,5 +1,7 @@
 import {
 	OUTSIDE_TASK_TEXT_MAX,
+	RUN_STATUSES,
+	type RunStatus,
 	rankWikiPages,
 	WIKI_PAGE_NUMBER,
 	type WikiPage,
@@ -32,6 +34,28 @@ export interface TaskStart {
 	message?: string;
 }
 
+/** What one run came to: its state, its answer once it has one, and its page. */
+export interface TaskRun {
+	status: "ok" | "refused";
+	message?: string;
+	run?: {
+		runId: string;
+		state: RunStatus;
+		error: string | null;
+		agent: string;
+		steps: number;
+		inputTokens: number;
+		outputTokens: number;
+		/** Estimated cost in millionths of a dollar; null when a model it used has no prices. */
+		cost: number | null;
+		startedAt: number;
+		endedAt: number | null;
+		answer: string | null;
+		conversationId: string | null;
+		link: string;
+	};
+}
+
 /** What the tools may do for one signed-in user. */
 export interface AgentsAccess {
 	workspaces(): Promise<{ slug: string; name: string; role: MemberRole }[]>;
@@ -53,6 +77,12 @@ export interface AgentsAccess {
 		task: string;
 		requestId: string;
 	}): Promise<TaskStart>;
+	/**
+	 * Reads one run of the workspace `workspace` (`get_run`, AGT-155): its state and answer, as
+	 * the Runs pages show them to the person. A run the person may not see is refused as if it
+	 * did not exist.
+	 */
+	runOf(input: { workspace: string; runId: string }): Promise<TaskRun>;
 }
 
 /** A repository with a wiki, as list_wiki_repos lists it. */
@@ -249,6 +279,54 @@ export function createAgentsServer(access: AgentsAccess, canRun = false): McpSer
 			async ({ workspace, agent, task, requestId }) => {
 				const result = await access.startTask({ workspace, agent, task, requestId });
 				const ok = result.status === "started" || result.status === "duplicate";
+				return {
+					content: [{ type: "text", text: JSON.stringify(result) }],
+					structuredContent: result,
+					...(ok ? {} : { isError: true }),
+				};
+			},
+		);
+
+		server.registerTool(
+			"get_run",
+			{
+				title: "Read a run",
+				description:
+					"Reads a run of one of your workspaces: its state, the agent's answer once it has one, its steps and tokens, and its link on the Runs page. A run another member started is an owner's or admin's to read.",
+				inputSchema: z.object({
+					workspace: z
+						.string()
+						.min(1)
+						.max(100)
+						.describe("The workspace's slug, from list_workspaces."),
+					runId: z.string().min(1).max(64).describe("The run's id, as run_agent answered it."),
+				}),
+				outputSchema: z.looseObject({
+					status: z.enum(["ok", "refused"]),
+					message: z.string().optional(),
+					run: z
+						.looseObject({
+							runId: z.string(),
+							state: z.enum(RUN_STATUSES),
+							error: z.string().nullable(),
+							agent: z.string(),
+							steps: z.number(),
+							inputTokens: z.number(),
+							outputTokens: z.number(),
+							cost: z.number().nullable(),
+							startedAt: z.number(),
+							endedAt: z.number().nullable(),
+							answer: z.string().nullable(),
+							conversationId: z.string().nullable(),
+							link: z.string(),
+						})
+						.optional(),
+				}),
+				annotations: { readOnlyHint: true, openWorldHint: false },
+			},
+			async ({ workspace, runId }) => {
+				const result = await access.runOf({ workspace, runId });
+				const ok = result.status === "ok";
 				return {
 					content: [{ type: "text", text: JSON.stringify(result) }],
 					structuredContent: result,

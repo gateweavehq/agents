@@ -1,6 +1,7 @@
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { createDpopReplayStore } from "better-auth/oauth2";
 import type { JWTPayload } from "jose";
+import { isAdmin } from "#/lib/roles";
 import { db, getAuth, mcpResource } from "../auth";
 import { MCP_RUN_SCOPE, MCP_SCOPE } from "../auth/config";
 import { demoEnabled } from "../demo/mode";
@@ -138,6 +139,51 @@ function accessFor(userId: string, askedVia: string): AgentsAccess {
 				}),
 			);
 			return matches.filter((match) => match !== null);
+		},
+		async runOf({ workspace, runId }) {
+			const membership = (await workspaceIdsOf(db, userId)).find(
+				(candidate) => candidate.slug === workspace,
+			);
+			if (!membership) return { status: "refused", message: "There is no such workspace" };
+			const ref = { workspaceId: membership.id, ...membership };
+			const run = await registryFor(ref).getRun(runId);
+			// The Runs pages' rule: a member reads their own runs; an owner or admin reads every one.
+			// Anything else is refused as if it did not exist, so its existence does not leak.
+			const notFound = {
+				status: "refused",
+				message: "There is no such run in that workspace",
+			} as const;
+			if (!run) return notFound;
+			const role = (await listWorkspaces(db, userId)).find((each) => each.slug === workspace)?.role;
+			if (run.startedBy !== userId && !(role !== undefined && isAdmin(role))) return notFound;
+			let answer: string | null = null;
+			if (run.conversationId !== null) {
+				try {
+					const conversation = await conversationFor(ref, run.conversationId);
+					answer = await conversation.runAnswer(run.id);
+				} catch {
+					// A deleted conversation's run has no answer left to give.
+					answer = null;
+				}
+			}
+			return {
+				status: "ok",
+				run: {
+					runId: run.id,
+					state: run.status,
+					error: run.error,
+					agent: run.agentName,
+					steps: run.steps,
+					inputTokens: run.inputTokens,
+					outputTokens: run.outputTokens,
+					cost: run.cost,
+					startedAt: run.startedAt,
+					endedAt: run.endedAt,
+					answer,
+					conversationId: run.conversationId,
+					link: `/${workspace}/runs/${run.id}`,
+				},
+			};
 		},
 		async startTask({ workspace, agent, task, requestId }) {
 			// The public demo has no outside tasks: a visitor's sandbox takes nothing from outside.
