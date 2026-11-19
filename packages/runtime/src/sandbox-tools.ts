@@ -41,7 +41,7 @@ export const SANDBOX_LIMITS = {
 	command: 20_000,
 };
 
-/** How a command went: its exit code, and its output, stdout and stderr together, clipped. */
+/** How a command went: its exit code and bounded output. Search keeps stdout rows separate from diagnostics. */
 export interface CommandResult {
 	exitCode: number;
 	output: string;
@@ -67,9 +67,8 @@ export type DeleteResult = { deleted: true } | { error: string };
  * words the model reads.
  *
  * The text is in ripgrep's format, and the format is part of the port. A sandbox's answer is
- * ripgrep's own output, clipped by the sandbox as any command's is, which cannot be taken apart
- * into results and put together again byte for byte; so every port writes the same text rather
- * than hand over results for the tools to format:
+ * ripgrep's own output, bounded by whole matching lines in the sandbox; so every port writes
+ * the same text rather than hand over results for the tools to format:
  *
  * - One result to a line, each line ended by a newline, the last one too.
  * - A listing's line is the file's absolute path. Lines are sorted by path, one part of the path
@@ -83,8 +82,8 @@ export type DeleteResult = { deleted: true } | { error: string };
  *   file named itself is searched, and listed, whatever the glob. A byte order mark at a file's start is
  *   not part of its first line. The files come in no promised order from a sandbox, where
  *   ripgrep searches several at once, and sorted like a listing from `FileStore`.
- * - Text longer than `OUTPUT_LIMIT` bytes keeps its start and its end, with how many bytes were
- *   left out between them, as a command's output does (`./output.ts`).
+ * - A search longer than `OUTPUT_LIMIT` UTF-8 bytes keeps its first whole lines and ends with
+ *   `[N more]`, counting matching lines left out. A listing still uses command clipping.
  * - `found` is null when nothing matches. `FileStore` never answers an empty string. A sandbox's
  *   port can: it passes on what its command printed, so a command that exits with 0 and prints
  *   nothing comes back as `""`, which the tools then answer with as it is. ripgrep itself exits
@@ -124,6 +123,8 @@ export interface SandboxPort {
 		cwd: string,
 		timeoutSeconds: number,
 		captureOutput?: boolean,
+		/** Search alone streams and counts stdout rows; other calls keep command output behavior. */
+		outputMode?: "search",
 	): Promise<CommandResult>;
 	readFile(path: string): Promise<ReadResult>;
 	/** Writes the file, making the directories it needs. */
@@ -364,8 +365,16 @@ export function deletingFileTools(files: DeletingFilePort, run: RunRecorder): To
  * searches them with ripgrep, and deletes one with `rm`, each run as a command.
  */
 export function sandboxFiles(sandbox: SandboxPort): DeletingFilePort {
-	const ripgrep = async (command: string) =>
-		ripgrepOutcome(await sandbox.run(command, SANDBOX_ROOT, SANDBOX_LIMITS.searchSeconds));
+	const ripgrep = async (command: string, search = false) =>
+		ripgrepOutcome(
+			await sandbox.run(
+				command,
+				SANDBOX_ROOT,
+				SANDBOX_LIMITS.searchSeconds,
+				false,
+				search ? "search" : undefined,
+			),
+		);
 	return {
 		words: SANDBOX_FILE_WORDS,
 		readFile: (path) => sandbox.readFile(path),
@@ -394,6 +403,7 @@ export function sandboxFiles(sandbox: SandboxPort): DeletingFilePort {
 				]
 					.filter(Boolean)
 					.join(" "),
+				true,
 			),
 	};
 }
