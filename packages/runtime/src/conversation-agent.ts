@@ -9,6 +9,7 @@ import {
 	PULL_REQUEST_TOOL,
 	type PullRequestOutcome,
 	providerMissing,
+	RUN_PART,
 	type RunSpan,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
@@ -655,6 +656,8 @@ ${runPageNote(runs, turn.runId)}`
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
+				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
 					if (label === shown) return;
@@ -734,6 +737,9 @@ ${runPageNote(runs, turn.runId)}`
 							agent: agent.agentId,
 							conversation: conversationId,
 						}),
+						...(agent.provider === "anthropic"
+							? { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
+							: {}),
 						system: system === "" ? undefined : system,
 						// A turn stopped during a tool call leaves the call without a result, which
 						// providers refuse in a later turn.
@@ -832,6 +838,8 @@ ${runPageNote(runs, turn.runId)}`
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
+				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
 					if (label === shown) return;

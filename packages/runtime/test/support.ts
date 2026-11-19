@@ -82,7 +82,17 @@ export function ask(socket: WebSocket, text: string, id = crypto.randomUUID()): 
 /** Anthropic's streamed answer, as `POST /v1/messages` sends it. */
 export function anthropicStream(
 	text: string,
-	{ end = true, headers = {} }: { end?: boolean; headers?: Record<string, string> } = {},
+	{
+		end = true,
+		headers = {},
+		cacheRead,
+		cacheWrite,
+	}: {
+		end?: boolean;
+		headers?: Record<string, string>;
+		cacheRead?: number;
+		cacheWrite?: number;
+	} = {},
 ): Response {
 	const events: [string, unknown][] = [
 		[
@@ -97,7 +107,12 @@ export function anthropicStream(
 					content: [],
 					stop_reason: null,
 					stop_sequence: null,
-					usage: { input_tokens: 10, output_tokens: 1 },
+					usage: {
+						input_tokens: 10,
+						cache_read_input_tokens: cacheRead,
+						cache_creation_input_tokens: cacheWrite,
+						output_tokens: 1,
+					},
 				},
 			},
 		],
