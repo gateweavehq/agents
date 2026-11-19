@@ -7,6 +7,7 @@ import { generateText, type UIMessage } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ConversationAgent, conversationName, destroyConversationObject } from "../src";
 import { languageModel } from "../src/models";
+import { FakeMcpServer } from "./fake-mcp";
 import { anthropicStream, ask, closeCode, connect, fakeModel, KEY, SESSION } from "./support";
 
 afterEach(() => {
@@ -207,6 +208,29 @@ describe("data parts", () => {
 		expect(parts).toEqual([
 			expect.objectContaining({ type: "data-run", data: { runId: "run-1" } }),
 		]);
+	});
+
+	it("says what the turn is doing before its first token, and never stores it", async () => {
+		const { stub } = await conversation({ server: true });
+		const mcp = new FakeMcpServer(
+			[{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }],
+			() => ({ content: [{ type: "text", text: "pong" }] }),
+		);
+		fakeModel(() => anthropicStream("Done."), { "mcp.acme.dev": (request) => mcp.handle(request) });
+		const socket = await connect(stub);
+
+		const turn = await ask(socket, "Hello");
+		expect(turn).toMatchObject({ text: "Done.", error: null });
+		// Connecting the servers is the one wait a turn with them has before its model answers.
+		// Each frame's body holds one chunk as JSON text, quotes escaped.
+		expect(turn.raw.join("")).toContain("data-progress");
+		expect(turn.raw.join("")).toContain("Connecting tools");
+
+		const stored = (await (await stub.fetch("http://conversation/get-messages")).json()) as {
+			parts: { type: string }[];
+		}[];
+		expect(stored.at(-1)?.parts.some((part) => part.type === "data-progress")).toBe(false);
+		socket.close();
 	});
 });
 

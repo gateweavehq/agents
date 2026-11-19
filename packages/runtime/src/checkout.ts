@@ -27,22 +27,32 @@ export interface CheckedOutSandbox extends SandboxPort {
 
 /**
  * The sandbox as the tools reach it, checking out the repository before the first of them runs.
- * A checkout that fails is the tool's answer, and the next tool call tries again.
+ * A checkout that fails is the tool's answer, and the next tool call tries again. `onWait` says
+ * when a checkout starts and settles, so a turn can show the wait (AGT-139); a failed checkout's
+ * retry says it again.
  */
 export function withCheckout(
 	sandbox: CheckoutPort,
 	repository: SandboxRepository,
 	branch: string,
+	onWait?: (waiting: boolean) => void,
 ): CheckedOutSandbox {
 	let pending: Promise<string | null> | undefined;
-	const problem = async (): Promise<string | null> => {
-		pending ??= sandbox.checkout(repository, branch).then(
-			(result) => ("error" in result ? result.error : null),
-			() => `${repository.owner}/${repository.name} could not be checked out. Try again.`,
-		);
-		const found = await pending;
-		if (found !== null) pending = undefined;
-		return found;
+	const problem = (): Promise<string | null> => {
+		if (pending === undefined) {
+			onWait?.(true);
+			pending = sandbox
+				.checkout(repository, branch)
+				.then(
+					(result) => ("error" in result ? result.error : null),
+					() => `${repository.owner}/${repository.name} could not be checked out. Try again.`,
+				)
+				.finally(() => onWait?.(false));
+		}
+		return pending.then((found) => {
+			if (found !== null) pending = undefined;
+			return found;
+		});
 	};
 	return {
 		ready: problem,

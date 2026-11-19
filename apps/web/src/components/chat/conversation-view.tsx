@@ -38,6 +38,7 @@ import {
 	toolCallsOf,
 } from "#/lib/tool-calls";
 import { isMarkedTriggerMessage, readTriggerMessage } from "#/lib/trigger-message";
+import { turnProgressOf } from "#/lib/turn-progress";
 import { cn } from "#/lib/utils";
 import { Markdown } from "./markdown";
 import { TriggerCard, TriggerText } from "./trigger-card";
@@ -204,16 +205,28 @@ function LiveConversation({
 		onSocketRefused(now, sending.current);
 	}
 
+	// What the turn says it is doing, from its transient progress parts; null once it has answered.
+	const [progress, setProgress] = useState<string | null>(null);
 	// Both run for a turn the socket cut off too. That turn is not over but refused, or still waiting
 	// to be, and refreshing the page for it would take someone whose session ended to the sign-in page
 	// without what they wrote.
 	const turnEnded = () => {
 		if (closing.current || agent.readyState !== WebSocket.OPEN) return;
 		sending.current = "";
+		setProgress(null);
 		onTurnEnd();
 	};
 	const { messages, sendMessage, stop, status, error, clearError, isStreaming, isRecovering } =
-		useAgentChat({ agent, onFinish: turnEnded, onError: turnEnded });
+		useAgentChat({
+			agent,
+			onFinish: turnEnded,
+			onError: turnEnded,
+			// A turn's progress parts are transient: they pass through here and never join its messages.
+			onData: (chunk) => {
+				const label = turnProgressOf(chunk);
+				if (label !== undefined) setProgress(label);
+			},
+		});
 	// A turn this page found waiting to begin, which the hook says nothing of until its reply starts.
 	const [pending, setPending] = useState<PendingTurn>(null);
 	useEffect(() => {
@@ -236,11 +249,22 @@ function LiveConversation({
 	const [sent, setSent] = useState(false);
 	const answering = sent || status === "submitted" || isStreaming || isRecovering;
 	const busy = !closed && (answering || pending !== null);
-	// Nothing of the reply has come yet.
+	// Nothing of the reply has come yet: no text, reasoning or tool call, though the stream may
+	// already be open (its "start" arrives before the first content) or a progress part may be
+	// saying what the turn is doing.
+	const last = messages.at(-1);
+	// An empty text part exists from text-start, before the first delta; only content counts.
+	const replyBegan =
+		last?.role === "assistant" &&
+		last.parts.some((part) => {
+			if (part.type === "text" || part.type === "reasoning") return part.text.length > 0;
+			return part.type.startsWith("tool-") || part.type === "dynamic-tool" || part.type === "file";
+		});
 	const waiting =
 		status === "submitted" ||
 		(pending !== null && !answering) ||
-		(sent && !isStreaming && messages.at(-1)?.role === "user");
+		(sent && !isStreaming && messages.at(-1)?.role === "user") ||
+		(isStreaming && !replyBegan);
 	const end = useRef<HTMLDivElement>(null);
 	// The refused words went into the list as soon as they were sent, and are back in the box now.
 	const shown =
@@ -311,9 +335,9 @@ function LiveConversation({
 							first={index === 0}
 						/>
 					))}
-					{waiting && !closed && (
+					{(waiting || progress !== null) && !closed && (
 						<p className="text-sm text-muted-foreground" aria-live="polite">
-							{agentName} is thinking…
+							{progress ?? `${agentName} is thinking…`}
 						</p>
 					)}
 					{isRecovering && (

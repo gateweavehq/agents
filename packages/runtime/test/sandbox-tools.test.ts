@@ -441,6 +441,31 @@ describe("a repository in the sandbox", () => {
 		expect(sandbox.checkouts).toHaveLength(2);
 	});
 
+	it("says when it waits for a checkout, before the tool's own work starts", async () => {
+		const sandbox = new MemorySandbox();
+		const events: string[] = [];
+		const run = sandbox.run.bind(sandbox);
+		sandbox.run = (command, cwd, timeoutSeconds) => {
+			events.push("run");
+			return run(command, cwd, timeoutSeconds);
+		};
+		const port = withCheckout(sandbox, repository, BRANCH, (waiting) =>
+			events.push(waiting ? "wait" : "ready"),
+		);
+		await port.run("ls", "/workspace", 120);
+		expect(events).toEqual(["wait", "ready", "run"]);
+	});
+
+	it("says it waits again when a failed checkout is retried", async () => {
+		const sandbox = new MemorySandbox();
+		sandbox.checkoutAnswers.push({ error: "acme/site could not be checked out." });
+		const waits: boolean[] = [];
+		const port = withCheckout(sandbox, repository, BRANCH, (waiting) => waits.push(waiting));
+		await port.run("ls", "/workspace", 120);
+		await port.run("ls", "/workspace", 120);
+		expect(waits).toEqual([true, false, true, false]);
+	});
+
 	it("is described to the model with where it is and the branch it works on", () => {
 		expect(repositoryNote(repository, BRANCH)).toBe(
 			"Your sandbox has the repository acme/site at /workspace/repo, on the branch gateweave/conversation-1, made from main. Read its AGENTS.md or CLAUDE.md, if it has one, before you change it. Its files are checked out when you first use a tool. When the work is done and checked, open_pull_request proposes it as a pull request; git push does not work in the sandbox.",

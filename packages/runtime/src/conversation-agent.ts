@@ -16,6 +16,7 @@ import {
 	SESSION_ENDED,
 	TRIGGER_MESSAGE_METADATA,
 	type TriggerTurnOutcome,
+	TURN_PROGRESS_PART,
 	type TurnEdge,
 	type TurnVia,
 	type WorkersAiSettings,
@@ -648,99 +649,138 @@ ${runPageNote(runs, turn.runId)}`
 		if (agent.engine !== "gateweave") {
 			return this.#engineTurn(agent.engine, turn, run, options?.abortSignal);
 		}
-		const toolbox = await connectTools(
-			mcpServers,
-			run,
-			options?.abortSignal,
-			sandbox,
-			this.#oauth(registry),
-		);
-		const checkedOut = sandbox && repository ? withCheckout(sandbox, repository, branch) : null;
-		const github = repository ? this.#pullRequests(repository) : null;
-		// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with them. An
-		// edge is named after a member of the team, so it wins over any tool of that name.
-		const tools = {
-			...toolbox.tools,
-			...(sandbox ? sandboxTools(checkedOut ?? sandbox, run) : {}),
-			...(sandbox && checkedOut && repository && github
-				? pullRequestTools({
+		// The reply's stream opens before the turn's slow parts — connecting the servers, the
+		// repository's checkout on the first tool call, the model's first token — so the chat can
+		// say what it is doing instead of "thinking…" (AGT-139). Progress parts are transient:
+		// the conversation never stores them.
+		const stream = createUIMessageStream({
+			execute: async ({ writer }) => {
+				writer.write({ type: "start" });
+				let shown: string | null = null;
+				const progress = (label: string | null) => {
+					if (label === shown) return;
+					shown = label;
+					writer.write({ type: TURN_PROGRESS_PART, data: { label }, transient: true });
+				};
+				let toolbox: Awaited<ReturnType<typeof connectTools>> | null = null;
+				const end = async (
+					status: "succeeded" | "failed" | "stopped",
+					error: string | null = null,
+				) => {
+					if (error !== null) this.#failure = error;
+					await toolbox?.close();
+					const finish = run.finish(status, error);
+					if (finish) await this.#report(registry, runId, finish);
+				};
+				try {
+					if (mcpServers.length > 0) progress("Connecting tools");
+					toolbox = await connectTools(
+						mcpServers,
+						run,
+						options?.abortSignal,
 						sandbox,
-						checks: this.#checks(registry, repository, sandbox),
-						ready: checkedOut.ready,
-						github,
-						repository,
-						branch,
-						author: this.#commitAuthor(agent.name, repository),
-						record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
-						run,
-					})
-				: {}),
-			// The registry reads who asks, and what started the run, from the run itself.
-			...(turn.memory
-				? memoryTools(
-						{
-							remember: (input) => registry.rememberInRun(runId, input),
-							recall: (input) => registry.recallInRun(runId, input),
-							forget: (id) => registry.forgetInRun(runId, id),
-						},
-						run,
-					)
-				: {}),
-			...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
-		};
-		const system = [agent.instructions, sandbox && repository && repositoryNote(repository, branch)]
-			.filter((part) => typeof part === "string")
-			.join("\n\n");
-		const end = async (status: "succeeded" | "failed" | "stopped", error: string | null = null) => {
-			if (error !== null) this.#failure = error;
-			await toolbox.close();
-			const finish = run.finish(status, error);
-			if (finish) await this.#report(registry, runId, finish);
-		};
-
-		try {
-			const result = streamText({
-				model: this.modelFor(agent, key, {
-					workspace: workspaceId,
-					agent: agent.agentId,
-					conversation: conversationId,
-				}),
-				system: system === "" ? undefined : system,
-				// A turn stopped during a tool call leaves the call without a result, which providers
-				// refuse in a later turn.
-				messages: await convertToModelMessages(this.messages, {
-					tools,
-					ignoreIncompleteToolCalls: true,
-				}),
-				tools,
-				stopWhen: stepCountIs(sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS),
-				abortSignal: options?.abortSignal,
-				onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
-				onStepEnd: (step) => run.stepEnded(step),
-				onStepError: ({ stepNumber, error }) =>
-					run.stepFailed(stepNumber, describeFailure(agent, error)),
-				onEnd: ({ finishReason }) =>
-					finishReason === "error"
-						? end("failed", `${agent.name} could not finish its answer.`)
-						: end("succeeded"),
-				onAbort: () => end("stopped"),
-				onError: ({ error }) => end("failed", describeFailure(agent, error)),
-			});
-			return createUIMessageStreamResponse({
-				stream: toUIMessageStream({
-					stream: result.stream,
-					tools,
-					onError: (error) => {
-						console.error("A turn failed", { agent: agent.agentId, ...failureForLogs(error) });
-						return describeFailure(agent, error);
-					},
-				}),
-			});
-		} catch (error) {
-			const message = describeFailure(agent, error);
-			await end("failed", message);
-			return failed(message);
-		}
+						this.#oauth(registry),
+					);
+					progress(null);
+					const checkedOut =
+						sandbox && repository
+							? withCheckout(sandbox, repository, branch, (waiting) =>
+									progress(waiting ? "Checking out the repository" : null),
+								)
+							: null;
+					const github = repository ? this.#pullRequests(repository) : null;
+					// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with
+					// them. An edge is named after a member of the team, so it wins over any tool of
+					// that name.
+					const tools = {
+						...toolbox.tools,
+						...(sandbox ? sandboxTools(checkedOut ?? sandbox, run) : {}),
+						...(sandbox && checkedOut && repository && github
+							? pullRequestTools({
+									sandbox,
+									checks: this.#checks(registry, repository, sandbox),
+									ready: checkedOut.ready,
+									github,
+									repository,
+									branch,
+									author: this.#commitAuthor(agent.name, repository),
+									record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
+									run,
+								})
+							: {}),
+						// The registry reads who asks, and what started the run, from the run itself.
+						...(turn.memory
+							? memoryTools(
+									{
+										remember: (input) => registry.rememberInRun(runId, input),
+										recall: (input) => registry.recallInRun(runId, input),
+										forget: (id) => registry.forgetInRun(runId, id),
+									},
+									run,
+								)
+							: {}),
+						...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
+					};
+					const system = [
+						agent.instructions,
+						sandbox && repository && repositoryNote(repository, branch),
+					]
+						.filter((part) => typeof part === "string")
+						.join("\n\n");
+					const result = streamText({
+						model: this.modelFor(agent, key, {
+							workspace: workspaceId,
+							agent: agent.agentId,
+							conversation: conversationId,
+						}),
+						system: system === "" ? undefined : system,
+						// A turn stopped during a tool call leaves the call without a result, which
+						// providers refuse in a later turn.
+						messages: await convertToModelMessages(this.messages, {
+							tools,
+							ignoreIncompleteToolCalls: true,
+						}),
+						tools,
+						stopWhen: stepCountIs(sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS),
+						abortSignal: options?.abortSignal,
+						onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
+						onStepEnd: (step) => run.stepEnded(step),
+						onStepError: ({ stepNumber, error }) =>
+							run.stepFailed(stepNumber, describeFailure(agent, error)),
+						onEnd: ({ finishReason }) =>
+							finishReason === "error"
+								? end("failed", `${agent.name} could not finish its answer.`)
+								: end("succeeded"),
+						onAbort: () => end("stopped"),
+						onError: ({ error }) => end("failed", describeFailure(agent, error)),
+					});
+					writer.merge(
+						toUIMessageStream({
+							stream: result.stream,
+							tools,
+							// The stream's own "start" would open a second message; this one opened it.
+							sendStart: false,
+							onError: (error) => {
+								console.error("A turn failed", {
+									agent: agent.agentId,
+									...failureForLogs(error),
+								});
+								return describeFailure(agent, error);
+							},
+						}),
+					);
+				} catch (error) {
+					const message = describeFailure(agent, error);
+					await end("failed", message);
+					writer.write({ type: "error", errorText: message });
+				}
+			},
+			onError: (error) => {
+				console.error("A turn failed", { agent: agent.agentId, ...failureForLogs(error) });
+				return describeFailure(agent, error);
+			},
+		});
+		return createUIMessageStreamResponse({ stream });
 	}
 
 	/**
@@ -786,6 +826,14 @@ ${runPageNote(runs, turn.runId)}`
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
+				let shown: string | null = null;
+				const progress = (label: string | null) => {
+					if (label === shown) return;
+					shown = label;
+					writer.write({ type: TURN_PROGRESS_PART, data: { label }, transient: true });
+				};
+				if (repository) progress("Checking out the repository");
+				else if (mcpServers.length > 0) progress("Connecting tools");
 				const checkedOut = repository ? withCheckout(sandbox, repository, branch) : null;
 				const [problem, toolbox] = await Promise.all([
 					checkedOut ? checkedOut.ready() : null,
@@ -805,6 +853,7 @@ ${runPageNote(runs, turn.runId)}`
 					writer.write({ type: "finish" });
 					return;
 				}
+				progress(null);
 				const github = repository ? this.#pullRequests(repository) : null;
 				const tools: ToolSet = {
 					...toolbox.tools,
@@ -846,6 +895,7 @@ ${runPageNote(runs, turn.runId)}`
 				signal?.addEventListener("abort", stop, { once: true });
 				try {
 					const note = engineNote(repository, branch, PULL_REQUEST_TOOL in tools);
+					progress("Starting the sandbox");
 					const events = await sandbox.startEngine({
 						engine,
 						prompt: lastUserText(this.messages),
@@ -867,10 +917,20 @@ ${runPageNote(runs, turn.runId)}`
 							meter: { conversation: this.name, token },
 						},
 					});
-					for await (const line of linesOf(events)) turn.take(line);
+					// startEngine resolving means the process is up, not that it has spoken; the
+					// label stays until the engine's first line (the finally clears a silent turn's).
+					let started = false;
+					for await (const line of linesOf(events)) {
+						if (!started) {
+							started = true;
+							progress(null);
+						}
+						turn.take(line);
+					}
 				} catch (error) {
 					console.error(`${ENGINE_NAMES[engine]}'s turn failed`, failureForLogs(error));
 				} finally {
+					progress(null);
 					signal?.removeEventListener("abort", stop);
 					await this.#meteredRequests(requests);
 					if (this.#engineTurnState?.token === token) this.#engineTurnState = null;

@@ -54,6 +54,13 @@ async function expectStoppedRun(page: Page, slug: string) {
 }
 
 /**
+ * The line a turn shows while nothing of its reply has come: its progress label when it has one
+ * (AGT-139 — this agent's silent MCP server keeps it at "Connecting tools"), "is thinking…" when
+ * it has none.
+ */
+const WAITING = /is thinking…|Connecting tools/;
+
+/**
  * Holds back what the conversation answers when a new socket asks whether a turn was left running,
  * until `release`: a conversation that is slow to wake answers after someone has already written.
  */
@@ -128,7 +135,7 @@ test("a turn shows as running from the moment it is sent, and stops before its r
 		const stop = page.getByRole("button", { name: "Stop" });
 		await expect(stop).toBeVisible({ timeout: 2_000 });
 		await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
-		await expect(page.getByText("is thinking…")).toBeVisible();
+		await expect(page.getByText(WAITING)).toBeVisible();
 		// The turn is waiting for its server, with nothing of its reply sent.
 		await expect.poll(server.asked).toBeGreaterThan(0);
 
@@ -139,7 +146,7 @@ test("a turn shows as running from the moment it is sent, and stops before its r
 		await expect(stop).toBeVisible();
 		await expect(stop).toBeEnabled();
 		await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
-		await expect(page.getByText("is thinking…")).toBeVisible();
+		await expect(page.getByText(WAITING)).toBeVisible();
 
 		await stop.click();
 		await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 5_000 });
@@ -165,7 +172,7 @@ test("a page opened while a turn waits to begin shows it as running, and stops i
 		const stop = page.getByRole("button", { name: "Stop" });
 		await expect(stop).toBeVisible({ timeout: 5_000 });
 		await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
-		await expect(page.getByText("is thinking…")).toBeVisible();
+		await expect(page.getByText(WAITING)).toBeVisible();
 		await expect(stop).toBeEnabled();
 
 		await stop.click();
