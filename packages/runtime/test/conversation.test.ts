@@ -2,7 +2,8 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { AgentSnapshot } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
-import { generateText } from "ai";
+import { applyChunkToParts } from "agents/chat";
+import { generateText, type UIMessage } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ConversationAgent, conversationName, destroyConversationObject } from "../src";
 import { languageModel } from "../src/models";
@@ -153,6 +154,59 @@ describe("a conversation", () => {
 		await vi.waitFor(() => expect(requests[0]?.signal?.aborted).toBe(true));
 		await turn;
 		socket.close();
+	});
+});
+
+describe("data parts", () => {
+	it("stores and replays data parts with the conversation", async () => {
+		const { stub } = await conversation();
+		fakeModel(() => anthropicStream("Done."));
+		const socket = await connect(stub);
+		await ask(socket, "Run the checks");
+
+		// What a turn's stream leaves behind once `applyChunkToParts` has turned its data chunks
+		// into parts: what a rich reply (a PR card, the run's summary) is stored as.
+		const before = (await (
+			await stub.fetch("http://conversation/get-messages")
+		).json()) as UIMessage[];
+		await stub.persistMessages([
+			...before,
+			{
+				id: crypto.randomUUID(),
+				role: "assistant",
+				parts: [
+					{ type: "text", text: "Done." },
+					{ type: "data-run", data: { runId: "run-1", steps: 3 } },
+					{ type: "data-changes", data: { files: 2, added: 40 } },
+				],
+			},
+		]);
+
+		const stored = (await (await stub.fetch("http://conversation/get-messages")).json()) as {
+			role: string;
+			parts: { type: string; data?: unknown }[];
+		}[];
+		const last = stored.at(-1);
+		expect(last?.role).toBe("assistant");
+		expect(last?.parts).toContainEqual({ type: "data-run", data: { runId: "run-1", steps: 3 } });
+		expect(last?.parts).toContainEqual({ type: "data-changes", data: { files: 2, added: 40 } });
+		socket.close();
+	});
+
+	it("does not store transient data parts, which is what live progress writes", () => {
+		// `applyChunkToParts` is the assembly the chat server runs on every stream chunk
+		// (`agents/chat`, which `@cloudflare/ai-chat` calls), so a part it does not keep is
+		// never stored.
+		const parts: UIMessage["parts"] = [];
+		const progress = { type: "data-progress", data: { step: "tests" }, transient: true };
+		expect(applyChunkToParts(parts, progress)).toBe(true);
+		expect(parts).toEqual([]);
+
+		const run = { type: "data-run", data: { runId: "run-1" } };
+		expect(applyChunkToParts(parts, run)).toBe(true);
+		expect(parts).toEqual([
+			expect.objectContaining({ type: "data-run", data: { runId: "run-1" } }),
+		]);
 	});
 });
 
