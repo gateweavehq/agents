@@ -751,12 +751,22 @@ describe("a repository's checks", () => {
 		// Text Markdown escapes cannot be told from a tag by reading the source alone: here the
 		// quote that opens in the paragraph ends in the <div>, whose own quote stays open.
 		expect(after('A <b a="\n\n<div title=">')).toBe(`A <b a="\n\n<div title=">\n${TAG_CLOSER}`);
-		// A body the tool wrote before, sent back, keeps one such line: it moves after the
-		// </details> now in the text, and stays there.
+		// A body the tool wrote before, sent back, keeps the lines it had: the one before the
+		// </details> now in the text ends any tag the model left open there, and one more ends
+		// the text. Sent back again, it stays as it is.
 		const once = withChecksSection("<details>\nLog", section);
 		const twice = withChecksSection(once, section);
-		expect(twice).toBe(`<details>\nLog\n</details>\n${TAG_CLOSER}\n\n${section}`);
+		expect(twice).toBe(`<details>\nLog\n${TAG_CLOSER}\n</details>\n${TAG_CLOSER}\n\n${section}`);
 		expect(withChecksSection(twice, section)).toBe(twice);
+		// So a <details> whose own tag the model left unfinished is still ended before its
+		// </details>, which would otherwise fall inside the open value and leave the fold open
+		// around the section.
+		const cut = withChecksSection('<details title="unfinished', section);
+		const cutTwice = withChecksSection(cut, section);
+		expect(cutTwice).toBe(
+			`<details title="unfinished\n${TAG_CLOSER}\n</details>\n${TAG_CLOSER}\n\n${section}`,
+		);
+		expect(withChecksSection(cutTwice, section)).toBe(cutTwice);
 		// Text without a tag gets nothing.
 		expect(after("Vec < T and a <= b")).toBe("Vec < T and a <= b");
 	});

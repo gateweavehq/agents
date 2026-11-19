@@ -546,11 +546,15 @@ export function pullRequestBody(body: string, section: string | null, agentName:
  * sight, which is the side to err on.
  */
 function closed(model: string): string {
-	// The line a body this tool wrote before already carries, as the model may send it back.
-	const body = model
-		.split("\n")
-		.filter((line) => line !== TAG_CLOSER)
-		.join("\n");
+	// A body this tool wrote before, which the model may send back, ends with the line; it is put
+	// back below. One with closers after it stays where it is: it ends the tag that those closers
+	// would otherwise fall inside.
+	let body = model;
+	while (body.trimEnd().endsWith(TAG_CLOSER)) {
+		const kept = body.trimEnd().slice(0, -TAG_CLOSER.length);
+		if (kept !== "" && !kept.endsWith("\n")) break;
+		body = kept.replace(/\n$/, "");
+	}
 	const closers: string[] = [];
 	// A fence is closed by a line of the same character, at least as long, with nothing after.
 	let fence: string | null = null;
