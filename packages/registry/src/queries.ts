@@ -295,6 +295,7 @@ export function getAgent(db: Db, id: string): AgentDetail | null {
 		engine: row.engine,
 		memory: row.memory,
 		files: row.files,
+		outsideTasks: row.outsideTasks,
 		repository: chosenRepository(db, row.repositoryId),
 	};
 	const instructions = pinned

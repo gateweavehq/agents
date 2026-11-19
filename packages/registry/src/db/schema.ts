@@ -250,6 +250,11 @@ export const agentDefinitions = sqliteTable(
 		 * `sandbox`, and only with a repository, which `../definitions.ts` holds on every save.
 		 */
 		files: integer("files", { mode: "boolean" }).notNull().default(false),
+		/**
+		 * Whether an MCP client may hand it tasks from outside the app (AGT-155): `run_agent` and
+		 * `get_run` on /mcp, which spend the workspace's budget. Off unless someone turns it on.
+		 */
+		outsideTasks: integer("outside_tasks", { mode: "boolean" }).notNull().default(false),
 	},
 	(table) => [
 		index("agent_definitions_instructions_idx").on(table.instructionsAssetId),

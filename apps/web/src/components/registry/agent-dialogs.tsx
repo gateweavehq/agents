@@ -112,6 +112,7 @@ export function AgentDialog({
 	const [sandbox, setSandbox] = useState(agent?.definition.sandbox ?? false);
 	const [engine, setEngine] = useState<AgentEngine>(agent?.definition.engine ?? "gateweave");
 	const [memory, setMemory] = useState(agent?.definition.memory ?? false);
+	const [outsideTasks, setOutsideTasks] = useState(agent?.definition.outsideTasks ?? false);
 	const chosenRepository = agent?.definition.repository ?? null;
 	const [repositoryId, setRepositoryId] = useState(chosenRepository?.id ?? "");
 	// The repositories the workspace's GitHub App reaches, which a sandbox can check out.
@@ -215,6 +216,7 @@ export function AgentDialog({
 				sandbox,
 				engine,
 				memory,
+				outsideTasks,
 				// The repository is checked out in the sandbox, so it goes with it.
 				repositoryId: repositoryId !== "" ? repositoryId : null,
 			});
@@ -470,6 +472,21 @@ export function AgentDialog({
 								{engine === "gateweave"
 									? "The agent can note facts, decisions and preferences in the workspace's memory, and recall them in later runs. Every member of the workspace can read the notes it keeps on the Memory page, those from someone's own chat with it included. What it notes about the workspace or a repository, or in a run a trigger started, waits there for an owner or admin."
 									: `${ENGINE_NAMES[engine]} does not have the memory tools yet: they work with the Gateweave engine.`}
+							</span>
+						</span>
+					</Label>
+					<Label className="flex cursor-pointer items-start gap-3 font-normal">
+						<Checkbox
+							className="mt-0.5"
+							checked={outsideTasks}
+							onCheckedChange={(checked) => setOutsideTasks(checked === true)}
+						/>
+						<span className="space-y-1">
+							<span className="block text-sm font-medium">Tasks from MCP clients</span>
+							<span className="block text-xs text-muted-foreground">
+								An app connected over MCP with the agents:run scope can give this agent tasks and
+								read its runs, only for people who allow it. Each task runs like a trigger's and
+								spends the workspace's budget.
 							</span>
 						</span>
 					</Label>

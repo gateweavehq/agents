@@ -37,6 +37,7 @@ export function inputOf(agent: Agent, definition: AgentDefinition): WholeAgentIn
 		engine: definition.engine,
 		memory: definition.memory,
 		files: definition.files,
+		outsideTasks: definition.outsideTasks,
 	};
 }
 
@@ -53,6 +54,7 @@ export type AgentFormChoices = Pick<
 	| "sandbox"
 	| "engine"
 	| "memory"
+	| "outsideTasks"
 > & {
 	/** The repository chosen in the form, or the one the agent had; null when none. */
 	repositoryId: string | null;

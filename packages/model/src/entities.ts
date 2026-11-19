@@ -375,6 +375,11 @@ export interface AgentDefinition {
 	 * open pull requests, and run nothing. Never with a sandbox, and only with a repository.
 	 */
 	files: boolean;
+	/**
+	 * Whether an MCP client may hand it tasks from outside the app (AGT-155): `run_agent` and
+	 * `get_run` on /mcp, which spend the workspace's budget. Off unless someone turns it on.
+	 */
+	outsideTasks: boolean;
 }
 
 /**

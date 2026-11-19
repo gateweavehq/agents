@@ -100,6 +100,18 @@ describe("agents run by Gateweave", () => {
 		expect((await stub.getAsset(rules))?.agents).toEqual([]);
 	});
 
+	it("keep whether an MCP client may hand them tasks, off unless someone turns it on (AGT-155)", async () => {
+		const stub = registry();
+		const agent = await stub.createAgent(reviewer(null));
+		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(false);
+
+		await stub.updateAgent(agent.id, reviewer(null, { outsideTasks: true }));
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({ outsideTasks: true });
+
+		await stub.updateAgent(agent.id, reviewer(null, { outsideTasks: false }));
+		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(false);
+	});
+
 	it("take instructions only from a prompt or instructions in the library", async () => {
 		const stub = registry();
 		const skill = await stub.createLibraryAsset({

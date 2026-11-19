@@ -245,6 +245,7 @@ function definitionRow(agentId: string, input: Definition) {
 		engine: input.engine,
 		memory: input.memory,
 		files: input.files,
+		outsideTasks: input.outsideTasks,
 	};
 }
 

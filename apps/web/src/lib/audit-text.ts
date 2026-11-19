@@ -28,6 +28,7 @@ const FIELD_NAMES: Record<string, string> = {
 	engine: "engine",
 	memory: "memory",
 	files: "work on files without a sandbox",
+	outsideTasks: "tasks from MCP clients",
 	runtimes: "coding agents",
 	assets: "assets",
 	prompt: "prompt",
