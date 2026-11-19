@@ -4,6 +4,7 @@ import {
 	type FilePort,
 	fileTools,
 	type ReadResult,
+	SANDBOX_LIMITS,
 	type SearchQuery,
 	type SearchResult,
 	sandboxFiles,
@@ -93,6 +94,48 @@ describe("the tools for files", () => {
 		);
 		await expect(call("write_file", { path: "/etc/passwd", content: "" })).rejects.toThrow(
 			"/etc/passwd is outside /workspace",
+		);
+	});
+
+	it("bound numbered reads by UTF-8 bytes including the continuation hint", async () => {
+		const files = new MemoryFiles();
+		const { call } = toolbox(files);
+		const wide = "🙂".repeat(1_000);
+		const firstFour = Array.from({ length: 4 }, (_, index) => `${index + 1}\t${wide}`).join("\n");
+		const hint = "\n\n[Lines 1 to 5 of 6; read on from 6.]";
+		const fifthLength =
+			SANDBOX_LIMITS.readBytes - new TextEncoder().encode(`${firstFour}\n5\t${hint}`).length;
+		const fifth = "x".repeat(fifthLength);
+		const tail = "t".repeat(128);
+		files.files.set("/workspace/wide.txt", [wide, wide, wide, wide, fifth, tail].join("\n"));
+
+		const page = await call("read_file", { path: "wide.txt" });
+		expect(page).toBe(`${firstFour}\n5\t${fifth}${hint}`);
+		expect(new TextEncoder().encode(page as string)).toHaveLength(SANDBOX_LIMITS.readBytes);
+		expect(await call("read_file", { path: "wide.txt", offset: 6 })).toBe(`6\t${tail}`);
+
+		files.files.set("/workspace/wide.txt", [wide, wide, wide, wide, `${fifth}x`, tail].join("\n"));
+		const shorter = await call("read_file", { path: "wide.txt" });
+		expect(shorter).toBe(`${firstFour}\n\n[Lines 1 to 4 of 6; read on from 5.]`);
+		expect(new TextEncoder().encode(shorter as string).length).toBeLessThanOrEqual(
+			SANDBOX_LIMITS.readBytes,
+		);
+		expect(await call("read_file", { path: "wide.txt", offset: 5 })).toBe(
+			`5\t${fifth}x\n6\t${tail}`,
+		);
+	});
+
+	it("keep explicit line limits, offsets, and complete surrogate pairs at a line cut", async () => {
+		const files = new MemoryFiles();
+		const { call } = toolbox(files);
+		files.files.set("/workspace/lines.txt", `first\n${"a".repeat(1_999)}🙂after\nthird`);
+
+		expect(await call("read_file", { path: "lines.txt", offset: 2, limit: 1 })).toBe(
+			`2\t${"a".repeat(1_999)}[line cut short]\n\n[Lines 2 to 2 of 3; read on from 3.]`,
+		);
+		expect(await call("read_file", { path: "lines.txt", offset: 3 })).toBe("3\tthird");
+		expect(await call("read_file", { path: "lines.txt", offset: 4 })).toBe(
+			"/workspace/lines.txt has 3 lines; none from 4.",
 		);
 	});
 
