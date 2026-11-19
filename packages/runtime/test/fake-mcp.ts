@@ -8,10 +8,15 @@ export interface FakeTool {
 	inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
 }
 
-type CallResult = {
-	content: { type: "text"; text: string }[];
+export type CallResult = {
+	content?: (
+		| { type: "text"; text: string }
+		| { type: "image"; data: string; mimeType: string }
+		| { type: "resource"; resource: { uri: string; text: string } }
+	)[];
 	structuredContent?: Record<string, unknown>;
 	isError?: boolean;
+	_meta?: Record<string, unknown>;
 };
 
 export class FakeMcpServer {

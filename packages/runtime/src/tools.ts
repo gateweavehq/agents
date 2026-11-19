@@ -57,6 +57,7 @@ export async function connectTools(
 			// Names that only differ in characters a provider refuses: the first one wins.
 			if (!(toolName in tools))
 				tools[toolName] = traced(tool, server.name, name, run, {
+					limitMcpResult: true,
 					onSignInFailure:
 						oauthAssetId && oauth
 							? async () => await oauth(oauthAssetId).invalidateHealth()
@@ -423,6 +424,8 @@ export interface TraceOptions {
 	/** Record the message the tool threw, not only that the call failed. */
 	showErrors?: boolean;
 	onSignInFailure?: () => Promise<void>;
+	/** Only connection-backed MCP tools cap the result the model receives. */
+	limitMcpResult?: boolean;
 }
 
 /**
@@ -456,11 +459,12 @@ export function traced(
 			const span = run.toolStarted(server, name, byteSize(input));
 			try {
 				const output: unknown = await execute(input, callOptions);
+				const outputBytes = byteSize(output);
 				run.toolEnded(span, {
-					outputBytes: byteSize(output),
+					outputBytes,
 					error: isToolError(output) ? "The tool answered with an error" : null,
 				});
-				return output;
+				return options.limitMcpResult ? limitedMcpResult(output, outputBytes) : output;
 			} catch (error) {
 				const failure = describeToolFailure(error, options);
 				run.toolEnded(span, { error: failure });
@@ -483,6 +487,60 @@ function toolNameOf(server: string, tool: string): string {
 
 function byteSize(value: unknown): number {
 	return new TextEncoder().encode(JSON.stringify(value) ?? "").length;
+}
+
+const MCP_RESULT_LIMIT = 16 * 1024;
+// The CLI MCP server adds its fixed serverInfo and resultType metadata to a returned tool result.
+const MCP_RESULT_ENVELOPE_RESERVE = 128;
+
+/** Keep the first text block's prefix without carrying binary or structured data into the reply. */
+function limitedMcpResult(output: unknown, outputBytes: number): unknown {
+	if (outputBytes <= MCP_RESULT_LIMIT) return output;
+	const notice = `MCP tool result was ${outputBytes} bytes, exceeding the 16 KiB limit. Ask for less data.`;
+	const content =
+		typeof output === "object" &&
+		output !== null &&
+		"content" in output &&
+		Array.isArray(output.content)
+			? output.content
+			: [];
+	const firstText = content.find(
+		(block: unknown): block is { text: string } =>
+			typeof block === "object" &&
+			block !== null &&
+			"type" in block &&
+			block.type === "text" &&
+			"text" in block &&
+			typeof block.text === "string" &&
+			block.text.length > 0,
+	);
+	const isError = { isError: isToolError(output) };
+	const result = { content: [{ type: "text", text: notice }], ...isError };
+	if (!firstText) return result;
+	// The MCP SDK synthesizes JSON text for a result that had only structuredContent.
+	if (
+		typeof output === "object" &&
+		output !== null &&
+		"structuredContent" in output &&
+		output.structuredContent !== undefined &&
+		content.length === 1 &&
+		firstText.text === JSON.stringify(output.structuredContent)
+	)
+		return result;
+
+	const withPrefix = { content: [...result.content, { type: "text", text: "" }], ...isError };
+	let remaining = MCP_RESULT_LIMIT - MCP_RESULT_ENVELOPE_RESERVE - byteSize(withPrefix);
+	let end = 0;
+	const encoder = new TextEncoder();
+	for (const character of firstText.text) {
+		// JSON.stringify accounts for quotes, backslashes, control characters and lone surrogates.
+		const bytes = encoder.encode(JSON.stringify(character)).length - 2;
+		if (bytes > remaining) break;
+		remaining -= bytes;
+		end += character.length;
+	}
+	withPrefix.content[1] = { type: "text", text: firstText.text.slice(0, end) };
+	return withPrefix;
 }
 
 /** MCP reports a tool's own failure in its result, which the model reads like any answer. */
