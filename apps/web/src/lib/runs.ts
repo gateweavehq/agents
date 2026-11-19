@@ -10,6 +10,7 @@
  */
 import {
 	RUNS_PER_PAGE,
+	type Run,
 	type RunSpan,
 	runCursor,
 	type TotaledRun,
@@ -17,6 +18,15 @@ import {
 } from "@gateweave/agents-model";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+
+/** What a reply's run used, for the line under it in Chat. */
+export interface RunSummary {
+	steps: number;
+	inputTokens: number;
+	outputTokens: number;
+	cost: number | null;
+	status: Run["status"];
+}
 
 /** A run, with its total and the name of the member or the trigger that started it. */
 export interface RunEntry extends TotaledRun {
@@ -140,6 +150,26 @@ export const getRun = createServerFn({ method: "GET" })
 			};
 		},
 	);
+
+/**
+ * What a reply's run used, for the line under it in Chat (AGT-139); null when the caller may not
+ * see the run, as `getRun` decides.
+ */
+export const runSummary = createServerFn({ method: "GET" })
+	.validator(z.object({ slug: z.string().min(1), runId: z.string().min(1).max(64) }))
+	.handler(async ({ data }): Promise<RunSummary | null> => {
+		const viewer = await viewerOf(data.slug);
+		if (!viewer) return null;
+		const run = await viewer.registry.getRun(data.runId);
+		if (!run || (!viewer.everyone && run.startedBy !== viewer.userId)) return null;
+		return {
+			steps: run.steps,
+			inputTokens: run.inputTokens,
+			outputTokens: run.outputTokens,
+			cost: run.cost,
+			status: run.status,
+		};
+	});
 
 /**
  * Replays a run from its model request `step` (AGT-73): a new conversation of the caller's gets

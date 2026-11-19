@@ -27,6 +27,8 @@ import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
 import { type PendingTurn, pendingTurnAfter, stopFrame } from "#/lib/pending-turn";
+import { runIdOf } from "#/lib/run-part";
+import { type RunSummary, runSummary } from "#/lib/runs";
 import {
 	type CallState,
 	describeEdgeCall,
@@ -39,6 +41,7 @@ import {
 } from "#/lib/tool-calls";
 import { isMarkedTriggerMessage, readTriggerMessage } from "#/lib/trigger-message";
 import { turnProgressOf } from "#/lib/turn-progress";
+import { formatCost, formatTokens } from "#/lib/usage";
 import { cn } from "#/lib/utils";
 import { Markdown } from "./markdown";
 import { TriggerCard, TriggerText } from "./trigger-card";
@@ -333,6 +336,7 @@ function LiveConversation({
 							agentName={agentName}
 							members={members}
 							first={index === 0}
+							slug={slug}
 						/>
 					))}
 					{(waiting || progress !== null) && !closed && (
@@ -481,6 +485,7 @@ function Message({
 	members,
 	first = false,
 	triggerName = null,
+	slug = null,
 }: {
 	message: UIMessage;
 	agentName: string;
@@ -488,6 +493,8 @@ function Message({
 	/** The conversation's first message, the only one a delivery's text is recognised in unmarked. */
 	first?: boolean;
 	triggerName?: string | null;
+	/** The workspace's slug, for the link to a reply's run; none where runs are not linked. */
+	slug?: string | null;
 }) {
 	const mine = message.role === "user";
 	const text = message.parts
@@ -495,6 +502,7 @@ function Message({
 		.join("\n\n");
 	const calls = toolCallsOf(message);
 	const reasoning = reasoningOf(message);
+	const runId = mine ? null : runIdOf(message);
 	if (!text && !reasoning && calls.length === 0) return null;
 	if (mine) {
 		// A delivery's message is an event, not something a person wrote. Ones stored before the
@@ -535,8 +543,54 @@ function Message({
 					</ul>
 				)}
 				{mine ? text : text && <Markdown>{text}</Markdown>}
+				{!mine && slug && runId && <RunLine slug={slug} runId={runId} />}
 			</div>
 		</div>
+	);
+}
+
+/** How often a reply's run is read again while it still runs. */
+const RUN_POLL_MS = 2_000;
+
+/** What the reply's run used, and the way to its page. */
+function RunLine({ slug, runId }: { slug: string; runId: string }) {
+	const [run, setRun] = useState<RunSummary | null | undefined>(undefined);
+	useEffect(() => {
+		let live = true;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const load = async () => {
+			try {
+				const summary = await runSummary({ data: { slug, runId } });
+				if (!live) return;
+				setRun(summary);
+				// A reply mounts while its turn still streams, so its run's numbers move until it ends.
+				if (summary?.status === "running") timer = setTimeout(load, RUN_POLL_MS);
+			} catch {
+				// A dropped request says nothing of the run: keep the last reading and try again.
+				if (live) timer = setTimeout(load, RUN_POLL_MS);
+			}
+		};
+		void load();
+		return () => {
+			live = false;
+			if (timer !== undefined) clearTimeout(timer);
+		};
+	}, [slug, runId]);
+	if (!run) return null;
+	return (
+		<p className="mt-1.5 text-xs text-muted-foreground">
+			{run.steps} {run.steps === 1 ? "step" : "steps"} · {formatTokens(run.inputTokens)} in ·{" "}
+			{formatTokens(run.outputTokens)} out
+			{run.cost !== null && ` · ${formatCost(run.cost)}`}
+			{" · "}
+			<Link
+				to="/$workspace/runs/$runId"
+				params={{ workspace: slug, runId }}
+				className="underline-offset-4 hover:underline"
+			>
+				View run
+			</Link>
+		</p>
 	);
 }
 
