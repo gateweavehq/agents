@@ -201,7 +201,7 @@ export function completionStream(chunks: CompletionChunk[]): Response {
 }
 
 /** Anthropic's streamed answer that calls one tool, as `POST /v1/messages` sends it. */
-export function anthropicToolCall(name: string, input: object): Response {
+export function anthropicToolCall(name: string, input: object, id = "toolu_1"): Response {
 	const events: [string, unknown][] = [
 		[
 			"message_start",
@@ -224,7 +224,7 @@ export function anthropicToolCall(name: string, input: object): Response {
 			{
 				type: "content_block_start",
 				index: 0,
-				content_block: { type: "tool_use", id: "toolu_1", name, input: {} },
+				content_block: { type: "tool_use", id, name, input: {} },
 			},
 		],
 		[

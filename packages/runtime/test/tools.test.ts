@@ -1,6 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: "${VAR}" references are what is under test
 import { env } from "cloudflare:workers";
-import { MCP_CHECK_LIMITS, type McpServerInput, mcpCheckResult } from "@gateweave/agents-model";
+import {
+	MAX_STEPS,
+	MCP_CHECK_LIMITS,
+	type McpServerInput,
+	mcpCheckResult,
+} from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkMcpServer, checkTrackAgent, conversationName } from "../src";
@@ -69,6 +74,59 @@ async function conversation(servers: McpServerInput[], allowed: Record<string, s
 }
 
 describe("MCP servers", () => {
+	it("records a step limit after the last allowed tool round and keeps its result", async () => {
+		let toolCalls = 0;
+		const acme = new FakeMcpServer([SEARCH], () => ({
+			content: [{ type: "text", text: `Search result ${++toolCalls}.` }],
+		}));
+		const requests = fakeModel(
+			(call) => anthropicToolCall("acme__search", { query: QUERY }, `toolu_${call}`),
+			{ "mcp.acme.dev": acme.handle },
+		);
+		const { registry, stub } = await conversation([ACME]);
+		const socket = await connect(stub);
+		expect(await ask(socket, "Keep searching")).toMatchObject({ error: null });
+		socket.close();
+
+		expect(requests).toHaveLength(MAX_STEPS);
+		expect(acme.requests.filter((request) => request.method === "tools/call")).toHaveLength(
+			MAX_STEPS,
+		);
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({
+			status: "step-limit",
+			steps: MAX_STEPS,
+			error: `The run reached its limit of ${MAX_STEPS} model requests.`,
+		});
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "tool" && span.status === "ok")).toHaveLength(
+			MAX_STEPS,
+		);
+		expect(JSON.stringify(await stub.transcript())).toContain(`Search result ${MAX_STEPS}.`);
+	});
+
+	it("succeeds when the last allowed request answers naturally", async () => {
+		const acme = new FakeMcpServer([SEARCH], () => ({ content: [{ type: "text", text: FOUND }] }));
+		const requests = fakeModel(
+			(call) =>
+				call === MAX_STEPS - 1
+					? anthropicStream("Here is the answer.")
+					: anthropicToolCall("acme__search", { query: QUERY }, `toolu_${call}`),
+			{ "mcp.acme.dev": acme.handle },
+		);
+		const { registry, stub } = await conversation([ACME]);
+		const socket = await connect(stub);
+		expect(await ask(socket, "Search, then answer")).toMatchObject({
+			text: "Here is the answer.",
+			error: null,
+		});
+		socket.close();
+
+		expect(requests).toHaveLength(MAX_STEPS);
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({ status: "succeeded", steps: MAX_STEPS, error: null });
+	});
+
 	it("give the agent their tools, and each call joins the trace without its content", async () => {
 		const acme = new FakeMcpServer([SEARCH], () => ({ content: [{ type: "text", text: FOUND }] }));
 		const requests = fakeModel(
