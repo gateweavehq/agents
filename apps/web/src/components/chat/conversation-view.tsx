@@ -1,8 +1,8 @@
 import { useAgentChat } from "@cloudflare/ai-chat/react";
-import { SESSION_ENDED, type TeamEdgeKind } from "@gateweave/agents-model";
+import { PULL_REQUEST_TOOL, SESSION_ENDED, type TeamEdgeKind } from "@gateweave/agents-model";
 import { Link } from "@tanstack/react-router";
 import { useAgent } from "agents/react";
-import type { UIMessage } from "ai";
+import { getToolName, type UIMessage } from "ai";
 import {
 	ArrowUp,
 	CircleAlert,
@@ -14,7 +14,14 @@ import {
 	Square,
 	Wrench,
 } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+	type ComponentType,
+	type FormEvent,
+	type KeyboardEvent,
+	useEffect,
+	useRef,
+	useState,
+} from "react";
 import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
@@ -26,6 +33,7 @@ import {
 	describePullRequestCall,
 	describeToolCall,
 	describeToolTarget,
+	reasoningOf,
 	type ToolCallPart,
 	toolCallsOf,
 } from "#/lib/tool-calls";
@@ -462,7 +470,8 @@ function Message({
 		.flatMap((part) => (part.type === "text" ? [part.text] : []))
 		.join("\n\n");
 	const calls = toolCallsOf(message);
-	if (!text && calls.length === 0) return null;
+	const reasoning = reasoningOf(message);
+	if (!text && !reasoning && calls.length === 0) return null;
 	if (mine) {
 		// A delivery's message is an event, not something a person wrote. Ones stored before the
 		// marker existed are recognised by their text.
@@ -484,13 +493,19 @@ function Message({
 				)}
 			>
 				{!mine && <p className="mb-1 text-xs font-medium text-muted-foreground">{agentName}</p>}
+				{!mine && reasoning && (
+					<details className="mb-2 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+						<summary className="cursor-pointer select-none font-medium">Reasoning</summary>
+						<p className="mt-1.5 whitespace-pre-wrap">{reasoning}</p>
+					</details>
+				)}
 				{calls.length > 0 && (
 					<ul aria-label="Tools used" className="mb-2 flex flex-wrap gap-1.5">
 						{calls.map((part) => {
 							const edge = members && describeEdgeCall(part, members);
 							if (edge) return <EdgeCall key={part.toolCallId} {...edge} />;
-							const pull = describePullRequestCall(part);
-							if (pull) return <PullRequestCall key={part.toolCallId} {...pull} />;
+							const Card = TOOL_CARDS[getToolName(part)];
+							if (Card) return <Card key={part.toolCallId} part={part} />;
 							return <ToolCall key={part.toolCallId} part={part} />;
 						})}
 					</ul>
@@ -503,6 +518,14 @@ function Message({
 
 const CHIP =
 	"inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs text-muted-foreground";
+
+/**
+ * A tool's own card, by the tool's name. A tool without one keeps the chip every tool had, so a
+ * message stored before a card existed still draws.
+ */
+const TOOL_CARDS: Record<string, ComponentType<{ part: ToolCallPart }>> = {
+	[PULL_REQUEST_TOOL]: PullRequestCard,
+};
 
 /** A tool the agent called. What it took and gave back stays out of view. */
 function ToolCall({ part }: { part: ToolCallPart }) {
@@ -532,47 +555,97 @@ function ToolCall({ part }: { part: ToolCallPart }) {
 	);
 }
 
+const PULL_STATES: Record<"open" | "closed" | "merged", { label: string; className: string }> = {
+	open: {
+		label: "Open",
+		className: "border-emerald-700/30 text-emerald-700 dark:text-emerald-400",
+	},
+	merged: {
+		label: "Merged",
+		className: "border-violet-700/30 text-violet-700 dark:text-violet-400",
+	},
+	closed: { label: "Closed", className: "text-muted-foreground" },
+};
+
 /**
- * A call of `open_pull_request`: the pull request it opened or pushed to, linked, or why there is
- * none, which shows on hover and which the model says too.
+ * A call of `open_pull_request`, as a card: while it runs, a line that says so; when it fails, why
+ * on hover; when it is done, the pull request with its title, repository, branch, files and lines,
+ * state and link. A message stored before the card's fields were kept draws with what it has.
  */
-function PullRequestCall({
-	state,
-	pullRequest,
-	error,
-}: NonNullable<ReturnType<typeof describePullRequestCall>>) {
+function PullRequestCard({ part }: { part: ToolCallPart }) {
+	const pull = describePullRequestCall(part);
+	if (!pull) return <ToolCall part={part} />;
+	const { state, pullRequest, error } = pull;
 	const Icon = { running: LoaderCircle, done: GitPullRequestArrow, failed: CircleAlert }[state];
-	const label =
-		state === "running"
-			? "Opening a pull request"
-			: state === "failed" || !pullRequest
-				? "Could not open a pull request"
-				: `${pullRequest.opened ? "Opened" : "Pushed to"} pull request #${pullRequest.number}`;
+	const badge = pullRequest?.state ? PULL_STATES[pullRequest.state] : undefined;
+	const where = pullRequest
+		? [pullRequest.repository, pullRequest.branch].filter(Boolean).join(" · ")
+		: "";
+	const lines =
+		pullRequest &&
+		(pullRequest.additions !== undefined ||
+			pullRequest.deletions !== undefined ||
+			pullRequest.changedFiles !== undefined)
+			? [
+					pullRequest.additions !== undefined ? `+${pullRequest.additions}` : null,
+					pullRequest.deletions !== undefined ? `-${pullRequest.deletions}` : null,
+					pullRequest.changedFiles !== undefined
+						? `${pullRequest.changedFiles} ${pullRequest.changedFiles === 1 ? "file" : "files"}`
+						: null,
+				]
+					.filter(Boolean)
+					.join(" · ")
+			: "";
 	return (
 		<li
-			className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
+			className={cn(
+				"w-full min-w-0 basis-full rounded-lg border bg-card px-3 py-2 text-xs",
+				state === "failed" && "border-destructive/40",
+			)}
 			title={error ?? undefined}
 		>
-			<Icon
-				aria-hidden="true"
-				className={cn(
-					"size-3 shrink-0",
-					state === "running" && "animate-spin",
-					state === "done" && "text-emerald-700 dark:text-emerald-400",
+			<div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+				<Icon
+					aria-hidden="true"
+					className={cn(
+						"size-3 shrink-0",
+						state === "running" && "animate-spin",
+						state === "done" && "text-emerald-700 dark:text-emerald-400",
+					)}
+				/>
+				<span className="truncate">
+					{state === "running"
+						? "Opening a pull request"
+						: state === "failed" || !pullRequest
+							? "Could not open a pull request"
+							: `${pullRequest.opened ? "Opened" : "Pushed to"} pull request #${pullRequest.number}`}
+				</span>
+				{badge && (
+					<span
+						className={cn(
+							"ml-auto shrink-0 rounded border px-1.5 py-px text-[10px] font-medium",
+							badge.className,
+						)}
+					>
+						{badge.label}
+					</span>
 				)}
-			/>
-			{pullRequest ? (
-				<a
-					href={pullRequest.url}
-					target="_blank"
-					rel="noreferrer"
-					className="truncate font-medium text-foreground underline-offset-4 hover:underline"
-				>
-					{label}
-				</a>
-			) : (
-				<span className="truncate">{label}</span>
+			</div>
+			{state === "done" && pullRequest && (
+				<div className="mt-1.5 min-w-0 text-sm">
+					<a
+						href={pullRequest.url}
+						target="_blank"
+						rel="noreferrer"
+						className="block truncate font-medium text-foreground underline-offset-4 hover:underline"
+					>
+						{pullRequest.title ?? `Pull request #${pullRequest.number}`}
+					</a>
+					{where && <p className="truncate text-xs text-muted-foreground">{where}</p>}
+					{lines && <p className="text-xs text-muted-foreground">{lines}</p>}
+				</div>
 			)}
+			{state === "failed" && <span className="sr-only">(failed)</span>}
 		</li>
 	);
 }
