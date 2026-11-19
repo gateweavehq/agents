@@ -80,6 +80,8 @@ it("offers run_agent only to a token with agents:run, and hands it the ask (AGT-
 	};
 	const readOnly = await connect(access);
 	expect((await readOnly.listTools()).tools.map((tool) => tool.name)).not.toContain("run_agent");
+	// get_run comes with the same scope, so a read-only token does not get it either.
+	expect((await readOnly.listTools()).tools.map((tool) => tool.name)).not.toContain("get_run");
 	await readOnly.close();
 
 	const client = await connect(access, true);
@@ -93,9 +95,6 @@ it("offers run_agent only to a token with agents:run, and hands it the ask (AGT-
 	expect(asked).toEqual([
 		{ workspace: "acme", agent: "Reviewer", task: "Review it.", requestId: "req-1" },
 	]);
-
-	// get_run comes with the same scope, and hands the read to access as it is.
-	expect((await readOnly.listTools()).tools.map((tool) => tool.name)).not.toContain("get_run");
 	const read = await client.callTool({
 		name: "get_run",
 		arguments: { workspace: "acme", runId: "run-1" },
