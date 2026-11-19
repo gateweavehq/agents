@@ -62,6 +62,34 @@ export function withCheckout(
 	};
 }
 
+/**
+ * The wait for a checkout said aloud (AGT-139): the first tool call that finds the repository
+ * not yet there says so, and the call that finds it ready clears it. The progress part is
+ * transient, so the conversation never stores it.
+ */
+export function withCheckoutProgress(
+	inner: CheckedOutSandbox,
+	progress: (label: string | null) => void,
+): CheckedOutSandbox {
+	let reported = false;
+	const report = async <T>(work: () => Promise<T>): Promise<T> => {
+		if (reported) return work();
+		reported = true;
+		progress("Checking out the repository");
+		try {
+			return await work();
+		} finally {
+			progress(null);
+		}
+	};
+	return {
+		ready: () => report(() => inner.ready()),
+		run: (command, cwd, timeoutSeconds) => report(() => inner.run(command, cwd, timeoutSeconds)),
+		readFile: (path) => report(() => inner.readFile(path)),
+		writeFile: (path, content) => report(() => inner.writeFile(path, content)),
+	};
+}
+
 /** What the model is told of the repository, after the agent's instructions. */
 export function repositoryNote(repository: SandboxRepository, branch: string): string {
 	const name = `${repository.owner}/${repository.name}`;
