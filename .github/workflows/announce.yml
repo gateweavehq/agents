@@ -50,7 +50,8 @@ jobs:
             '{product: $product, version: $version, url: $url, image: $image,
               summary: ($product + " " + $version + "\n\n" + $entry)}' > body.json
           # Each address is a password, so curl must not echo it: no -v, and errors without the URL.
-          # One network failing does not stop the other; the job fails afterwards so it shows.
+          # One network failing or hanging does not stop the other (each request has a time limit); the job
+          # fails afterwards so it shows.
           failed=0
           for network in linkedin x; do
             case "$network" in
@@ -61,7 +62,7 @@ jobs:
               echo "No address for $network; skipped."
               continue
             fi
-            status="$(curl -sS --proto '=https' -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
+            status="$(curl -sS --proto '=https' --connect-timeout 10 --max-time 60 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
               --data @body.json "$hook" 2>/dev/null || true)"
             echo "The $network workflow answered $status."
             case "$status" in 2*) ;; *) failed=1 ;; esac
