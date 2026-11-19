@@ -26,7 +26,10 @@ import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
+import { edgeRunsOf } from "#/lib/edge-part";
 import { type PendingTurn, pendingTurnAfter, stopFrame } from "#/lib/pending-turn";
+import { runIdOf } from "#/lib/run-part";
+import { type RunSummary, runSummary } from "#/lib/runs";
 import {
 	type CallState,
 	describeEdgeCall,
@@ -39,6 +42,7 @@ import {
 } from "#/lib/tool-calls";
 import { isMarkedTriggerMessage, readTriggerMessage } from "#/lib/trigger-message";
 import { turnProgressOf } from "#/lib/turn-progress";
+import { formatCost, formatTokens } from "#/lib/usage";
 import { cn } from "#/lib/utils";
 import { Markdown } from "./markdown";
 import { TriggerCard, TriggerText } from "./trigger-card";
@@ -333,6 +337,7 @@ function LiveConversation({
 							agentName={agentName}
 							members={members}
 							first={index === 0}
+							slug={slug}
 						/>
 					))}
 					{(waiting || progress !== null) && !closed && (
@@ -481,6 +486,7 @@ function Message({
 	members,
 	first = false,
 	triggerName = null,
+	slug = null,
 }: {
 	message: UIMessage;
 	agentName: string;
@@ -488,6 +494,8 @@ function Message({
 	/** The conversation's first message, the only one a delivery's text is recognised in unmarked. */
 	first?: boolean;
 	triggerName?: string | null;
+	/** The workspace's slug, for the link to a reply's run; none where runs are not linked. */
+	slug?: string | null;
 }) {
 	const mine = message.role === "user";
 	const text = message.parts
@@ -495,6 +503,8 @@ function Message({
 		.join("\n\n");
 	const calls = toolCallsOf(message);
 	const reasoning = reasoningOf(message);
+	const runId = mine ? null : runIdOf(message);
+	const edgeRuns = edgeRunsOf(message);
 	if (!text && !reasoning && calls.length === 0) return null;
 	if (mine) {
 		// A delivery's message is an event, not something a person wrote. Ones stored before the
@@ -527,7 +537,15 @@ function Message({
 					<ul aria-label="Tools used" className="mb-2 flex flex-wrap gap-1.5">
 						{calls.map((part) => {
 							const edge = members && describeEdgeCall(part, members);
-							if (edge) return <EdgeCall key={part.toolCallId} {...edge} />;
+							if (edge)
+								return (
+									<EdgeCall
+										key={part.toolCallId}
+										{...edge}
+										runId={edgeRuns.get(part.toolCallId) ?? null}
+										slug={slug}
+									/>
+								);
 							const Card = TOOL_CARDS.get(getToolName(part));
 							if (Card) return <Card key={part.toolCallId} part={part} />;
 							return <ToolCall key={part.toolCallId} part={part} />;
@@ -535,8 +553,54 @@ function Message({
 					</ul>
 				)}
 				{mine ? text : text && <Markdown>{text}</Markdown>}
+				{!mine && slug && runId && <RunLine slug={slug} runId={runId} />}
 			</div>
 		</div>
+	);
+}
+
+/** How often a reply's run is read again while it still runs. */
+const RUN_POLL_MS = 2_000;
+
+/** What the reply's run used, and the way to its page. */
+function RunLine({ slug, runId }: { slug: string; runId: string }) {
+	const [run, setRun] = useState<RunSummary | null | undefined>(undefined);
+	useEffect(() => {
+		let live = true;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const load = async () => {
+			try {
+				const summary = await runSummary({ data: { slug, runId } });
+				if (!live) return;
+				setRun(summary);
+				// A reply mounts while its turn still streams, so its run's numbers move until it ends.
+				if (summary?.status === "running") timer = setTimeout(load, RUN_POLL_MS);
+			} catch {
+				// A dropped request says nothing of the run: keep the last reading and try again.
+				if (live) timer = setTimeout(load, RUN_POLL_MS);
+			}
+		};
+		void load();
+		return () => {
+			live = false;
+			if (timer !== undefined) clearTimeout(timer);
+		};
+	}, [slug, runId]);
+	if (!run) return null;
+	return (
+		<p className="mt-1.5 text-xs text-muted-foreground">
+			{run.steps} {run.steps === 1 ? "step" : "steps"} · {formatTokens(run.inputTokens)} in ·{" "}
+			{formatTokens(run.outputTokens)} out
+			{run.cost !== null && ` · ${formatCost(run.cost)}`}
+			{" · "}
+			<Link
+				to="/$workspace/runs/$runId"
+				params={{ workspace: slug, runId }}
+				className="underline-offset-4 hover:underline"
+			>
+				View run
+			</Link>
+		</p>
 	);
 }
 
@@ -686,26 +750,32 @@ const EDGE_ICONS = { delegate: Forward, ask: MessageCircleQuestionMark, report: 
 
 /**
  * A call over one of the team's edges: its kind and the member it went to. The words it carried
- * stay out of view, as a tool's do; why it failed shows on hover, and the model says it too.
+ * stay out of view, as a tool's do; a finished one opens to the member's answer, as Markdown,
+ * and to the run it started. Why it failed shows on hover, and the model says it too.
  */
 function EdgeCall({
 	edge,
 	member,
 	state,
 	error,
+	answer,
+	runId,
+	slug,
 }: {
 	edge: TeamEdgeKind;
 	member: string;
 	state: CallState;
 	error: string | null;
+	answer: string | null;
+	/** The run the call started, when the reply's parts name it. */
+	runId: string | null;
+	/** The workspace's slug, for the link to the run's page; none where runs are not linked. */
+	slug: string | null;
 }) {
 	const Icon =
 		state === "running" ? LoaderCircle : state === "failed" ? CircleAlert : EDGE_ICONS[edge];
-	return (
-		<li
-			className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
-			title={error ?? undefined}
-		>
+	const label = (
+		<>
 			<Icon
 				aria-hidden="true"
 				className={cn(
@@ -718,6 +788,38 @@ function EdgeCall({
 				{EDGE_CALLS[edge][state]}{" "}
 				<span className={cn("font-medium", state !== "failed" && "text-foreground")}>{member}</span>
 			</span>
+		</>
+	);
+	const opens = state === "done" && (answer !== null || (runId !== null && slug !== null));
+	if (!opens) {
+		return (
+			<li
+				className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
+				title={error ?? undefined}
+			>
+				{label}
+			</li>
+		);
+	}
+	return (
+		<li className="w-full min-w-0 basis-full rounded-lg border bg-card px-3 py-2 text-xs">
+			<details>
+				<summary className="flex cursor-pointer select-none items-center gap-1.5 text-muted-foreground">
+					{label}
+				</summary>
+				<div className="mt-2 space-y-2">
+					{answer !== null && <Markdown>{answer}</Markdown>}
+					{runId !== null && slug !== null && (
+						<Link
+							to="/$workspace/runs/$runId"
+							params={{ workspace: slug, runId }}
+							className="text-muted-foreground underline-offset-4 hover:underline"
+						>
+							View run
+						</Link>
+					)}
+				</div>
+			</details>
 		</li>
 	);
 }

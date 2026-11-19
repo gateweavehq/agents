@@ -173,7 +173,14 @@ export const INSTRUCTION_KINDS = ["instructions", "prompt"] as const satisfies r
  * How a run ended, or that it is still going. A run is `interrupted` when its conversation's
  * Durable Object restarted in the middle of it, so it never finished.
  */
-export const RUN_STATUSES = ["running", "succeeded", "failed", "stopped", "interrupted"] as const;
+export const RUN_STATUSES = [
+	"running",
+	"succeeded",
+	"failed",
+	"stopped",
+	"interrupted",
+	"step-limit",
+] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
 /**

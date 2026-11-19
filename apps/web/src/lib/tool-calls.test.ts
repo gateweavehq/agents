@@ -59,13 +59,19 @@ it("shows a call over a team's edge as its kind and the member it went to", () =
 		({ type, toolCallId: "call-2", input: { task: "Review it" }, ...state }) as ToolUIPart;
 	expect(
 		describeEdgeCall(edge("tool-delegate__Code_reviewer", { state: "input-available" }), members),
-	).toEqual({ edge: "delegate", member: "Code reviewer", state: "running", error: null });
+	).toEqual({
+		edge: "delegate",
+		member: "Code reviewer",
+		state: "running",
+		error: null,
+		answer: null,
+	});
 	expect(
 		describeEdgeCall(
 			edge("tool-ask__QA", { state: "output-available", output: "It passes." }),
 			members,
 		),
-	).toEqual({ edge: "ask", member: "QA", state: "done", error: null });
+	).toEqual({ edge: "ask", member: "QA", state: "done", error: null, answer: "It passes." });
 	expect(
 		describeEdgeCall(
 			edge("tool-report__QA", {
@@ -79,7 +85,15 @@ it("shows a call over a team's edge as its kind and the member it went to", () =
 		member: "QA",
 		state: "failed",
 		error: "That edge is no longer in the team",
+		answer: null,
 	});
+	// An answer that is not text, as an older call's may be, opens to nothing.
+	expect(
+		describeEdgeCall(
+			edge("tool-delegate__QA", { state: "output-available", output: { text: "It passes." } }),
+			members,
+		),
+	).toEqual({ edge: "delegate", member: "QA", state: "done", error: null, answer: null });
 	expect(describeEdgeCall(edge("tool-acme__search", { state: "input-available" }), members)).toBe(
 		null,
 	);

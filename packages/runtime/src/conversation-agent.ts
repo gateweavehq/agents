@@ -3,12 +3,14 @@ import { sharedApp } from "@gateweave/agents-github";
 import {
 	type AgentSnapshot,
 	conversationBranch,
+	EDGE_PART,
 	ENGINE_NAMES,
 	MAX_SANDBOX_STEPS,
 	MAX_STEPS,
 	PULL_REQUEST_TOOL,
 	type PullRequestOutcome,
 	providerMissing,
+	RUN_PART,
 	type RunSpan,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
@@ -57,7 +59,6 @@ import {
 	convertToModelMessages,
 	createUIMessageStream,
 	createUIMessageStreamResponse,
-	stepCountIs,
 	streamText,
 	type ToolSet,
 	toUIMessageStream,
@@ -657,6 +658,8 @@ ${runPageNote(runs, turn.runId)}`
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
+				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
 					if (label === shown) return;
@@ -665,7 +668,7 @@ ${runPageNote(runs, turn.runId)}`
 				};
 				let toolbox: Awaited<ReturnType<typeof connectTools>> | null = null;
 				const end = async (
-					status: "succeeded" | "failed" | "stopped",
+					status: "succeeded" | "failed" | "stopped" | "step-limit",
 					error: string | null = null,
 				) => {
 					if (error !== null) this.#failure = error;
@@ -722,7 +725,11 @@ ${runPageNote(runs, turn.runId)}`
 									run,
 								)
 							: {}),
-						...edgeTools(edges, (edge, text, signal) => this.#takeEdge(run, edge, text, signal)),
+						...edgeTools(edges, (edge, text, { toolCallId }, signal) =>
+							this.#takeEdge(run, edge, text, signal, (runId) =>
+								writer.write({ type: EDGE_PART, data: { toolCallId, runId } }),
+							),
+						),
 					};
 					const system = [
 						agent.instructions,
@@ -730,12 +737,17 @@ ${runPageNote(runs, turn.runId)}`
 					]
 						.filter((part) => typeof part === "string")
 						.join("\n\n");
+					const maxSteps = sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS;
+					let reachedStepLimit = false;
 					const result = streamText({
 						model: this.modelFor(agent, key, {
 							workspace: workspaceId,
 							agent: agent.agentId,
 							conversation: conversationId,
 						}),
+						...(agent.provider === "anthropic"
+							? { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
+							: {}),
 						system: system === "" ? undefined : system,
 						// A turn stopped during a tool call leaves the call without a result, which
 						// providers refuse in a later turn.
@@ -744,7 +756,10 @@ ${runPageNote(runs, turn.runId)}`
 							ignoreIncompleteToolCalls: true,
 						}),
 						tools,
-						stopWhen: stepCountIs(sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS),
+						stopWhen: ({ steps }) => {
+							reachedStepLimit = steps.length >= maxSteps;
+							return reachedStepLimit;
+						},
 						abortSignal: options?.abortSignal,
 						onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
 						onStepEnd: (step) => run.stepEnded(step),
@@ -753,7 +768,9 @@ ${runPageNote(runs, turn.runId)}`
 						onEnd: ({ finishReason }) =>
 							finishReason === "error"
 								? end("failed", `${agent.name} could not finish its answer.`)
-								: end("succeeded"),
+								: reachedStepLimit
+									? end("step-limit", `The run reached its limit of ${maxSteps} model requests.`)
+									: end("succeeded"),
 						onAbort: () => end("stopped"),
 						onError: ({ error }) => end("failed", describeFailure(agent, error)),
 					});
@@ -829,6 +846,8 @@ ${runPageNote(runs, turn.runId)}`
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
+				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
 					if (label === shown) return;
@@ -880,8 +899,12 @@ ${runPageNote(runs, turn.runId)}`
 								run,
 							})
 						: {}),
-					...edgeTools(edges, (edge, text, edgeSignal) =>
-						this.#takeEdge(run, edge, text, edgeSignal),
+					// An engine's chat knows the call by the engine's own id, not by the id the MCP path hands
+					// the tool, so the part names the tool and its text for it to match.
+					...edgeTools(edges, (edge, text, { toolName }, edgeSignal) =>
+						this.#takeEdge(run, edge, text, edgeSignal, (runId) =>
+							writer.write({ type: EDGE_PART, data: { toolName, text, runId } }),
+						),
 					),
 				};
 				const offered = Object.keys(tools).length > 0;
@@ -979,6 +1002,7 @@ ${runPageNote(runs, turn.runId)}`
 		edge: TurnEdge,
 		text: string,
 		signal?: AbortSignal,
+		note?: (nestedRunId: string) => void,
 	): Promise<string> {
 		const env = this.env as unknown as RuntimeEnv;
 		const { workspaceId } = this.#parties();
@@ -1008,6 +1032,8 @@ ${runPageNote(runs, turn.runId)}`
 		}
 		const error = "error" in outcome ? outcome.error : null;
 		run.edgeEnded(span, { childRunId: outcome.runId, error });
+		// The reply's call names the run it started, so the chat can open that run's page.
+		if (outcome.runId !== null) note?.(outcome.runId);
 		if ("error" in outcome) {
 			// A turn the registry refused leaves a conversation it never heard of.
 			if (outcome.runId === null) await nested.destroy().catch(() => {});

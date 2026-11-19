@@ -693,6 +693,8 @@ export interface ModelSpan extends SpanBase {
 	inputTokens: number;
 	outputTokens: number;
 	cachedInputTokens: number;
+	/** Input tokens written to the provider's prompt cache, when recorded for this span. */
+	cacheWriteInputTokens?: number;
 	cost: number | null;
 	/** Why the model stopped, as the AI SDK puts it: `stop`, `length`, `tool-calls`, `error`... */
 	finishReason: string | null;

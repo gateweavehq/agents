@@ -61,11 +61,18 @@ export function describeToolCall(part: ToolCallPart): {
 /**
  * A call over one of a team's edges, by its kind and the member it went to, or null for any other
  * tool. `members` are the names of the team's members; a refusal comes back as the call's error.
+ * `answer` is what the member at the other end answered, which the chat shows when the chip opens.
  */
 export function describeEdgeCall(
 	part: ToolCallPart,
 	members: readonly string[],
-): { edge: TeamEdgeKind; member: string; state: CallState; error: string | null } | null {
+): {
+	edge: TeamEdgeKind;
+	member: string;
+	state: CallState;
+	error: string | null;
+	answer: string | null;
+} | null {
 	const read = readEdgeToolName(getToolName(part), members);
 	if (!read) return null;
 	const state: CallState =
@@ -79,6 +86,8 @@ export function describeEdgeCall(
 		member: read.member,
 		state,
 		error: part.state === "output-error" ? part.errorText : null,
+		answer:
+			part.state === "output-available" && typeof part.output === "string" ? part.output : null,
 	};
 }
 
