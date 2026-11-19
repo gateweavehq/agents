@@ -85,6 +85,38 @@ test("someone joins by an invitation", async ({ page, browser }) => {
 	}
 });
 
+test("an invitee can retry joining after a network failure", async ({ page, browser }) => {
+	const { name, slug } = await startWorkspace(page);
+	await page.goto(`/${slug}/settings/members`);
+	await waitForHydration(page);
+	const guest = newPerson("guest");
+	await page.getByLabel("Email address").fill(guest.email);
+	await page.getByRole("button", { name: "Create invite link" }).click();
+	const invitation = await page.getByLabel("Invite link").first().inputValue();
+
+	const guestContext = await newBrowserContext(browser);
+	try {
+		const guestPage = await guestContext.newPage();
+		await signUp(guestPage, guest);
+		await guestPage.goto(invitation);
+		await waitForHydration(guestPage);
+		const join = guestPage.getByRole("button", { name: `Join ${name}` });
+		const decline = guestPage.getByRole("button", { name: "Decline" });
+		await guestContext.setOffline(true);
+		await join.click();
+		await expect(guestPage.getByText("Could not join")).toBeVisible();
+		await expect(guestPage.getByText("Check your connection and try again.")).toBeVisible();
+		await expect(join).toBeEnabled();
+		await expect(decline).toBeEnabled();
+		await guestContext.setOffline(false);
+		await join.click();
+		await expect(guestPage).toHaveURL(new RegExp(`/${slug}(/|$)`));
+	} finally {
+		await guestContext.setOffline(false);
+		await guestContext.close();
+	}
+});
+
 test("an invitation cannot be answered before its page's script has run", async ({
 	page,
 	browser,
