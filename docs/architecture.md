@@ -1309,7 +1309,11 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     everything the model wrote and is the last section. For that to hold on the page, what the body
     left open is closed first (`closed`): a code fence, an HTML comment, processing instruction,
     CDATA or declaration, and a `<details>`, each of which would otherwise take the section in
-    and show it as code or not at all. Nothing of a command's output goes into the body.
+    and show it as code or not at all. A text with a tag in it is followed by the line
+    `<!-- " ' -->`: a tag left unfinished in an HTML block, such as `<div title="cut`, would take
+    what follows into an attribute, and the line ends it whatever quote is open, while it is a
+    comment, which shows nothing, where none is. The tool cannot tell which lines Markdown passes
+    on as HTML, so it does not try. Nothing of a command's output goes into the body.
   - A command gets 10 minutes, a call's checks 20 and a run's 40, counted where the tools are made
     for the turn. A command stopped at its limit is timed out, never passed. Checks a call has no
     time left for fail the round; when the run has none left before a round begins, the checks

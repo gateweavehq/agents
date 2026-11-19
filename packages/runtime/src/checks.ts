@@ -545,7 +545,12 @@ export function pullRequestBody(body: string, section: string | null, agentName:
  * seldom: a closer too many leaves a stray line or shows the section as code, both in plain
  * sight, which is the side to err on.
  */
-function closed(body: string): string {
+function closed(model: string): string {
+	// The line a body this tool wrote before already carries, as the model may send it back.
+	const body = model
+		.split("\n")
+		.filter((line) => line !== TAG_CLOSER)
+		.join("\n");
 	const closers: string[] = [];
 	// A fence is closed by a line of the same character, at least as long, with nothing after.
 	let fence: string | null = null;
@@ -573,6 +578,7 @@ function closed(body: string): string {
 	}
 	// A declaration, such as `<!DOCTYPE`, runs to the next `>`: one after the last `>` is open.
 	if (/<![A-Za-z]/.test(body.slice(body.lastIndexOf(">") + 1))) closers.push(">");
+	if (/<\/?[A-Za-z]/.test(body)) closers.push(TAG_CLOSER);
 	const opened = body.match(/<details[\s>]/gi)?.length ?? 0;
 	const ended = body.match(/<\/details\s*>/gi)?.length ?? 0;
 	for (let left = Math.min(opened - ended, MAX_FOLDS); left > 0; left -= 1) {
@@ -599,6 +605,18 @@ const HTML_UNTIL: readonly (readonly [string, string])[] = [
 	["<?", "?>"],
 	["<![CDATA[", "]]>"],
 ];
+
+/**
+ * A line that ends a tag a page may still be inside where the model's text ends, and shows
+ * nothing otherwise. Markdown passes on as they are the lines of an HTML block, and a tag left
+ * unfinished in one, such as `<div title="cut`, would take what follows into an attribute: the
+ * section and the disclosure. Whether a page is inside a tag there depends on which lines Markdown
+ * passes on, in lists and quotes too, which this does not work out, so the line follows any text
+ * with a tag in it. In a double-quoted value its `"` ends the value, in a single-quoted one its
+ * `'`, and then, as in a tag outside any value, the `>` ends the tag. Where no tag is open it is a
+ * comment, which Markdown passes on as a block of its own.
+ */
+const TAG_CLOSER = `<!-- " ' -->`;
 
 /** Most `<details>` the tool closes after a body, which no body a person reads comes near. */
 const MAX_FOLDS = 50;

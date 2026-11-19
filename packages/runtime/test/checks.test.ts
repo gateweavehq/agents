@@ -29,6 +29,8 @@ const BRANCH = "gateweave/conversation-1";
 const DISCLOSURE =
 	"Written and opened by `Builder`, an AI agent in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->";
 const AUTHOR = { name: "Builder", email: "noreply@gateweave.com" };
+/** The line after a body with a tag in it: it ends a tag left open and is a comment otherwise. */
+const TAG_CLOSER = `<!-- " ' -->`;
 
 /** The sentence every section the tool writes ends with. */
 const WRITTEN_BY =
@@ -693,7 +695,6 @@ describe("a repository's checks", () => {
 			"```sh\npnpm test\n```",
 			"~~~\n```\n~~~",
 			"Done. <!-- a note --> And more.",
-			"<details><summary>Log</summary>\n\nok\n\n</details>",
 			"<?php echo 1; ?> and <![CDATA[x]]> and <!DOCTYPE html>",
 			// A line of backticks inside a comment is the comment's own: a closer after the comment
 			// would open a code block there, with the section in it.
@@ -713,20 +714,57 @@ describe("a repository's checks", () => {
 		expect(after("Passed.\n\n<?")).toBe("Passed.\n\n<?\n?>");
 		expect(after("Passed.\n\n<![CDATA[")).toBe("Passed.\n\n<![CDATA[\n]]>");
 		expect(after("Passed.\n\n<!DOCTYPE")).toBe("Passed.\n\n<!DOCTYPE\n>");
+		// A text with a tag in it is followed by a line that ends any tag left open and is a
+		// comment otherwise, so it shows nothing even after a block that leaves nothing open.
+		expect(after("<details><summary>Log</summary>\n\nok\n\n</details>")).toBe(
+			`<details><summary>Log</summary>\n\nok\n\n</details>\n${TAG_CLOSER}`,
+		);
 		// A folded block left open would fold the section away.
 		expect(after("<details><summary>Checks passed</summary>")).toBe(
-			"<details><summary>Checks passed</summary>\n</details>",
+			`<details><summary>Checks passed</summary>\n${TAG_CLOSER}\n</details>`,
 		);
 		expect(after("<DETAILS open>\n<details>\n</details>\n<details >")).toBe(
-			"<DETAILS open>\n<details>\n</details>\n<details >\n</details>\n</details>",
+			`<DETAILS open>\n<details>\n</details>\n<details >\n${TAG_CLOSER}\n</details>\n</details>`,
 		);
 		// A code block left open would show the section as part of the model's code.
 		expect(after("Passed:\n\n```")).toBe("Passed:\n\n```\n```");
 		expect(after("````md\n```\nstill open")).toBe("````md\n```\nstill open\n````");
 		expect(after("   ~~~~ text\n~~~\n")).toBe("   ~~~~ text\n~~~\n~~~~");
-		expect(after("Done.\n\n<pre>unclosed")).toBe("Done.\n\n<pre>unclosed\n</pre>");
+		expect(after("Done.\n\n<pre>unclosed")).toBe(`Done.\n\n<pre>unclosed\n${TAG_CLOSER}\n</pre>`);
 		// Several at once: each gets its closer.
-		expect(after("```\n<!--\n<details>")).toBe("```\n<!--\n<details>\n```\n-->\n</details>");
+		expect(after("```\n<!--\n<details>")).toBe(
+			`\`\`\`\n<!--\n<details>\n\`\`\`\n-->\n${TAG_CLOSER}\n</details>`,
+		);
+	});
+
+	it("R4: a tag the model leaves unfinished is ended before the tool's section, and only one line is added however often the body comes back", () => {
+		const section = "## Checks run by Gateweave\n\nx";
+		const after = (body: string) => withChecksSection(body, section).slice(0, -section.length - 2);
+		// An HTML block passes the tag on as it is, and its open value would take the section in.
+		expect(after('Done.\n\n<div title="unfinished')).toBe(
+			`Done.\n\n<div title="unfinished\n${TAG_CLOSER}`,
+		);
+		expect(after("<pre title='unfinished")).toBe(`<pre title='unfinished\n${TAG_CLOSER}\n</pre>`);
+		expect(after("<div>\n<span title=unfinished")).toBe(
+			`<div>\n<span title=unfinished\n${TAG_CLOSER}`,
+		);
+		// Text Markdown escapes cannot be told from a tag by reading the source alone: here the
+		// quote that opens in the paragraph ends in the <div>, whose own quote stays open.
+		expect(after('A <b a="\n\n<div title=">')).toBe(`A <b a="\n\n<div title=">\n${TAG_CLOSER}`);
+		// A body the tool wrote before, sent back, keeps one such line: it moves after the
+		// </details> now in the text, and stays there.
+		const once = withChecksSection("<details>\nLog", section);
+		const twice = withChecksSection(once, section);
+		expect(twice).toBe(`<details>\nLog\n</details>\n${TAG_CLOSER}\n\n${section}`);
+		expect(withChecksSection(twice, section)).toBe(twice);
+		// Text without a tag gets nothing.
+		expect(after("Vec < T and a <= b")).toBe("Vec < T and a <= b");
+	});
+
+	it("R4: a body cut inside a quoted attribute to fit still ends the tag before the disclosure", () => {
+		const body = pullRequestBody(`<div title="${"x".repeat(70_000)}">Done</div>`, null, "Builder");
+		expect(body.length).toBeLessThanOrEqual(65_536);
+		expect(body.endsWith(`x\n${TAG_CLOSER}\n\n${SHORTENED}\n\n${DISCLOSURE}`)).toBe(true);
 	});
 
 	it("R4: a copy the tool does not recognize still stands above the tool's section, which is the last and says so", async () => {
@@ -833,9 +871,9 @@ describe("a repository's checks", () => {
 	it.each([
 		["~~~", "~~~"],
 		["<!--", "-->"],
-		["<ScRiPt type=module>\nlet ready = true;", "</script>"],
-		["<STYLE>\nbody { color: red; }", "</style>"],
-		["<TextArea>\nDraft", "</textarea>"],
+		["<ScRiPt type=module>\nlet ready = true;", `${TAG_CLOSER}\n</script>`],
+		["<STYLE>\nbody { color: red; }", `${TAG_CLOSER}\n</style>`],
+		["<TextArea>\nDraft", `${TAG_CLOSER}\n</textarea>`],
 	])("R7: closes a model body ending in %s in both branches", (opener, closer) => {
 		const section = "## Checks run by Gateweave\n\nPassed.";
 		for (const checks of [null, section]) {
