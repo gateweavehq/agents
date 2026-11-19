@@ -566,7 +566,8 @@ function RunLine({ slug, runId }: { slug: string; runId: string }) {
 				// A reply mounts while its turn still streams, so its run's numbers move until it ends.
 				if (summary?.status === "running") timer = setTimeout(load, RUN_POLL_MS);
 			} catch {
-				if (live) setRun(null);
+				// A dropped request says nothing of the run: keep the last reading and try again.
+				if (live) timer = setTimeout(load, RUN_POLL_MS);
 			}
 		};
 		void load();
