@@ -232,6 +232,24 @@ describe("data parts", () => {
 		expect(stored.at(-1)?.parts.some((part) => part.type === "data-progress")).toBe(false);
 		socket.close();
 	});
+
+	it("ties its reply to its run, so the chat can sum it up and link to it", async () => {
+		const { stub } = await conversation();
+		fakeModel(() => anthropicStream("Done."));
+		const socket = await connect(stub);
+
+		const turn = await ask(socket, "Hello");
+		expect(turn).toMatchObject({ text: "Done.", error: null });
+		// The part is not transient, so history keeps it and a reopened chat still links the run.
+		expect(turn.raw.join("")).toContain("data-run");
+
+		const stored = (await (await stub.fetch("http://conversation/get-messages")).json()) as {
+			parts: { type: string; data?: { runId?: unknown } }[];
+		}[];
+		const run = stored.at(-1)?.parts.find((part) => part.type === "data-run");
+		expect(typeof run?.data?.runId).toBe("string");
+		socket.close();
+	});
 });
 
 describe("destroying a conversation's object", () => {
