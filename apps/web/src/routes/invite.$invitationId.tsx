@@ -80,32 +80,54 @@ function ValidInvitation({
 
 	async function switchAccount() {
 		setPending(true);
-		await authClient.signOut();
-		await router.invalidate();
-		await router.navigate({ to: "/login", search: { redirect: here, email: invitation.email } });
+		try {
+			const result = await authClient.signOut();
+			if (result.error) {
+				toast.error("Could not switch account", { description: result.error.message });
+				return;
+			}
+			await router.invalidate();
+			await router.navigate({ to: "/login", search: { redirect: here, email: invitation.email } });
+		} catch {
+			toast.error("Could not switch account", {
+				description: "Check your connection and try again.",
+			});
+		} finally {
+			setPending(false);
+		}
 	}
 
 	async function accept() {
 		setPending(true);
-		const result = await authClient.organization.acceptInvitation({ invitationId });
-		if (result.error) {
+		try {
+			const result = await authClient.organization.acceptInvitation({ invitationId });
+			if (result.error) {
+				toast.error("Could not join", { description: result.error.message });
+				return;
+			}
+			await router.navigate({ to: "/$workspace", params: { workspace: invitation.workspaceSlug } });
+		} catch {
+			toast.error("Could not join", { description: "Check your connection and try again." });
+		} finally {
 			setPending(false);
-			toast.error("Could not join", { description: result.error.message });
-			return;
 		}
-		await router.navigate({ to: "/$workspace", params: { workspace: invitation.workspaceSlug } });
 	}
 
 	async function decline() {
 		setPending(true);
-		const result = await authClient.organization.rejectInvitation({ invitationId });
-		setPending(false);
-		if (result.error) {
-			toast.error("Could not decline", { description: result.error.message });
-			return;
+		try {
+			const result = await authClient.organization.rejectInvitation({ invitationId });
+			if (result.error) {
+				toast.error("Could not decline", { description: result.error.message });
+				return;
+			}
+			toast.success("Invitation declined");
+			await router.navigate({ to: "/" });
+		} catch {
+			toast.error("Could not decline", { description: "Check your connection and try again." });
+		} finally {
+			setPending(false);
 		}
-		toast.success("Invitation declined");
-		await router.navigate({ to: "/" });
 	}
 
 	if (!viewer) {
