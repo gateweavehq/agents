@@ -300,8 +300,10 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
 - **Sandboxes' containers follow it.** A sandbox's container is started by its Durable Object,
   and under the `durable_object` scheduling policy Cloudflare runs it
   [where the object runs](https://developers.cloudflare.com/containers/concepts/placement/#jurisdictional-constraints),
-  so a turn's repository and commands stay in the jurisdiction too. The Containers API lists each
-  instance's location: Gateweave Cloud's have all been in EU data centers since the move. The
+  so the container, with the repository it holds and the commands it runs, is in the jurisdiction
+  too. What a turn sends out goes where its destination is, such as pushes to GitHub and requests
+  to a model provider. The Containers API lists each instance's location: Gateweave Cloud's have
+  all been in EU data centers since the move. The
   jurisdiction does not cover where container images are stored; the sandbox's image is code.
 - **Cost.** Each conversation takes about a dozen calls to its two objects, of the thousand a
   Worker on the Free plan may make to Cloudflare's services in one invocation (ten thousand on
