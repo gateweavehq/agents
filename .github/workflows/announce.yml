@@ -62,9 +62,16 @@ jobs:
               echo "No address for $network; skipped."
               continue
             fi
+            # A request that times out after the headers still reports their status, so curl's own exit
+            # code decides too.
+            code=0
             status="$(curl -sS --proto '=https' --connect-timeout 10 --max-time 60 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
-              --data @body.json "$hook" 2>/dev/null || true)"
-            echo "The $network workflow answered $status."
+              --data @body.json "$hook" 2>/dev/null)" || code=$?
+            echo "The $network workflow answered ${status:-nothing} (curl exit $code)."
+            if [ "$code" -ne 0 ]; then
+              failed=1
+              continue
+            fi
             case "$status" in 2*) ;; *) failed=1 ;; esac
           done
           exit "$failed"
