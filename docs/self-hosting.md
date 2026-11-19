@@ -136,10 +136,11 @@ on its own:
   moves nothing back. Leave it unset in `.dev.vars`: local runtimes have no jurisdictions.
 - **Repository wikis**: add `"jurisdiction": "eu"` to the Workflow in `wrangler.jsonc`. A Workflow's
   jurisdiction is fixed when it is made, so an existing one needs a new `name` as well.
-- **Sandboxes' containers** can't be kept there yet: Cloudflare starts a sandbox's container
-  wherever it has capacity, not necessarily where its Durable Object is, and offers no placement
-  for containers that a Durable Object starts. A turn's repository and commands may run outside
-  the jurisdiction.
+- **Sandboxes' containers** follow their Durable Objects, so the setting above covers them too.
+  A sandbox's container is started by its Durable Object, and Cloudflare runs such a container
+  [where the object runs](https://developers.cloudflare.com/containers/concepts/placement/#jurisdictional-constraints).
+  Gateweave Cloud's have run only in EU data centers since its move. The jurisdiction does not
+  cover where the container image is stored, and the sandbox's image holds only its code.
 
 If your team works far from the database, the Worker can run near it instead of near each
 visitor, so the queries a page makes one after another don't each cross an ocean. Find where the
