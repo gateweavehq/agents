@@ -736,6 +736,9 @@ ${runPageNote(runs, turn.runId)}`
 							agent: agent.agentId,
 							conversation: conversationId,
 						}),
+						...(agent.provider === "anthropic"
+							? { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
+							: {}),
 						system: system === "" ? undefined : system,
 						// A turn stopped during a tool call leaves the call without a result, which
 						// providers refuse in a later turn.
