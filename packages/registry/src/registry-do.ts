@@ -60,6 +60,7 @@ import {
 	memoryInput,
 	type NewTeamInput,
 	newTeamInput,
+	OUTSIDE_TASK_TEXT_MAX,
 	type Overview,
 	type Project,
 	type ProjectDetail,
@@ -312,6 +313,12 @@ import {
 	writeForMove,
 	writeKeysForMove,
 } from "./move";
+import {
+	admitOutsideTask,
+	type OutsideAdmission,
+	outsideTaskOf,
+	settleOutsideTask,
+} from "./outside-tasks";
 import { passFailedAt, runPassOnce } from "./passes";
 import { createProject, deleteProject, setProjectRepositories, updateProject } from "./projects";
 import {
@@ -1551,6 +1558,62 @@ export class RegistryDO extends DurableObject {
 		});
 	}
 
+	/**
+	 * Begins the run of an outside task's conversation, for the runtime alone, in the conversation
+	 * `admitOutsideTask` opened for it. Only that task takes a turn there, once, and its message
+	 * is the MCP client's, not the person's who asked.
+	 */
+	async beginOutsideTurn(
+		conversationId: string,
+		text: string,
+	): Promise<ConversationTurn | ProviderRefusal> {
+		const conversation = id.parse(conversationId);
+		const message = z.string().max(100_000).parse(text);
+		const parties = conversationParties(this.#db, conversation);
+		if (!parties || parties.triggerId !== null) {
+			return refused("This conversation was not opened by an outside task");
+		}
+		if (!outsideTaskOf(this.#db, conversation)) {
+			return refused("This task has had its run already");
+		}
+		const settle = (refusal: ProviderRefusal) => {
+			this.#write(() => settleOutsideTask(this.#db, conversation, { error: refusal.message }));
+			return refusal;
+		};
+		const plan = this.#planTurn(parties);
+		if ("status" in plan) return settle(plan);
+		const prepared = await this.#prepareTurn(conversation, plan.agent, plan.position, true);
+		if ("status" in prepared) return settle(prepared);
+		const { startedBy } = parties;
+		return this.#write(() => {
+			// A retry may have taken the task over while the key was opened.
+			if (!outsideTaskOf(this.#db, conversation)) {
+				return refused("This task has had its run already");
+			}
+			// And other turns may have taken the sandboxes, or the day's minutes.
+			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
+			if (over) {
+				settleOutsideTask(this.#db, conversation, { error: over.message });
+				return over;
+			}
+			const now = Date.now();
+			noteTurn(this.#db, conversation, message, now);
+			const runId = beginRun(
+				this.#db,
+				{
+					agent: plan.agent,
+					conversationId: conversation,
+					startedBy,
+					teamPath: plan.position?.path ?? null,
+					sandbox: prepared.sandbox,
+				},
+				now,
+			);
+			settleOutsideTask(this.#db, conversation, { runId });
+			return { ...prepared, runId };
+		});
+	}
+
 	/** Who answers a conversation's turn: its agent, or its team's lead, as they are now. */
 	#planTurn(parties: {
 		agentId: string;
@@ -2082,6 +2145,32 @@ export class RegistryDO extends DurableObject {
 			replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now()),
 		);
 		return replaced && { trigger: replaced, secret: next };
+	}
+
+	/**
+	 * Takes a task an MCP client handed an agent (`run_agent` on /mcp, AGT-155): admits it the way
+	 * a trigger's delivery is admitted — the agent must allow outside tasks, be runnable, and be
+	 * under its limits — and opens the conversation its run begins in. The runtime then begins
+	 * the run with `beginOutsideTurn`.
+	 */
+	admitOutsideTask(input: {
+		agent: string;
+		requestId: string;
+		askedBy: string;
+		askedVia: string | null;
+		task: string;
+	}): OutsideAdmission {
+		const parsed = z
+			.object({
+				agent: z.string().min(1).max(200),
+				requestId: z.string().min(1).max(64),
+				askedBy: id,
+				askedVia: z.string().max(200).nullable(),
+				task: z.string().min(1).max(OUTSIDE_TASK_TEXT_MAX),
+			})
+			.safeParse(input);
+		if (!parsed.success) return { status: "refused", message: "The task is not valid" };
+		return this.#write(() => admitOutsideTask(this.#db, parsed.data, Date.now()));
 	}
 
 	/**

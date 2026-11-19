@@ -17,6 +17,7 @@ import {
 	MEMORY_SCOPES,
 	type Metadata,
 	MODEL_PROVIDERS,
+	OUTSIDE_TASK_STATUSES,
 	REPOSITORY_PROVIDERS,
 	RUN_STATUSES,
 	type RunPullRequest,
@@ -663,6 +664,34 @@ export const triggerDeliveries = sqliteTable(
 		primaryKey({ columns: [table.triggerId, table.id] }),
 		index("trigger_deliveries_received_idx").on(table.triggerId, table.receivedAt),
 		index("trigger_deliveries_conversation_idx").on(table.conversationId),
+	],
+);
+
+/**
+ * A task an MCP client handed an agent (`run_agent` on /mcp, AGT-155): admitted like a trigger's
+ * delivery, counted in the same limits, and settled when its run begins or cannot.
+ */
+export const outsideTasks = sqliteTable(
+	"outside_tasks",
+	{
+		agentId: text("agent_id")
+			.notNull()
+			.references(() => agents.id),
+		/** The id the client gave the task, so its retry finds the run; one is made when none. */
+		requestId: text("request_id").notNull(),
+		status: text("status", { enum: OUTSIDE_TASK_STATUSES }).notNull(),
+		conversationId: text("conversation_id"),
+		runId: text("run_id"),
+		error: text("error"),
+		/** The user whose token asked, and the OAuth client it came through ("" when it has none). */
+		askedBy: text("asked_by").notNull(),
+		askedVia: text("asked_via").notNull(),
+		createdAt: integer("created_at").notNull(),
+	},
+	(table) => [
+		primaryKey({ columns: [table.agentId, table.askedBy, table.askedVia, table.requestId] }),
+		index("outside_tasks_created_idx").on(table.agentId, table.createdAt),
+		index("outside_tasks_conversation_idx").on(table.conversationId),
 	],
 );
 

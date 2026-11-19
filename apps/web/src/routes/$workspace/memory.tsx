@@ -80,6 +80,7 @@ const RUN_ORIGINS: Record<MemoryOrigin, string> = {
 	person: "",
 	trigger: " a trigger started",
 	replay: " that replays one a trigger started",
+	outside: " an outside task started",
 	unknown: " whose start could not be read",
 };
 

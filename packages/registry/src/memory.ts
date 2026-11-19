@@ -53,6 +53,7 @@ import {
 	conversations,
 	type MemoryRow,
 	memories,
+	outsideTasks,
 	repositories,
 	runs,
 	triggers,
@@ -424,6 +425,9 @@ function runOrigin(
 		const conversation = conversationAtTop(db, current.conversationId);
 		if (!conversation) return "unknown";
 		if (conversation.triggerId !== null) return replay ? "replay" : "trigger";
+		// An MCP client's task is outside content, however its conversation came to name a person:
+		// its words are the client's, not something the person typed.
+		if (outsideTaskConversation(db, conversation.id)) return "outside";
 		if (conversation.replayOf === null) return "person";
 		const replayed = db
 			.select({
@@ -440,9 +444,21 @@ function runOrigin(
 	return "unknown";
 }
 
+/** Whether an outside task (`run_agent`) opened the conversation, begun or not. */
+function outsideTaskConversation(db: Db, conversationId: string): boolean {
+	return (
+		db
+			.select({ id: outsideTasks.conversationId })
+			.from(outsideTasks)
+			.where(eq(outsideTasks.conversationId, conversationId))
+			.get() !== undefined
+	);
+}
+
 /** A conversation, or for a team's nested turn the conversation it goes with. */
 function conversationAtTop(db: Db, id: string) {
 	const columns = {
+		id: conversations.id,
 		rootId: conversations.rootId,
 		triggerId: conversations.triggerId,
 		replayOf: conversations.replayOf,
@@ -630,6 +646,7 @@ const ORIGIN_WORDS: Record<MemoryOrigin, string> = {
 	person: "in a run a person's message started",
 	trigger: "in a run a trigger started",
 	replay: "in a replay of a run a trigger started",
+	outside: "in a run an outside task started",
 	unknown: "in a run whose start could not be read",
 };
 
@@ -668,6 +685,7 @@ function toRecalled(db: Db, row: MemoryRow): RecalledMemory {
 const NOT_A_PERSONS: Record<Exclude<MemoryOrigin, "person">, string> = {
 	trigger: "A trigger started this run",
 	replay: "This run replays one a trigger started",
+	outside: "An outside task started this run",
 	unknown: "What started this run could not be read",
 };
 

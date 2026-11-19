@@ -1,4 +1,5 @@
 import {
+	OUTSIDE_TASK_TEXT_MAX,
 	rankWikiPages,
 	WIKI_PAGE_NUMBER,
 	type WikiPage,
@@ -22,6 +23,15 @@ export interface WikiMatch {
 	pages: WikiPage[] | null;
 }
 
+/** What one outside task came to: its run begun, or why not. */
+export interface TaskStart {
+	status: "started" | "duplicate" | "starting" | "limited" | "refused";
+	runId?: string | null;
+	conversationId?: string;
+	retryAfter?: number;
+	message?: string;
+}
+
 /** What the tools may do for one signed-in user. */
 export interface AgentsAccess {
 	workspaces(): Promise<{ slug: string; name: string; role: MemberRole }[]>;
@@ -32,6 +42,17 @@ export interface AgentsAccess {
 	wikis(repoName: string, workspace: string | undefined): Promise<WikiMatch[]>;
 	/** Every repository with a wiki in the person's workspaces, or in the one named. */
 	wikiRepos(workspace: string | undefined): Promise<WikiRepo[]>;
+	/**
+	 * Hands an agent of the workspace `workspace` the task `task` (`run_agent`, AGT-155): admitted
+	 * and begun the way a trigger's delivery is, and counted like its run. `requestId` is the
+	 * caller's own id for the task, so its retry finds the run instead of starting another.
+	 */
+	startTask(input: {
+		workspace: string;
+		agent: string;
+		task: string;
+		requestId: string;
+	}): Promise<TaskStart>;
 }
 
 /** A repository with a wiki, as list_wiki_repos lists it. */
@@ -177,10 +198,65 @@ export function wikiReposText(repos: readonly WikiRepo[]): string {
 
 /**
  * The server one request talks to, made for the person it acts as. Every tool reaches Agents
- * through `access` alone.
+ * through `access` alone. `canRun` is whether the token carries `agents:run` (AGT-155): without
+ * it the server offers the read tools alone, so a read-only token cannot even see `run_agent`.
  */
-export function createAgentsServer(access: AgentsAccess): McpServer {
+export function createAgentsServer(access: AgentsAccess, canRun = false): McpServer {
 	const server = new McpServer({ name: "gateweave-agents", version: "1.0.0" });
+
+	if (canRun) {
+		server.registerTool(
+			"run_agent",
+			{
+				title: "Give an agent a task",
+				description:
+					"Gives an agent of one of your workspaces a task and starts its run, the way a trigger would. The agent must have allowed tasks from outside (\"Tasks from MCP clients\" on its page), and the run spends the workspace's budget. The answer names the run and its conversation, which is in your chat list, where the run's state and answer can be read.",
+				inputSchema: z.object({
+					workspace: z
+						.string()
+						.min(1)
+						.max(100)
+						.describe("The workspace's slug, from list_workspaces."),
+					agent: z
+						.string()
+						.min(1)
+						.max(200)
+						.describe("The agent's id or exact name, as its page in Gateweave Agents shows it."),
+					task: z
+						.string()
+						.trim()
+						.min(1)
+						.max(OUTSIDE_TASK_TEXT_MAX)
+						.describe(
+							"What the agent should do, in full: it sees this text and nothing else of the ask.",
+						),
+					requestId: z
+						.string()
+						.regex(/^[\w-]{1,64}$/)
+						.describe(
+							"Your own id for this task. Send the same id on a retry, and the same run answers instead of a second one starting.",
+						),
+				}),
+				outputSchema: z.looseObject({
+					status: z.enum(["started", "duplicate", "starting", "limited", "refused"]),
+					runId: z.string().nullable().optional(),
+					conversationId: z.string().optional(),
+					retryAfter: z.number().optional(),
+					message: z.string().optional(),
+				}),
+				annotations: { readOnlyHint: false, openWorldHint: true },
+			},
+			async ({ workspace, agent, task, requestId }) => {
+				const result = await access.startTask({ workspace, agent, task, requestId });
+				const ok = result.status === "started" || result.status === "duplicate";
+				return {
+					content: [{ type: "text", text: JSON.stringify(result) }],
+					structuredContent: result,
+					...(ok ? {} : { isError: true }),
+				};
+			},
+		);
+	}
 
 	server.registerTool(
 		"list_workspaces",

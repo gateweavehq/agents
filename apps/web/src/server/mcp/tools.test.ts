@@ -9,8 +9,8 @@ import {
 	wikiAnswerText,
 } from "./tools";
 
-async function connect(access: AgentsAccess) {
-	const handler = createMcpHandler(() => createAgentsServer(access));
+async function connect(access: AgentsAccess, canRun = false) {
+	const handler = createMcpHandler(() => createAgentsServer(access, canRun));
 	const client = new Client({ name: "test", version: "1.0.0" });
 	await client.connect(
 		new StreamableHTTPClientTransport(new URL("https://agents.example.com/mcp"), {
@@ -25,6 +25,7 @@ it("offers list_workspaces, which returns what access gives it and nothing more"
 		workspaces: async () => [{ slug: "acme", name: "Acme", role: "owner" }],
 		wikis: async () => [],
 		wikiRepos: async () => [],
+		startTask: async () => ({ status: "refused" as const, message: "not in this test" }),
 	});
 
 	const { tools } = await client.listTools();
@@ -41,6 +42,35 @@ it("offers list_workspaces, which returns what access gives it and nothing more"
 	expect(result.structuredContent).toEqual({
 		workspaces: [{ slug: "acme", name: "Acme", role: "owner" }],
 	});
+	await client.close();
+});
+
+it("offers run_agent only to a token with agents:run, and hands it the ask (AGT-155)", async () => {
+	const asked: unknown[] = [];
+	const access: AgentsAccess = {
+		workspaces: async () => [],
+		wikis: async () => [],
+		wikiRepos: async () => [],
+		startTask: async (input) => {
+			asked.push(input);
+			return { status: "started" as const, runId: "run-1", conversationId: "conv-1" };
+		},
+	};
+	const readOnly = await connect(access);
+	expect((await readOnly.listTools()).tools.map((tool) => tool.name)).not.toContain("run_agent");
+	await readOnly.close();
+
+	const client = await connect(access, true);
+	const { tools } = await client.listTools();
+	expect(tools.map((tool) => tool.name)).toContain("run_agent");
+	const result = await client.callTool({
+		name: "run_agent",
+		arguments: { workspace: "acme", agent: "Reviewer", task: "Review it.", requestId: "req-1" },
+	});
+	expect(result.structuredContent).toMatchObject({ status: "started", runId: "run-1" });
+	expect(asked).toEqual([
+		{ workspace: "acme", agent: "Reviewer", task: "Review it.", requestId: "req-1" },
+	]);
 	await client.close();
 });
 
@@ -81,6 +111,7 @@ async function call(
 			asked.push([workspace]);
 			return repos;
 		},
+		startTask: async () => ({ status: "refused" as const, message: "not in this test" }),
 	});
 	const result = await client.callTool({ name, arguments: args });
 	await client.close();
