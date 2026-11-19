@@ -1118,7 +1118,9 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   of the workspace's: the key, the environment set and MCP headers stay in the Worker.
 - **The tools** (`packages/runtime/src/sandbox-tools.ts`): `run_command` (a bash line, in a
   directory, stopped by `timeout` after 120 seconds unless the model asks for up to 600, its
-  output clipped to its first and last 15 KB), `read_file` (numbered lines, 2,000 at a time),
+  output preview keeps up to 2 KiB from the start and 6 KiB from the end. A clipped command
+  may return a file containing its full output for the sandbox's lifetime), `read_file` (numbered lines,
+  up to 2,000 lines and 16 KiB per response, with the next unread line in the continuation hint),
   `write_file`, `edit_file` (an exact replacement, found once unless every place is asked for),
   `find_files` and `search` (ripgrep). File paths stay under `/workspace`; that keeps the tools on
   the work, not a wall, since a command reaches the whole machine, which holds nothing else. They

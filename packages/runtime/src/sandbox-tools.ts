@@ -32,8 +32,9 @@ export const SANDBOX_LIMITS = {
 	maxCommandSeconds: 600,
 	/** Seconds a search or a listing of files may take. */
 	searchSeconds: 60,
-	/** Lines `read_file` returns at once, and characters of each line. */
+	/** Lines and UTF-8 bytes `read_file` returns at once, and characters of each line. */
 	readLines: 2_000,
+	readBytes: 16 * 1_024,
 	lineLength: 2_000,
 	/** Characters `write_file` takes, and a command line. */
 	written: 1_000_000,
@@ -46,6 +47,8 @@ export interface CommandResult {
 	output: string;
 	/** It ran out of time and was stopped. */
 	timedOut: boolean;
+	/** Confirmed full combined output, kept until this sandbox stops. */
+	outputPath?: string;
 	/** Bytes of output the bound left out; absent when nothing was left out. */
 	omitted?: number;
 }
@@ -116,7 +119,12 @@ export interface SearchQuery {
 /** What the tools need of a sandbox. `RunnerSandbox` is the real one. */
 export interface SandboxPort {
 	/** Runs a bash command line in `cwd`, stopped after `timeoutSeconds`. */
-	run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult>;
+	run(
+		command: string,
+		cwd: string,
+		timeoutSeconds: number,
+		captureOutput?: boolean,
+	): Promise<CommandResult>;
 	readFile(path: string): Promise<ReadResult>;
 	/** Writes the file, making the directories it needs. */
 	writeFile(path: string, content: string): Promise<WriteResult>;
@@ -181,7 +189,7 @@ export function sandboxPath(path: string): string | null {
 export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 	const tools: ToolSet = {
 		run_command: tool({
-			description: `Runs a bash command line on this conversation's Linux machine and returns its exit code and output, stdout and stderr together; long output keeps its start and end. It is Debian with Node.js 24, npm, Python 3, git, ripgrep (rg), curl and jq. Package registries (npm, PyPI, crates.io, Go modules) can be downloaded from; no other address can be reached. Files stay between turns while the machine is in use; after ${IDLE_MINUTES} minutes without use it stops, and the next command starts on an empty one. Nothing reads from stdin, so commands that ask questions must be told the answers.`,
+			description: `Runs a bash command line on this conversation's Linux machine and returns its exit code and output, stdout and stderr together; long output keeps its start and end and may give the path to its complete log. It is Debian with Node.js 24, npm, Python 3, git, ripgrep (rg), curl and jq. Package registries (npm, PyPI, crates.io, Go modules) can be downloaded from; no other address can be reached. Files stay between turns while the machine is in use; after ${IDLE_MINUTES} minutes without use it stops, and the next command starts on an empty one. Nothing reads from stdin, so commands that ask questions must be told the answers.`,
 			inputSchema: z.object({
 				command: z.string().min(1).max(SANDBOX_LIMITS.command).describe("The command line"),
 				cwd: z
@@ -201,7 +209,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 			}),
 			execute: async ({ command, cwd, timeout_seconds }) => {
 				const seconds = timeout_seconds ?? SANDBOX_LIMITS.commandSeconds;
-				const result = await sandbox.run(command, within(cwd ?? SANDBOX_ROOT), seconds);
+				const result = await sandbox.run(command, within(cwd ?? SANDBOX_ROOT), seconds, true);
 				return describeCommand(result, seconds);
 			},
 		}),
@@ -214,7 +222,7 @@ export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
 	const words = files.words ?? SANDBOX_FILE_WORDS;
 	const tools: ToolSet = {
 		read_file: tool({
-			description: `Reads a text file, each line after its number and a tab, ${SANDBOX_LIMITS.readLines} lines at a time. The numbers are not part of the file: leave them out of edit_file.`,
+			description: `Reads a text file, each line after its number and a tab, up to ${SANDBOX_LIMITS.readLines} lines and ${SANDBOX_LIMITS.readBytes} UTF-8 bytes at a time. The numbers are not part of the file: leave them out of edit_file.`,
 			inputSchema: z.object({
 				path: z.string().min(1).max(1_000).describe(`Absolute, or from ${SANDBOX_ROOT}`),
 				offset: z
@@ -419,11 +427,17 @@ function foundOr(none: string, result: SearchResult): string {
 	return result.found ?? none;
 }
 
-function describeCommand({ exitCode, output, timedOut }: CommandResult, seconds: number): string {
+function describeCommand(
+	{ exitCode, output, timedOut, outputPath }: CommandResult,
+	seconds: number,
+): string {
 	const status = timedOut
 		? `It was stopped after ${seconds} seconds.`
 		: `It exited with code ${exitCode}.`;
-	return output.trim() === "" ? `${status} It printed nothing.` : `${status}\n\n${output}`;
+	const log = outputPath
+		? `\n\nComplete combined output: ${outputPath}. If read_file says the log is too large, read a chunk with run_command, for example tail -c 6000 ${outputPath}.`
+		: "";
+	return (output.trim() === "" ? `${status} It printed nothing.` : `${status}\n\n${output}`) + log;
 }
 
 /** The lines asked for, numbered, with where the rest is when there is more. */
@@ -431,20 +445,38 @@ function numbered(file: string, content: string, offset: number, limit: number):
 	if (content === "") return `${file} is empty.`;
 	const lines = content.endsWith("\n") ? content.slice(0, -1).split("\n") : content.split("\n");
 	if (offset > lines.length) return `${file} has ${lines.length} lines; none from ${offset}.`;
-	const shown = lines.slice(offset - 1, offset - 1 + limit);
-	const text = shown
-		.map((line, index) => {
-			const cut =
-				line.length > SANDBOX_LIMITS.lineLength
-					? `${line.slice(0, SANDBOX_LIMITS.lineLength)}[line cut short]`
-					: line;
-			return `${offset + index}\t${cut}`;
-		})
-		.join("\n");
-	const last = offset + shown.length - 1;
-	return last < lines.length
-		? `${text}\n\n[Lines ${offset} to ${last} of ${lines.length}; read on from ${last + 1}.]`
-		: text;
+	const encoder = new TextEncoder();
+	const shown: string[] = [];
+	let bytes = 0;
+	let continuation = "";
+	for (let index = offset - 1; index < lines.length && shown.length < limit; index++) {
+		const line = lines[index] ?? "";
+		let cut = line;
+		if (line.length > SANDBOX_LIMITS.lineLength) {
+			let end = SANDBOX_LIMITS.lineLength;
+			const lastCode = line.charCodeAt(end - 1);
+			const nextCode = line.charCodeAt(end);
+			if (lastCode >= 0xd800 && lastCode <= 0xdbff && nextCode >= 0xdc00 && nextCode <= 0xdfff) {
+				end--;
+			}
+			cut = `${line.slice(0, end)}[line cut short]`;
+		}
+		const numberedLine = `${index + 1}\t${cut}`;
+		const nextBytes = bytes + (shown.length > 0 ? 1 : 0) + encoder.encode(numberedLine).length;
+		const last = index + 1;
+		const hint =
+			last < lines.length
+				? `\n\n[Lines ${offset} to ${last} of ${lines.length}; read on from ${last + 1}.]`
+				: "";
+		// The per-line limit leaves room for at least one line and the hint.
+		if (nextBytes + encoder.encode(hint).length > SANDBOX_LIMITS.readBytes) {
+			break;
+		}
+		shown.push(numberedLine);
+		bytes = nextBytes;
+		continuation = hint;
+	}
+	return shown.join("\n") + continuation;
 }
 
 /** ripgrep's answer: what it found, that it found nothing (exit 1), or its complaint. */

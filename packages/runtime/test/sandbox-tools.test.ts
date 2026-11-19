@@ -9,7 +9,7 @@ import {
 	pushedRefs,
 	withGitHubToken,
 } from "../src/outbound";
-import { clipOutput } from "../src/output";
+import { clipCommandOutput, clipOutput } from "../src/output";
 import { type PullRequestPort, pullRequestTools } from "../src/pull-requests";
 import { SANDBOX_LIMITS, sandboxPath, sandboxTools } from "../src/sandbox-tools";
 import type { RunRecorder } from "../src/trace";
@@ -73,12 +73,59 @@ describe("sandbox tools", () => {
 			"It was stopped after 5 seconds.\n\nstill going\n",
 		);
 		expect(sandbox.commands).toEqual([
-			{ command: "npm test", cwd: "/workspace", timeoutSeconds: SANDBOX_LIMITS.commandSeconds },
-			{ command: "false", cwd: "/workspace/repo", timeoutSeconds: SANDBOX_LIMITS.commandSeconds },
-			{ command: "sleep 99", cwd: "/workspace", timeoutSeconds: 5 },
+			{
+				command: "npm test",
+				cwd: "/workspace",
+				timeoutSeconds: SANDBOX_LIMITS.commandSeconds,
+				captureOutput: true,
+			},
+			{
+				command: "false",
+				cwd: "/workspace/repo",
+				timeoutSeconds: SANDBOX_LIMITS.commandSeconds,
+				captureOutput: true,
+			},
+			{ command: "sleep 99", cwd: "/workspace", timeoutSeconds: 5, captureOutput: true },
 		]);
 		await expect(call("run_command", { command: "ls", cwd: "/" })).rejects.toThrow(
 			"/ is outside /workspace",
+		);
+	});
+
+	it("offers a confirmed complete log only when one is returned", async () => {
+		const { sandbox, call } = toolbox();
+		const path = "/workspace/.gateweave-command-abc/output.log";
+		sandbox.answers.push(
+			{ exitCode: 0, output: "short", timedOut: false },
+			{
+				exitCode: 0,
+				output: "first\n\n[9000 bytes of output left out here]\n\nlast",
+				timedOut: false,
+				outputPath: path,
+			},
+			{
+				exitCode: 1,
+				output: "first\n\n[9000 bytes of output left out here]\n\nlast",
+				timedOut: false,
+				outputPath: path,
+			},
+			{ exitCode: 124, output: "stopped", timedOut: true, outputPath: path },
+			{ exitCode: 0, output: "preview only", timedOut: false },
+		);
+		expect(await call("run_command", { command: "short" })).not.toContain(
+			"Complete combined output",
+		);
+		expect(await call("run_command", { command: "long" })).toContain(
+			`Complete combined output: ${path}`,
+		);
+		expect(await call("run_command", { command: "failing" })).toContain(
+			`Complete combined output: ${path}. If read_file says the log is too large, read a chunk with run_command, for example tail -c 6000 ${path}.`,
+		);
+		expect(await call("run_command", { command: "sleep 99", timeout_seconds: 1 })).toContain(
+			`Complete combined output: ${path}`,
+		);
+		expect(await call("run_command", { command: "failed spool" })).not.toContain(
+			"Complete combined output",
 		);
 	});
 
@@ -182,6 +229,41 @@ describe("a command's output", () => {
 			text: "abcde\n\n[16 bytes of output left out here]\n\nvwxyz",
 			omitted: 16,
 		});
+	});
+
+	it("gives native commands a 2 KiB head and 6 KiB tail without broken UTF-8 at the cuts", async () => {
+		const bytes = new TextEncoder().encode(
+			`${"a".repeat(2047)}€${"x".repeat(9000)}€${"z".repeat(6143)}`,
+		);
+		const input = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (let offset = 0; offset < bytes.length; offset += 17)
+					controller.enqueue(bytes.slice(offset, offset + 17));
+				controller.close();
+			},
+		});
+		const clipped = await clipCommandOutput(input);
+		expect(clipped.text).toMatch(/^a{2047}\n\n\[/);
+		expect(clipped.text).toMatch(/\n\nz{6143}$/);
+		expect(clipped.text).not.toContain("�");
+		expect(clipped.omitted).toBe(bytes.length - 2047 - 6143);
+		expect(clipped.totalBytes).toBe(bytes.length);
+	});
+
+	it("keeps surrounding diagnostics when the preview has invalid UTF-8 bytes", async () => {
+		const bytes = new TextEncoder().encode(`start!${"x".repeat(12_000)}end!`);
+		bytes[5] = 0xff;
+		bytes[bytes.length - 1] = 0xff;
+		const input = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(bytes);
+				controller.close();
+			},
+		});
+		const clipped = await clipCommandOutput(input);
+		expect(clipped.text).toMatch(/^start\uFFFD/u);
+		expect(clipped.text).toMatch(/end\uFFFD$/u);
+		expect(clipped.omitted).toBe(bytes.length - 8192);
 	});
 });
 
@@ -422,6 +504,15 @@ describe("a repository in the sandbox", () => {
 		expect(sandbox.checkouts).toEqual([{ repository, branch: BRANCH }]);
 		expect(sandbox.commands).toEqual([
 			{ command: "git status", cwd: "/workspace/repo", timeoutSeconds: 120 },
+		]);
+	});
+
+	it("forwards native command capture through checkout", async () => {
+		const sandbox = new MemorySandbox();
+		const port = withCheckout(sandbox, repository, BRANCH);
+		await port.run("printf done", "/workspace/repo", 20, true);
+		expect(sandbox.commands).toEqual([
+			{ command: "printf done", cwd: "/workspace/repo", timeoutSeconds: 20, captureOutput: true },
 		]);
 	});
 
