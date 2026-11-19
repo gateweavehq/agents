@@ -9,22 +9,22 @@ packages:
 # @modelcontextprotocol/server, vite, and vite's own peers @types/node and esbuild. `pnpm check` holds
 # this.
 catalog:
-  "@ai-sdk/openai-compatible": 3.0.90
-  "@ai-sdk/provider": 4.0.37
-  "@ai-sdk/react": 4.0.173
+  "@ai-sdk/openai-compatible": 3.0.92
+  "@ai-sdk/provider": 4.0.38
+  "@ai-sdk/react": 4.0.177
   "@cloudflare/ai-chat": 0.12.2
-  "@cloudflare/vitest-plugin": 1.7.0
+  "@cloudflare/vitest-plugin": 1.8.2
   "@modelcontextprotocol/server": 2.4.0
   "@types/node": 26.6.6
   agents: 0.33.0
-  ai: 7.0.169
+  ai: 7.0.173
   drizzle-kit: 0.31.11
   drizzle-orm: 0.45.4
   esbuild: 0.28.2
   typescript: 7.0.2
-  vite: 8.3.7
+  vite: 8.3.8
   vitest: 5.0.5
-  wrangler: 4.160.0
+  wrangler: 4.162.0
   zod: 4.6.7
 
 allowBuilds:
