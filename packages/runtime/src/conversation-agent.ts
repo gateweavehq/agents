@@ -59,6 +59,7 @@ import {
 	stepCountIs,
 	streamText,
 	type ToolSet,
+	toUIMessageStream,
 	type UIMessage,
 } from "ai";
 import { type ChatSession, sessionOpening } from "./chat-session";
@@ -725,11 +726,15 @@ ${runPageNote(runs, turn.runId)}`
 				onAbort: () => end("stopped"),
 				onError: ({ error }) => end("failed", describeFailure(agent, error)),
 			});
-			return result.toUIMessageStreamResponse({
-				onError: (error) => {
-					console.error("A turn failed", { agent: agent.agentId, ...failureForLogs(error) });
-					return describeFailure(agent, error);
-				},
+			return createUIMessageStreamResponse({
+				stream: toUIMessageStream({
+					stream: result.stream,
+					tools,
+					onError: (error) => {
+						console.error("A turn failed", { agent: agent.agentId, ...failureForLogs(error) });
+						return describeFailure(agent, error);
+					},
+				}),
 			});
 		} catch (error) {
 			const message = describeFailure(agent, error);
