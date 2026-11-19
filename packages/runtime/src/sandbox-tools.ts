@@ -47,6 +47,8 @@ export interface CommandResult {
 	output: string;
 	/** It ran out of time and was stopped. */
 	timedOut: boolean;
+	/** Confirmed full combined output, kept until this sandbox stops. */
+	outputPath?: string;
 }
 
 /** A file's text, or why it could not be read, in words the model reads. */
@@ -115,7 +117,12 @@ export interface SearchQuery {
 /** What the tools need of a sandbox. `RunnerSandbox` is the real one. */
 export interface SandboxPort {
 	/** Runs a bash command line in `cwd`, stopped after `timeoutSeconds`. */
-	run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult>;
+	run(
+		command: string,
+		cwd: string,
+		timeoutSeconds: number,
+		captureOutput?: boolean,
+	): Promise<CommandResult>;
 	readFile(path: string): Promise<ReadResult>;
 	/** Writes the file, making the directories it needs. */
 	writeFile(path: string, content: string): Promise<WriteResult>;
@@ -180,7 +187,7 @@ export function sandboxPath(path: string): string | null {
 export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 	const tools: ToolSet = {
 		run_command: tool({
-			description: `Runs a bash command line on this conversation's Linux machine and returns its exit code and output, stdout and stderr together; long output keeps its start and end. It is Debian with Node.js 24, npm, Python 3, git, ripgrep (rg), curl and jq. Package registries (npm, PyPI, crates.io, Go modules) can be downloaded from; no other address can be reached. Files stay between turns while the machine is in use; after ${IDLE_MINUTES} minutes without use it stops, and the next command starts on an empty one. Nothing reads from stdin, so commands that ask questions must be told the answers.`,
+			description: `Runs a bash command line on this conversation's Linux machine and returns its exit code and output, stdout and stderr together; long output keeps its start and end and may give the path to its complete log. It is Debian with Node.js 24, npm, Python 3, git, ripgrep (rg), curl and jq. Package registries (npm, PyPI, crates.io, Go modules) can be downloaded from; no other address can be reached. Files stay between turns while the machine is in use; after ${IDLE_MINUTES} minutes without use it stops, and the next command starts on an empty one. Nothing reads from stdin, so commands that ask questions must be told the answers.`,
 			inputSchema: z.object({
 				command: z.string().min(1).max(SANDBOX_LIMITS.command).describe("The command line"),
 				cwd: z
@@ -200,7 +207,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 			}),
 			execute: async ({ command, cwd, timeout_seconds }) => {
 				const seconds = timeout_seconds ?? SANDBOX_LIMITS.commandSeconds;
-				const result = await sandbox.run(command, within(cwd ?? SANDBOX_ROOT), seconds);
+				const result = await sandbox.run(command, within(cwd ?? SANDBOX_ROOT), seconds, true);
 				return describeCommand(result, seconds);
 			},
 		}),
@@ -418,11 +425,17 @@ function foundOr(none: string, result: SearchResult): string {
 	return result.found ?? none;
 }
 
-function describeCommand({ exitCode, output, timedOut }: CommandResult, seconds: number): string {
+function describeCommand(
+	{ exitCode, output, timedOut, outputPath }: CommandResult,
+	seconds: number,
+): string {
 	const status = timedOut
 		? `It was stopped after ${seconds} seconds.`
 		: `It exited with code ${exitCode}.`;
-	return output.trim() === "" ? `${status} It printed nothing.` : `${status}\n\n${output}`;
+	const log = outputPath
+		? `\n\nComplete combined output: ${outputPath}. If read_file says the log is too large, read a chunk with run_command, for example tail -c 6000 ${outputPath}.`
+		: "";
+	return (output.trim() === "" ? `${status} It printed nothing.` : `${status}\n\n${output}`) + log;
 }
 
 /** The lines asked for, numbered, with where the rest is when there is more. */
