@@ -504,7 +504,7 @@ function Message({
 						{calls.map((part) => {
 							const edge = members && describeEdgeCall(part, members);
 							if (edge) return <EdgeCall key={part.toolCallId} {...edge} />;
-							const Card = TOOL_CARDS[getToolName(part)];
+							const Card = TOOL_CARDS.get(getToolName(part));
 							if (Card) return <Card key={part.toolCallId} part={part} />;
 							return <ToolCall key={part.toolCallId} part={part} />;
 						})}
@@ -521,11 +521,12 @@ const CHIP =
 
 /**
  * A tool's own card, by the tool's name. A tool without one keeps the chip every tool had, so a
- * message stored before a card existed still draws.
+ * message stored before a card existed still draws. A Map, because a tool's name is a stored
+ * message's text: "constructor" must not find a card.
  */
-const TOOL_CARDS: Record<string, ComponentType<{ part: ToolCallPart }>> = {
-	[PULL_REQUEST_TOOL]: PullRequestCard,
-};
+const TOOL_CARDS = new Map<string, ComponentType<{ part: ToolCallPart }>>([
+	[PULL_REQUEST_TOOL, PullRequestCard],
+]);
 
 /** A tool the agent called. What it took and gave back stays out of view. */
 function ToolCall({ part }: { part: ToolCallPart }) {
