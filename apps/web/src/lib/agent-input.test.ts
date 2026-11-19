@@ -59,6 +59,7 @@ const definition: AgentDefinition = {
 	memory: true,
 	// Never with a sandbox, so this one is at its default here and away from it below.
 	files: false,
+	outsideTasks: false,
 };
 
 /** An agent that works on its repository's files without a sandbox (AGT-122). */
@@ -91,6 +92,7 @@ it("leaves no field to its default", () => {
 		engine: "claude-code",
 		memory: true,
 		files: false,
+		outsideTasks: false,
 	});
 	// What the server's validator makes of it is the same: nothing was filled in.
 	expect(agentDefinitionInput.parse(input)).toEqual(input);

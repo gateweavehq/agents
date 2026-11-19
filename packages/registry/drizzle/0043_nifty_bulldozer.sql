@@ -1,0 +1,1 @@
+ALTER TABLE `agent_definitions` ADD `outside_tasks` integer DEFAULT false NOT NULL;

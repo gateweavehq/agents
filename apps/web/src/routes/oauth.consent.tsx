@@ -14,6 +14,8 @@ import { useDocumentTitle } from "#/lib/title";
 const consentSearch = z.looseObject({
 	client_id: z.string().catch(""),
 	redirect_uri: z.string().optional().catch(undefined),
+	// The scopes the app asked for, space-separated, as the authorization request carries them.
+	scope: z.string().optional().catch(undefined),
 });
 
 export const Route = createFileRoute("/oauth/consent")({
@@ -74,12 +76,18 @@ function ConsentPage() {
 	}
 
 	const { clientName, viewer } = request;
+	// MCP_RUN_SCOPE in `#/server/auth/config`; the route cannot import server code, so the word
+	// is written here too, and the server stays the one that decides what a token may do.
+	const canRun = (search.scope ?? "").split(" ").includes("agents:run");
 	return (
 		<Card title={`Allow ${clientName} to use Gateweave Agents?`}>
 			<p className="text-sm text-muted-foreground">
 				It will act as you, <span className="text-foreground">{viewer.email}</span>: it can see the
 				names of the workspaces you belong to and read their repositories' wikis, which may describe
-				private code. It cannot change anything.
+				private code.
+				{canRun
+					? " It can also give your agents tasks and read their runs, only for agents whose owner allowed tasks from outside, and those tasks spend your workspace's budget."
+					: " It cannot change anything."}
 			</p>
 			<p className="text-sm text-muted-foreground">
 				Then you go back to{" "}

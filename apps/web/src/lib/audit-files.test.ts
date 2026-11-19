@@ -14,6 +14,7 @@ const definition = (fields: Partial<AgentDefinition> = {}): AgentDefinition => (
 	engine: "gateweave",
 	memory: false,
 	files: false,
+	outsideTasks: false,
 	...fields,
 });
 

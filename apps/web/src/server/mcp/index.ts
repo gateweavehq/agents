@@ -2,7 +2,7 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 import { createDpopReplayStore } from "better-auth/oauth2";
 import type { JWTPayload } from "jose";
 import { db, getAuth, mcpResource } from "../auth";
-import { MCP_SCOPE } from "../auth/config";
+import { MCP_RUN_SCOPE, MCP_SCOPE } from "../auth/config";
 import { registryFor } from "../registry";
 import { listWorkspaces, workspaceIdsOf } from "../workspaces";
 import { protectResource } from "./protect";
@@ -68,7 +68,9 @@ function protect(resource: string) {
 					resource,
 					requiredScopes: [MCP_SCOPE],
 					// offline_access lets clients refresh tokens instead of asking the user again.
-					challengeScopes: [MCP_SCOPE, "offline_access"],
+					// agents:run is offered, not required: a client that does not ask for it gets a
+					// token that only reads.
+					challengeScopes: [MCP_SCOPE, MCP_RUN_SCOPE, "offline_access"],
 					jwks: () => getAuth().api.getJwks(),
 					dpopReplayStore: createDpopReplayStore(internalAdapter),
 				},
