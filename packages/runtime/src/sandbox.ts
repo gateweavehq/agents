@@ -68,7 +68,7 @@ import {
 	pushedRefs,
 	withGitHubToken,
 } from "./outbound";
-import { clipOutput } from "./output";
+import { clipCommandOutput, clipOutput } from "./output";
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
 import {
 	type CommandResult,
@@ -219,13 +219,90 @@ export class RunnerSandbox
 		}
 	}
 
-	async run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult> {
+	async run(
+		command: string,
+		cwd: string,
+		timeoutSeconds: number,
+		captureOutput = false,
+	): Promise<CommandResult> {
 		const container = await this.#ready();
 		if (cwd !== SANDBOX_ROOT) {
 			const missing = await this.#directoryProblem(container, cwd);
 			if (missing) return { exitCode: 1, output: missing, timedOut: false };
 		}
+		if (captureOutput) return this.#runCaptured(container, command, cwd, timeoutSeconds);
 		return this.#exec(container, ["bash", "-c", command], cwd, timeoutSeconds);
+	}
+
+	/** Stream one command into a private sandbox file; offer the path only after tee finishes. */
+	async #runCaptured(
+		container: Container,
+		command: string,
+		cwd: string,
+		timeoutSeconds: number,
+	): Promise<CommandResult> {
+		const files = new Files(container);
+		let directory: string | undefined;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const candidate = `${SANDBOX_ROOT}/.gateweave-command-${crypto.randomUUID()}`;
+			try {
+				await files.mkdir(candidate);
+				directory = candidate;
+				break;
+			} catch (error) {
+				if (!(SandboxFileError.is(error) && error.code === "EEXIST")) break;
+			}
+		}
+		if (!directory)
+			return this.#exec(
+				container,
+				["bash", "-c", command],
+				cwd,
+				timeoutSeconds,
+				{},
+				undefined,
+				true,
+			);
+		const path = `${directory}/output.log`;
+		const marker = `${directory}/complete`;
+		let retain = false;
+		try {
+			// The command and paths are argv, never inserted into the shell source.
+			const script = `timeout --kill-after=5s "$1" bash -c "$2" 2>&1 | tee --output-error=warn-nopipe -- "$3" 2>/dev/null; codes=("\${PIPESTATUS[@]}"); if [ "\${codes[1]}" -eq 0 ]; then : > "$4"; fi; exit "\${codes[0]}"`;
+			const process = await container.exec(
+				["bash", "-c", script, "bash", `${timeoutSeconds}s`, command, path, marker],
+				{ cwd, env: COMMAND_ENV, stdout: "pipe", stderr: "combined" },
+			);
+			const [preview, exitCode] = await Promise.all([
+				clipCommandOutput(process.stdout),
+				process.exitCode,
+			]);
+			const result: CommandResult = {
+				exitCode,
+				output: preview.text,
+				timedOut: TIMED_OUT.has(exitCode),
+			};
+			if (preview.omitted > 0) {
+				try {
+					const [completed, log] = await Promise.all([files.lstat(marker), files.lstat(path)]);
+					if (
+						completed.type === "file" &&
+						completed.size === 0n &&
+						log.type === "file" &&
+						log.size === BigInt(preview.totalBytes)
+					) {
+						result.outputPath = path;
+						retain = true;
+					}
+				} catch {
+					// The preview and original exit status still describe the command.
+				}
+			}
+			return result;
+		} finally {
+			await files.remove(marker, { force: true }).catch(() => {});
+			if (!retain) await files.remove(directory, { recursive: true, force: true }).catch(() => {});
+		}
 	}
 
 	/**
@@ -796,6 +873,7 @@ export class RunnerSandbox
 		timeoutSeconds: number,
 		env: Record<string, string> = {},
 		signal?: AbortSignal,
+		commandPreview = false,
 	): Promise<CommandResult> {
 		const process = await container.exec(
 			["timeout", "--kill-after=5s", `${timeoutSeconds}s`, ...argv],
@@ -807,7 +885,10 @@ export class RunnerSandbox
 				...(signal === undefined ? {} : { signal }),
 			},
 		);
-		const [output, exitCode] = await Promise.all([clipOutput(process.stdout), process.exitCode]);
+		const [output, exitCode] = await Promise.all([
+			commandPreview ? clipCommandOutput(process.stdout) : clipOutput(process.stdout),
+			process.exitCode,
+		]);
 		return { exitCode, output: output.text, timedOut: TIMED_OUT.has(exitCode) };
 	}
 

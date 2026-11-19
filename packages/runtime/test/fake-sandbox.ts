@@ -24,6 +24,7 @@ export interface RanCommand {
 	command: string;
 	cwd: string;
 	timeoutSeconds: number;
+	captureOutput?: boolean;
 }
 
 export interface Checkout {
@@ -82,8 +83,18 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort {
 	/** What was asked of it that changes or runs something, in order. */
 	readonly log: string[] = [];
 
-	async run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult> {
-		this.commands.push({ command, cwd, timeoutSeconds });
+	async run(
+		command: string,
+		cwd: string,
+		timeoutSeconds: number,
+		captureOutput?: boolean,
+	): Promise<CommandResult> {
+		this.commands.push({
+			command,
+			cwd,
+			timeoutSeconds,
+			...(captureOutput ? { captureOutput } : {}),
+		});
 		this.log.push(`run ${command}`);
 		const answer = this.answers.shift();
 		if (answer instanceof Error) throw answer;
@@ -263,8 +274,8 @@ export class FakeSandbox
 	#stops = 0;
 	#exit: EngineExit | null = null;
 
-	run(command: string, cwd: string, timeoutSeconds: number) {
-		return this.#memory.run(command, cwd, timeoutSeconds);
+	run(command: string, cwd: string, timeoutSeconds: number, captureOutput?: boolean) {
+		return this.#memory.run(command, cwd, timeoutSeconds, captureOutput);
 	}
 
 	readFile(path: string) {
