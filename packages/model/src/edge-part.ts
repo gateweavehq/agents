@@ -7,8 +7,14 @@ export const EDGE_PART = "data-edge";
 
 /** What an `EDGE_PART` carries. */
 export interface EdgePartData {
-	/** The tool call whose execution started the run. */
-	toolCallId: string;
+	/** The tool call whose execution started the run, as Gateweave's own loop names it. */
+	toolCallId?: string;
+	/**
+	 * The edge tool's name and the text it carried. An engine's chat names the call by the engine's
+	 * own id, which the tool never sees, so it matches on these instead.
+	 */
+	toolName?: string;
+	text?: string;
 	/** The run, in a conversation of the member the edge went to. */
 	runId: string;
 }

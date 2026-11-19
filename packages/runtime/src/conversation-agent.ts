@@ -722,7 +722,7 @@ ${runPageNote(runs, turn.runId)}`
 									run,
 								)
 							: {}),
-						...edgeTools(edges, (edge, text, toolCallId, signal) =>
+						...edgeTools(edges, (edge, text, { toolCallId }, signal) =>
 							this.#takeEdge(run, edge, text, signal, (runId) =>
 								writer.write({ type: EDGE_PART, data: { toolCallId, runId } }),
 							),
@@ -891,9 +891,11 @@ ${runPageNote(runs, turn.runId)}`
 								run,
 							})
 						: {}),
-					...edgeTools(edges, (edge, text, toolCallId, edgeSignal) =>
+					// An engine's chat knows the call by the engine's own id, not by the id the MCP path hands
+					// the tool, so the part names the tool and its text for it to match.
+					...edgeTools(edges, (edge, text, { toolName }, edgeSignal) =>
 						this.#takeEdge(run, edge, text, edgeSignal, (runId) =>
-							writer.write({ type: EDGE_PART, data: { toolCallId, runId } }),
+							writer.write({ type: EDGE_PART, data: { toolName, text, runId } }),
 						),
 					),
 				};

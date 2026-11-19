@@ -13,25 +13,28 @@ const MAX_TEXT = 100_000;
 
 /**
  * Takes an edge with this text. Returns what the calling model reads: the answer, or that a
- * report went out. `toolCallId` is the call's own id, so the run it starts can be tied back to
- * the call. Throws with why it could not, in words the model reads too.
+ * report went out. `call` names the call as the chat will: `toolCallId` is the id the loop gave
+ * it, and `toolName` the tool's name, which an engine's chat knows the call by instead. The run
+ * the edge starts is tied back to the call through one of them. Throws with why it could not, in
+ * words the model reads too.
  */
 export type TakeEdge = (
 	edge: TurnEdge,
 	text: string,
-	toolCallId: string,
+	call: { toolCallId: string; toolName: string },
 	signal?: AbortSignal,
 ) => Promise<string>;
 
 export function edgeTools(edges: TurnEdge[], take: TakeEdge): ToolSet {
 	const tools: ToolSet = {};
 	for (const edge of edges) {
-		tools[nameOf(tools, edgeToolName(edge.kind, edge.name))] = edgeTool(edge, take);
+		const name = nameOf(tools, edgeToolName(edge.kind, edge.name));
+		tools[name] = edgeTool(edge, name, take);
 	}
 	return tools;
 }
 
-function edgeTool(edge: TurnEdge, take: TakeEdge): ToolSet[string] {
+function edgeTool(edge: TurnEdge, toolName: string, take: TakeEdge): ToolSet[string] {
 	const { name } = edge;
 	const who = edge.lead === null ? name : `${name}, a team that ${edge.lead} answers for`;
 	const about = edge.description ? ` About ${name}: ${edge.description}` : "";
@@ -42,21 +45,21 @@ function edgeTool(edge: TurnEdge, take: TakeEdge): ToolSet[string] {
 				description: `Hands a task to ${who} and waits for the result. ${name} works on it with its own tools and sees nothing but the task, so give it everything it needs.${about}`,
 				inputSchema: z.object({ task: text("The task, with everything needed to do it") }),
 				execute: ({ task }, { toolCallId, abortSignal }) =>
-					take(edge, task, toolCallId, abortSignal),
+					take(edge, task, { toolCallId, toolName }, abortSignal),
 			});
 		case "ask":
 			return tool({
 				description: `Asks ${who} one question and waits for the answer. ${name} answers from what it knows, without tools, and sees nothing but the question.${about}`,
 				inputSchema: z.object({ question: text("The question, with what is needed to answer it") }),
 				execute: ({ question }, { toolCallId, abortSignal }) =>
-					take(edge, question, toolCallId, abortSignal),
+					take(edge, question, { toolCallId, toolName }, abortSignal),
 			});
 		case "report":
 			return tool({
 				description: `Sends ${who} a message and goes on without waiting for an answer. ${name} takes a turn of its own on it and sees nothing but the message.${about}`,
 				inputSchema: z.object({ message: text("The message") }),
 				// A report goes on by itself, so the turn stopping does not stop it.
-				execute: ({ message }, { toolCallId }) => take(edge, message, toolCallId),
+				execute: ({ message }, { toolCallId }) => take(edge, message, { toolCallId, toolName }),
 			});
 	}
 }
