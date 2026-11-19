@@ -381,7 +381,7 @@ export function createAuth(config: AuthConfig) {
 							resource: config.mcpResource,
 							loginPage: "/login",
 							consentPage: "/oauth/consent",
-							scopes: ["openid", "profile", "email", "offline_access", MCP_SCOPE],
+							scopes: ["openid", "profile", "email", "offline_access", MCP_SCOPE, MCP_RUN_SCOPE],
 							// MCP clients register themselves. Anyone can register a client, so the
 							// consent page names where the grant will go, and consent is never skipped.
 							allowDynamicClientRegistration: true,
@@ -430,6 +430,13 @@ export const DEFAULT_AUTH_LIMIT = { window: 10, max: 100 };
 
 /** Lets an agent act as the user in Agents: read what the user can, with their permissions. */
 export const MCP_SCOPE = "agents";
+
+/**
+ * Lets an MCP client hand the user's agents tasks and read their runs (`run_agent`, `get_run` on
+ * /mcp), which spends the workspace's budget. Granted beside `agents`, never instead of it, and
+ * only to agents whose owner allowed tasks from outside (AGT-155).
+ */
+export const MCP_RUN_SCOPE = "agents:run";
 
 export const INVITATION_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
 
