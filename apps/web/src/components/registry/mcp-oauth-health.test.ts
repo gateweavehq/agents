@@ -9,6 +9,19 @@ it("changes the health request key when a pinned OAuth server is added", () => {
 	expect(after).not.toBe(before);
 });
 
+it("changes the health request key when agent or pinned versions change", () => {
+	const key = (agentRevision: number, environmentVersion: number, serverVersion: number) =>
+		healthRequestKey(
+			"workspace",
+			["agent"],
+			[String(agentRevision), String(environmentVersion), `server:${serverVersion}`],
+		);
+	const original = key(1, 1, 1);
+	expect(key(2, 1, 1)).not.toBe(original);
+	expect(key(1, 2, 1)).not.toBe(original);
+	expect(key(1, 1, 2)).not.toBe(original);
+});
+
 it("uses the same connection words for MCP, agent and team pages", () => {
 	const shown = (state: Parameters<typeof McpOAuthStatus>[0]["state"]) =>
 		renderToStaticMarkup(createElement(McpOAuthStatus, { state }));

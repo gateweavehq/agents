@@ -18,6 +18,7 @@ export class FakeOAuthMcp {
 	#deadClients = new Set<string>();
 	#refreshFailure: "503" | "network" | "invalid-client" | "malformed" | null = null;
 	#deniedStatus: 401 | 403 | null = null;
+	#invalidBearer = false;
 	#refreshDelayMs = 0;
 	#nonRotatingRefresh = false;
 
@@ -80,6 +81,12 @@ export class FakeOAuthMcp {
 
 	denyMcp(status: 401 | 403 | null) {
 		this.#deniedStatus = status;
+		this.#invalidBearer = false;
+	}
+
+	denyInvalidBearer() {
+		this.#deniedStatus = 401;
+		this.#invalidBearer = true;
 	}
 
 	handle = async (request: Request): Promise<Response> => {
@@ -164,7 +171,15 @@ export class FakeOAuthMcp {
 	async #mcp(request: Request): Promise<Response> {
 		const bearer = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
 		this.bearers.push(bearer);
-		if (this.#deniedStatus) return new Response("Policy denied", { status: this.#deniedStatus });
+		if (this.#deniedStatus)
+			return new Response("Policy denied", {
+				status: this.#deniedStatus,
+				headers: this.#invalidBearer
+					? {
+							"www-authenticate": `Bearer resource_metadata="${this.origin}/.well-known/oauth-protected-resource", error="invalid_token"`,
+						}
+					: {},
+			});
 		if (!this.#valid.has(bearer)) {
 			return new Response("Unauthorized", {
 				status: 401,

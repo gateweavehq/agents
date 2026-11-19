@@ -1107,6 +1107,10 @@ export class RegistryDO extends DurableObject {
 
 	/** Keeps, sealed, what the OAuth client saves for a server; null clears a part. */
 	async mcpOAuthSave(assetId: string, parts: McpOAuthParts): Promise<boolean> {
+		return this.#mcpOAuthSave(assetId, parts, true);
+	}
+
+	async #mcpOAuthSave(assetId: string, parts: McpOAuthParts, retry: boolean): Promise<boolean> {
 		const asset = id.parse(assetId);
 		const baseline = oauthRow(this.#db, asset);
 		let openedSealed: {
@@ -1173,6 +1177,15 @@ export class RegistryDO extends DurableObject {
 				return false;
 			return saveOAuth(this.#db, asset, defined);
 		});
+		if (!saved && retry && openedSealed) {
+			const current = oauthRow(this.#db, asset);
+			if (
+				(parts.expectedTokens !== undefined && current?.sealedTokens !== prior) ||
+				(parts.expectedClient !== undefined && current?.sealedClient !== priorClient) ||
+				(parts.expectedVerifier !== undefined && current?.sealedVerifier !== priorVerifier)
+			)
+				return this.#mcpOAuthSave(assetId, parts, false);
+		}
 		if (
 			saved &&
 			parts.tokens !== undefined &&

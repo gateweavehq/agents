@@ -44,6 +44,22 @@ export function cacheableHealthResult(
 	return check.ok || JSON.stringify(before) === JSON.stringify(after);
 }
 
+/** A failed probe can describe missing credentials only for the URL it checked. */
+export function currentMissingCredentials(
+	checkedUrl: string | undefined,
+	currentUrl: string | undefined,
+	currentTokens: unknown,
+	check: HealthProbe,
+): boolean {
+	return (
+		checkedUrl !== undefined &&
+		checkedUrl === currentUrl &&
+		currentTokens === null &&
+		!check.ok &&
+		check.kind === "sign-in-again"
+	);
+}
+
 /** Checks current OAuth connections only, with a per-server deadline and bounded parallelism. */
 export async function checkOAuthHealth(
 	servers: McpServerEntry[],

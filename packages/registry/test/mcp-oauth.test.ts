@@ -47,7 +47,8 @@ describe("MCP servers connected through OAuth", () => {
 	it("retains connection metadata when tokens are cleared, then removes it on disconnect", async () => {
 		const { stub, server } = await workspace();
 		await connect(stub, server);
-		await stub.mcpOAuthSave(server, { tokens: null, expectedTokens: TOKENS });
+		expect(await stub.mcpOAuthSave(server, { tokens: null, expectedTokens: TOKENS })).toBe(true);
+		expect((await stub.mcpOAuthOpen(server))?.tokens).toBeNull();
 		expect(
 			(await stub.listMcpServers()).find((item) => item.asset.id === server)?.oauth?.current,
 		).toBe(true);
@@ -161,6 +162,36 @@ describe("MCP servers connected through OAuth", () => {
 			}
 		});
 		expect((await stub.mcpOAuthOpen(server))?.tokens).toEqual(fresh);
+	});
+
+	it("retries a conditional save when only the ciphertext changed during the open", async () => {
+		const { stub, server } = await workspace();
+		await connect(stub, server);
+		await runInDurableObject(stub, async (instance: RegistryDO) => {
+			const decrypt = crypto.subtle.decrypt.bind(crypto.subtle);
+			let injected = false;
+			const spy = vi.spyOn(crypto.subtle, "decrypt").mockImplementation(async (...args) => {
+				if (!injected) {
+					injected = true;
+					await instance.mcpOAuthSave(server, { tokens: TOKENS });
+				}
+				return decrypt(...args);
+			});
+			try {
+				expect(
+					await instance.mcpOAuthSave(server, {
+						tokens: { ...TOKENS, access_token: "rotated" },
+						expectedTokens: TOKENS,
+					}),
+				).toBe(true);
+			} finally {
+				spy.mockRestore();
+			}
+		});
+		expect((await stub.mcpOAuthOpen(server))?.tokens).toEqual({
+			...TOKENS,
+			access_token: "rotated",
+		});
 	});
 
 	it("compares token objects regardless of key order and undefined values", async () => {

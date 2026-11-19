@@ -94,6 +94,8 @@ export interface ProviderOptions {
 	 */
 	freshSignIn?: boolean;
 	healthCheck?: boolean;
+	/** The URL whose credentials this provider may open. */
+	serverUrl?: string;
 }
 
 export class RegistryOAuthProvider implements OAuthClientProvider {
@@ -103,8 +105,14 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	#loaded: Awaited<ReturnType<OAuthStore["mcpOAuthOpen"]>> | undefined;
 	#refreshLease: string | undefined;
 	#refreshSource: unknown | undefined;
+	#adoptedRefresh = false;
 	#clientRejected = false;
 	#healthCheck = false;
+	#serverUrl: string | undefined;
+
+	bindServerUrl(serverUrl: string): void {
+		this.#serverUrl = serverUrl;
+	}
 
 	get clientRejected(): boolean {
 		return this.#clientRejected;
@@ -143,7 +151,13 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 
 	async #data() {
 		this.#loaded ??= await this.#store.mcpOAuthOpen(this.#assetId);
+		this.#assertServer(this.#loaded);
 		return this.#loaded;
+	}
+
+	#assertServer(data: Awaited<ReturnType<OAuthStore["mcpOAuthOpen"]>>) {
+		const target = this.#serverUrl ?? this.#options.serverUrl;
+		if (data && target && data.serverUrl !== target) throw new OAuthSignInNeeded();
 	}
 
 	async #save(parts: {
@@ -177,7 +191,9 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 	}
 
 	async storedTokens(): Promise<unknown> {
-		return (await this.#store.mcpOAuthOpen(this.#assetId))?.tokens ?? null;
+		const data = await this.#store.mcpOAuthOpen(this.#assetId);
+		this.#assertServer(data);
+		return data?.tokens ?? null;
 	}
 
 	async tokens(): Promise<OAuthTokens | undefined> {
@@ -187,6 +203,7 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 
 	async saveTokens(tokens: OAuthTokens): Promise<void> {
 		try {
+			if (this.#adoptedRefresh) return;
 			await this.#save({
 				tokens,
 				...(this.#options.freshSignIn
@@ -194,6 +211,7 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 					: { expectedTokens: this.#refreshSource ?? this.#loaded?.tokens }),
 			});
 		} finally {
+			this.#adoptedRefresh = false;
 			this.#refreshSource = undefined;
 			await this.releaseRefresh();
 		}
@@ -251,18 +269,22 @@ export class RegistryOAuthProvider implements OAuthClientProvider {
 				try {
 					if (waitSignal?.aborted) throw waitSignal.reason;
 					const fresh = await this.#store.mcpOAuthOpen(this.#assetId);
+					this.#assertServer(fresh);
 					const tokens = fresh?.tokens as OAuthTokens | null | undefined;
 					this.#loaded = fresh;
 					if (!tokens) throw new OAuthSignInNeeded();
 					if (tokens?.access_token && tokens.access_token !== loadedAccess?.access_token) {
+						this.#adoptedRefresh = true;
 						await this.releaseRefresh();
 						return Response.json(tokens);
 					}
 					if (tokens?.refresh_token && tokens.refresh_token !== expected) {
+						this.#adoptedRefresh = true;
 						await this.releaseRefresh();
 						return Response.json(tokens);
 					}
 					this.#refreshSource = loadedAccess;
+					if (waitSignal?.aborted) throw waitSignal.reason;
 					const response = await fetchFn(input, {
 						...init,
 						signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
@@ -365,6 +387,7 @@ export async function startOAuth(
 		redirectUrl: flow.redirectUrl,
 		state: flow.state,
 		freshSignIn: true,
+		serverUrl: flow.serverUrl,
 		onRedirect: (url) => {
 			destination = url;
 		},
@@ -383,6 +406,7 @@ export async function finishOAuth(
 		redirectUrl: flow.redirectUrl,
 		state: flow.state,
 		freshSignIn: true,
+		serverUrl: flow.serverUrl,
 	});
 	const before = await store.mcpOAuthOpen(assetId);
 	let result: Awaited<ReturnType<typeof auth>>;

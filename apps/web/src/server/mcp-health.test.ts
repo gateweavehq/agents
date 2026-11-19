@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	cacheableHealthResult,
 	checkOAuthHealth,
+	currentMissingCredentials,
 	healthAgentId,
 	waitForHealthLease,
 } from "./mcp-health";
@@ -37,6 +38,15 @@ describe("MCP OAuth health", () => {
 		).toBe(false);
 		expect(
 			cacheableHealthResult(old, old, { ok: false, error: "invalid grant", kind: "sign-in-again" }),
+		).toBe(true);
+	});
+	it("does not return A's sign-in result after B's sign-in replaced the row", () => {
+		const failed = { ok: false as const, error: signInAgain, kind: "sign-in-again" as const };
+		expect(
+			currentMissingCredentials("https://a.test/mcp", "https://b.test/mcp", null, failed),
+		).toBe(false);
+		expect(
+			currentMissingCredentials("https://a.test/mcp", "https://a.test/mcp", null, failed),
 		).toBe(true);
 	});
 	it("keeps a healthy or refreshable connection connected, without returning a token", async () => {

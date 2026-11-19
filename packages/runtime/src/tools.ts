@@ -100,7 +100,7 @@ async function connect(
 	const { deadline, options } = timeLimit(signal, server.transport === "stdio");
 	let opened: Awaited<ReturnType<typeof openClient>> | undefined;
 	try {
-		opened = await openClient(server, options, sandbox, oauth);
+		opened = await openClient(server, options, sandbox, oauth, fetchWithoutRedirects, signal);
 		const { client, definitions } = opened;
 		// The allowlist names the server's own tool names; one it does not offer is just absent.
 		const allowed = server.tools && new Set(server.tools);
@@ -120,7 +120,11 @@ async function connect(
 		await opened?.client.close().catch(() => {});
 		const failure = describeServerFailure(error, deadline, server.transport === "stdio");
 		if (failure === SIGN_IN_AGAIN && server.transport !== "stdio" && server.oauth && oauth)
-			await oauth(server.oauth).invalidateHealth();
+			await oauth(server.oauth)
+				.invalidateHealth()
+				.catch((failure) =>
+					console.error("Could not invalidate MCP health", failureForLogs(failure)),
+				);
 		run.serverFailed(span, failure);
 		console.error("An MCP server did not connect", {
 			server: server.name,
@@ -148,6 +152,8 @@ export async function checkMcpServer(
 	const { deadline, options } = timeLimit(signal);
 	let tokenEndpointFailure = false;
 	let invalidGrant = false;
+	let refreshed = false;
+	let rejectedBearer = false;
 	const provider = server.oauth && oauth ? oauth(server.oauth) : null;
 	provider?.markHealthCheck();
 	const checkFetch: typeof fetch = async (input, init) => {
@@ -164,6 +170,12 @@ export async function checkMcpServer(
 					: { ...init, signal: init?.signal ?? options.signal },
 			);
 			if (refreshing && response.status >= 500) tokenEndpointFailure = true;
+			if (refreshing && response.ok) refreshed = true;
+			if (!refreshing && refreshed && response.status === 401) {
+				const challenge = response.headers.get("www-authenticate") ?? "";
+				rejectedBearer =
+					/\bBearer\b/i.test(challenge) && /\berror\s*=\s*"?invalid_token"?/i.test(challenge);
+			}
 			if (refreshing && response.status === 400) {
 				const answer = await response
 					.clone()
@@ -185,7 +197,14 @@ export async function checkMcpServer(
 	let initialTokens: unknown;
 	try {
 		initialTokens = await provider?.tokens();
-		opened = await openClient(server, options, null, provider ? () => provider : null, checkFetch);
+		opened = await openClient(
+			server,
+			options,
+			null,
+			provider ? () => provider : null,
+			checkFetch,
+			signal,
+		);
 		if (provider?.clientRejected)
 			return {
 				ok: false,
@@ -212,6 +231,7 @@ export async function checkMcpServer(
 			initialTokens !== undefined &&
 			!("refresh_token" in initialTokens);
 		const kind =
+			rejectedBearer ||
 			(stored === null && server.oauth && !provider.clientRejected) ||
 			(invalidGrant && !staleGrant && !provider.clientRejected) ||
 			(error instanceof OAuthSignInNeeded && noRefreshToken)
@@ -343,10 +363,13 @@ async function openClient(
 	sandbox: LocalServerPort | null = null,
 	oauth: OAuthProviders | null = null,
 	fetchFn: typeof fetch = fetchWithoutRedirects,
+	liveSignal?: AbortSignal,
 ) {
 	let client: MCPClient | undefined;
 	const provider =
 		server.transport !== "stdio" && server.oauth && oauth ? oauth(server.oauth) : null;
+	if (provider instanceof RegistryOAuthProvider && server.transport !== "stdio")
+		provider.bindServerUrl(server.url);
 	try {
 		client = await createMCPClient({
 			clientName: "gateweave-agents",
@@ -363,7 +386,7 @@ async function openClient(
 							headers: server.headers,
 							fetch:
 								provider instanceof RegistryOAuthProvider
-									? provider.fetchWithRefreshLease(fetchFn, options.signal)
+									? provider.fetchWithRefreshLease(fetchFn, liveSignal)
 									: fetchFn,
 							...(provider ? { authProvider: provider } : {}),
 						},
@@ -442,7 +465,11 @@ export function traced(
 				const failure = describeToolFailure(error, options);
 				run.toolEnded(span, { error: failure });
 				if (error instanceof OAuthSignInNeeded || error instanceof UnauthorizedError)
-					await options.onSignInFailure?.();
+					await options
+						.onSignInFailure?.()
+						.catch((failure) =>
+							console.error("Could not invalidate MCP health", failureForLogs(failure)),
+						);
 				throw error;
 			}
 		},

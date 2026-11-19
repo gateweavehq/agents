@@ -12,7 +12,7 @@ import {
 	startOAuth,
 } from "../src";
 import type { OAuthStore } from "../src/mcp-oauth";
-import { traced } from "../src/tools";
+import { connectTools, traced } from "../src/tools";
 import type { RunRecorder } from "../src/trace";
 import { anthropicStream, anthropicToolCall, ask, connect, fakeModel, KEY } from "./support";
 
@@ -46,6 +46,91 @@ it("invalidates cached health when a connected tool later needs sign-in", async 
 	const execute = tool.execute as unknown as (input: unknown, options: unknown) => Promise<unknown>;
 	await expect(execute({}, { toolCallId: "call", messages: [] })).rejects.toThrow();
 	expect(invalidated).toBe(true);
+});
+
+it("keeps the tool error when health invalidation fails", async () => {
+	const run = { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder;
+	const error = new OAuthSignInNeeded();
+	const tool = traced(
+		{
+			execute: async () => {
+				throw error;
+			},
+		} as unknown as ToolSet[string],
+		"server",
+		"tool",
+		run,
+		{
+			onSignInFailure: async () => {
+				throw new Error("RPC failed");
+			},
+		},
+	);
+	await expect(tool.execute?.({}, { toolCallId: "call", messages: [] } as never)).rejects.toBe(
+		error,
+	);
+});
+
+it("keeps sibling cleanup available when connect health invalidation fails", async () => {
+	const bad = new FakeOAuthMcp("bad.test");
+	let closed = 0;
+	fakeModel(() => anthropicStream("unused"), {
+		"bad.test": bad.handle,
+		"good.test": async (request) => {
+			if (request.method === "DELETE") {
+				closed++;
+				return new Response(null, { status: 204 });
+			}
+			const message = (await request.json()) as { id?: number; method: string };
+			if (message.id === undefined) return new Response(null, { status: 202 });
+			return Response.json(
+				{
+					jsonrpc: "2.0",
+					id: message.id,
+					result:
+						message.method === "initialize"
+							? {
+									protocolVersion: "2025-11-25",
+									capabilities: { tools: {} },
+									serverInfo: { name: "good", version: "1" },
+								}
+							: { tools: [{ name: "search", inputSchema: { type: "object" } }] },
+				},
+				message.method === "initialize" ? { headers: { "mcp-session-id": "good-session" } } : {},
+			);
+		},
+	});
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => {
+			throw new OAuthSignInNeeded();
+		},
+		mcpOAuthSave: async () => true,
+		mcpHealthInvalidate: async () => {
+			throw new Error("RPC failed");
+		},
+	};
+	const failures: string[] = [];
+	const run = {
+		serverConnecting: () => "span",
+		serverConnected: () => {},
+		serverFailed: (_span: string, failure: string) => {
+			failures.push(failure);
+		},
+	} as unknown as RunRecorder;
+	const connected = await connectTools(
+		[
+			{ name: "good", transport: "http", url: "https://good.test/mcp", headers: {}, tools: null },
+			{ name: "bad", transport: "http", url: bad.mcpUrl, headers: {}, tools: null, oauth: "bad" },
+		],
+		run,
+		undefined,
+		null,
+		() => new RegistryOAuthProvider(store, "bad", {}),
+	);
+	expect(failures).toEqual([expect.stringContaining("OAuth connection")]);
+	expect(connected.tools.good__search).toBeDefined();
+	await connected.close();
+	expect(closed).toBe(1);
 });
 
 it("releases a refresh lease after a malformed successful response", async () => {
@@ -122,6 +207,46 @@ it("does not restore tokens cleared while waiting for a refresh lease", async ()
 	expect(tokens).toBeNull();
 });
 
+it("refuses credentials moved to a different server URL", async () => {
+	let opens = 0;
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({
+			serverUrl: ++opens === 1 ? "https://a.test/mcp" : "https://b.test/mcp",
+			client: null,
+			verifier: null,
+			tokens: { access_token: "b-secret", refresh_token: "refresh" },
+		}),
+		mcpOAuthSave: async () => true,
+		mcpRefreshClaim: async () => ({ kind: "claimed", lease: crypto.randomUUID() }),
+		mcpRefreshRelease: async () => {},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", { serverUrl: "https://a.test/mcp" });
+	await provider.tokens();
+	let requests = 0;
+	await expect(
+		provider.fetchWithRefreshLease(async () => {
+			requests++;
+			return Response.json({ access_token: "bad" });
+		})("https://a.test/token", { body: "grant_type=refresh_token&refresh_token=refresh" }),
+	).rejects.toThrow(OAuthSignInNeeded);
+	expect(requests).toBe(0);
+});
+
+it("refuses B's credentials before opening a client for A", async () => {
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({
+			serverUrl: "https://b.test/mcp",
+			client: null,
+			verifier: null,
+			tokens: { access_token: "b-secret" },
+		}),
+		mcpOAuthSave: async () => true,
+	};
+	const provider = new RegistryOAuthProvider(store, "server", { serverUrl: "https://a.test/mcp" });
+	await expect(provider.tokens()).rejects.toThrow(OAuthSignInNeeded);
+	await expect(provider.storedTokens()).rejects.toThrow(OAuthSignInNeeded);
+});
+
 it("stops a refresh waiter on abort", async () => {
 	const store: OAuthStore = {
 		mcpOAuthOpen: async () => ({
@@ -141,6 +266,40 @@ it("stops a refresh waiter on abort", async () => {
 	});
 	controller.abort(new Error("cancelled"));
 	await expect(waiting).rejects.toThrow("cancelled");
+});
+
+it("does not send a refresh after abort during the post-claim read", async () => {
+	const controller = new AbortController();
+	let sent = 0;
+	let released = 0;
+	let opens = 0;
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => {
+			if (++opens === 2) controller.abort(new Error("stopped"));
+			return {
+				serverUrl: "https://example.test/mcp",
+				client: null,
+				verifier: null,
+				tokens: { access_token: "old", refresh_token: "same" },
+			};
+		},
+		mcpOAuthSave: async () => true,
+		mcpRefreshClaim: async () => ({ kind: "claimed", lease: crypto.randomUUID() }),
+		mcpRefreshRelease: async () => {
+			released++;
+		},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", {});
+	await expect(
+		provider.fetchWithRefreshLease(async () => {
+			sent++;
+			return Response.json({});
+		}, controller.signal)("https://example.test/token", {
+			body: "grant_type=refresh_token&refresh_token=same",
+		}),
+	).rejects.toThrow("stopped");
+	expect(sent).toBe(0);
+	expect(released).toBe(1);
 });
 
 it("honors the caller abort before claiming, while a sent refresh can finish", async () => {
@@ -270,12 +429,122 @@ it("each invalidation scope compares the client and token snapshot", async () =>
 	const provider = new RegistryOAuthProvider(store, "server", { onRedirect: () => {} });
 	for (const scope of ["all", "client", "tokens", "verifier"] as const)
 		await provider.invalidateCredentials(scope);
-	for (const parts of saved) {
+	expect(saved).toHaveLength(4);
+	for (const [index, parts] of saved.entries()) {
 		expect(parts.expectedClient).toEqual({ client_id: "client" });
 		expect(parts.expectedTokens).toEqual({ access_token: "token" });
+		expect(parts).toMatchObject(
+			[
+				{ client: null, tokens: null, unlessSigningIn: true },
+				{ client: null, unlessSigningIn: true },
+				{ tokens: null },
+				{ verifier: null, expectedVerifier: "verifier" },
+			][index] ?? {},
+		);
 	}
 	expect(saved.at(-1)?.expectedVerifier).toBe("verifier");
 });
+
+it("keeps an adopted access-only token set without saving SDK-filled credentials", async () => {
+	const old = {
+		access_token: "old",
+		refresh_token: "old-refresh",
+		token_type: "Bearer",
+		authorization_server: "https://old.test",
+	};
+	const adopted = { access_token: "new", token_type: "Bearer" };
+	let current: unknown = old;
+	let saves = 0;
+	let opens = 0;
+	const store: OAuthStore = {
+		mcpOAuthOpen: async () => ({
+			serverUrl: "https://example.test/mcp",
+			client: null,
+			verifier: null,
+			tokens: current,
+		}),
+		mcpOAuthSave: async (_, parts) => {
+			saves++;
+			current = parts.tokens;
+			return true;
+		},
+		mcpRefreshClaim: async () => {
+			if (++opens === 1) current = adopted;
+			return { kind: "claimed", lease: crypto.randomUUID() };
+		},
+		mcpRefreshRelease: async () => {},
+	};
+	const provider = new RegistryOAuthProvider(store, "server", {});
+	await provider.tokens();
+	const response = await provider.fetchWithRefreshLease(async () => {
+		throw new Error("unexpected POST");
+	})("https://example.test/token", { body: "grant_type=refresh_token&refresh_token=old-refresh" });
+	expect(await response.json()).toEqual(adopted);
+	await provider.saveTokens({
+		...adopted,
+		refresh_token: "old-refresh",
+		authorization_server: "https://old.test",
+	} as never);
+	expect(saves).toBe(0);
+	expect(current).toEqual(adopted);
+});
+
+it("refreshes a tool after the connection deadline has passed", async () => {
+	const server = new FakeOAuthMcp("mcp.oauth.test");
+	fakeModel(() => anthropicStream("unused"), { "mcp.oauth.test": server.handle });
+	const registry = env.REGISTRY.getByName(crypto.randomUUID());
+	const assetId = await registry.createMcpServer({
+		name: "tracker",
+		transport: "http",
+		url: server.mcpUrl,
+		headers: [],
+	});
+	const begun = await registry.mcpOAuthBegin(assetId, "user-ada");
+	if ("status" in begun) throw new Error(begun.message);
+	const flow = { serverUrl: begun.serverUrl, redirectUrl: REDIRECT, state: begun.state };
+	const url = await startOAuth(registry, assetId, flow);
+	if (!url) throw new Error("Expected sign-in URL");
+	const { code } = server.approve(url.href);
+	expect(await registry.mcpOAuthTakeState(assetId, begun.state, "user-ada")).toBe(true);
+	await finishOAuth(registry, assetId, { ...flow, code });
+	await registry.mcpOAuthConnected(assetId, "user-ada");
+	const target = await registry.mcpCheckTarget(assetId);
+	if (!target) throw new Error("Expected target");
+	const run = {
+		serverConnecting: () => "span",
+		serverConnected: () => {},
+		serverFailed: () => {},
+		toolStarted: () => "tool",
+		toolEnded: () => {},
+	} as unknown as RunRecorder;
+	const connected = await connectTools(
+		[target],
+		run,
+		undefined,
+		null,
+		(id) => new RegistryOAuthProvider(registry, id, {}),
+	);
+	try {
+		server.expireAccessTokens();
+		await new Promise((resolve) => setTimeout(resolve, 10_050));
+		const tool = connected.tools.tracker__whoami;
+		expect(tool).toBeDefined();
+		await expect(
+			tool?.execute?.({}, { toolCallId: "call", messages: [] } as never),
+		).resolves.toBeDefined();
+		expect((await registry.mcpOAuthOpen(assetId))?.tokens).toMatchObject({
+			access_token: "access-2",
+		});
+		server.denyInvalidBearer();
+		const rejected = await checkMcpServer(
+			target,
+			(id) => new RegistryOAuthProvider(registry, id, {}),
+		);
+		expect(rejected).toMatchObject({ ok: false, kind: "sign-in-again" });
+	} finally {
+		await connected.close();
+	}
+}, 20_000);
 
 it("caps a refresh wait with a temporary error", async () => {
 	let now = 1_000;

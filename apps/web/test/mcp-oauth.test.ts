@@ -167,6 +167,12 @@ it("connects a server through its OAuth sign-in, with PKCE, and keeps the tokens
 	const revoked = await health();
 	expect(revoked.text).toContain("needs-reconnecting");
 	expect(revoked.text).not.toContain("access-2");
+	await registry.mcpOAuthSave(assetId, { tokens: null });
+	const missing = await health();
+	expect(missing.text).toContain("needs-reconnecting");
+	const cachedMissing = await health();
+	expect(cachedMissing.text).toContain("needs-reconnecting");
+	expect(cachedMissing.text).toBe(missing.text);
 
 	const stranger = await signUp(agents, origin, "stranger-oauth-health");
 	const outside = await callServerFn(agents, origin, "getMcpOAuthHealth", {

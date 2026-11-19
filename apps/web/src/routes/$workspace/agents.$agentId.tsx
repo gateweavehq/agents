@@ -63,7 +63,13 @@ function AgentPage() {
 	const health = useMcpOAuthHealth(
 		slug,
 		data?.definition ? [data.agent.id] : [],
-		data?.definition?.mcpServers.map((server) => server.asset.id),
+		data?.definition
+			? [
+					String(data.agent.updatedAt),
+					String(data.definition.environment?.version ?? 0),
+					...data.definition.mcpServers.map((server) => `${server.asset.id}:${server.version}`),
+				]
+			: undefined,
 	);
 	const admin = isAdmin(useMyRole());
 	useDocumentTitle(data ? data.agent.name : "Agent");
