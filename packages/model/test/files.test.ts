@@ -17,12 +17,14 @@ const agent = (fields: object = {}) => ({
 });
 
 describe("an agent's files setting", () => {
-	it("is off unless it is sent, and comes last, after what an agent had before it", () => {
+	it("is off unless it is sent, and each later setting comes last, after what an agent had before it", () => {
 		const parsed = agentDefinitionInput.parse(agent());
 		expect(parsed.files).toBe(false);
-		expect(Object.keys(parsed).at(-1)).toBe("files");
+		expect(parsed.outsideTasks).toBe(false);
+		expect(Object.keys(parsed).at(-1)).toBe("outsideTasks");
 		expect(agentDefinitionInput.parse(agent({ files: true })).files).toBe(true);
 		expect(agentDefinitionInput.safeParse(agent({ files: "yes" })).success).toBe(false);
+		expect(agentDefinitionInput.safeParse(agent({ outsideTasks: "yes" })).success).toBe(false);
 	});
 
 	it("is never had with a sandbox", () => {
