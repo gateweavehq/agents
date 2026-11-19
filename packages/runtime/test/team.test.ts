@@ -151,6 +151,20 @@ describe("a conversation with a team", () => {
 		});
 		expect(child?.parentSpanId).toBe(edge?.id);
 		expect(await traceOf(workspaceId, child)).toMatchObject([{ kind: "model", status: "ok" }]);
+		// The reply's call names the run it started, so the chat can open that run's page.
+		const stored = (await (await stub.fetch("http://conversation/get-messages")).json()) as {
+			parts: {
+				type: string;
+				toolCallId?: string;
+				data?: { toolCallId?: unknown; runId?: unknown };
+			}[];
+		}[];
+		const reply = stored.at(-1);
+		const call = reply?.parts.find((part) => part.type === "tool-delegate__Coder");
+		const edgePart = reply?.parts.find((part) => part.type === "data-edge");
+		expect(call?.toolCallId).toEqual(expect.any(String));
+		expect(edgePart?.data?.toolCallId).toBe(call?.toolCallId);
+		expect(edgePart?.data?.runId).toBe(child?.id);
 		// Each run counts once.
 		expect((await registry.runUsage(0)).runs).toBe(2);
 	});

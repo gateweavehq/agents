@@ -26,6 +26,7 @@ import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
+import { edgeRunsOf } from "#/lib/edge-part";
 import { type PendingTurn, pendingTurnAfter, stopFrame } from "#/lib/pending-turn";
 import { runIdOf } from "#/lib/run-part";
 import { type RunSummary, runSummary } from "#/lib/runs";
@@ -503,6 +504,7 @@ function Message({
 	const calls = toolCallsOf(message);
 	const reasoning = reasoningOf(message);
 	const runId = mine ? null : runIdOf(message);
+	const edgeRuns = edgeRunsOf(message);
 	if (!text && !reasoning && calls.length === 0) return null;
 	if (mine) {
 		// A delivery's message is an event, not something a person wrote. Ones stored before the
@@ -535,7 +537,15 @@ function Message({
 					<ul aria-label="Tools used" className="mb-2 flex flex-wrap gap-1.5">
 						{calls.map((part) => {
 							const edge = members && describeEdgeCall(part, members);
-							if (edge) return <EdgeCall key={part.toolCallId} {...edge} />;
+							if (edge)
+								return (
+									<EdgeCall
+										key={part.toolCallId}
+										{...edge}
+										runId={edgeRuns.get(part.toolCallId) ?? null}
+										slug={slug}
+									/>
+								);
 							const Card = TOOL_CARDS.get(getToolName(part));
 							if (Card) return <Card key={part.toolCallId} part={part} />;
 							return <ToolCall key={part.toolCallId} part={part} />;
@@ -740,26 +750,32 @@ const EDGE_ICONS = { delegate: Forward, ask: MessageCircleQuestionMark, report: 
 
 /**
  * A call over one of the team's edges: its kind and the member it went to. The words it carried
- * stay out of view, as a tool's do; why it failed shows on hover, and the model says it too.
+ * stay out of view, as a tool's do; a finished one opens to the member's answer, as Markdown,
+ * and to the run it started. Why it failed shows on hover, and the model says it too.
  */
 function EdgeCall({
 	edge,
 	member,
 	state,
 	error,
+	answer,
+	runId,
+	slug,
 }: {
 	edge: TeamEdgeKind;
 	member: string;
 	state: CallState;
 	error: string | null;
+	answer: string | null;
+	/** The run the call started, when the reply's parts name it. */
+	runId: string | null;
+	/** The workspace's slug, for the link to the run's page; none where runs are not linked. */
+	slug: string | null;
 }) {
 	const Icon =
 		state === "running" ? LoaderCircle : state === "failed" ? CircleAlert : EDGE_ICONS[edge];
-	return (
-		<li
-			className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
-			title={error ?? undefined}
-		>
+	const label = (
+		<>
 			<Icon
 				aria-hidden="true"
 				className={cn(
@@ -772,6 +788,38 @@ function EdgeCall({
 				{EDGE_CALLS[edge][state]}{" "}
 				<span className={cn("font-medium", state !== "failed" && "text-foreground")}>{member}</span>
 			</span>
+		</>
+	);
+	const opens = state === "done" && (answer !== null || (runId !== null && slug !== null));
+	if (!opens) {
+		return (
+			<li
+				className={cn(CHIP, state === "failed" && "border-destructive/40 text-destructive")}
+				title={error ?? undefined}
+			>
+				{label}
+			</li>
+		);
+	}
+	return (
+		<li className="w-full min-w-0 basis-full rounded-lg border bg-card px-3 py-2 text-xs">
+			<details>
+				<summary className="flex cursor-pointer select-none items-center gap-1.5 text-muted-foreground">
+					{label}
+				</summary>
+				<div className="mt-2 space-y-2">
+					{answer !== null && <Markdown>{answer}</Markdown>}
+					{runId !== null && slug !== null && (
+						<Link
+							to="/$workspace/runs/$runId"
+							params={{ workspace: slug, runId }}
+							className="text-muted-foreground underline-offset-4 hover:underline"
+						>
+							View run
+						</Link>
+					)}
+				</div>
+			</details>
 		</li>
 	);
 }
