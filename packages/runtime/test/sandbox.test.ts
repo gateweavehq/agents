@@ -336,6 +336,7 @@ describe("a conversation with a sandbox", () => {
 				{
 					branch,
 					message: "Fix the cart",
+					model: "claude-sonnet-5-5",
 					author: {
 						name: "Builder",
 						email: "141234+gateweave-agents[bot]@users.noreply.github.com",
@@ -360,7 +361,12 @@ describe("a conversation with a sandbox", () => {
 			},
 			{
 				route: "POST /repos/acme/site/pulls",
-				body: { title: "Fix the cart", body: "It ignored codes.", head: branch, base: "main" },
+				body: {
+					title: "Fix the cart",
+					body: "It ignored codes.\n\nWritten and opened by `Builder`, an AI agent in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->",
+					head: branch,
+					base: "main",
+				},
 			},
 		]);
 		expect(JSON.stringify(requests[1]?.body.messages)).toContain(
@@ -444,7 +450,7 @@ describe("a conversation with a sandbox", () => {
 		]);
 		expect(JSON.stringify(requests[0]?.body)).not.toContain("pnpm check");
 		expect(JSON.stringify(requests[0]?.body)).not.toContain("pnpm test");
-		// R4: the pull request GitHub was asked to open ends with the tool's section.
+		// The pull request GitHub was asked to open ends with the disclosure after the checks.
 		expect(pulls()).toEqual([
 			`GET /repos/acme/site/pulls?head=acme%3Agateweave%2F${conversationId}&state=open&per_page=1`,
 			"POST /repos/acme/site/pulls",
@@ -453,7 +459,7 @@ describe("a conversation with a sandbox", () => {
 		expect(opened).toMatchObject({ title: "Fix the cart", head: branch, base: "main" });
 		expect(opened.draft).toBeUndefined();
 		expect(opened.body).toMatch(
-			/^Done\.\n\n## Checks run by Gateweave\n\nGateweave Agents ran these commands in the agent's sandbox on commit 2222222, before pushing it\.\n\n- `pnpm check`: passed, exit code 0, \d+\.\d s\n- `pnpm test`: passed, exit code 0, \d+\.\d s\n\nThe commands are set on the repository's page in Gateweave Agents\. Gateweave wrote this section, not the agent: it is always the last one, and what stands above it is the agent's\.$/,
+			/^Done\.\n\n## Checks run by Gateweave\n\nGateweave Agents ran these commands in the agent's sandbox on commit 2222222, before pushing it\.\n\n- `pnpm check`: passed, exit code 0, \d+\.\d s\n- `pnpm test`: passed, exit code 0, \d+\.\d s\n\nThe commands are set on the repository's page in Gateweave Agents\. Gateweave wrote this section, not the agent: it is always the last one, and what stands above it is the agent's\.\n\nWritten and opened by `Builder`, an AI agent in Gateweave Agents\.\n<!-- AI-Disclosure: mode=machine-generated -->$/,
 		);
 
 		// R3: the run is not failed for the round that failed, and has its pull request.
@@ -532,7 +538,7 @@ describe("a conversation with a sandbox", () => {
 		const opened = pulls.at(-1)?.body as { body: string; draft?: boolean };
 		expect(opened).toMatchObject({ title: "Fix the cart", draft: true });
 		expect(opened.body).toMatch(
-			/^Done\.\n\n## Checks run by Gateweave\n\nGateweave Agents ran these commands in the agent's sandbox on commit 3333333, before pushing it\.\n\n- `pnpm check`: passed, exit code 0, \d+\.\d s\n- `pnpm test`: failed, exit code 1, \d+\.\d s\n\nThe checks failed in 3 rounds of this run, so Gateweave opens the pull request as a draft\. One that was open already stays as it was\.\n\nThe commands are set on the repository's page in Gateweave Agents\. Gateweave wrote this section, not the agent: it is always the last one, and what stands above it is the agent's\.$/,
+			/^Done\.\n\n## Checks run by Gateweave\n\nGateweave Agents ran these commands in the agent's sandbox on commit 3333333, before pushing it\.\n\n- `pnpm check`: passed, exit code 0, \d+\.\d s\n- `pnpm test`: failed, exit code 1, \d+\.\d s\n\nThe checks failed in 3 rounds of this run, so Gateweave opens the pull request as a draft\. One that was open already stays as it was\.\n\nThe commands are set on the repository's page in Gateweave Agents\. Gateweave wrote this section, not the agent: it is always the last one, and what stands above it is the agent's\.\n\nWritten and opened by `Builder`, an AI agent in Gateweave Agents\.\n<!-- AI-Disclosure: mode=machine-generated -->$/,
 		);
 		expect(opened.body).not.toContain(SECRET_TEXT);
 		// The model is told it is a draft, and why.

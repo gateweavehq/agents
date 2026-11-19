@@ -23,6 +23,7 @@ import {
 import type { UIMessage, UIMessageChunk } from "ai";
 import { ENGINE_TOOLS_SERVER, type EngineToolsAccess } from "./engine-tools";
 import type { GatewayMetadata } from "./models";
+import type { CommitAuthor } from "./pull-requests";
 
 /** The engines that run in the sandbox: every one but Gateweave's own loop. */
 export type SandboxEngine = Exclude<AgentEngine, "gateweave">;
@@ -48,6 +49,7 @@ export interface EngineAccess {
 /** A turn for an engine, as the conversation hands it to its sandbox. */
 export interface EngineJob {
 	engine: SandboxEngine;
+	author: CommitAuthor;
 	/** The person's message. */
 	prompt: string;
 	/** The conversation so far, for a sandbox that no longer has its session; null for none. */

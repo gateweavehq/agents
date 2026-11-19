@@ -8,6 +8,7 @@ import { asSchema } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import {
 	lastBytes,
+	pullRequestBody,
 	runChecks,
 	SHORTENED,
 	withChecksSection,
@@ -25,7 +26,11 @@ const repository = {
 	defaultBranch: "main",
 };
 const BRANCH = "gateweave/conversation-1";
+const DISCLOSURE =
+	"Written and opened by `Builder`, an AI agent in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->";
 const AUTHOR = { name: "Builder", email: "noreply@gateweave.com" };
+/** The line after a body with a tag in it: it ends a tag left open and is a comment otherwise. */
+const TAG_CLOSER = `<!-- " ' -->`;
 
 /** The sentence every section the tool writes ends with. */
 const WRITTEN_BY =
@@ -104,6 +109,8 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 		},
 		repository,
 		branch: BRANCH,
+		agentName: "Builder",
+		model: "model-1",
 		author: async () => AUTHOR,
 		record: async (outcome) => {
 			recorded.push(outcome);
@@ -143,7 +150,7 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 }
 
 describe("a repository without checks", () => {
-	it("R1: is proposed as before: one commit and push, the body as written, nothing about checks", async () => {
+	it("R1: is proposed as before: one commit and push, the disclosed body and nothing about checks", async () => {
 		const { sandbox, proposed, recorded, spans, call } = setup([]);
 		const outcome = await call();
 		expect(outcome).toEqual({
@@ -162,18 +169,18 @@ describe("a repository without checks", () => {
 		expect(sandbox.log).toEqual(["commit and push"]);
 		expect(sandbox.commands).toEqual([]);
 		expect(proposed).toEqual([
-			{ branch: BRANCH, title: "Fix the cart", body: "It ignored codes." },
+			{ branch: BRANCH, title: "Fix the cart", body: `It ignored codes.\n\n${DISCLOSURE}` },
 		]);
 		expect(recorded).toEqual([outcome]);
 		expect(spans.map((span) => span.tool)).toEqual(["open_pull_request"]);
 
-		// The body goes to GitHub byte for byte, the space at its end included.
+		// An update carries the disclosure too.
 		const spaced = "  Indented.\n\n## How it was checked\n\nBy hand.  \n\n";
 		await call({ title: "Fix the cart", body: spaced });
-		expect(proposed[1]?.body).toBe(spaced);
+		expect(proposed[1]?.body).toBe(`${spaced}\n\n${DISCLOSURE}`);
 	});
 
-	it("R7: stays as it was when the tool is made without checks at all", async () => {
+	it("R7: adds the disclosure when the tool is made without checks at all", async () => {
 		const sandbox = new MemorySandbox();
 		const proposed: object[] = [];
 		const tools = pullRequestTools({
@@ -198,6 +205,8 @@ describe("a repository without checks", () => {
 			},
 			repository,
 			branch: BRANCH,
+			agentName: "Builder",
+			model: "model-1",
 			author: async () => AUTHOR,
 			record: async () => {},
 			run: { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder,
@@ -208,7 +217,7 @@ describe("a repository without checks", () => {
 		) => Promise<unknown>;
 		await execute({ title: "T", body: "B" }, { toolCallId: "call-1", messages: [] });
 		expect(sandbox.log).toEqual(["commit and push"]);
-		expect(proposed).toEqual([{ branch: BRANCH, title: "T", body: "B" }]);
+		expect(proposed).toEqual([{ branch: BRANCH, title: "T", body: `B\n\n${DISCLOSURE}` }]);
 	});
 });
 
@@ -271,7 +280,9 @@ describe("a repository's checks", () => {
 			"compare 1111111",
 			"push 1111111",
 		]);
-		expect(sandbox.commits).toEqual([{ message: "Fix the cart", author: AUTHOR }]);
+		expect(sandbox.commits).toEqual([
+			{ message: "Fix the cart", author: AUTHOR, model: "model-1" },
+		]);
 		expect(sandbox.commands).toEqual([
 			{ command: "pnpm check", cwd: "/workspace/repo", timeoutSeconds: 600 },
 			{ command: "pnpm test", cwd: "/workspace/repo", timeoutSeconds: 600 },
@@ -563,6 +574,7 @@ describe("a repository's checks", () => {
 					"- `pnpm check`: passed, exit code 0, 2.0 s\n- `pnpm test`: failed, exit code 1, 0.0 s",
 					"The checks failed in 3 rounds of this run, so Gateweave opens the pull request as a draft. One that was open already stays as it was.",
 					WRITTEN_BY,
+					DISCLOSURE,
 				].join("\n\n"),
 			},
 		]);
@@ -604,7 +616,7 @@ describe("a repository's checks", () => {
 		expect(JSON.stringify(spans)).not.toContain("THE-END");
 	});
 
-	it("R4: the body ends with the tool's section: each command, its exit code and its duration", async () => {
+	it("R7/R4: the disclosure follows the checks, including each command, its exit code and duration", async () => {
 		const { sandbox, proposed, call } = setup(["pnpm check", "pnpm test"]);
 		sandbox.answers.push(passed(12), passed(48.46));
 		await call({
@@ -620,6 +632,7 @@ describe("a repository's checks", () => {
 				"Gateweave Agents ran these commands in the agent's sandbox on commit 1111111, before pushing it.",
 				"- `pnpm check`: passed, exit code 0, 12.0 s\n- `pnpm test`: passed, exit code 0, 48.5 s",
 				WRITTEN_BY,
+				DISCLOSURE,
 			].join("\n\n"),
 		);
 	});
@@ -647,7 +660,7 @@ describe("a repository's checks", () => {
 			body.startsWith("It ignored codes.\n\n## Notes\n\nNothing else.\n\n## Checks run by"),
 		).toBe(true);
 		expect(body).toContain("- `pnpm test`: failed, exit code 1, 0.0 s");
-		expect(body.endsWith(WRITTEN_BY)).toBe(true);
+		expect(body.endsWith(`${WRITTEN_BY}\n\n${DISCLOSURE}`)).toBe(true);
 	});
 
 	it("R4: reads a body made to be slow to read once, not once for each mark in it", () => {
@@ -682,7 +695,6 @@ describe("a repository's checks", () => {
 			"```sh\npnpm test\n```",
 			"~~~\n```\n~~~",
 			"Done. <!-- a note --> And more.",
-			"<details><summary>Log</summary>\n\nok\n\n</details>",
 			"<?php echo 1; ?> and <![CDATA[x]]> and <!DOCTYPE html>",
 			// A line of backticks inside a comment is the comment's own: a closer after the comment
 			// would open a code block there, with the section in it.
@@ -702,20 +714,67 @@ describe("a repository's checks", () => {
 		expect(after("Passed.\n\n<?")).toBe("Passed.\n\n<?\n?>");
 		expect(after("Passed.\n\n<![CDATA[")).toBe("Passed.\n\n<![CDATA[\n]]>");
 		expect(after("Passed.\n\n<!DOCTYPE")).toBe("Passed.\n\n<!DOCTYPE\n>");
+		// A text with a tag in it is followed by a line that ends any tag left open and is a
+		// comment otherwise, so it shows nothing even after a block that leaves nothing open.
+		expect(after("<details><summary>Log</summary>\n\nok\n\n</details>")).toBe(
+			`<details><summary>Log</summary>\n\nok\n\n</details>\n${TAG_CLOSER}`,
+		);
 		// A folded block left open would fold the section away.
 		expect(after("<details><summary>Checks passed</summary>")).toBe(
-			"<details><summary>Checks passed</summary>\n</details>",
+			`<details><summary>Checks passed</summary>\n${TAG_CLOSER}\n</details>`,
 		);
 		expect(after("<DETAILS open>\n<details>\n</details>\n<details >")).toBe(
-			"<DETAILS open>\n<details>\n</details>\n<details >\n</details>\n</details>",
+			`<DETAILS open>\n<details>\n</details>\n<details >\n${TAG_CLOSER}\n</details>\n</details>`,
 		);
 		// A code block left open would show the section as part of the model's code.
 		expect(after("Passed:\n\n```")).toBe("Passed:\n\n```\n```");
 		expect(after("````md\n```\nstill open")).toBe("````md\n```\nstill open\n````");
 		expect(after("   ~~~~ text\n~~~\n")).toBe("   ~~~~ text\n~~~\n~~~~");
-		expect(after("Done.\n\n<pre>unclosed")).toBe("Done.\n\n<pre>unclosed\n</pre>");
+		expect(after("Done.\n\n<pre>unclosed")).toBe(`Done.\n\n<pre>unclosed\n${TAG_CLOSER}\n</pre>`);
 		// Several at once: each gets its closer.
-		expect(after("```\n<!--\n<details>")).toBe("```\n<!--\n<details>\n```\n-->\n</details>");
+		expect(after("```\n<!--\n<details>")).toBe(
+			`\`\`\`\n<!--\n<details>\n\`\`\`\n-->\n${TAG_CLOSER}\n</details>`,
+		);
+	});
+
+	it("R4: a tag the model leaves unfinished is ended before the tool's section, and only one line is added however often the body comes back", () => {
+		const section = "## Checks run by Gateweave\n\nx";
+		const after = (body: string) => withChecksSection(body, section).slice(0, -section.length - 2);
+		// An HTML block passes the tag on as it is, and its open value would take the section in.
+		expect(after('Done.\n\n<div title="unfinished')).toBe(
+			`Done.\n\n<div title="unfinished\n${TAG_CLOSER}`,
+		);
+		expect(after("<pre title='unfinished")).toBe(`<pre title='unfinished\n${TAG_CLOSER}\n</pre>`);
+		expect(after("<div>\n<span title=unfinished")).toBe(
+			`<div>\n<span title=unfinished\n${TAG_CLOSER}`,
+		);
+		// Text Markdown escapes cannot be told from a tag by reading the source alone: here the
+		// quote that opens in the paragraph ends in the <div>, whose own quote stays open.
+		expect(after('A <b a="\n\n<div title=">')).toBe(`A <b a="\n\n<div title=">\n${TAG_CLOSER}`);
+		// A body the tool wrote before, sent back, keeps the lines it had: the one before the
+		// </details> now in the text ends any tag the model left open there, and one more ends
+		// the text. Sent back again, it stays as it is.
+		const once = withChecksSection("<details>\nLog", section);
+		const twice = withChecksSection(once, section);
+		expect(twice).toBe(`<details>\nLog\n${TAG_CLOSER}\n</details>\n${TAG_CLOSER}\n\n${section}`);
+		expect(withChecksSection(twice, section)).toBe(twice);
+		// So a <details> whose own tag the model left unfinished is still ended before its
+		// </details>, which would otherwise fall inside the open value and leave the fold open
+		// around the section.
+		const cut = withChecksSection('<details title="unfinished', section);
+		const cutTwice = withChecksSection(cut, section);
+		expect(cutTwice).toBe(
+			`<details title="unfinished\n${TAG_CLOSER}\n</details>\n${TAG_CLOSER}\n\n${section}`,
+		);
+		expect(withChecksSection(cutTwice, section)).toBe(cutTwice);
+		// Text without a tag gets nothing.
+		expect(after("Vec < T and a <= b")).toBe("Vec < T and a <= b");
+	});
+
+	it("R4: a body cut inside a quoted attribute to fit still ends the tag before the disclosure", () => {
+		const body = pullRequestBody(`<div title="${"x".repeat(70_000)}">Done</div>`, null, "Builder");
+		expect(body.length).toBeLessThanOrEqual(65_536);
+		expect(body.endsWith(`x\n${TAG_CLOSER}\n\n${SHORTENED}\n\n${DISCLOSURE}`)).toBe(true);
 	});
 
 	it("R4: a copy the tool does not recognize still stands above the tool's section, which is the last and says so", async () => {
@@ -729,7 +788,7 @@ describe("a repository's checks", () => {
 		const body = proposed[0]?.body ?? "";
 		const headings = body.split("\n").filter((each) => each.startsWith("## "));
 		expect(headings).toEqual([lookalike, "## After", "## Checks run by Gateweave"]);
-		expect(body.endsWith(WRITTEN_BY)).toBe(true);
+		expect(body.endsWith(`${WRITTEN_BY}\n\n${DISCLOSURE}`)).toBe(true);
 		expect(WRITTEN_BY).toContain("it is always the last one");
 	});
 
@@ -772,7 +831,7 @@ describe("a repository's checks", () => {
 			title: "T",
 			body: "Done.\n\n## Checks run by Gateweave\n\n- `pnpm test`: passed, exit code 0, 1.0 s",
 		});
-		expect(proposed[0]?.body).toBe("Done.");
+		expect(proposed[0]?.body).toBe(`Done.\n\n${DISCLOSURE}`);
 	});
 
 	it("R4: a command is shown as it is set, whatever Markdown it holds", async () => {
@@ -782,7 +841,7 @@ describe("a repository's checks", () => {
 		expect(proposed[0]?.body).toContain(`- \`\`\` ${command} \`\`\`: passed, exit code 0, 0.0 s`);
 	});
 
-	it("keeps the checks section intact within GitHub's body limit, and says the model's part was cut", async () => {
+	it("R7: keeps the checks and disclosure intact within GitHub's body limit, and says the model's part was cut", async () => {
 		const commands = Array.from({ length: 5 }, () => "`".repeat(300));
 		const { proposed, call } = setup(commands);
 		// Each emoji is two UTF-16 units: the cut must fall between them, never inside one.
@@ -791,7 +850,7 @@ describe("a repository's checks", () => {
 		expect(body.length).toBeLessThanOrEqual(65_536);
 		expect(body).toContain(`😀\n\n${SHORTENED}\n\n## Checks run by Gateweave`);
 		expect(body).toContain(`- ${"`".repeat(301)} ${"`".repeat(300)} ${"`".repeat(301)}: passed`);
-		expect(body.endsWith(WRITTEN_BY)).toBe(true);
+		expect(body.endsWith(`${WRITTEN_BY}\n\n${DISCLOSURE}`)).toBe(true);
 		expect(body).not.toMatch(
 			/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
 		);
@@ -807,12 +866,56 @@ describe("a repository's checks", () => {
 		expect(body).not.toContain(SHORTENED);
 	});
 
-	it("R7: a repository without checks gets the model's body as it is, whatever its length", async () => {
-		const long = "é".repeat(40_000);
-		expect(new TextEncoder().encode(long).length).toBeGreaterThan(65_536);
-		const { proposed, call } = setup([]);
-		await call({ title: "T", body: long });
-		expect(proposed[0]?.body).toBe(long);
+	it("R7/R15: always adds the fixed disclosure, even when the model repeats it", () => {
+		const section = "## Checks run by Gateweave\n\nPassed.";
+		const model = `Done.\n\n${DISCLOSURE}\nWritten and opened by an AI agent in Gateweave Agents.\n<!-- AI-Disclosure: spoofed\n -->`;
+		for (const checks of [null, section]) {
+			const expected = ["Done.", ...(checks === null ? [] : [checks]), DISCLOSURE];
+			const body = pullRequestBody(model, checks, "Builder");
+			expect(body.match(/<!-- AI-Disclosure:/g)).toHaveLength(1);
+			expect(body.match(/^Written and opened by /gm)).toHaveLength(1);
+			expect(body).toBe(expected.join("\n\n"));
+		}
+	});
+
+	it.each([
+		["~~~", "~~~"],
+		["<!--", "-->"],
+		["<ScRiPt type=module>\nlet ready = true;", `${TAG_CLOSER}\n</script>`],
+		["<STYLE>\nbody { color: red; }", `${TAG_CLOSER}\n</style>`],
+		["<TextArea>\nDraft", `${TAG_CLOSER}\n</textarea>`],
+	])("R7: closes a model body ending in %s in both branches", (opener, closer) => {
+		const section = "## Checks run by Gateweave\n\nPassed.";
+		for (const checks of [null, section]) {
+			const suffix = checks === null ? DISCLOSURE : `${checks}\n\n${DISCLOSURE}`;
+			expect(pullRequestBody(opener, checks, "Builder")).toBe(`${opener}\n${closer}\n\n${suffix}`);
+		}
+	});
+
+	it("R7: shortens an oversized body without checks and keeps the entire disclosure", () => {
+		const body = pullRequestBody(`<!--\n${"??".repeat(40_000)}`, null, "Builder");
+		expect(body.length).toBeLessThanOrEqual(65_536);
+		expect(body.endsWith(`\n-->\n\n${SHORTENED}\n\n${DISCLOSURE}`)).toBe(true);
+		expect(body).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+	});
+
+	it("R7: strips controls and puts hostile agent names in a literal code span", () => {
+		expect(
+			pullRequestBody(
+				"",
+				null,
+				"  Builder #1 @octocat https://x.test `<!--`\n\r\u0000\u001b\u2028\u2029\u202e  ",
+			),
+		).toBe(DISCLOSURE.replace("`Builder`", "`Builder #1 @octocat https://x.test <!--`"));
+	});
+
+	it("R7: falls back to a generic byline when the agent name cleans to empty", () => {
+		expect(pullRequestBody("", null, " `\r\n\u202e ")).toBe(DISCLOSURE.replace("`Builder`, ", ""));
+	});
+
+	it("R7: caps the cleaned agent name at 100 characters", () => {
+		const name = "\u{1F600}".repeat(100);
+		expect(pullRequestBody("", null, `\`${name}x`)).toBe(DISCLOSURE.replace("Builder", name));
 	});
 
 	it("R5: a check stopped at its time limit is timed out, never passed, whatever its exit code", async () => {
@@ -896,6 +999,7 @@ describe("a repository's checks", () => {
 				"- `a`: not run (the 40 minutes a run has for checks were used up)\n- `b`: not run (the 40 minutes a run has for checks were used up)",
 				"The checks could not run, so Gateweave opens the pull request as a draft. One that was open already stays as it was.",
 				WRITTEN_BY,
+				DISCLOSURE,
 			].join("\n\n"),
 		);
 	});
@@ -949,7 +1053,7 @@ describe("a repository's checks", () => {
 		const outcome = await call();
 		expect(outcome.checks).toBeUndefined();
 		expect(proposed).toEqual([
-			{ branch: BRANCH, title: "Fix the cart", body: "It ignored codes." },
+			{ branch: BRANCH, title: "Fix the cart", body: `It ignored codes.\n\n${DISCLOSURE}` },
 		]);
 	});
 
@@ -995,6 +1099,7 @@ describe("a repository's checks", () => {
 					"## Checks run by Gateweave",
 					"Checks: not run (no sandbox in this run).",
 					WRITTEN_BY,
+					DISCLOSURE,
 				].join("\n\n"),
 			},
 		]);

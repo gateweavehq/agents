@@ -432,8 +432,9 @@ describe("Codex's command", () => {
 		expect(tomlString("a\ud800b")).toBe('"a�b"');
 	});
 
-	it("is `codex`, with the message after the conversation so far when it lost the thread", () => {
+	it("R9: is `codex`, with the message after the conversation so far when it lost the thread", () => {
 		const job = {
+			author: { name: "Builder", email: "bot@users.noreply.github.com" },
 			engine: "codex" as const,
 			prompt: "And the folders?",
 			history: "The person: List the files",
@@ -449,10 +450,16 @@ describe("Codex's command", () => {
 			},
 		};
 		const fresh = codexCommand(job, false);
+		expect(fresh.env).toEqual({
+			...CODEX_ENV,
+			GIT_AUTHOR_NAME: "Builder",
+			GIT_AUTHOR_EMAIL: "bot@users.noreply.github.com",
+			GIT_COMMITTER_NAME: "Builder",
+			GIT_COMMITTER_EMAIL: "bot@users.noreply.github.com",
+		});
 		expect(fresh.argv[0]).toBe("codex");
 		expect(fresh.input).toContain("The person: List the files");
 		expect(fresh.input.endsWith("And the folders?")).toBe(true);
-		expect(fresh.env).toBe(CODEX_ENV);
 		expect(codexCommand(job, true).input).toBe("And the folders?");
 	});
 });

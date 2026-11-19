@@ -82,6 +82,7 @@ import {
 	type SandboxEngine,
 	settle,
 } from "./engines";
+import { disclosureModel } from "./git-work";
 import type { LocalServerPort } from "./local-servers";
 import { RegistryOAuthProvider } from "./mcp-oauth";
 import { memoryTools } from "./memory-tools";
@@ -738,6 +739,8 @@ ${runPageNote(runs, turn.runId)}`
 									github,
 									repository,
 									branch,
+									agentName: agent.name,
+									model: disclosureModel(agent.model, agent.engine),
 									author: this.#commitAuthor(agent.name, repository),
 									record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
 									run,
@@ -896,9 +899,12 @@ ${runPageNote(runs, turn.runId)}`
 				if (repository) progress("Checking out the repository");
 				else if (mcpServers.length > 0) progress("Connecting tools");
 				const checkedOut = repository ? withCheckout(sandbox, repository, branch) : null;
-				const [problem, toolbox] = await Promise.all([
+				const [problem, toolbox, author] = await Promise.all([
 					checkedOut ? checkedOut.ready() : null,
 					connectTools(mcpServers, run, signal, sandbox, this.#oauth(registry)),
+					repository
+						? this.#commitAuthor(agent.name, repository)()
+						: { name: agent.name, email: COMMIT_EMAIL },
 				]);
 				if (problem) {
 					await toolbox.close();
@@ -939,7 +945,9 @@ ${runPageNote(runs, turn.runId)}`
 								github,
 								repository,
 								branch,
-								author: this.#commitAuthor(agent.name, repository),
+								agentName: agent.name,
+								model: disclosureModel(agent.model, engine),
+								author: async () => author,
 								record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
 								run,
 							})
@@ -974,6 +982,7 @@ ${runPageNote(runs, turn.runId)}`
 					progress("Starting the sandbox");
 					const events = await sandbox.startEngine({
 						engine,
+						author,
 						prompt: lastUserText(this.messages),
 						history: historyOf(this.messages, agent.name),
 						system: [agent.instructions, note]

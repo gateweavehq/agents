@@ -111,6 +111,7 @@ import {
 } from "@gateweave/agents-github";
 import { SANDBOX_REPOSITORY_PATH, type SandboxRepository } from "@gateweave/agents-model";
 import type { CheckoutResult } from "./checkout";
+import { assistedBy } from "./git-work";
 import { type Glob, GlobTooSlow, readGlob } from "./glob";
 import { failureForLogs } from "./models";
 import { clipText } from "./output";
@@ -668,7 +669,12 @@ export class FileStore implements DeletingFilePort, PushPort {
 	 * The base never moves: a conversation works on the commit it first read, however far the
 	 * default branch has gone, and GitHub shows what conflicts on the pull request.
 	 */
-	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
+	async push(
+		branch: string,
+		message: string,
+		author: CommitAuthor,
+		model: string,
+	): Promise<PushResult> {
 		const row = this.#row();
 		if (!row) return { error: "No repository is checked out here." };
 		if (branch !== row.branch) {
@@ -719,7 +725,7 @@ export class FileStore implements DeletingFilePort, PushPort {
 				},
 				files,
 				deleted,
-				message,
+				message: `${message}\n\n${assistedBy(model)}`,
 				author,
 			});
 		const note = (tip: string) =>

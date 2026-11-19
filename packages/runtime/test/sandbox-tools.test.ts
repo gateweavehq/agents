@@ -573,6 +573,8 @@ describe("pull requests from the sandbox", () => {
 		defaultBranch: "main",
 	};
 	const BRANCH = "gateweave/conversation-1";
+	const DISCLOSURE =
+		"Written and opened by `Builder`, an AI agent in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->";
 	const AUTHOR = { name: "Builder", email: "noreply@gateweave.com" };
 
 	/** `open_pull_request` over a sandbox in memory and a GitHub that answers with `pulls`. */
@@ -607,6 +609,8 @@ describe("pull requests from the sandbox", () => {
 			github,
 			repository,
 			branch: BRANCH,
+			agentName: "Builder",
+			model: "model-1",
 			author: async () => AUTHOR,
 			record: async (outcome) => {
 				recorded.push(outcome);
@@ -643,12 +647,12 @@ describe("pull requests from the sandbox", () => {
 		expect(second).toMatchObject({ number: 12, opened: false, head: "2".repeat(40) });
 
 		expect(sandbox.pushes).toEqual([
-			{ branch: BRANCH, message: "Fix the cart", author: AUTHOR },
-			{ branch: BRANCH, message: "Fix the cart, and test it", author: AUTHOR },
+			{ branch: BRANCH, message: "Fix the cart", author: AUTHOR, model: "model-1" },
+			{ branch: BRANCH, message: "Fix the cart, and test it", author: AUTHOR, model: "model-1" },
 		]);
 		expect(proposed).toEqual([
-			{ branch: BRANCH, title: "Fix the cart", body: "It ignored codes." },
-			{ branch: BRANCH, title: "Fix the cart, and test it", body: "With a test." },
+			{ branch: BRANCH, title: "Fix the cart", body: `It ignored codes.\n\n${DISCLOSURE}` },
+			{ branch: BRANCH, title: "Fix the cart, and test it", body: `With a test.\n\n${DISCLOSURE}` },
 		]);
 		expect(recorded).toEqual([first, second]);
 	});
