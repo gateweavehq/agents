@@ -297,12 +297,12 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
 - **The wiki Workflow** keeps its instances in a jurisdiction of its own setting in
   `wrangler.jsonc`, fixed when the Workflow is made. Gateweave Cloud's moved to new Workflows
   named `…-wiki-eu`.
-- **Sandboxes' containers are not bound by it.** A sandbox's Durable Object, with what it keeps,
-  is in the jurisdiction, but Cloudflare starts its container wherever it has capacity, which
-  [need not be where the object is](https://developers.cloudflare.com/containers/concepts/architecture/#starting-a-container).
-  Placement constraints exist only for containers on the `default` scheduling policy, which
-  Wrangler refuses beside `durable_object`, and `start()` takes none. So a turn's repository and
-  commands may run outside it.
+- **Sandboxes' containers follow it.** A sandbox's container is started by its Durable Object,
+  and under the `durable_object` scheduling policy Cloudflare runs it
+  [where the object runs](https://developers.cloudflare.com/containers/concepts/placement/#jurisdictional-constraints),
+  so a turn's repository and commands stay in the jurisdiction too. The Containers API lists each
+  instance's location: Gateweave Cloud's have all been in EU data centers since the move. The
+  jurisdiction does not cover where container images are stored; the sandbox's image is code.
 - **Cost.** Each conversation takes about a dozen calls to its two objects, of the thousand a
   Worker on the Free plan may make to Cloudflare's services in one invocation (ten thousand on
   Paid); hence three workspaces a run. One that holds a repository's files (see "Files without
