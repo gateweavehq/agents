@@ -8,6 +8,40 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.31.0] - 2026-11-19
+
+Three things that were awkward when setting agents up: a broken MCP connection now says so, an
+agent's model is chosen from a list, and a new library asset asks for its kind. There is no
+migration in this release.
+
+### Added
+
+- **An MCP server whose OAuth connection has stopped working says "needs reconnecting"** on the
+  MCP page and on the agents and teams that pin it. Before, the page went on saying it was
+  connected, and the first sign was a run that failed. The page checks each such connection when
+  it loads, at most once in five minutes per server; a check never clears a connection, and a
+  provider that cannot be reached is reported as "could not check", not as broken.
+  ([#274](https://github.com/gateweavehq/agents/pull/274))
+- **An agent's model is picked from the provider's list**, with search, in the edit dialog as in
+  the new-agent dialog. A saved model the provider no longer offers is marked. Typing an id still
+  works. ([#273](https://github.com/gateweavehq/agents/pull/273))
+
+### Fixed
+
+- **A new library asset asks for its kind** and says what each kind is for, where the form
+  preselected Skill. ([#272](https://github.com/gateweavehq/agents/pull/272))
+- **Stored OAuth credentials of an MCP server are handled more strictly**, for runs as well as
+  for the new check: they are given only to the server address they were issued for; they are
+  cleared only if they are still the ones that were sent, so a late answer cannot erase a newer
+  sign-in; a refresh that was already sent saves its new token even if its caller gave up; a
+  sign-in left unfinished stops counting after ten minutes; and a tool call late in a long turn
+  can still renew its token. ([#274](https://github.com/gateweavehq/agents/pull/274))
+
+### If you run your own
+
+- **Update.** After updating, open the MCP page: a connection that needs reconnecting now shows
+  there.
+
 ## [0.30.0] - 2026-11-18
 
 An agent's pull request can now be held to the repository's own checks before it exists. This
