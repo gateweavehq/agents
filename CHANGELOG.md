@@ -8,6 +8,54 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.32.0] - 2026-11-19
+
+The chat shows what an agent did, not only what it said, and what an agent writes on GitHub
+says that an AI agent wrote it. There is no migration in this release.
+
+### Added
+
+- **A pull request an agent opens shows as a card in the chat**: title, repository, branch,
+  files and lines changed, state, and a link. Reasoning shows collapsed. Messages from before
+  render as they did. ([#282](https://github.com/gateweavehq/agents/pull/282))
+- **The chat says what a turn is doing before its first words**, such as "Connecting tools",
+  "Checking out the repository" or "Starting the sandbox", where it said "thinking…". ([#284](https://github.com/gateweavehq/agents/pull/284))
+- **Each reply shows its run underneath**: steps, tokens and cost, with a link to the run's page,
+  updated while the run is still going. ([#289](https://github.com/gateweavehq/agents/pull/289))
+- **A delegated turn opens to the member's answer**: "Delegated to …" expands to what the other
+  agent replied, with a link to its run. ([#292](https://github.com/gateweavehq/agents/pull/292))
+- **Pull requests and commits an agent writes say that an AI agent wrote them**, to support
+  the transparency rules of the EU AI Act, Article 50. A pull request ends with "Written and
+  opened by `<agent>`, an AI agent in Gateweave Agents." and a machine-readable comment, after
+  the checks section; nothing the model writes above it can hide or shorten it. Each commit
+  carries the trailer `Assisted-by: Gateweave Agents:<model>` and the agent's bot identity as
+  author and committer. Commits already on a remote are never rewritten, and a hook or a
+  signing rule in the repository no longer stops a push. This cannot be turned off; a person's
+  setup apply is unchanged. ([#295](https://github.com/gateweavehq/agents/pull/295))
+- **A sandbox command's whole output is kept**: the turn sees a short preview, and the complete
+  log is stored outside the checkout. ([#296](https://github.com/gateweavehq/agents/pull/296))
+
+### Changed
+
+- **Anthropic models use their own prompt cache** when called directly, which makes long turns
+  cheaper; the run's trace records the tokens written to the cache as well as those read.
+  ([#290](https://github.com/gateweavehq/agents/pull/290))
+
+### Fixed
+
+- **A run that reaches its step limit says so**, and keeps the last tool's result, where it
+  looked finished. ([#291](https://github.com/gateweavehq/agents/pull/291))
+- **`read_file` keeps its answers within the limit in bytes**, not characters, so text in
+  languages with longer characters no longer overruns it, and it resumes from the first line it
+  did not return. ([#293](https://github.com/gateweavehq/agents/pull/293))
+- **`/mcp` answers an expired or wrong token with `error="invalid_token"`**, so an assistant
+  knows to refresh it rather than sign in again. ([#285](https://github.com/gateweavehq/agents/pull/285))
+- **Dependencies are updated**, Better Auth to 1.7.25 among them. ([#275](https://github.com/gateweavehq/agents/pull/275))
+
+### If you run your own
+
+- **Update.** Nothing else to do: no migration, variable or secret.
+
 ## [0.31.0] - 2026-11-19
 
 Three things that were awkward when setting agents up: a broken MCP connection now says so, an
