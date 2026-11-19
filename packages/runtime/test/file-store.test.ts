@@ -274,6 +274,40 @@ describe("reading", () => {
 });
 
 describe("searching", () => {
+	it("returns a bounded prefix of matching rows with the exact omitted count", async () => {
+		const lines = Array.from({ length: 4_000 }, (_, index) => `needle ${index}\n`).join("");
+		await checkedOut({ "many.txt": lines }, async ({ store }) => {
+			const result =
+				found(
+					await store.search({ pattern: "needle", path: `${REPO}/many.txt`, ignoreCase: false }),
+				) ?? "";
+			const rows = result.match(/^\d+:needle \d+$/gm) ?? [];
+			const omitted = Number(/\[(\d+) more\]\n$/.exec(result)?.[1]);
+			expect(rows[0]).toBe("1:needle 0");
+			expect(rows.at(-1)).toBe(`${rows.length}:needle ${rows.length - 1}`);
+			expect(rows.length + omitted).toBe(4_000);
+			expect(new TextEncoder().encode(result).length).toBeLessThanOrEqual(30_000);
+		});
+	});
+
+	it("counts the unchecked-files notice and footer within the search budget", async () => {
+		const files: Record<string, string> = {
+			"many.txt": Array.from({ length: 4_000 }, (_, index) => `needle ${index}\n`).join(""),
+		};
+		for (let index = 0; index < 27; index++) {
+			files[`marked-${String(index).padStart(2, "0")}.txt`] = `\uFEFFneedle ${index}\n`;
+		}
+		await checkedOut(files, async ({ fake, store }) => {
+			fake.dropsMark = true;
+			const result =
+				found(await store.search({ pattern: "needle", path: REPO, ignoreCase: false })) ?? "";
+			const rows = result.match(/^.*:\d+:needle.*$/gm) ?? [];
+			const omitted = Number(/\[(\d+) more\]\n$/.exec(result)?.[1]);
+			expect(result).toContain("[2 files were not searched:");
+			expect(rows.length + omitted).toBeGreaterThanOrEqual(4_000);
+			expect(new TextEncoder().encode(result).length).toBeLessThanOrEqual(30_000);
+		});
+	});
 	it("fetches only the files under its path and glob, in one request, then holds them", async () => {
 		await checkedOut(FILES, async ({ fake, store, storage }) => {
 			expect(
@@ -444,7 +478,7 @@ describe("searching", () => {
 		});
 	});
 
-	it("clips a long answer as a command's output is clipped", async () => {
+	it("keeps listing clipping as a command's output is clipped", async () => {
 		const files: Record<string, string> = {};
 		for (let index = 0; index < 600; index++) {
 			files[`docs/a-rather-long-directory-name/page-${String(index).padStart(4, "0")}.md`] = "x\n";

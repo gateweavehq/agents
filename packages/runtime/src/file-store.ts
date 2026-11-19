@@ -114,7 +114,7 @@ import type { CheckoutResult } from "./checkout";
 import { assistedBy } from "./git-work";
 import { type Glob, GlobTooSlow, readGlob } from "./glob";
 import { failureForLogs } from "./models";
-import { clipText } from "./output";
+import { clipText, SearchOutput } from "./output";
 import type { CommitAuthor, PushPort, PushResult } from "./pull-requests";
 import {
 	type DeleteResult,
@@ -546,7 +546,7 @@ export class FileStore implements DeletingFilePort, PushPort {
 				text = decodeText(new Uint8Array(bytes));
 			}
 			if (text === null) return { error: undecoded(path) };
-			return { found: clipped(matchingLines(text, needle, ignoreCase, "")) };
+			return { found: boundedSearch(matchingLines(text, needle, ignoreCase, "")) };
 		}
 
 		// What can be searched, and of that what GitHub has yet to be asked for.
@@ -588,16 +588,18 @@ export class FileStore implements DeletingFilePort, PushPort {
 		// From here to the answer nothing is awaited, so no other call's write comes between the
 		// rows this reads. What another call took away while the texts were fetched is found
 		// missing below, and said.
+		const note =
+			left === 0
+				? ""
+				: `[${left === 1 ? "1 file was" : `${left} files were`} not searched: GitHub's text of ${left === 1 ? "it" : "them"} could not be checked this time. Search again to go on.]\n`;
 		let text: string | null;
 		try {
-			text = clipped(this.#lines(searched, needle, ignoreCase, unchecked));
+			text = boundedSearch(this.#lines(searched, needle, ignoreCase, unchecked), note);
 		} catch (error) {
 			if (error instanceof SearchStopped) return { error: error.message };
 			throw error;
 		}
-		if (left === 0) return { found: text };
-		const note = `[${left === 1 ? "1 file was" : `${left} files were`} not searched: GitHub's text of ${left === 1 ? "it" : "them"} could not be checked this time. Search again to go on.]\n`;
-		return { found: `${text ?? ""}${note}` };
+		return { found: text };
 	}
 
 	/**
@@ -1405,6 +1407,13 @@ function* matchingLines(
 function clipped(lines: Iterable<string>): string | null {
 	const { text } = clipText(lines);
 	return text === "" ? null : text;
+}
+
+function boundedSearch(lines: Iterable<string>, note = ""): string | null {
+	const output = new SearchOutput();
+	const encoder = new TextEncoder();
+	for (const line of lines) output.add(encoder.encode(line));
+	return output.end(note) || null;
 }
 
 async function gzip(bytes: Uint8Array): Promise<Uint8Array> {

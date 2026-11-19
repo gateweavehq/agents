@@ -6,6 +6,74 @@
 /** Bytes of a command's output the model reads, half from the start and half from the end. */
 export const OUTPUT_LIMIT = 30_000;
 
+/** Keeps complete search rows while counting every row beyond the byte budget. */
+export class SearchOutput {
+	readonly #limit: number;
+	readonly #rows: { text: string; bytes: number }[] = [];
+	#bytes = 0;
+	#omitted = 0;
+	#pending: number[] = [];
+	#oversized = false;
+
+	constructor(limit = OUTPUT_LIMIT) {
+		this.#limit = limit;
+	}
+
+	add(chunk: Uint8Array): void {
+		for (const byte of chunk) {
+			if (byte === 10) {
+				if (!this.#oversized && this.#pending.length < this.#limit) this.#pending.push(byte);
+				else this.#oversized = true;
+				this.#line();
+			} else if (!this.#oversized) {
+				if (this.#pending.length < this.#limit) this.#pending.push(byte);
+				else this.#oversized = true;
+			}
+		}
+	}
+
+	#line(): void {
+		if (this.#oversized || this.#omitted) {
+			this.#omitted++;
+		} else {
+			const text = new TextDecoder().decode(Uint8Array.from(this.#pending));
+			const bytes = new TextEncoder().encode(text).length;
+			if (this.#bytes + bytes > this.#limit) this.#omitted++;
+			else {
+				this.#rows.push({ text, bytes });
+				this.#bytes += bytes;
+			}
+		}
+		this.#pending = [];
+		this.#oversized = false;
+	}
+
+	end(note = ""): string {
+		if (this.#pending.length || this.#oversized) this.#line();
+		const encoder = new TextEncoder();
+		const noteBytes = encoder.encode(note).length;
+		let footer = this.#omitted ? `[${this.#omitted} more]\n` : "";
+		while (
+			this.#rows.length &&
+			this.#bytes + noteBytes + encoder.encode(footer).length > this.#limit
+		) {
+			const row = this.#rows.pop();
+			if (row) this.#bytes -= row.bytes;
+			this.#omitted++;
+			footer = `[${this.#omitted} more]\n`;
+		}
+		return this.#rows.map((row) => row.text).join("") + note + footer;
+	}
+}
+
+export async function boundedSearchOutput(
+	stream: ReadableStream<Uint8Array> | null,
+): Promise<string> {
+	const output = new SearchOutput();
+	if (stream) for await (const chunk of stream) output.add(chunk);
+	return output.end();
+}
+
 export interface ClippedOutput {
 	text: string;
 	/** Bytes left out of the middle; 0 when all of it fits. */

@@ -9,7 +9,7 @@ import {
 	pushedRefs,
 	withGitHubToken,
 } from "../src/outbound";
-import { clipCommandOutput, clipOutput } from "../src/output";
+import { boundedSearchOutput, clipCommandOutput, clipOutput, SearchOutput } from "../src/output";
 import { type PullRequestPort, pullRequestTools } from "../src/pull-requests";
 import { SANDBOX_LIMITS, sandboxPath, sandboxTools } from "../src/sandbox-tools";
 import type { RunRecorder } from "../src/trace";
@@ -264,6 +264,30 @@ describe("a command's output", () => {
 		expect(clipped.text).toMatch(/^start\uFFFD/u);
 		expect(clipped.text).toMatch(/end\uFFFD$/u);
 		expect(clipped.omitted).toBe(bytes.length - 8192);
+	});
+});
+
+describe("search output", () => {
+	it("keeps whole rows at a UTF-8 boundary and counts all later matches", async () => {
+		const encoder = new TextEncoder();
+		const bytes = encoder.encode("a\né\nlate\nlast\n");
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+				controller.close();
+			},
+		});
+		// The native path uses the same bounded stream reader with the normal 30,000 byte limit.
+		expect(await boundedSearchOutput(stream)).toBe("a\né\nlate\nlast\n");
+		const output = new SearchOutput(12);
+		output.add(bytes);
+		expect(output.end()).toBe("a\n[3 more]\n");
+	});
+
+	it("counts an oversized first row without retaining it, and reserves the note", () => {
+		const output = new SearchOutput(35);
+		output.add(new TextEncoder().encode(`${"x".repeat(100)}\nsmall\nnext\n`));
+		expect(output.end("[unchecked]\n")).toBe("[unchecked]\n[3 more]\n");
 	});
 });
 
