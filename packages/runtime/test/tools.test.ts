@@ -93,6 +93,10 @@ describe("MCP servers", () => {
 		}
 		// The model saw the tool under the server's name, and then what it found.
 		expect(requests[0]?.body.tools).toMatchObject([{ name: "acme__search" }]);
+		expect(requests.map((request) => request.body.cache_control)).toEqual([
+			{ type: "ephemeral" },
+			{ type: "ephemeral" },
+		]);
 		expect(JSON.stringify(requests[1]?.body.messages)).toContain(FOUND);
 
 		const [run] = await registry.listRuns();
