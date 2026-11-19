@@ -314,8 +314,13 @@ export class RunnerSandbox
 	 * commit the default branch does not. Git's push leaves through `SandboxOutbound` like every
 	 * request, which lets it through while this lasts.
 	 */
-	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
-		const committed = await this.commit(message, author);
+	async push(
+		branch: string,
+		message: string,
+		author: CommitAuthor,
+		model: string,
+	): Promise<PushResult> {
+		const committed = await this.commit(message, author, model);
 		if ("error" in committed) return committed;
 		return this.pushCommit(branch, committed.head);
 	}
@@ -326,7 +331,7 @@ export class RunnerSandbox
 	 * the default branch does not. `open_pull_request` calls it alone when the repository has
 	 * checks, which run on this commit before `pushCommit` pushes it.
 	 */
-	async commit(message: string, author: CommitAuthor): Promise<CommitResult> {
+	async commit(message: string, author: CommitAuthor, model: string): Promise<CommitResult> {
 		const repository = this.#repository();
 		if (!repository) return { error: "This sandbox has no repository checked out." };
 		const container = await this.#ready();
@@ -335,7 +340,15 @@ export class RunnerSandbox
 				error: `${repository.owner}/${repository.name} is not checked out in this sandbox.`,
 			};
 		}
-		return commitWork(this.#git(container), repository.defaultBranch, message, author);
+		return commitWork(
+			(args, seconds = 60, env = {}) =>
+				this.#exec(container, args, SANDBOX_REPOSITORY_PATH, seconds, env),
+			repository.defaultBranch,
+			message,
+			author,
+			model,
+			this.ctx.storage.kv.get<string>(PUSHED_KEY) ?? null,
+		);
 	}
 
 	/** Git in the checkout, as `./git-work.ts` runs it. */

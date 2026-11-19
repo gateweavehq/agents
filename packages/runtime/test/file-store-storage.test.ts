@@ -193,7 +193,9 @@ describe("a conversation that holds a repository's files", () => {
 			expect(read).toEqual({ content: "\uFEFF#!/bin/sh\r\necho 1\r\n" });
 			expect(await store.readFile(`${REPO}/README.md`)).toEqual({ content: FILES["README.md"] });
 			expect(fake.requests).toEqual([]);
-			expect(await store.push(BRANCH, "After the move", AUTHOR)).toMatchObject({ pushed: true });
+			expect(await store.push(BRANCH, "After the move", AUTHOR, "model-1")).toMatchObject({
+				pushed: true,
+			});
 		}, copy);
 		const { "docs/old.md": _gone, ...kept } = FILES;
 		expect(fake.filesAt(BRANCH)).toEqual({

@@ -11,21 +11,38 @@ const { privateKey } = generateKeyPairSync("rsa", {
 });
 
 export default defineConfig({
-	plugins: [
-		cloudflareTest({
-			wrangler: { configPath: "./test/wrangler.jsonc" },
-			miniflare: { bindings: { GITHUB_APP_PRIVATE_KEY: privateKey } },
-		}),
-	],
 	test: {
-		// The first test to reach a Durable Object waits while Vite loads its code, which takes
-		// several seconds on a cold start.
-		testTimeout: 20_000,
-		// With the file system cache, Vitest hands each test file's worker every module it has
-		// cached in one message, and the Cloudflare pool inlines their code into it, once per
-		// alias. For this package's graph that came to over 32 MiB in CI, more than workerd
-		// accepts in one WebSocket message, and the worker died. Without it, modules arrive one
-		// at a time, the largest about 3 MB.
-		fsModuleCache: false,
+		projects: [
+			{
+				// Tests that need real git (`*.node.test.ts`) run in Node, outside workerd.
+				test: {
+					name: "node",
+					include: ["test/**/*.node.test.ts"],
+					testTimeout: 20_000,
+				},
+			},
+			{
+				plugins: [
+					cloudflareTest({
+						wrangler: { configPath: "./test/wrangler.jsonc" },
+						miniflare: { bindings: { GITHUB_APP_PRIVATE_KEY: privateKey } },
+					}),
+				],
+				test: {
+					name: "worker",
+					include: ["test/**/*.test.ts"],
+					exclude: ["test/**/*.node.test.ts"],
+					// The first test to reach a Durable Object waits while Vite loads its code, which takes
+					// several seconds on a cold start.
+					testTimeout: 20_000,
+					// With the file system cache, Vitest hands each test file's worker every module it has
+					// cached in one message, and the Cloudflare pool inlines their code into it, once per
+					// alias. For this package's graph that came to over 32 MiB in CI, more than workerd
+					// accepts in one WebSocket message, and the worker died. Without it, modules arrive one
+					// at a time, the largest about 3 MB.
+					fsModuleCache: false,
+				},
+			},
+		],
 	},
 });

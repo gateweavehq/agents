@@ -38,6 +38,7 @@
 import { z } from "zod";
 import { ENGINE_TOOLS_SERVER } from "./engine-tools";
 import { type EngineJob, enginePrompt } from "./engines";
+import { commitEnvironment } from "./git-work";
 import { failureForLogs } from "./models";
 import { openCodeSettings } from "./opencode";
 
@@ -173,7 +174,9 @@ export async function startOpenCodeTurn(
 	let id: string | null = session ?? null;
 	let frames: ServerEvents | null = null;
 	try {
-		({ logFrom } = await step("start", (signal) => server.ensure(openCodeSettings(job), signal)));
+		({ logFrom } = await step("start", (signal) =>
+			server.ensure({ ...openCodeSettings(job), ...commitEnvironment(job.author) }, signal),
+		));
 		await waitForServer(server, {
 			startMs: options.startMs ?? START_MS,
 			pollMs: options.pollMs ?? POLL_MS,

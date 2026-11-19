@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { changedSince, commitWork, type Git, isCommitId, pushArguments } from "../src/git-work";
+import {
+	type CheckoutCommand,
+	changedSince,
+	commitWork,
+	type Git,
+	isCommitId,
+	pushArguments,
+} from "../src/git-work";
 import type { CommandResult } from "../src/sandbox-tools";
 
 const AUTHOR = { name: "Builder", email: "noreply@gateweave.com" };
@@ -11,15 +18,21 @@ function recordingGit(answers: Record<string, Partial<CommandResult>> = {}) {
 	const defaults: Record<string, Partial<CommandResult>> = {
 		// Something is staged, the work is one commit ahead, and HEAD is a commit.
 		diff: { exitCode: 1 },
+		"merge-base": { output: HEAD },
 		"rev-list": { output: "1\n" },
 		"rev-parse": { output: `${HEAD}\n` },
 	};
 	const git: Git = async (args, seconds, env) => {
 		asked.push({ args, seconds, env });
+		if (args[0] === "bash") {
+			return { exitCode: 0, output: `${HEAD}\n`, timedOut: false };
+		}
 		const answer = answers[args[0] ?? ""] ?? defaults[args[0] ?? ""] ?? {};
 		return { exitCode: 0, output: "", timedOut: false, ...answer };
 	};
-	return { git, asked, commands: () => asked.map(({ args }) => args.join(" ")) };
+	const run: CheckoutCommand = (args, seconds, env) =>
+		git(args[0] === "git" ? args.slice(1) : args, seconds, env);
+	return { git, run, asked, commands: () => asked.map(({ args }) => args.join(" ")) };
 }
 
 describe("a checkout after the repository's checks", () => {
@@ -69,14 +82,19 @@ describe("a checkout after the repository's checks", () => {
 
 describe("a sandbox's work in git", () => {
 	it("R2: is committed whole, by its author, and not pushed: the push is a step of its own", async () => {
-		const { git, asked, commands } = recordingGit();
-		expect(await commitWork(git, "main", "Fix the cart", AUTHOR)).toEqual({ head: HEAD });
+		const { run, asked, commands } = recordingGit();
+		expect(await commitWork(run, "main", "Fix the cart", AUTHOR, "model-1")).toEqual({
+			head: HEAD,
+		});
 		expect(commands()).toEqual([
 			"add --all",
 			"diff --cached --quiet",
 			"commit --quiet --message Fix the cart",
-			"rev-list --count origin/main..HEAD",
+			"fetch --quiet origin +refs/heads/main:refs/remotes/origin/main",
 			"rev-parse HEAD",
+			`rev-list --count origin/main..${HEAD}`,
+			`merge-base origin/main ${HEAD}`,
+			expect.stringMatching(/^bash -c /),
 		]);
 		expect(asked[2]?.env).toEqual({
 			GIT_AUTHOR_NAME: "Builder",
@@ -87,23 +105,25 @@ describe("a sandbox's work in git", () => {
 	});
 
 	it("R2: makes no commit when nothing is staged, and still says which commit the work is at", async () => {
-		const { git, commands } = recordingGit({ diff: { exitCode: 0 } });
-		expect(await commitWork(git, "main", "Fix the cart", AUTHOR)).toEqual({ head: HEAD });
+		const { run, commands } = recordingGit({ diff: { exitCode: 0 } });
+		expect(await commitWork(run, "main", "Fix the cart", AUTHOR, "model-1")).toEqual({
+			head: HEAD,
+		});
 		expect(commands()).not.toContain("commit --quiet --message Fix the cart");
 	});
 
 	it("R2: has nothing to propose without a commit the default branch lacks, or a commit it can name", async () => {
 		const none = recordingGit({ "rev-list": { output: "0\n" } });
-		expect(await commitWork(none.git, "main", "T", AUTHOR)).toEqual({
+		expect(await commitWork(none.run, "main", "T", AUTHOR, "model-1")).toEqual({
 			error: "There is nothing to propose: the work has no commit that main does not.",
 		});
 		const hooks = recordingGit({ commit: { exitCode: 1, output: "lint failed" } });
-		expect(await commitWork(hooks.git, "main", "T", AUTHOR)).toEqual({
+		expect(await commitWork(hooks.run, "main", "T", AUTHOR, "model-1")).toEqual({
 			error: "The changes could not be committed.\nlint failed",
 		});
 		// What is pushed later is named by this id, so anything else is no answer.
 		const odd = recordingGit({ "rev-parse": { output: "HEAD\n" } });
-		expect(await commitWork(odd.git, "main", "T", AUTHOR)).toEqual({
+		expect(await commitWork(odd.run, "main", "T", AUTHOR, "model-1")).toEqual({
 			error: "The work's commit could not be read.",
 		});
 	});

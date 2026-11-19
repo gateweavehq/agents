@@ -35,12 +35,14 @@ export interface Push {
 	branch: string;
 	message: string;
 	author: CommitAuthor;
+	model: string;
 }
 
 /** A commit `open_pull_request` asked for before the repository's checks. */
 export interface Commit {
 	message: string;
 	author: CommitAuthor;
+	model: string;
 }
 
 /** The push of one commit, which `open_pull_request` asks for after the repository's checks. */
@@ -91,8 +93,8 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort {
 		return result;
 	}
 
-	async commit(message: string, author: CommitAuthor): Promise<CommitResult> {
-		this.commits.push({ message, author });
+	async commit(message: string, author: CommitAuthor, model: string): Promise<CommitResult> {
+		this.commits.push({ message, author, model });
 		this.log.push("commit");
 		const head = String(this.commits.length).repeat(40).slice(0, 40);
 		return this.commitAnswers.shift() ?? { head };
@@ -126,8 +128,13 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort {
 		return this.checkoutAnswers.shift() ?? { checkedOut: true };
 	}
 
-	async push(branch: string, message: string, author: CommitAuthor): Promise<PushResult> {
-		this.pushes.push({ branch, message, author });
+	async push(
+		branch: string,
+		message: string,
+		author: CommitAuthor,
+		model: string,
+	): Promise<PushResult> {
+		this.pushes.push({ branch, message, author, model });
 		this.log.push("commit and push");
 		const head = String(this.pushes.length).repeat(40).slice(0, 40);
 		return this.pushAnswers.shift() ?? { head, pushed: true };
@@ -272,12 +279,12 @@ export class FakeSandbox
 		return this.#memory.checkout(repository, branch);
 	}
 
-	push(branch: string, message: string, author: CommitAuthor) {
-		return this.#memory.push(branch, message, author);
+	push(branch: string, message: string, author: CommitAuthor, model: string) {
+		return this.#memory.push(branch, message, author, model);
 	}
 
-	commit(message: string, author: CommitAuthor) {
-		return this.#memory.commit(message, author);
+	commit(message: string, author: CommitAuthor, model: string) {
+		return this.#memory.commit(message, author, model);
 	}
 
 	changedSince(head: string) {

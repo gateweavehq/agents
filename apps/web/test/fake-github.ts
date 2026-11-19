@@ -111,7 +111,14 @@ export class FakeGitHub {
 	readonly pulls = new Map<string, FakePull[]>();
 	/** Trees and commits made through the API, by id: every file each holds. */
 	readonly #trees = new Map<string, Record<string, FakeFile>>();
-	readonly #commits = new Map<string, { files: Record<string, FakeFile>; parents: string[] }>();
+	readonly #commits = new Map<
+		string,
+		{ files: Record<string, FakeFile>; parents: string[]; message?: string }
+	>();
+
+	commitMessage(sha: string): string | undefined {
+		return this.#commits.get(sha)?.message;
+	}
 	#objects = 0;
 
 	/** The Worker's settings for this app. */
@@ -412,7 +419,10 @@ export class FakeGitHub {
 			if (!files || parents.length === 0 || !parents.every(known)) {
 				return refused("Unknown tree or parent");
 			}
-			return Response.json({ sha: this.#commit(files, parents) }, { status: 201 });
+			return Response.json(
+				{ sha: this.#commit(files, parents, String(body.message)) },
+				{ status: 201 },
+			);
 		}
 		if (method === "POST" && resource === "git/refs") {
 			const branch = String(body.ref).replace(/^refs\/heads\//, "");
@@ -469,9 +479,9 @@ export class FakeGitHub {
 		return Response.json({ message: "Not Found" }, { status: 404 });
 	}
 
-	#commit(files: Record<string, FakeFile>, parents: string[]): string {
+	#commit(files: Record<string, FakeFile>, parents: string[], message?: string): string {
 		const sha = this.#objectId("commit");
-		this.#commits.set(sha, { files, parents });
+		this.#commits.set(sha, { files, parents, ...(message === undefined ? {} : { message }) });
 		return sha;
 	}
 

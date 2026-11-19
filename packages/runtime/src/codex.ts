@@ -43,6 +43,7 @@ import {
 	UNFINISHED,
 	withoutKeys,
 } from "./engines";
+import { commitEnvironment } from "./git-work";
 import type { RunRecorder } from "./trace";
 
 /** The server the trace and the chat name for Codex's own tools. */
@@ -132,7 +133,7 @@ export function codexCommand(job: EngineJob, resume: boolean): EngineCommand {
 	const tools = job.access.tools !== null;
 	return {
 		argv: ["codex", ...codexArguments({ model: job.model, system: job.system, resume, tools })],
-		env: CODEX_ENV,
+		env: { ...CODEX_ENV, ...commitEnvironment(job.author) },
 		input: enginePrompt(job, resume),
 		log: CODEX_LOG,
 	};

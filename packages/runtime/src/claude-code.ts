@@ -44,6 +44,7 @@ import {
 	outputOf,
 	UNFINISHED,
 } from "./engines";
+import { commitEnvironment } from "./git-work";
 import type { RunRecorder } from "./trace";
 
 /** The server the trace and the chat name for Claude Code's own tools. */
@@ -177,7 +178,7 @@ export function claudeCodeCommand(job: EngineJob, session: string, resume: boole
 			"claude",
 			...claudeCodeArguments({ model: job.model, system: job.system, session, resume, tools }),
 		],
-		env: { ...CLAUDE_CODE_ENV, ...claudeCodeModelEnv(job.model) },
+		env: { ...CLAUDE_CODE_ENV, ...claudeCodeModelEnv(job.model), ...commitEnvironment(job.author) },
 		input: enginePrompt(job, resume),
 		log: CLAUDE_CODE_LOG,
 	};

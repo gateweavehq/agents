@@ -527,7 +527,7 @@ describe("applying setups", () => {
 		return { registry, setup, repositoryId: detail?.repository.id ?? "", pin };
 	}
 
-	it("opens a pull request, keeps it current, and follows it to the end", async () => {
+	it("R10: opens and updates a person's setup pull request without AI disclosure", async () => {
 		const mcp = `${JSON.stringify({ mcpServers: { search: { command: "search-mcp", args: ["--fast"] } } }, null, 2)}\n`;
 		const codex = '# Codex settings\nmodel = "o3"\n';
 		const repository: FakeRepository = {
@@ -573,6 +573,10 @@ describe("applying setups", () => {
 		expect(pull).toMatchObject({ number: 1, head: branch, base: "main", state: "open" });
 		expect(pull?.title).toBe("chore(agents): apply the Reviewers setup");
 		expect(pull?.body).toContain(`[the setup](${setupUrl})`);
+		expect(pull?.body).not.toMatch(/AI-Disclosure|an AI agent in Gateweave Agents/);
+		expect(github.commitMessage(opened.application.commit)).toBe(
+			"chore(agents): apply the Reviewers setup\n\nWritten by Gateweave Agents from the setup's pinned library versions.",
+		);
 		expect(pull?.body).toContain("- `CLAUDE.md`: Is a symbolic link in the repository");
 
 		// Nothing new to write, so no new commit.
@@ -585,7 +589,13 @@ describe("applying setups", () => {
 		// A moved pin gives the open pull request a new commit.
 		await pin("Be briefer.\n");
 		const updated = await registry.applySetup(setup.id, repositoryId, setupUrl);
-		expect(updated.status).toBe("updated");
+		if (updated.status !== "updated") throw new Error(JSON.stringify(updated));
+		expect(github.commitMessage(updated.application.commit)).toBe(
+			github.commitMessage(opened.application.commit),
+		);
+		expect(github.pullsOf(repository)[0]?.body).not.toMatch(
+			/AI-Disclosure|an AI agent in Gateweave Agents/,
+		);
 		expect(github.filesAt(repository, branch)?.["AGENTS.md"]).toBe("Be briefer.\n");
 		expect(github.pullsOf(repository)).toHaveLength(1);
 		expect(github.pullsOf(repository)[0]?.body).toContain("| AGENTS.md | Instructions | v2 |");

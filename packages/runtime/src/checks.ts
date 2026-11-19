@@ -499,20 +499,32 @@ export const SHORTENED =
 	"_The description above was shortened to fit GitHub's length limit for a pull request._";
 
 /**
- * The body the pull request is opened with. Without checks it is the model's body as it was,
- * less any forged section, whatever its length. With checks, the tool's section must be shown
- * whole, so when the two do not fit together, the model's part is cut, at a code point, and says
- * so in a fixed line rather than ending mid-sentence in silence.
+ * Keep the checks and disclosure whole, shortening only the model's part at a code point.
  */
-export function pullRequestBody(body: string, section: string | null): string {
-	if (section === null) return withoutChecksSection(body);
-	const full = withChecksSection(body, section);
+export function pullRequestBody(body: string, section: string | null, agentName: string): string {
+	// A code span also prevents GitHub from linking names that look like mentions or URLs.
+	const name = Array.from(agentName.replace(/[`\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim())
+		.slice(0, 100)
+		.join("")
+		.trimEnd();
+	const byline = name ? `\`${name}\`, an AI agent` : "an AI agent";
+	const disclosure = `Written and opened by ${byline} in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->`;
+	const suffix = section === null ? disclosure : `${section}\n\n${disclosure}`;
+	const description = body
+		.replace(/<!--\s*AI-Disclosure:[\s\S]*?-->/gi, "")
+		.replace(
+			/^[ \t]*Written and opened by (?:[^\r\n]+, )?an AI agent in Gateweave Agents\.[ \t]*\r?(?:\n|$)/gm,
+			"",
+		);
+	const model = withoutChecksSection(description === body ? description : description.trimEnd());
+	const before = closed(section === null ? model : model.trimEnd());
+	const full = before === "" ? suffix : `${before}\n\n${suffix}`;
 	if (full.length <= BODY_LIMIT) return full;
 	const shortened = (model: string) => {
-		const before = closed(withoutChecksSection(model).trimEnd());
-		return `${before === "" ? "" : `${before}\n\n`}${SHORTENED}\n\n${section}`;
+		const before = closed(model.trimEnd());
+		return `${before === "" ? "" : `${before}\n\n`}${SHORTENED}\n\n${suffix}`;
 	};
-	const characters = Array.from(body);
+	const characters = Array.from(model);
 	let low = 0;
 	let high = characters.length;
 	while (low < high) {
@@ -566,10 +578,14 @@ function closed(body: string): string {
 	for (let left = Math.min(opened - ended, MAX_FOLDS); left > 0; left -= 1) {
 		closers.push("</details>");
 	}
-	const pres = [...body.matchAll(/<pre(?:\s[^>]*)?>/gi)];
-	const lastPre = pres.at(-1)?.index ?? -1;
-	const lastPreEnd = [...body.matchAll(/<\/pre\s*>/gi)].at(-1)?.index ?? -1;
-	if (lastPre > lastPreEnd) closers.push("</pre>");
+	for (const tag of ["pre", "script", "style", "textarea"]) {
+		let open = false;
+		const tags = new RegExp(`<${tag}(?=[\\s>]|$)|</${tag}\\s*>`, "gi");
+		for (const [matched] of body.matchAll(tags)) {
+			open = !matched.startsWith("</");
+		}
+		if (open) closers.push(`</${tag}>`);
+	}
 	return closers.length === 0 ? body : `${body}\n${closers.join("\n")}`;
 }
 
