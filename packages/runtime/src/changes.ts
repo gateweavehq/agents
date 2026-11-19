@@ -144,9 +144,13 @@ function pathOf(section: string): string | null {
 	// A binary file's section has no `---`/`+++` lines; its `diff --git` line names it.
 	const head = lines[0] ?? "";
 	const match = /^diff --git ("(?:[^"\\]|\\.)*"|\S+) ("(?:[^"\\]|\\.)*"|\S+)$/.exec(head);
-	if (match === null) return null;
-	const target = unquote(match[2] ?? "");
-	return target.startsWith("b/") ? target.slice(2) : target;
+	if (match !== null) {
+		const target = unquote(match[2] ?? "");
+		return target.startsWith("b/") ? target.slice(2) : target;
+	}
+	// A path with a space is written unquoted, the same on both sides: `a/my file.txt b/my file.txt`.
+	const plain = /^diff --git a\/(.+) b\/\1$/.exec(head);
+	return plain === null ? null : (plain[1] ?? null);
 }
 
 /**
@@ -154,7 +158,8 @@ function pathOf(section: string): string | null {
  * its `a/` or `b/` prefix inside the quotes, and only then the prefix dropped.
  */
 function headerPath(text: string, prefix: string): string {
-	const path = unquote(text);
+	// Git ends a header's path with a TAB when the path holds a space; a quoted path never does.
+	const path = unquote(text.replace(/\t$/, ""));
 	return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
@@ -184,7 +189,7 @@ function unquote(path: string): string {
 
 /** What a secret looks like on one line of a diff, and a private key's block around it. */
 const SECRET_LINE =
-	/(BEGIN [A-Z ]*PRIVATE KEY|["']?authorization["']?\s*:|bearer\s+\S|api[-_ ]?key["']?\s*[:=]|["']?secret["']?\s*[:=]|["']?token["']?\s*[:=]|["']?password["']?\s*[:=]|["']?passwd["']?\s*[:=]|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|xox[a-z]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/i;
+	/(BEGIN [A-Z ]*PRIVATE KEY|["']?authorization["']?\s*:|bearer\s+\S|["']?[\w-]*(?:secret|token|password|passwd|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key)[\w-]*["']?\s*[:=]|[a-z][a-z0-9+.-]*:\/\/[^\s/@]*:[^\s/@]+@|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|xox[a-z]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/i;
 
 const REDACTED = " [redacted]";
 

@@ -254,3 +254,59 @@ it("drops a patch's partial last section when the patch itself was clipped", asy
 	expect(changes?.files.map((file) => file.path)).toEqual(["src/app.ts", "docs/new.md"]);
 	expect(changes?.truncated).toBe(true);
 });
+
+it("keeps a path with a space, TAB and all, from Git's headers", async () => {
+	const patch = [
+		"diff --git a/my file.txt b/my file.txt",
+		"--- a/my file.txt\t",
+		"+++ b/my file.txt\t",
+		"@@ -1,1 +1,1 @@",
+		"-old",
+		"+new",
+		"",
+	].join("\n");
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+	});
+	const changes = await turnChanges(git, TREE);
+	expect(changes?.files.map((file) => file.path)).toEqual(["my file.txt"]);
+});
+
+it("names a binary file whose path has a space from its diff --git line", async () => {
+	const patch = [
+		"diff --git a/my file.bin b/my file.bin",
+		"index 1111111..2222222 100644",
+		"Binary files a/my file.bin and b/my file.bin differ",
+		"",
+	].join("\n");
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+	});
+	const changes = await turnChanges(git, TREE);
+	expect(changes?.files.map((file) => file.path)).toEqual(["my file.bin"]);
+});
+
+it("takes out credentials whose keys merely contain a secret's word, and URL logins", async () => {
+	const patch = [
+		"diff --git a/.env b/.env",
+		"--- a/.env",
+		"+++ b/.env",
+		"@@ -0,0 +1,3 @@",
+		"+SECRET_KEY=abc123",
+		"+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"+DATABASE_URL=postgres://user:secretpass@db.example.com/app",
+		"",
+	].join("\n");
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+	});
+	const changes = await turnChanges(git, TREE);
+	const diff = changes?.files[0]?.diff ?? "";
+	for (const secret of ["abc123", "wJalrXUtn", "secretpass"]) {
+		expect(diff).not.toContain(secret);
+	}
+	expect(diff.match(/ \[redacted\]/g)).toHaveLength(3);
+});
