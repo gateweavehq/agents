@@ -249,11 +249,17 @@ function LiveConversation({
 	const [sent, setSent] = useState(false);
 	const answering = sent || status === "submitted" || isStreaming || isRecovering;
 	const busy = !closed && (answering || pending !== null);
-	// Nothing of the reply has come yet.
+	// Nothing of the reply has come yet: no text, reasoning or tool call, though the stream may
+	// already be open (its "start" arrives before the first content) or a progress part may be
+	// saying what the turn is doing.
+	const last = messages.at(-1);
+	const replyBegan =
+		last?.role === "assistant" && last.parts.some((part) => part.type !== "step-start");
 	const waiting =
 		status === "submitted" ||
 		(pending !== null && !answering) ||
-		(sent && !isStreaming && messages.at(-1)?.role === "user");
+		(sent && !isStreaming && messages.at(-1)?.role === "user") ||
+		(isStreaming && !replyBegan);
 	const end = useRef<HTMLDivElement>(null);
 	// The refused words went into the list as soon as they were sent, and are back in the box now.
 	const shown =
