@@ -233,10 +233,14 @@ describe("repository writes", () => {
 			Response.json({
 				number: 7,
 				html_url: "https://github.com/acme/site/pull/7",
+				title: "Apply the Reviewers setup",
 				state,
 				...(merged === undefined ? {} : { merged }),
 				merged_at: mergedAt,
 				head: { ref: "gateweave/setup-x", sha: sha("d") },
+				additions: 10,
+				deletions: 3,
+				changed_files: 2,
 			});
 		const calls = github(
 			pull("open", false, null),
@@ -253,8 +257,13 @@ describe("repository writes", () => {
 		expect(opened).toEqual({
 			number: 7,
 			url: "https://github.com/acme/site/pull/7",
+			title: "Apply the Reviewers setup",
 			state: "open",
 			head: sha("d"),
+			headRef: "gateweave/setup-x",
+			additions: 10,
+			deletions: 3,
+			changedFiles: 2,
 		});
 		expect((await pullRequest("ghs_x", repository, 7))?.state).toBe("merged");
 		const updated = await updatePullRequest("ghs_x", repository, 7, { title: "T", body: "B" });
@@ -281,9 +290,13 @@ describe("repository writes", () => {
 				{
 					number: 12,
 					html_url: "https://github.com/acme/site/pull/12",
+					title: "Set up the reviewers",
 					state: "open",
 					merged_at: null,
 					head: { ref: "gateweave/c-1", sha: sha("e") },
+					additions: 4,
+					deletions: 1,
+					changed_files: 1,
 				},
 			]),
 			Response.json([]),
@@ -292,8 +305,13 @@ describe("repository writes", () => {
 		expect(await openPullRequestFrom("ghs_x", repository, "gateweave/c-1")).toEqual({
 			number: 12,
 			url: "https://github.com/acme/site/pull/12",
+			title: "Set up the reviewers",
 			state: "open",
 			head: sha("e"),
+			headRef: "gateweave/c-1",
+			additions: 4,
+			deletions: 1,
+			changedFiles: 1,
 		});
 		expect(await openPullRequestFrom("ghs_x", repository, "gateweave/c-2")).toBeNull();
 		expect(calls.map((call) => call.route)).toEqual([

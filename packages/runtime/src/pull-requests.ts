@@ -18,6 +18,7 @@ import {
 	GitHubError,
 	openPullRequest,
 	openPullRequestFrom,
+	type PullRequest,
 	updatePullRequest,
 } from "@gateweave/agents-github";
 import {
@@ -92,7 +93,7 @@ export interface PullRequestPort {
 		body: string;
 		/** Opens a new pull request as a draft. One that is open already stays as it is. */
 		draft?: boolean;
-	}): Promise<{ number: number; url: string; opened: boolean }>;
+	}): Promise<PullRequest & { opened: boolean }>;
 }
 
 /** Pull requests made on GitHub with the workspace's GitHub App. */
@@ -109,7 +110,7 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 			const open = await openPullRequestFrom(token, name, branch);
 			if (open) {
 				const updated = await updatePullRequest(token, name, open.number, { title, body });
-				return { number: updated.number, url: updated.url, opened: false };
+				return { ...updated, opened: false };
 			}
 			const head = branch;
 			const base = repository.defaultBranch;
@@ -120,7 +121,7 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 				base,
 				...(draft ? { draft: true } : {}),
 			});
-			return { number: made.number, url: made.url, opened: true };
+			return { ...made, opened: true };
 		},
 	};
 }
@@ -267,7 +268,15 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		}
 		const outcome: PullRequestOutcome = {
 			repository: name,
-			...made,
+			number: made.number,
+			url: made.url,
+			opened: made.opened,
+			title: made.title,
+			branch: made.headRef,
+			state: made.state,
+			additions: made.additions,
+			deletions: made.deletions,
+			changedFiles: made.changedFiles,
 			head: pushed.head,
 			...about,
 		};

@@ -87,9 +87,15 @@ export type ChangesOutcome =
 export interface PullRequest {
 	number: number;
 	url: string;
+	title: string;
 	state: "open" | "closed" | "merged";
 	/** The commit the pull request's branch is at. */
 	head: string;
+	/** The branch it is from, which a card names. */
+	headRef: string;
+	additions: number;
+	deletions: number;
+	changedFiles: number;
 }
 
 const objectId = z.string().regex(/^[0-9a-f]{40}$/);
@@ -100,10 +106,14 @@ const compareSchema = z.object({ status: z.enum(["diverged", "ahead", "behind", 
 const pullSchema = z.object({
 	number: z.number().int().positive(),
 	html_url: z.string().url(),
+	title: z.string(),
 	state: z.enum(["open", "closed"]),
 	merged: z.boolean().optional(),
 	merged_at: z.string().nullable().optional(),
-	head: z.object({ sha: objectId }),
+	head: z.object({ sha: objectId, ref: z.string() }),
+	additions: z.number().int().nonnegative(),
+	deletions: z.number().int().nonnegative(),
+	changed_files: z.number().int().nonnegative(),
 });
 
 function repositoryPath({ owner, name }: RepositoryName) {
@@ -121,8 +131,13 @@ function toPullRequest(found: z.infer<typeof pullSchema>): PullRequest {
 	return {
 		number: found.number,
 		url: found.html_url,
+		title: found.title,
 		state: found.state === "open" ? "open" : merged ? "merged" : "closed",
 		head: found.head.sha,
+		headRef: found.head.ref,
+		additions: found.additions,
+		deletions: found.deletions,
+		changedFiles: found.changed_files,
 	};
 }
 

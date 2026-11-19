@@ -88,7 +88,18 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 				proposed.push(input);
 				const opened = open === null;
 				open ??= 12;
-				return { number: open, url: `https://github.com/acme/site/pull/${open}`, opened };
+				return {
+					number: open,
+					url: `https://github.com/acme/site/pull/${open}`,
+					opened,
+					title: input.title,
+					state: "open",
+					head: "2".repeat(40),
+					headRef: input.branch,
+					additions: 10,
+					deletions: 3,
+					changedFiles: 2,
+				};
 			},
 		},
 		repository,
@@ -140,6 +151,12 @@ describe("a repository without checks", () => {
 			number: 12,
 			url: "https://github.com/acme/site/pull/12",
 			opened: true,
+			title: "Fix the cart",
+			branch: BRANCH,
+			state: "open",
+			additions: 10,
+			deletions: 3,
+			changedFiles: 2,
 			head: "1".repeat(40),
 		});
 		expect(sandbox.log).toEqual(["commit and push"]);
@@ -165,7 +182,18 @@ describe("a repository without checks", () => {
 			github: {
 				async propose(input) {
 					proposed.push(input);
-					return { number: 3, url: "https://github.com/acme/site/pull/3", opened: true };
+					return {
+						number: 3,
+						url: "https://github.com/acme/site/pull/3",
+						opened: true,
+						title: input.title,
+						state: "open",
+						head: "2".repeat(40),
+						headRef: input.branch,
+						additions: 10,
+						deletions: 3,
+						changedFiles: 2,
+					};
 				},
 			},
 			repository,

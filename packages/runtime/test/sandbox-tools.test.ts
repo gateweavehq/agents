@@ -470,7 +470,18 @@ describe("pull requests from the sandbox", () => {
 				proposed.push(input);
 				const opened = open === null;
 				open ??= 12;
-				return { number: open, url: `https://github.com/acme/site/pull/${open}`, opened };
+				return {
+					number: open,
+					url: `https://github.com/acme/site/pull/${open}`,
+					opened,
+					title: input.title,
+					state: "open",
+					head: "2".repeat(40),
+					headRef: input.branch,
+					additions: 10,
+					deletions: 3,
+					changedFiles: 2,
+				};
 			},
 		};
 		const run = { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder;
@@ -504,6 +515,12 @@ describe("pull requests from the sandbox", () => {
 			number: 12,
 			url: "https://github.com/acme/site/pull/12",
 			opened: true,
+			title: "Fix the cart",
+			branch: BRANCH,
+			state: "open",
+			additions: 10,
+			deletions: 3,
+			changedFiles: 2,
 			head: "1".repeat(40),
 		});
 		const second = await call({ title: "Fix the cart, and test it", body: "With a test." });

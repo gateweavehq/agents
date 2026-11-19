@@ -380,10 +380,14 @@ export class FakeGitHub {
 		const pullJson = (pull: FakePull) => ({
 			number: pull.number,
 			html_url: `https://github.com/${keyOf(repository)}/pull/${pull.number}`,
+			title: pull.title,
 			state: pull.state,
 			merged: pull.merged,
 			merged_at: pull.merged ? new Date().toISOString() : null,
 			head: { ref: pull.head, sha: branches.get(pull.head) ?? "0".repeat(40) },
+			additions: 3,
+			deletions: 1,
+			changed_files: 2,
 		});
 
 		if (method === "POST" && resource === "git/trees") {
