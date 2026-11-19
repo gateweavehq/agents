@@ -3,7 +3,8 @@ import { createDpopReplayStore } from "better-auth/oauth2";
 import type { JWTPayload } from "jose";
 import { db, getAuth, mcpResource } from "../auth";
 import { MCP_RUN_SCOPE, MCP_SCOPE } from "../auth/config";
-import { registryFor } from "../registry";
+import { demoEnabled } from "../demo/mode";
+import { conversationFor, registryFor } from "../registry";
 import { listWorkspaces, workspaceIdsOf } from "../workspaces";
 import { protectResource } from "./protect";
 import { type AgentsAccess, createAgentsServer } from "./tools";
@@ -39,7 +40,11 @@ function protect(resource: string) {
 		if (typeof userId !== "string" || !authInfo?.clientId) {
 			throw new Error("MCP request without verified credentials");
 		}
-		return createAgentsServer(accessFor(userId));
+		// agents:run is what run_agent needs; a token without it gets the read tools alone.
+		return createAgentsServer(
+			accessFor(userId, authInfo.clientId),
+			authInfo.scopes.includes(MCP_RUN_SCOPE),
+		);
 	});
 
 	const serve = (request: Request, claims: JWTPayload) => {
@@ -81,8 +86,11 @@ function protect(resource: string) {
 	};
 }
 
-/** What a caller reaches: every workspace the user is in, each found through D1 first. */
-function accessFor(userId: string): AgentsAccess {
+/**
+ * What a caller reaches: every workspace the user is in, each found through D1 first. `askedVia`
+ * is the OAuth client the token was issued to, recorded with each outside task it starts.
+ */
+function accessFor(userId: string, askedVia: string): AgentsAccess {
 	const membershipsIn = async (workspace: string | undefined) =>
 		(await workspaceIdsOf(db, userId)).filter(
 			(membership) => workspace === undefined || membership.slug === workspace,
@@ -130,6 +138,56 @@ function accessFor(userId: string): AgentsAccess {
 				}),
 			);
 			return matches.filter((match) => match !== null);
+		},
+		async startTask({ workspace, agent, task, requestId }) {
+			// The public demo has no outside tasks: a visitor's sandbox takes nothing from outside.
+			if (demoEnabled())
+				return { status: "refused", message: "This workspace takes no tasks from outside" };
+			// A workspace the person is not in matches nothing, as with the wiki tools.
+			const membership = (await workspaceIdsOf(db, userId)).find(
+				(candidate) => candidate.slug === workspace,
+			);
+			if (!membership) return { status: "refused", message: "There is no such workspace" };
+			const ref = { workspaceId: membership.id, ...membership };
+			const admitted = await registryFor(ref).admitOutsideTask({
+				agent,
+				requestId,
+				askedBy: userId,
+				askedVia,
+				task,
+			});
+			switch (admitted.status) {
+				case "duplicate":
+					return { status: "duplicate", runId: admitted.runId };
+				case "starting":
+					return { status: "starting", retryAfter: admitted.retryAfter };
+				case "limited":
+					return {
+						status: "limited",
+						retryAfter: admitted.retryAfter,
+						message: admitted.message,
+					};
+				case "refused":
+					return { status: "refused", message: admitted.message };
+				case "start":
+					break;
+			}
+			try {
+				const conversation = await conversationFor(ref, admitted.conversationId);
+				const outcome = await conversation.outsideTurn(task);
+				if (outcome.runId === null) {
+					return { status: "refused", message: outcome.error ?? "The run could not be started" };
+				}
+				return {
+					status: "started",
+					runId: outcome.runId,
+					conversationId: admitted.conversationId,
+				};
+			} catch (error) {
+				// The task stays taken for a minute, then a retry with its requestId starts it again.
+				console.error("mcp: an outside task could not be started", error);
+				return { status: "refused", message: "The run could not be started" };
+			}
 		},
 	};
 }

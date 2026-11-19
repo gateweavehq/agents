@@ -8,6 +8,7 @@ import {
 	ENGINE_NAMES,
 	MAX_SANDBOX_STEPS,
 	MAX_STEPS,
+	OUTSIDE_TASK_MESSAGE_METADATA,
 	PULL_REQUEST_TOOL,
 	type PullRequestOutcome,
 	providerMissing,
@@ -575,6 +576,31 @@ ${runPageNote(runs, turn.runId)}`
 		const done = this.saveMessages((messages) => [...messages, message]);
 		this.keepAliveWhile(() => done).catch((error: unknown) =>
 			console.error("A trigger's turn failed", failureForLogs(error)),
+		);
+		return { runId: turn.runId };
+	}
+
+	/**
+	 * Takes the one turn an outside task's admission opened this conversation for, with the task
+	 * as its message (AGT-155). The registry checks the conversation and begins the run. Nobody
+	 * waits for the answer, so the conversation stays awake until the turn ends.
+	 */
+	async outsideTurn(text: string): Promise<TriggerTurnOutcome> {
+		const { conversationId, registry } = this.#parties();
+		const turn = await registry.beginOutsideTurn(conversationId, text);
+		if ("status" in turn) return { runId: null, error: turn.message };
+		this.#begun = turn;
+		const message: UIMessage = {
+			id: crypto.randomUUID(),
+			role: "user",
+			// The marker is for the pages: they show an MCP client's task as an event, not as
+			// something the person typed. Models never see message metadata.
+			metadata: OUTSIDE_TASK_MESSAGE_METADATA,
+			parts: [{ type: "text", text }],
+		};
+		const done = this.saveMessages((messages) => [...messages, message]);
+		this.keepAliveWhile(() => done).catch((error: unknown) =>
+			console.error("An outside task's turn failed", failureForLogs(error)),
 		);
 		return { runId: turn.runId };
 	}
