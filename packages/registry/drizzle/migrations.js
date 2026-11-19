@@ -42,7 +42,7 @@ import m0040 from "./0040_memory_search.sql";
 import m0041 from "./0041_agent_files.sql";
 import m0042 from "./0042_repository_checks.sql";
 import m0043 from "./0043_nifty_bulldozer.sql";
-import m0044 from "./0044_ordinary_hardball.sql";
+import m0044 from "./0044_past_leper_queen.sql";
 import journal from "./meta/_journal.json";
 
 export default {

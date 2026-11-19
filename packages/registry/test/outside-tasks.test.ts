@@ -46,6 +46,18 @@ describe("outside tasks (AGT-155)", () => {
 		expect(conversation).toMatchObject({ agentId: open.id, triggerId: null });
 	});
 
+	it("name a task by who asked as well, so two clients' requestIds never meet", async () => {
+		const stub = registry();
+		await stub.createAgent(reviewer({ name: "Builder", outsideTasks: true }));
+		const first = await stub.admitOutsideTask(task("Builder", "r1"));
+		// Another OAuth client reusing "r1" is another task, not the first one's retry.
+		const second = await stub.admitOutsideTask({ ...task("Builder", "r1"), askedVia: "client-2" });
+		expect(first.status).toBe("start");
+		expect(second.status).toBe("start");
+		if (first.status !== "start" || second.status !== "start") return;
+		expect(second.conversationId).not.toBe(first.conversationId);
+	});
+
 	it("hold an agent to its tasks per minute", async () => {
 		const stub = registry();
 		await stub.createAgent(reviewer({ outsideTasks: true }));

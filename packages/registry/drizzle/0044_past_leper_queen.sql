@@ -6,9 +6,9 @@ CREATE TABLE `outside_tasks` (
 	`run_id` text,
 	`error` text,
 	`asked_by` text NOT NULL,
-	`asked_via` text,
+	`asked_via` text NOT NULL,
 	`created_at` integer NOT NULL,
-	PRIMARY KEY(`agent_id`, `request_id`),
+	PRIMARY KEY(`agent_id`, `asked_by`, `asked_via`, `request_id`),
 	FOREIGN KEY (`agent_id`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint

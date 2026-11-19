@@ -36,10 +36,11 @@ export type MemoryState = (typeof MEMORY_STATES)[number];
 
 /**
  * What started the run an agent wrote a memory in, as the registry read it then: a person's chat
- * message, a trigger, a replay of a trigger's run (which reads the same event), or `unknown` when
- * the links back to what started it could not be followed. All but `person` count as outside.
+ * message, a trigger, a replay of a trigger's run (which reads the same event), an outside task
+ * an MCP client gave (`run_agent`), or `unknown` when the links back to what started it could not
+ * be followed. All but `person` count as outside.
  */
-export const MEMORY_ORIGINS = ["person", "trigger", "replay", "unknown"] as const;
+export const MEMORY_ORIGINS = ["person", "trigger", "replay", "outside", "unknown"] as const;
 export type MemoryOrigin = (typeof MEMORY_ORIGINS)[number];
 
 /** The scopes in which an agent's memory is trusted at once, in a run a person started. */

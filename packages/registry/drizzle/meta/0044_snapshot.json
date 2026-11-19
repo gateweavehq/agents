@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "fd9e95a2-e0e9-4df5-801d-da816bd16fab",
+  "id": "cef4de83-aafe-426c-85e0-89a2057d90cb",
   "prevId": "68320dd0-12d4-4302-b99d-6add77fb94a6",
   "tables": {
     "agent_assets": {
@@ -1449,7 +1449,7 @@
           "name": "asked_via",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "created_at": {
@@ -1493,12 +1493,14 @@
         }
       },
       "compositePrimaryKeys": {
-        "outside_tasks_agent_id_request_id_pk": {
+        "outside_tasks_agent_id_asked_by_asked_via_request_id_pk": {
           "columns": [
             "agent_id",
+            "asked_by",
+            "asked_via",
             "request_id"
           ],
-          "name": "outside_tasks_agent_id_request_id_pk"
+          "name": "outside_tasks_agent_id_asked_by_asked_via_request_id_pk"
         }
       },
       "uniqueConstraints": {},

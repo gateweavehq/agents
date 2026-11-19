@@ -13,12 +13,12 @@
 import { OUTSIDE_TASK_LIMITS } from "@gateweave/agents-model";
 import { and, count, eq, gte, inArray, isNull, min, or } from "drizzle-orm";
 import { TITLE_LENGTH } from "./conversations";
-import { agentDefinitions, agents, conversations, outsideTasks } from "./db/schema";
+import { agentDefinitions, agents, conversations, outsideTasks, runs } from "./db/schema";
 import type { Db } from "./state";
 import { targetRefusal } from "./triggers";
 
 const MINUTE = 60_000;
-const DAY = 24 * MINUTE;
+const DAY = 24 * 60 * MINUTE;
 
 /** How long an accepted task may go before its run began, in seconds, before a retry may start it. */
 const ACCEPT_RETRY_SECONDS = 60;
@@ -55,15 +55,41 @@ export function admitOutsideTask(
 	}
 	if (!found) return { status: "refused", message: "There is no such agent" };
 	const agent = found;
-	const earlier = taskOf(db, agent.id, input.requestId);
+	const askedVia = input.askedVia ?? "";
+	const earlier = taskOf(db, agent.id, input.askedBy, askedVia, input.requestId);
 	if (earlier) {
 		if (earlier.status === "started") {
 			return { status: "duplicate", runId: earlier.runId };
 		}
 		if (earlier.status === "accepted") {
-			return { status: "starting", retryAfter: ACCEPT_RETRY_SECONDS };
+			if (earlier.createdAt > now - ACCEPT_RETRY_SECONDS * 1000) {
+				return {
+					status: "starting",
+					retryAfter: secondsUntil(earlier.createdAt + ACCEPT_RETRY_SECONDS * 1000, now),
+				};
+			}
+			// The handoff failed before the run began, so the retry takes the task over, the way a
+			// trigger's retry does: the conversation it opened, with no runs, goes with it.
+			if (
+				earlier.conversationId !== null &&
+				earlier.runId === null &&
+				!hasRuns(db, earlier.conversationId)
+			) {
+				db.delete(conversations).where(eq(conversations.id, earlier.conversationId)).run();
+			}
+			db.delete(outsideTasks)
+				.where(
+					and(
+						eq(outsideTasks.agentId, agent.id),
+						eq(outsideTasks.askedBy, input.askedBy),
+						eq(outsideTasks.askedVia, askedVia),
+						eq(outsideTasks.requestId, input.requestId),
+					),
+				)
+				.run();
+		} else {
+			return { status: "refused", message: earlier.error ?? "That task could not be started" };
 		}
-		return { status: "refused", message: earlier.error ?? "That task could not be started" };
 	}
 	if (!agent.outsideTasks) {
 		return {
@@ -100,7 +126,7 @@ export function admitOutsideTask(
 			runId: null,
 			error: null,
 			askedBy: input.askedBy,
-			askedVia: input.askedVia,
+			askedVia,
 			createdAt: now,
 		})
 		.run();
@@ -142,13 +168,34 @@ export function settleOutsideTask(
 }
 
 /** One task by its agent and the client's id for it; null when there is none. */
-export function taskOf(db: Db, agentId: string, requestId: string) {
+export function taskOf(
+	db: Db,
+	agentId: string,
+	askedBy: string,
+	askedVia: string,
+	requestId: string,
+) {
 	return (
 		db
 			.select()
 			.from(outsideTasks)
-			.where(and(eq(outsideTasks.agentId, agentId), eq(outsideTasks.requestId, requestId)))
+			.where(
+				and(
+					eq(outsideTasks.agentId, agentId),
+					eq(outsideTasks.askedBy, askedBy),
+					eq(outsideTasks.askedVia, askedVia),
+					eq(outsideTasks.requestId, requestId),
+				),
+			)
 			.get() ?? null
+	);
+}
+
+/** Whether the conversation ever had a run: a failed handoff's has none, so its retry replaces it. */
+function hasRuns(db: Db, conversationId: string): boolean {
+	return (
+		db.select({ id: runs.id }).from(runs).where(eq(runs.conversationId, conversationId)).get() !==
+		undefined
 	);
 }
 

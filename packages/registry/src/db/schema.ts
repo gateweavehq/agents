@@ -683,13 +683,13 @@ export const outsideTasks = sqliteTable(
 		conversationId: text("conversation_id"),
 		runId: text("run_id"),
 		error: text("error"),
-		/** The user whose token asked, and the OAuth client it came through. */
+		/** The user whose token asked, and the OAuth client it came through ("" when it has none). */
 		askedBy: text("asked_by").notNull(),
-		askedVia: text("asked_via"),
+		askedVia: text("asked_via").notNull(),
 		createdAt: integer("created_at").notNull(),
 	},
 	(table) => [
-		primaryKey({ columns: [table.agentId, table.requestId] }),
+		primaryKey({ columns: [table.agentId, table.askedBy, table.askedVia, table.requestId] }),
 		index("outside_tasks_created_idx").on(table.agentId, table.createdAt),
 		index("outside_tasks_conversation_idx").on(table.conversationId),
 	],

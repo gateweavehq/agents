@@ -210,7 +210,7 @@ export function createAgentsServer(access: AgentsAccess, canRun = false): McpSer
 			{
 				title: "Give an agent a task",
 				description:
-					'Gives an agent of one of your workspaces a task and starts its run, the way a trigger would. The agent must have allowed tasks from outside ("Tasks from MCP clients" on its page), and the run spends the workspace\'s budget. Read its state and answer with get_run.',
+					"Gives an agent of one of your workspaces a task and starts its run, the way a trigger would. The agent must have allowed tasks from outside (\"Tasks from MCP clients\" on its page), and the run spends the workspace's budget. The answer names the run and its conversation, which is in your chat list, where the run's state and answer can be read.",
 				inputSchema: z.object({
 					workspace: z
 						.string()
