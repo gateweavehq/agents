@@ -79,6 +79,7 @@ describe("a conversation", () => {
 		expect(request?.url).toBe("https://api.anthropic.com/v1/messages");
 		expect(request?.headers.get("x-api-key")).toBe(KEY);
 		expect(request?.body.model).toBe("claude-sonnet-5-5");
+		expect(request?.body.cache_control).toEqual({ type: "ephemeral" });
 		expect(JSON.stringify(request?.body.system)).toContain("Answer in one word.");
 		expect(JSON.stringify(request?.body.messages)).toContain("Review my change, please");
 
@@ -277,6 +278,33 @@ describe("destroying a conversation's object", () => {
 });
 
 describe("runs", () => {
+	it("record Anthropic cache writes and reads on the model span at their own prices", async () => {
+		const { registry, stub } = await conversation();
+		const requests = fakeModel(() =>
+			anthropicStream("Looks good.", { cacheRead: 60, cacheWrite: 20 }),
+		);
+		const socket = await connect(stub);
+		await ask(socket, "Review my change, please");
+		socket.close();
+
+		expect(requests[0]?.body.cache_control).toEqual({ type: "ephemeral" });
+		const [run] = await registry.listRuns();
+		const trace = await stub.runTrace(run?.id ?? "");
+		// Per million input tokens, Sonnet 5.5 charges $2 for ordinary input, $0.10 for reads,
+		// and $2.50 for writes.
+		expect(trace).toMatchObject([
+			{
+				kind: "model",
+				inputTokens: 90,
+				cachedInputTokens: 60,
+				cacheWriteInputTokens: 20,
+				outputTokens: 5,
+				cost: 10 * 2 + 60 * 0.1 + 20 * 2.5 + 5 * 10,
+			},
+		]);
+		expect(run).toMatchObject({ inputTokens: 90, cachedInputTokens: 60, cost: 126 });
+	});
+
 	it("record each turn with its tokens and cost, and keep the trace with the conversation", async () => {
 		const { registry, stub } = await conversation();
 		fakeModel(() => anthropicStream("Looks good.", { headers: { "cf-aig-log-id": "log-123" } }));

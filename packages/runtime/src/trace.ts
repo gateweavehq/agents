@@ -152,6 +152,7 @@ export class RunRecorder {
 			inputTokens: tokens.input,
 			outputTokens: tokens.output,
 			cachedInputTokens: tokens.cacheRead,
+			cacheWriteInputTokens: tokens.cacheWrite,
 			cost:
 				requestCost(provider, model, tokens, now, request.summed) ??
 				requestCost(provider, this.#agent.model, tokens, now, request.summed),
