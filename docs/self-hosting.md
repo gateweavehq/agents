@@ -413,7 +413,7 @@ Agents runs in the sandbox on an agent's work before it pushes it. They are set 
 repository's page under **Repositories**, one command to a line, and kept in the workspace's
 registry. There is no setting for whoever runs the server, and no file in the repository names
 them yet. [Work on Track issues](track-work.md#checks-before-a-pull-request) says what happens
-when one fails and what the **Checks run by Gateweave** section of a pull request
+when one fails and what the section **Checks run by Gateweave** near the end of a pull request
 means.
 
 A command may run for 10 minutes, the checks of one pull request call for 20 and those of one run
