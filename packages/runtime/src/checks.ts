@@ -14,7 +14,7 @@
  * before a repository's own CI, not in place of it.
  */
 import { CHECK_LIMITS, CHECKS_HEADING, SANDBOX_REPOSITORY_PATH } from "@gateweave/agents-model";
-import { type CommandResult, SANDBOX_SERVER } from "./sandbox-tools";
+import { type CommandResult, SANDBOX_SERVER, type SandboxPort } from "./sandbox-tools";
 import type { RunRecorder } from "./trace";
 
 /** The tool the trace names for a check, under the sandbox's name like its other commands. */
@@ -29,7 +29,7 @@ export type Comparison = null | { changed: string } | { unverified: string };
 
 /** What runs a check: a sandbox's `run`, and its word on the checkout afterwards. */
 export interface CheckRunner {
-	run(command: string, cwd: string, timeoutSeconds: number): Promise<CommandResult>;
+	run: SandboxPort["run"];
 	/**
 	 * Compares the checkout with the commit `head`. The checks run in the checkout, not on the
 	 * commit itself, so it is asked after each one that passed: a check that changes a file, as a
