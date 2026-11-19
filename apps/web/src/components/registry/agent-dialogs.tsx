@@ -2,7 +2,6 @@ import {
 	AGENT_ENGINES,
 	type Agent,
 	type AgentDefinition,
-	type AgentDefinitionInput,
 	type AgentEngine,
 	ENGINE_NAMES,
 	INSTRUCTION_KINDS,
@@ -39,6 +38,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
+import type { WholeAgentInput } from "#/lib/agent-input";
 import { formInput } from "#/lib/agent-input";
 import { getMcpServers, getModels, getRepositories } from "#/lib/registry";
 
@@ -72,7 +72,7 @@ const ENGINE_HINTS: Record<AgentEngine, string> = {
  * its latest.
  */
 export function AgentDialog({
-	agent,
+	agent: shownAgent,
 	library,
 	available,
 	sandboxOffer,
@@ -85,10 +85,12 @@ export function AgentDialog({
 	available: ModelProvider[];
 	/** Whether the server runs sandboxes for the workspace. */
 	sandboxOffer: SandboxOffer;
-	onSave: (input: AgentDefinitionInput) => Promise<void>;
+	onSave: (input: WholeAgentInput, expectedRevision: number | null) => Promise<void>;
 	onClose: () => void;
 }) {
 	const { slug } = useWorkspace();
+	// Keep the revision and all untouched fields from the snapshot that initialized the draft.
+	const [agent] = useState(shownAgent);
 	const pinned = agent?.definition.instructions ?? null;
 	const pinnedEnv = agent?.definition.environment ?? null;
 	const pinnedServers = agent?.definition.mcpServers ?? [];
@@ -220,7 +222,7 @@ export function AgentDialog({
 				// The repository is checked out in the sandbox, so it goes with it.
 				repositoryId: repositoryId !== "" ? repositoryId : null,
 			});
-			await onSave(input);
+			await onSave(input, agent?.agent.updatedAt ?? null);
 			onClose();
 		} catch (failure) {
 			setError(message(failure));

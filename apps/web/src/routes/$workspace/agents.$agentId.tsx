@@ -98,7 +98,7 @@ function AgentPage() {
 				{definition && (
 					<div className="flex flex-wrap gap-2">
 						<ChatButton agentId={agent.id} />
-						{admin && <AgentActions definition={definition} />}
+						{admin && <AgentActions key={agent.id} definition={definition} />}
 					</div>
 				)}
 			</header>
@@ -620,8 +620,11 @@ function AgentActions({ definition }: { definition: AgentDefinition }) {
 					library={data.library}
 					available={data.available}
 					sandboxOffer={data.sandboxOffer}
-					onSave={async (input) => {
-						await updateAgent({ data: { slug, agentId: agent.id, agent: input } });
+					onSave={async (input, expectedRevision) => {
+						if (expectedRevision === null) throw new Error("Agent not found");
+						await updateAgent({
+							data: { slug, agentId: agent.id, agent: input, expectedRevision },
+						});
 						await router.invalidate();
 					}}
 					onClose={close}

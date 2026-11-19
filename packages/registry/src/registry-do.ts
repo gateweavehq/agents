@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
 	type Agent,
 	type AgentDefinitionInput,
+	type AgentDefinitionUpdate,
 	type AgentDetail,
 	type AgentPinInput,
 	type AgentSnapshot,
@@ -11,6 +12,7 @@ import {
 	type AssetDetail,
 	type AssetVersion,
 	agentDefinitionInput,
+	agentDefinitionUpdate,
 	agentPinInput,
 	type Conversation,
 	type EnvRefusal,
@@ -762,9 +764,16 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => createAgent(this.#db, data, Date.now()));
 	}
 
-	updateAgent(agentId: string, input: AgentDefinitionInput): Agent | null {
-		const data = agentDefinitionInput.parse(input);
-		const updated = this.#write(() => updateAgent(this.#db, id.parse(agentId), data, Date.now()));
+	updateAgent(
+		agentId: string,
+		input: AgentDefinitionUpdate,
+		expectedRevision: number,
+	): Agent | null {
+		const data = agentDefinitionUpdate.parse(input);
+		const revision = z.number().int().nonnegative().parse(expectedRevision);
+		const updated = this.#write(() =>
+			updateAgent(this.#db, id.parse(agentId), data, revision, Date.now()),
+		);
 		if (updated) this.#clearAllMcpHealth();
 		return updated;
 	}

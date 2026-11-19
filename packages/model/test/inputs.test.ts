@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	agentDefinitionInput,
+	agentDefinitionUpdate,
 	type DetectedAgent,
 	type DetectedAsset,
 	isKeyedProvider,
@@ -200,6 +201,28 @@ describe("mcpServerInput", () => {
 });
 
 describe("agentDefinitionInput", () => {
+	it("keeps creation defaults while a full update requires every field", () => {
+		const created = agentDefinitionInput.parse({
+			name: "Triage",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+		});
+		expect(created.outsideTasks).toBe(false);
+		expect(agentDefinitionUpdate.safeParse(created).success).toBe(true);
+		for (const field of Object.keys(created)) {
+			const short = { ...created };
+			delete (short as Record<string, unknown>)[field];
+			expect(agentDefinitionUpdate.safeParse(short).success, field).toBe(false);
+		}
+		expect(
+			agentDefinitionUpdate.safeParse({
+				...created,
+				mcpServers: [{ assetId: "server", version: 1 }],
+			}).success,
+		).toBe(false);
+	});
 	const withTools = (tools: unknown) =>
 		agentDefinitionInput.safeParse({
 			name: "Triage",

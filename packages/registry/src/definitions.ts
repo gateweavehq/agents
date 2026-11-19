@@ -64,9 +64,19 @@ export function createAgent(db: Db, input: Definition, now: number): Agent {
 }
 
 /** Null when there is no such agent run by Gateweave. */
-export function updateAgent(db: Db, id: string, input: Definition, now: number): Agent | null {
+export function updateAgent(
+	db: Db,
+	id: string,
+	input: Definition,
+	expectedRevision: number,
+	now: number,
+): Agent | null {
 	const current = definitionOf(db, id);
 	if (!current) return null;
+	if (current.updatedAt !== expectedRevision)
+		throw new AgentError(
+			"Agent changed since you opened it. Review the latest version before saving.",
+		);
 	checkInstructions(db, input.instructions, current.instructionsAssetId);
 	checkEnvironment(db, input.environment, current.envSetAssetId);
 	checkMcpServers(db, input, pinnedServers(db, id));
@@ -79,7 +89,7 @@ export function updateAgent(db: Db, id: string, input: Definition, now: number):
 			name: input.name,
 			description: input.description,
 			model: input.model,
-			updatedAt: now,
+			updatedAt: Math.max(now, current.updatedAt + 1),
 		})
 		.where(eq(agents.id, id))
 		.returning()
@@ -115,6 +125,7 @@ export function moveAgentPin(
 ): MovedPin | null {
 	const current = db
 		.select({
+			updatedAt: agents.updatedAt,
 			instructionsAssetId: agentDefinitions.instructionsAssetId,
 			instructionsVersion: agentDefinitions.instructionsVersion,
 			envSetAssetId: agentDefinitions.envSetAssetId,
@@ -169,7 +180,12 @@ export function moveAgentPin(
 	} else {
 		throw new AgentError("The agent does not pin that asset");
 	}
-	const row = db.update(agents).set({ updatedAt: now }).where(eq(agents.id, id)).returning().get();
+	const row = db
+		.update(agents)
+		.set({ updatedAt: Math.max(now, current.updatedAt + 1) })
+		.where(eq(agents.id, id))
+		.returning()
+		.get();
 	if (!row) throw new Error("The agent whose pin moved is gone");
 	const assetIds = db
 		.select({ assetId: agentAssets.assetId })
@@ -221,6 +237,7 @@ export function agentSnapshot(db: Db, id: string): AgentSnapshot | null {
 function definitionOf(db: Db, id: string) {
 	return db
 		.select({
+			updatedAt: agents.updatedAt,
 			instructionsAssetId: agentDefinitions.instructionsAssetId,
 			envSetAssetId: agentDefinitions.envSetAssetId,
 			repositoryId: agentDefinitions.repositoryId,

@@ -60,9 +60,26 @@ test("moving an agent's pin to the newest version leaves its engine and memory a
 	await waitForHydration(page);
 	await expect(instructions).toContainText("v2 is out");
 	await expect(instructions).toContainText("Be brief.");
-	await instructions.getByRole("button", { name: "Use v2" }).click();
-	await expect(page.getByText(`${AGENT} reads v2 of Rules`)).toBeVisible();
-	await expect(instructions).toContainText("Be brief, and kind.");
+	const editor = await page.context().newPage();
+	try {
+		await editor.goto(agent);
+		await waitForHydration(editor);
+		await editor.getByRole("button", { name: "Edit", exact: true }).click();
+		const editing = editor.getByRole("dialog", { name: "Edit agent" });
+		await editing.getByLabel("Name").fill("Unsaved name");
+
+		await instructions.getByRole("button", { name: "Use v2" }).click();
+		await expect(page.getByText(`${AGENT} reads v2 of Rules`)).toBeVisible();
+		await expect(instructions).toContainText("Be brief, and kind.");
+
+		await editing.getByRole("button", { name: "Save", exact: true }).click();
+		await expect(
+			editing.getByText("Agent changed since you opened it.", { exact: false }),
+		).toBeVisible();
+		await expect(editing.getByLabel("Name")).toHaveValue("Unsaved name");
+	} finally {
+		await editor.close();
+	}
 	await expect(instructions).not.toContainText("is out");
 	await unchanged();
 

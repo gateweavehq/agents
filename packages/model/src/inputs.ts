@@ -638,6 +638,34 @@ export const agentDefinitionInput = agentDefinitionFields.refine(
 );
 export type AgentDefinitionInput = z.input<typeof agentDefinitionInput>;
 
+/** A full edit must carry every saved field; creation alone supplies defaults. */
+export const agentDefinitionUpdate = agentDefinitionFields
+	.safeExtend({
+		environment: agentDefinitionFields.shape.environment.removeDefault(),
+		mcpServers: z
+			.array(
+				agentDefinitionFields.shape.mcpServers.removeDefault().element.safeExtend({
+					tools: mcpToolAllowlist.removeDefault(),
+				}),
+			)
+			.max(MAX_AGENT_MCP_SERVERS, `An agent can use up to ${MAX_AGENT_MCP_SERVERS} MCP servers`)
+			.refine(
+				(pins) => new Set(pins.map((pin) => pin.assetId)).size === pins.length,
+				"An MCP server is chosen twice",
+			),
+		sandbox: agentDefinitionFields.shape.sandbox.removeDefault(),
+		repositoryId: agentDefinitionFields.shape.repositoryId.removeDefault(),
+		engine: agentDefinitionFields.shape.engine.removeDefault(),
+		memory: agentDefinitionFields.shape.memory.removeDefault(),
+		files: agentDefinitionFields.shape.files.removeDefault(),
+		outsideTasks: agentDefinitionFields.shape.outsideTasks.removeDefault(),
+	})
+	.refine((agent) => !(agent.files && agent.sandbox), {
+		message: FILES_WITH_SANDBOX,
+		path: ["files"],
+	});
+export type AgentDefinitionUpdate = z.input<typeof agentDefinitionUpdate>;
+
 /** The one file of an MCP server written in the app, in the format Claude Code reads. */
 export const MCP_SERVER_FILE = ".mcp.json";
 

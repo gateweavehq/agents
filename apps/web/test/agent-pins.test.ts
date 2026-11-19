@@ -86,6 +86,7 @@ it("keeps an agent's engine and memory when a page saves it whole to change one 
 		slug: "pin-whole",
 		agentId: agent.id,
 		agent: input,
+		expectedRevision: shown.agent.updatedAt,
 	});
 	expect(saved.failed, saved.text).toBe(false);
 
@@ -100,6 +101,44 @@ it("keeps an agent's engine and memory when a page saves it whole to change one 
 	expect(await auditOf(workspaceId)).toEqual([
 		{ action: "agent.updated", agent: agent.id, detail: { fields: ["instructions"] } },
 	]);
+});
+
+it("rejects short and stale full saves without replacing a newer pin", async () => {
+	const { owner, registry, rules, agent } = await workspace("pin-conflict");
+	const shown = await registry.getAgent(agent.id);
+	if (!shown?.definition) throw new Error("No definition");
+	const input = inputOf(shown.agent, shown.definition);
+	const short = { ...input };
+	delete (short as Partial<typeof input>).outsideTasks;
+	const old = await call("updateAgent", owner, {
+		slug: "pin-conflict",
+		agentId: agent.id,
+		agent: short,
+	});
+	expect(old.failed).toBe(true);
+	expect(old.text).toContain("Reload this page and reopen the agent before saving");
+	const omitted = await call("updateAgent", owner, {
+		slug: "pin-conflict",
+		agentId: agent.id,
+		agent: short,
+		expectedRevision: shown.agent.updatedAt,
+	});
+	expect(omitted.failed).toBe(true);
+	const moved = await call("moveAgentPin", owner, {
+		slug: "pin-conflict",
+		agentId: agent.id,
+		pin: { assetId: rules, version: 2 },
+	});
+	expect(moved.failed, moved.text).toBe(false);
+	const stale = await call("updateAgent", owner, {
+		slug: "pin-conflict",
+		agentId: agent.id,
+		agent: input,
+		expectedRevision: shown.agent.updatedAt,
+	});
+	expect(stale.failed).toBe(true);
+	expect(stale.text).toContain("Agent changed since you opened it");
+	expect((await registry.getAgent(agent.id))?.definition?.instructions?.version).toBe(2);
 });
 
 it("moves a pin by naming it alone, for owners and admins only, and logs what moved", async () => {

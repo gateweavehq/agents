@@ -146,9 +146,9 @@ describe("moving an agent's pin", () => {
 		const later = agent.updatedAt + 60_000;
 		vi.spyOn(Date, "now").mockReturnValue(later);
 
-		for (const assetId of [rules, prod, acme]) {
+		for (const [index, assetId] of [rules, prod, acme].entries()) {
 			const moved = await stub.moveAgentPin(agent.id, { assetId, version: 2 });
-			expect(moved?.agent.updatedAt).toBe(later);
+			expect(moved?.agent.updatedAt).toBe(later + index);
 		}
 		expect((await stateOf(stub, agent.id)).pins).toEqual({
 			instructions: 2,
@@ -156,8 +156,8 @@ describe("moving an agent's pin", () => {
 			mcpServers: [{ version: 2, tools: ["search"] }],
 		});
 		// A turn tells a changed agent by this.
-		expect((await stub.agentSnapshot(agent.id))?.updatedAt).toBe(later);
-		expect((await stub.getAgent(agent.id))?.agent.updatedAt).toBe(later);
+		expect((await stub.agentSnapshot(agent.id))?.updatedAt).toBe(later + 2);
+		expect((await stub.getAgent(agent.id))?.agent.updatedAt).toBe(later + 2);
 
 		expect(await stateOf(stub, other.id)).toEqual(others);
 		expect((await stub.agentSnapshot(other.id))?.updatedAt).toBe(other.updatedAt);

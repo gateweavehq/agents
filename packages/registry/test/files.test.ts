@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import {
 	AGENT_ENGINES,
 	type AgentDefinitionInput,
+	agentDefinitionInput,
 	ENGINE_NAMES,
 	FILES_NEED_REPOSITORY,
 	FILES_NOT_OFFERED,
@@ -12,6 +13,7 @@ import {
 } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
+import { saveAgent } from "./agent-update";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -132,13 +134,13 @@ describe("an agent that works on files without a sandbox", () => {
 		]);
 
 		// An edit that sends it again keeps it, and one that turns it off with its repository does.
-		await stub.updateAgent(agent.id, onFiles(site, { name: "Fixer", memory: true }));
+		await saveAgent(stub, agent.id, onFiles(site, { name: "Fixer", memory: true }));
 		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
 			files: true,
 			memory: true,
 			repository: { id: site },
 		});
-		await stub.updateAgent(agent.id, plain());
+		await saveAgent(stub, agent.id, plain());
 		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
 			files: false,
 			sandbox: false,
@@ -147,13 +149,13 @@ describe("an agent that works on files without a sandbox", () => {
 		expect(await stub.agentSnapshot(agent.id)).not.toHaveProperty("files");
 
 		// And it becomes an agent with a sandbox on the same repository, or one with files again.
-		await stub.updateAgent(agent.id, plain({ sandbox: true, repositoryId: site }));
+		await saveAgent(stub, agent.id, plain({ sandbox: true, repositoryId: site }));
 		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
 			files: false,
 			sandbox: true,
 			repository: { id: site },
 		});
-		await stub.updateAgent(agent.id, onFiles(site));
+		await saveAgent(stub, agent.id, onFiles(site));
 		expect(await storedDefinitions(stub)).toMatchObject([{ files: 1, sandbox: 0 }]);
 	});
 
@@ -164,7 +166,8 @@ describe("an agent that works on files without a sandbox", () => {
 		await inside(stub, (instance) => {
 			for (const save of [
 				(input: AgentDefinitionInput) => instance.createAgent(input),
-				(input: AgentDefinitionInput) => instance.updateAgent(agent.id, input),
+				(input: AgentDefinitionInput) =>
+					instance.updateAgent(agent.id, agentDefinitionInput.parse(input), agent.updatedAt),
 			]) {
 				expect(() => save(onFiles(null))).toThrow(FILES_NEED_REPOSITORY);
 				expect(() => save(onFiles(null))).toThrow("Files only works on a repository: choose one");
@@ -190,9 +193,13 @@ describe("an agent that works on files without a sandbox", () => {
 		// A client that knows nothing of the setting sends the repository alone: it is told why
 		// that cannot be saved, in the words it always was, and the agent stays as it is.
 		await inside(stub, (instance) => {
-			expect(() => instance.updateAgent(agent.id, plain({ repositoryId: site }))).toThrow(
-				"Only an agent with a sandbox can have a repository: it is checked out there",
-			);
+			expect(() =>
+				instance.updateAgent(
+					agent.id,
+					agentDefinitionInput.parse(plain({ repositoryId: site })),
+					agent.updatedAt,
+				),
+			).toThrow("Only an agent with a sandbox can have a repository: it is checked out there");
 			expect(() => instance.createAgent(plain({ repositoryId: site }))).toThrow(
 				"Only an agent with a sandbox can have a repository: it is checked out there",
 			);
@@ -228,24 +235,26 @@ describe("an agent that works on files without a sandbox", () => {
 		expect(await stub.listAgents()).toEqual([]);
 	});
 
-	it("is saved with the setting off by an old page's payload, from before the form carried every field", async () => {
+	it("keeps the file setup when an old page sends an incomplete save", async () => {
 		const stub = registry();
 		const [site = ""] = await stub.syncRepositories([SITE]);
 		const agent = await stub.createAgent(onFiles(site));
-		// What the app's form sent for an agent without a sandbox before it carried every field
-		// (AGT-135), and what a page loaded before that deploy still sends: no `files`, and no
-		// repository. Nothing refuses it, so the setting goes. The form of today keeps both.
+		// What the app's form sent before it carried the file setup.
 		const old = { ...plain({ name: "Renamed" }), sandbox: false, repositoryId: null };
 		expect(old).not.toHaveProperty("files");
-		await expect(stub.updateAgent(agent.id, old)).resolves.toMatchObject({ name: "Renamed" });
-		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
-			files: false,
-			sandbox: false,
-			repository: null,
+		await inside(stub, (instance) => {
+			expect(() => {
+				// @ts-expect-error Old clients can send creation-shaped updates over RPC.
+				instance.updateAgent(agent.id, old, agent.updatedAt);
+			}).toThrow();
 		});
-		expect(await stub.agentSnapshot(agent.id)).not.toHaveProperty("files");
+		expect((await stub.getAgent(agent.id))?.agent.name).toBe(agent.name);
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
+			files: true,
+			sandbox: false,
+		});
 		expect(await storedDefinitions(stub)).toMatchObject([
-			{ agent_id: agent.id, files: 0, sandbox: 0, repository_id: null },
+			{ agent_id: agent.id, files: 1, sandbox: 0, repository_id: site },
 		]);
 	});
 
@@ -273,7 +282,7 @@ describe("an agent that works on files without a sandbox", () => {
 		const agent = await stub.createAgent(onFiles(site));
 		await stub.removeInstallation("99");
 		await expect(
-			stub.updateAgent(agent.id, onFiles(site, { name: "Fixer" })),
+			saveAgent(stub, agent.id, onFiles(site, { name: "Fixer" })),
 		).resolves.toMatchObject({ name: "Fixer" });
 		await inside(stub, (instance) => {
 			expect(() => instance.createAgent(onFiles(site))).toThrow(
