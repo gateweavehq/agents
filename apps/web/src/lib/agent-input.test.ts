@@ -3,6 +3,7 @@ import {
 	type AgentDefinition,
 	type Asset,
 	agentDefinitionInput,
+	agentDefinitionUpdate,
 } from "@gateweave/agents-model";
 import { expect, it } from "vitest";
 import { formInput, inputOf } from "#/lib/agent-input";
@@ -95,13 +96,13 @@ it("leaves no field to its default", () => {
 		outsideTasks: false,
 	});
 	// What the server's validator makes of it is the same: nothing was filled in.
-	expect(agentDefinitionInput.parse(input)).toEqual(input);
+	expect(agentDefinitionUpdate.parse(input)).toEqual(input);
 });
 
 it("carries files away from its default, with the repository", () => {
 	const input = inputOf(agent, onFiles);
 	expect(input).toMatchObject({ files: true, sandbox: false, repositoryId: "r-1" });
-	expect(agentDefinitionInput.parse(input)).toEqual(input);
+	expect(agentDefinitionUpdate.parse(input)).toEqual(input);
 });
 
 /** What the form's controls hold when it opens on an agent and nothing is changed. */
@@ -115,13 +116,13 @@ it("keeps files and the repository when the form saves an agent that has them", 
 	const saved = formInput({ agent, definition: onFiles }, { ...untouched(onFiles), name: "Fixer" });
 	expect(saved).toEqual({ ...inputOf(agent, onFiles), name: "Fixer" });
 	expect(saved).toMatchObject({ files: true, sandbox: false, repositoryId: "r-1" });
-	expect(agentDefinitionInput.safeParse(saved).success).toBe(true);
+	expect(agentDefinitionUpdate.safeParse(saved).success).toBe(true);
 });
 
 it("turns files off when the form gives the agent a sandbox, which keeps the repository", () => {
 	const saved = formInput({ agent, definition: onFiles }, { ...untouched(onFiles), sandbox: true });
 	expect(saved).toMatchObject({ files: false, sandbox: true, repositoryId: "r-1" });
-	expect(agentDefinitionInput.safeParse(saved).success).toBe(true);
+	expect(agentDefinitionUpdate.safeParse(saved).success).toBe(true);
 });
 
 it("sends a repository only with a sandbox or files, and never turns files on", () => {

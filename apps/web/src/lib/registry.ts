@@ -5,6 +5,7 @@ import {
 	type AssetDetail,
 	type AssetKind,
 	agentDefinitionInput,
+	agentDefinitionUpdate,
 	agentPinInput,
 	isKeyedProvider,
 	type LibraryEntry,
@@ -178,11 +179,21 @@ export const createAgent = createServerFn({ method: "POST" })
 	});
 
 export const updateAgent = createServerFn({ method: "POST" })
-	.validator(z.object({ slug: z.string().min(1), agentId: id, agent: agentDefinitionInput }))
+	.validator(
+		z.object({
+			slug: z.string().min(1),
+			agentId: id,
+			agent: agentDefinitionUpdate,
+			expectedRevision: z
+				.number({ error: "Reload this page and reopen the agent before saving." })
+				.int()
+				.nonnegative(),
+		}),
+	)
 	.handler(async ({ data }): Promise<Agent> => {
 		const { registry, audit } = await managedOf(data.slug);
 		const before = await registry.getAgent(data.agentId);
-		const agent = await registry.updateAgent(data.agentId, data.agent);
+		const agent = await registry.updateAgent(data.agentId, data.agent, data.expectedRevision);
 		if (!agent) throw new Error("Agent not found");
 		const after = await registry.getAgent(data.agentId);
 		const fields = before && after ? agentChanges(before, after) : [];

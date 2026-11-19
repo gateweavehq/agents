@@ -10,6 +10,7 @@ import {
 } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
+import { saveAgent } from "./agent-update";
 import type { RegistryDO as TestRegistry } from "./worker";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
@@ -864,7 +865,7 @@ describe("turns with a repository", () => {
 		});
 		// The agent keeps it through an edit, but no agent can choose it anew.
 		await expect(
-			stub.updateAgent(agent.id, { ...builder(site), name: "Fixer" }),
+			saveAgent(stub, agent.id, { ...builder(site), name: "Fixer" }),
 		).resolves.toMatchObject({ name: "Fixer" });
 		await runInDurableObject(stub, (instance: RegistryDO) => {
 			expect(() => instance.createAgent(builder(site))).toThrow(

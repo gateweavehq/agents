@@ -1,5 +1,6 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { agentDefinitionInput } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
 
@@ -221,15 +222,19 @@ describe("replays", () => {
 			const { env: settings } = instance as unknown as { env: Record<string, unknown> };
 			settings.SANDBOX = {};
 			try {
-				instance.updateAgent(agent.id, {
-					name: "Reviewer",
-					description: null,
-					provider: "anthropic",
-					model: "claude-sonnet-5-5",
-					instructions: null,
-					sandbox: true,
-					engine: "claude-code",
-				});
+				instance.updateAgent(
+					agent.id,
+					agentDefinitionInput.parse({
+						name: "Reviewer",
+						description: null,
+						provider: "anthropic",
+						model: "claude-sonnet-5-5",
+						instructions: null,
+						sandbox: true,
+						engine: "claude-code",
+					}),
+					agent.updatedAt,
+				);
 			} finally {
 				delete settings.SANDBOX;
 			}

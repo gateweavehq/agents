@@ -5,6 +5,7 @@ import { envSecretInput, envSetInput } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import { RegistryDO } from "../src";
 import { sealerFor } from "../src/secrets";
+import { saveAgent } from "./agent-update";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -277,9 +278,9 @@ describe("agents and environment sets", () => {
 			"updatedAt",
 		]);
 
-		await stub.updateAgent(created.id, agent({ assetId: id, version: 2 }));
+		await saveAgent(stub, created.id, agent({ assetId: id, version: 2 }));
 		expect((await stub.listEnvSets())[0]?.agents[0]?.version).toBe(2);
-		await stub.updateAgent(created.id, agent(null));
+		await saveAgent(stub, created.id, agent(null));
 		expect((await stub.getAgent(created.id))?.definition?.environment).toBeNull();
 		expect((await stub.getAgent(created.id))?.agent.assetIds).toEqual([]);
 		expect((await stub.listEnvSets())[0]?.agents).toEqual([]);
@@ -321,7 +322,7 @@ describe("agents and environment sets", () => {
 			version: 1,
 		});
 		// Saving the agent again keeps the pin.
-		await stub.updateAgent(pinned.id, {
+		await saveAgent(stub, pinned.id, {
 			...agent({ assetId: id, version: 1 }),
 			name: "Renamed",
 		});
@@ -369,7 +370,7 @@ describe("agents and environment sets", () => {
 		expect(await stub.mcpCheckTarget(echo)).toMatchObject({
 			headers: { "X-Log-Level": "info" },
 		});
-		await stub.updateAgent(created.id, pinned(2));
+		await saveAgent(stub, created.id, pinned(2));
 		expect(await stub.mcpCheckTarget(echo)).toMatchObject({
 			headers: { "X-Log-Level": "debug", "X-Token": "token" },
 		});

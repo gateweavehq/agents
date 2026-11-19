@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { agentDefinitionInput } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
@@ -95,7 +96,11 @@ describe("replaying a run", () => {
 	it("answers from a step with the agent as it is now, and links back to the run", async () => {
 		const { workspaceId, registry, stub, agent, definition, run, requests } = await searchedOnce();
 		// The agent changed since: the replay uses the new model.
-		await registry.updateAgent(agent.id, { ...definition, model: "claude-opus-5-5" });
+		await registry.updateAgent(
+			agent.id,
+			agentDefinitionInput.parse({ ...definition, model: "claude-opus-5-5" }),
+			agent.updatedAt,
+		);
 
 		const { stub: replayed, replayId } = await replay(workspaceId, stub, run.id, 1);
 		const request = requests[2];

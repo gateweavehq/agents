@@ -5,6 +5,7 @@ import type { AgentDefinitionInput, McpServerInput } from "@gateweave/agents-mod
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
 import { BIND_UNSENT_SECRETS } from "../src/mcp-servers";
+import { saveAgent } from "./agent-update";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -162,14 +163,14 @@ describe("MCP servers", () => {
 
 		// A server that leaves the library stays pinned where it was, and cannot be pinned anew.
 		await stub.removeFromLibrary(acme);
-		expect(await stub.updateAgent(agent.id, input)).toMatchObject({ id: agent.id });
+		expect(await saveAgent(stub, agent.id, input)).toMatchObject({ id: agent.id });
 		expect((await stub.getAgent(agent.id))?.definition?.mcpServers[0]?.removed).toBe(true);
 		await inside(stub, (instance) => {
 			expect(() => instance.createAgent(input)).toThrow("acme is no longer in the library");
 		});
 
 		// Unpinning takes it off the agent.
-		await stub.updateAgent(agent.id, { ...input, mcpServers: [] });
+		await saveAgent(stub, agent.id, { ...input, mcpServers: [] });
 		expect((await stub.getAgent(agent.id))?.definition?.mcpServers).toEqual([]);
 		expect((await stub.getAgent(agent.id))?.agent.assetIds).toEqual([prod]);
 	});
@@ -269,7 +270,7 @@ describe("MCP servers", () => {
 			url: "https://mcp.acme.dev/v2",
 			headers: [],
 		});
-		await stub.updateAgent(agent.id, {
+		await saveAgent(stub, agent.id, {
 			...input,
 			mcpServers: [
 				{ assetId: acme, version: 2, tools },
@@ -282,7 +283,7 @@ describe("MCP servers", () => {
 		]);
 
 		// A list can be lifted again.
-		await stub.updateAgent(agent.id, {
+		await saveAgent(stub, agent.id, {
 			...input,
 			mcpServers: [{ assetId: acme, version: 2, tools: null }],
 		});
@@ -614,7 +615,8 @@ describe("secrets in MCP servers' headers", () => {
 			url: "https://team.elsewhere.example/mcp",
 			headers: [{ name: "X-Team", value: "${ACME_TEAM}" }],
 		});
-		await stub.updateAgent(
+		await saveAgent(
+			stub,
 			agent.id,
 			input([
 				{ assetId: acme, version: 1 },
@@ -644,7 +646,7 @@ describe("secrets in MCP servers' headers", () => {
 
 		// Moving the server itself and pinning that version sends nothing either.
 		await moveAcme(stub, acme, "https://acme.elsewhere.example/mcp");
-		await stub.updateAgent(agent.id, input([{ assetId: acme, version: 2 }]));
+		await saveAgent(stub, agent.id, input([{ assetId: acme, version: 2 }]));
 		const moved = await servers();
 		expect(moved).toEqual([
 			{

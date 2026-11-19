@@ -1,7 +1,6 @@
 import type {
 	Agent,
 	AgentDefinition,
-	AgentDefinitionInput,
 	agentDefinitionInput,
 	PinnedAsset,
 } from "@gateweave/agents-model";
@@ -71,7 +70,7 @@ export type AgentFormChoices = Pick<
 export function formInput(
 	current: { agent: Agent; definition: AgentDefinition } | null,
 	choices: AgentFormChoices,
-): AgentDefinitionInput {
+): WholeAgentInput {
 	const files = (current?.definition.files ?? false) && !choices.sandbox;
 	return {
 		...(current && inputOf(current.agent, current.definition)),

@@ -1,8 +1,9 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import type { AgentDefinitionInput } from "@gateweave/agents-model";
+import { type AgentDefinitionInput, agentDefinitionInput } from "@gateweave/agents-model";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
+import { saveAgent } from "./agent-update";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -29,6 +30,58 @@ function reviewer(
 }
 
 describe("agents run by Gateweave", () => {
+	it("refuses omitted update fields without resetting the definition", async () => {
+		const stub = registry();
+		const agent = await stub.createAgent(reviewer(null, { outsideTasks: true }));
+		await inside(stub, (instance) => {
+			// @ts-expect-error Exercise the RPC boundary with a short definition.
+			expect(() => instance.updateAgent(agent.id, reviewer(null), agent.updatedAt)).toThrow();
+		});
+		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(true);
+	});
+
+	it("refuses stale full saves after a pin move and another full save, even in one millisecond", async () => {
+		const stub = registry();
+		const rules = await stub.createLibraryAsset({
+			kind: "instructions",
+			name: "rules",
+			text: "First",
+		});
+		const [file] = (await stub.getAsset(rules))?.version.files ?? [];
+		await stub.editLibraryAsset({
+			libraryAssetId: rules,
+			files: [{ path: file?.path ?? "", content: "Second" }],
+		});
+		const agent = await stub.createAgent(
+			reviewer({ assetId: rules, version: 1 }, { outsideTasks: true }),
+		);
+		const stale = agentDefinitionInput.parse(
+			reviewer({ assetId: rules, version: 1 }, { outsideTasks: true }),
+		);
+		vi.spyOn(Date, "now").mockReturnValue(agent.updatedAt);
+		const pin = await stub.moveAgentPin(agent.id, { assetId: rules, version: 2 });
+		expect(pin?.agent.updatedAt).toBeGreaterThan(agent.updatedAt);
+		await inside(stub, (instance) => {
+			expect(() => instance.updateAgent(agent.id, stale, agent.updatedAt)).toThrow(
+				"Agent changed since you opened it",
+			);
+		});
+		const revision = pin?.agent.updatedAt ?? 0;
+		const saved = await stub.updateAgent(
+			agent.id,
+			{ ...stale, name: "Fresh", outsideTasks: false },
+			revision,
+		);
+		expect(saved?.updatedAt).toBeGreaterThan(revision);
+		await inside(stub, (instance) => {
+			expect(() => instance.updateAgent(agent.id, stale, revision)).toThrow(
+				"Agent changed since you opened it",
+			);
+		});
+		expect((await stub.getAgent(agent.id))?.definition?.instructions?.version).toBe(1);
+		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(false);
+		expect((await stub.getAgent(agent.id))?.agent.name).toBe("Fresh");
+	});
 	it("pin their instructions, and a turn reads one version of them", async () => {
 		const stub = registry();
 		const rules = await stub.createLibraryAsset({
@@ -84,7 +137,8 @@ describe("agents run by Gateweave", () => {
 		});
 		expect((await stub.agentSnapshot(agent.id))?.instructions).toBe("Review the change.\n");
 
-		const moved = await stub.updateAgent(
+		const moved = await saveAgent(
+			stub,
 			agent.id,
 			reviewer({ assetId: rules, version: 2 }, { model: "claude-opus-5-5" }),
 		);
@@ -95,7 +149,7 @@ describe("agents run by Gateweave", () => {
 		});
 
 		// Without instructions it reads nothing.
-		await stub.updateAgent(agent.id, reviewer(null));
+		await saveAgent(stub, agent.id, reviewer(null));
 		expect(await stub.agentSnapshot(agent.id)).toMatchObject({ instructions: null });
 		expect((await stub.getAsset(rules))?.agents).toEqual([]);
 	});
@@ -105,10 +159,10 @@ describe("agents run by Gateweave", () => {
 		const agent = await stub.createAgent(reviewer(null));
 		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(false);
 
-		await stub.updateAgent(agent.id, reviewer(null, { outsideTasks: true }));
+		await saveAgent(stub, agent.id, reviewer(null, { outsideTasks: true }));
 		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({ outsideTasks: true });
 
-		await stub.updateAgent(agent.id, reviewer(null, { outsideTasks: false }));
+		await saveAgent(stub, agent.id, reviewer(null, { outsideTasks: false }));
 		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(false);
 	});
 
@@ -140,10 +194,7 @@ describe("agents run by Gateweave", () => {
 		const agent = await stub.createAgent(reviewer({ assetId: prompt, version: 1 }));
 		await stub.removeFromLibrary(prompt);
 		expect(
-			await stub.updateAgent(
-				agent.id,
-				reviewer({ assetId: prompt, version: 1 }, { name: "Fixer" }),
-			),
+			await saveAgent(stub, agent.id, reviewer({ assetId: prompt, version: 1 }, { name: "Fixer" })),
 		).toMatchObject({ name: "Fixer" });
 		expect((await stub.getAgent(agent.id))?.definition?.instructions).toMatchObject({
 			removed: true,
@@ -164,7 +215,7 @@ describe("agents run by Gateweave", () => {
 		expect(await stub.listAgents()).toEqual([]);
 		expect(await stub.getAgent(agent.id)).toBeNull();
 		expect(await stub.agentSnapshot(agent.id)).toBeNull();
-		expect(await stub.updateAgent(agent.id, reviewer(null))).toBeNull();
+		expect(await saveAgent(stub, agent.id, reviewer(null))).toBeNull();
 		expect(await stub.removeAgent(crypto.randomUUID())).toBe(false);
 	});
 
@@ -272,8 +323,8 @@ describe("agents' engines", () => {
 		});
 		expect(await stub.agentSnapshot(agent.id)).toMatchObject({ engine: "claude-code" });
 
-		// An update that does not name an engine keeps Gateweave's, as the rest of the definition.
-		await stub.updateAgent(plain.id, reviewer(null, { model: "claude-opus-5-5" }));
+		// A full save can change the model and keep Gateweave as the engine.
+		await saveAgent(stub, plain.id, reviewer(null, { model: "claude-opus-5-5" }));
 		expect(await stub.agentSnapshot(plain.id)).toMatchObject({ engine: "gateweave" });
 	});
 
@@ -376,11 +427,19 @@ describe("agents' engines", () => {
 		const stub = registry();
 		const agent = await stub.createAgent(reviewer(null));
 		await inside(stub, (instance) => {
-			expect(() => instance.updateAgent(agent.id, claude({ sandbox: false }))).toThrow(
-				"Claude Code runs in the agent's sandbox: turn the sandbox on",
-			);
 			expect(() =>
-				instance.updateAgent(agent.id, claude({ provider: "google", model: "gemini-3" })),
+				instance.updateAgent(
+					agent.id,
+					agentDefinitionInput.parse(claude({ sandbox: false })),
+					agent.updatedAt,
+				),
+			).toThrow("Claude Code runs in the agent's sandbox: turn the sandbox on");
+			expect(() =>
+				instance.updateAgent(
+					agent.id,
+					agentDefinitionInput.parse(claude({ provider: "google", model: "gemini-3" })),
+					agent.updatedAt,
+				),
 			).toThrow("Claude Code calls Anthropic's models: choose one of them");
 		});
 		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
@@ -388,7 +447,7 @@ describe("agents' engines", () => {
 			sandbox: false,
 		});
 
-		const moved = await stub.updateAgent(agent.id, claude());
+		const moved = await saveAgent(stub, agent.id, claude());
 		expect(moved).toMatchObject({ model: "claude-sonnet-5-5" });
 		expect(await stub.agentSnapshot(agent.id)).toMatchObject({ engine: "claude-code" });
 	});
