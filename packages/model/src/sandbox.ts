@@ -195,4 +195,15 @@ export interface PullRequestOutcome {
 	draft?: boolean;
 	/** What the model should know of the checks, in words. */
 	note?: string;
+	/**
+	 * The pull request as GitHub has it, for the card the chat draws of the call. Left out by an
+	 * answer from before these were kept, which the card draws without.
+	 */
+	title?: string;
+	/** The branch it is from. */
+	branch?: string;
+	state?: "open" | "closed" | "merged";
+	additions?: number;
+	deletions?: number;
+	changedFiles?: number;
 }

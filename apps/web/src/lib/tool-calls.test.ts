@@ -5,6 +5,7 @@ import {
 	describePullRequestCall,
 	describeToolCall,
 	describeToolTarget,
+	reasoningOf,
 	toolCallsOf,
 } from "./tool-calls";
 
@@ -106,7 +107,12 @@ it("shows a call of open_pull_request by the pull request it made, linking only 
 	});
 	expect(describePullRequestCall(pull({ state: "output-available", output: made }))).toEqual({
 		state: "done",
-		pullRequest: { number: 12, url: "https://github.com/acme/site/pull/12", opened: true },
+		pullRequest: {
+			number: 12,
+			url: "https://github.com/acme/site/pull/12",
+			opened: true,
+			repository: "acme/site",
+		},
 		error: null,
 	});
 	expect(
@@ -122,6 +128,80 @@ it("shows a call of open_pull_request by the pull request it made, linking only 
 	expect(
 		describePullRequestCall({ ...call, toolName: "search", state: "output-available", output: "" }),
 	).toBeNull();
+});
+
+it("carries what the card of a pull request draws, and only the fields that hold", () => {
+	const pull = (output: object) =>
+		({
+			type: "tool-open_pull_request",
+			toolCallId: "call-3",
+			input: { title: "Fix the cart", body: "" },
+			state: "output-available",
+			output,
+		}) as ToolUIPart;
+	const made = {
+		repository: "acme/site",
+		number: 12,
+		url: "https://github.com/acme/site/pull/12",
+		opened: true,
+	};
+	expect(
+		describePullRequestCall(
+			pull({
+				...made,
+				title: "Fix the cart",
+				branch: "gateweave/conversation-1",
+				state: "open",
+				additions: 10,
+				deletions: 3,
+				changedFiles: 2,
+			}),
+		),
+	).toEqual({
+		state: "done",
+		pullRequest: {
+			number: 12,
+			url: "https://github.com/acme/site/pull/12",
+			opened: true,
+			repository: "acme/site",
+			title: "Fix the cart",
+			branch: "gateweave/conversation-1",
+			state: "open",
+			additions: 10,
+			deletions: 3,
+			changedFiles: 2,
+		},
+		error: null,
+	});
+	// A field that does not hold its shape is left out, as in a message stored before it was kept.
+	expect(
+		describePullRequestCall(
+			pull({ ...made, title: 42, state: "weird", additions: -1, changedFiles: "2" }),
+		),
+	).toEqual({
+		state: "done",
+		pullRequest: {
+			number: 12,
+			url: "https://github.com/acme/site/pull/12",
+			opened: true,
+			repository: "acme/site",
+		},
+		error: null,
+	});
+});
+
+it("reads a message's reasoning, joined, or none", () => {
+	const message = (parts: object[]) => ({ id: "m-1", role: "assistant", parts }) as UIMessage;
+	expect(
+		reasoningOf(
+			message([
+				{ type: "reasoning", text: "First, look." },
+				{ type: "text", text: "Done." },
+				{ type: "reasoning", text: "Then fix." },
+			]),
+		),
+	).toBe("First, look.\n\nThen fix.");
+	expect(reasoningOf(message([{ type: "text", text: "Done." }]))).toBe("");
 });
 
 const used = (toolName: string, input: unknown) =>

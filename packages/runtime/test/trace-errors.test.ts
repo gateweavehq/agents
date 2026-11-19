@@ -35,7 +35,18 @@ describe("a failed tool call in the trace", () => {
 	it("keeps the message open_pull_request threw", async () => {
 		const { run, errors } = recorderOf();
 		const github = {
-			propose: async () => ({ number: 1, url: "", opened: true }),
+			propose: async () => ({
+				number: 1,
+				url: "",
+				opened: true,
+				title: "T",
+				state: "open",
+				head: "2".repeat(40),
+				headRef: "gateweave/conversation-1",
+				additions: 1,
+				deletions: 0,
+				changedFiles: 1,
+			}),
 		} as PullRequestPort;
 		const tools = pullRequestTools({
 			sandbox: new MemorySandbox(),

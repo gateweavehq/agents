@@ -109,9 +109,13 @@ function pullRequestGitHub(
 			{
 				number: 12,
 				html_url: "https://github.com/acme/site/pull/12",
+				title: "Fix the cart",
 				state: "open",
 				merged_at: null,
-				head: { sha: "1".repeat(40) },
+				head: { sha: "1".repeat(40), ref: "gateweave/conversation-1" },
+				additions: 10,
+				deletions: 3,
+				changed_files: 2,
 			},
 			{ status: 201 },
 		);

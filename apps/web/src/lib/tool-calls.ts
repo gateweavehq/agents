@@ -25,6 +25,13 @@ export function toolCallsOf(message: UIMessage): ToolCallPart[] {
 	return message.parts.filter(isToolUIPart);
 }
 
+/** The reasoning of a message, its parts' text joined, or "" when it has none. */
+export function reasoningOf(message: UIMessage): string {
+	return message.parts
+		.flatMap((part) => (part.type === "reasoning" ? [part.text] : []))
+		.join("\n\n");
+}
+
 /**
  * A call of an MCP tool, as the chat shows it: the runtime names each MCP tool `<server>__<tool>`,
  * and MCP reports a tool's own failure inside its result.
@@ -78,11 +85,23 @@ export function describeEdgeCall(
 /**
  * A call of the sandbox's `open_pull_request`, by the pull request it made, or null for any other
  * tool. Only a link to the pull request's page on GitHub is shown: the output is the runtime's, but
- * the page should not link anywhere else whatever it holds.
+ * the page should not link anywhere else whatever it holds. The card's other fields are drawn as
+ * text; a message stored before they were kept draws without them.
  */
 export function describePullRequestCall(part: ToolCallPart): {
 	state: CallState;
-	pullRequest: { number: number; url: string; opened: boolean } | null;
+	pullRequest: {
+		number: number;
+		url: string;
+		opened: boolean;
+		repository?: string;
+		title?: string;
+		branch?: string;
+		state?: "open" | "closed" | "merged";
+		additions?: number;
+		deletions?: number;
+		changedFiles?: number;
+	} | null;
 	error: string | null;
 } | null {
 	if (getToolName(part) !== PULL_REQUEST_TOOL) return null;
@@ -93,16 +112,46 @@ export function describePullRequestCall(part: ToolCallPart): {
 		return { state: "failed", pullRequest: null, error: part.errorText ?? null };
 	}
 	const output = part.output as Partial<PullRequestOutcome> | null;
-	const { number, url, opened } = output ?? {};
+	const { number, url, opened, repository, title, branch, additions, deletions, changedFiles } =
+		output ?? {};
+	const prState = output?.state;
 	const linkable =
 		typeof number === "number" &&
 		typeof url === "string" &&
 		/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url);
 	return {
 		state: "done",
-		pullRequest: linkable ? { number, url, opened: opened === true } : null,
+		pullRequest: linkable
+			? {
+					number,
+					url,
+					opened: opened === true,
+					repository: cardText(repository),
+					title: cardText(title),
+					branch: cardText(branch),
+					state: cardState(prState),
+					additions: cardCount(additions),
+					deletions: cardCount(deletions),
+					changedFiles: cardCount(changedFiles),
+				}
+			: null,
 		error: null,
 	};
+}
+
+/** A card field that is text, or undefined when the stored output does not hold one. */
+function cardText(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+/** A card field that is a count, or undefined when the stored output does not hold one. */
+function cardCount(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+/** The pull request's state as GitHub has it, or undefined when the stored output does not say. */
+function cardState(value: unknown): "open" | "closed" | "merged" | undefined {
+	return value === "open" || value === "closed" || value === "merged" ? value : undefined;
 }
 
 /** The longest a chip's target gets before it is cut; the whole of it stays in the chip's title. */

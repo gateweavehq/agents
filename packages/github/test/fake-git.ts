@@ -402,10 +402,14 @@ export class FakeGit {
 				{
 					number: pull.number,
 					html_url: `https://github.com/${this.owner}/${this.name}/pull/${pull.number}`,
+					title: pull.title,
 					state: "open",
 					merged: false,
 					merged_at: null,
-					head: { sha: head },
+					head: { sha: head, ref: pull.head },
+					additions: 2,
+					deletions: 1,
+					changed_files: 1,
 				},
 				{ status: 201 },
 			);

@@ -87,9 +87,19 @@ export type ChangesOutcome =
 export interface PullRequest {
 	number: number;
 	url: string;
+	title: string;
 	state: "open" | "closed" | "merged";
 	/** The commit the pull request's branch is at. */
 	head: string;
+	/** The branch it is from, which a card names. */
+	headRef: string;
+	/**
+	 * The change's size. Only an answer about one pull request counts it; the list endpoint
+	 * leaves these out, and a card draws without them then.
+	 */
+	additions?: number;
+	deletions?: number;
+	changedFiles?: number;
 }
 
 const objectId = z.string().regex(/^[0-9a-f]{40}$/);
@@ -100,10 +110,15 @@ const compareSchema = z.object({ status: z.enum(["diverged", "ahead", "behind", 
 const pullSchema = z.object({
 	number: z.number().int().positive(),
 	html_url: z.string().url(),
+	title: z.string(),
 	state: z.enum(["open", "closed"]),
 	merged: z.boolean().optional(),
 	merged_at: z.string().nullable().optional(),
-	head: z.object({ sha: objectId }),
+	head: z.object({ sha: objectId, ref: z.string() }),
+	// Only an answer about one pull request counts changes; the list leaves them out.
+	additions: z.number().int().nonnegative().optional(),
+	deletions: z.number().int().nonnegative().optional(),
+	changed_files: z.number().int().nonnegative().optional(),
 });
 
 function repositoryPath({ owner, name }: RepositoryName) {
@@ -118,11 +133,25 @@ function headRef(branch: string) {
 function toPullRequest(found: z.infer<typeof pullSchema>): PullRequest {
 	// The list and webhook payloads may leave out `merged`; `merged_at` is always there.
 	const merged = found.merged ?? (found.merged_at !== null && found.merged_at !== undefined);
+	// The counts come together or not at all: an endpoint that counts changes gives all three.
+	const counted =
+		found.additions !== undefined &&
+		found.deletions !== undefined &&
+		found.changed_files !== undefined
+			? {
+					additions: found.additions,
+					deletions: found.deletions,
+					changedFiles: found.changed_files,
+				}
+			: undefined;
 	return {
 		number: found.number,
 		url: found.html_url,
+		title: found.title,
 		state: found.state === "open" ? "open" : merged ? "merged" : "closed",
 		head: found.head.sha,
+		headRef: found.head.ref,
+		...counted,
 	};
 }
 
