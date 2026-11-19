@@ -25,6 +25,15 @@
 </p>
 
 <p align="center">
+  <a href="https://www.producthunt.com/products/gateweave?launch=gateweave">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1317565&theme=dark">
+      <img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1317565&theme=light" width="250" height="54" alt="Gateweave on Product Hunt">
+    </picture>
+  </a>
+</p>
+
+<p align="center">
   <a href="https://gateweave.com/watch/issue-to-pull-request.mp4"><img src="docs/images/issue-to-pull-request.jpg" width="880" alt="An issue in Gateweave Track assigned to the agent Coder 2. The agent commented that it was on it, moved the issue to In Progress, opened pull request 308 and said so on the issue. The caption reads: 3 min 45 s after assigning, its pull request is open."></a>
 </p>
 
