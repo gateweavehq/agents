@@ -13,9 +13,15 @@ const MAX_TEXT = 100_000;
 
 /**
  * Takes an edge with this text. Returns what the calling model reads: the answer, or that a
- * report went out. Throws with why it could not, in words the model reads too.
+ * report went out. `toolCallId` is the call's own id, so the run it starts can be tied back to
+ * the call. Throws with why it could not, in words the model reads too.
  */
-export type TakeEdge = (edge: TurnEdge, text: string, signal?: AbortSignal) => Promise<string>;
+export type TakeEdge = (
+	edge: TurnEdge,
+	text: string,
+	toolCallId: string,
+	signal?: AbortSignal,
+) => Promise<string>;
 
 export function edgeTools(edges: TurnEdge[], take: TakeEdge): ToolSet {
 	const tools: ToolSet = {};
@@ -35,20 +41,22 @@ function edgeTool(edge: TurnEdge, take: TakeEdge): ToolSet[string] {
 			return tool({
 				description: `Hands a task to ${who} and waits for the result. ${name} works on it with its own tools and sees nothing but the task, so give it everything it needs.${about}`,
 				inputSchema: z.object({ task: text("The task, with everything needed to do it") }),
-				execute: ({ task }, { abortSignal }) => take(edge, task, abortSignal),
+				execute: ({ task }, { toolCallId, abortSignal }) =>
+					take(edge, task, toolCallId, abortSignal),
 			});
 		case "ask":
 			return tool({
 				description: `Asks ${who} one question and waits for the answer. ${name} answers from what it knows, without tools, and sees nothing but the question.${about}`,
 				inputSchema: z.object({ question: text("The question, with what is needed to answer it") }),
-				execute: ({ question }, { abortSignal }) => take(edge, question, abortSignal),
+				execute: ({ question }, { toolCallId, abortSignal }) =>
+					take(edge, question, toolCallId, abortSignal),
 			});
 		case "report":
 			return tool({
 				description: `Sends ${who} a message and goes on without waiting for an answer. ${name} takes a turn of its own on it and sees nothing but the message.${about}`,
 				inputSchema: z.object({ message: text("The message") }),
 				// A report goes on by itself, so the turn stopping does not stop it.
-				execute: ({ message }) => take(edge, message),
+				execute: ({ message }, { toolCallId }) => take(edge, message, toolCallId),
 			});
 	}
 }
