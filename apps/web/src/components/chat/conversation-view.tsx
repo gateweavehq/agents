@@ -253,8 +253,13 @@ function LiveConversation({
 	// already be open (its "start" arrives before the first content) or a progress part may be
 	// saying what the turn is doing.
 	const last = messages.at(-1);
+	// An empty text part exists from text-start, before the first delta; only content counts.
 	const replyBegan =
-		last?.role === "assistant" && last.parts.some((part) => part.type !== "step-start");
+		last?.role === "assistant" &&
+		last.parts.some((part) => {
+			if (part.type === "text" || part.type === "reasoning") return part.text.length > 0;
+			return part.type.startsWith("tool-") || part.type === "dynamic-tool" || part.type === "file";
+		});
 	const waiting =
 		status === "submitted" ||
 		(pending !== null && !answering) ||

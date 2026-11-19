@@ -27,22 +27,32 @@ export interface CheckedOutSandbox extends SandboxPort {
 
 /**
  * The sandbox as the tools reach it, checking out the repository before the first of them runs.
- * A checkout that fails is the tool's answer, and the next tool call tries again.
+ * A checkout that fails is the tool's answer, and the next tool call tries again. `onWait` says
+ * when a checkout starts and settles, so a turn can show the wait (AGT-139); a failed checkout's
+ * retry says it again.
  */
 export function withCheckout(
 	sandbox: CheckoutPort,
 	repository: SandboxRepository,
 	branch: string,
+	onWait?: (waiting: boolean) => void,
 ): CheckedOutSandbox {
 	let pending: Promise<string | null> | undefined;
-	const problem = async (): Promise<string | null> => {
-		pending ??= sandbox.checkout(repository, branch).then(
-			(result) => ("error" in result ? result.error : null),
-			() => `${repository.owner}/${repository.name} could not be checked out. Try again.`,
-		);
-		const found = await pending;
-		if (found !== null) pending = undefined;
-		return found;
+	const problem = (): Promise<string | null> => {
+		if (pending === undefined) {
+			onWait?.(true);
+			pending = sandbox
+				.checkout(repository, branch)
+				.then(
+					(result) => ("error" in result ? result.error : null),
+					() => `${repository.owner}/${repository.name} could not be checked out. Try again.`,
+				)
+				.finally(() => onWait?.(false));
+		}
+		return pending.then((found) => {
+			if (found !== null) pending = undefined;
+			return found;
+		});
 	};
 	return {
 		ready: problem,
@@ -59,34 +69,6 @@ export function withCheckout(
 			const failed = await problem();
 			return failed !== null ? { error: failed } : sandbox.writeFile(path, content);
 		},
-	};
-}
-
-/**
- * The wait for a checkout said aloud (AGT-139): the first tool call that finds the repository
- * not yet there says so, and the call that finds it ready clears it. The progress part is
- * transient, so the conversation never stores it.
- */
-export function withCheckoutProgress(
-	inner: CheckedOutSandbox,
-	progress: (label: string | null) => void,
-): CheckedOutSandbox {
-	let reported = false;
-	const report = async <T>(work: () => Promise<T>): Promise<T> => {
-		if (reported) return work();
-		reported = true;
-		progress("Checking out the repository");
-		try {
-			return await work();
-		} finally {
-			progress(null);
-		}
-	};
-	return {
-		ready: () => report(() => inner.ready()),
-		run: (command, cwd, timeoutSeconds) => report(() => inner.run(command, cwd, timeoutSeconds)),
-		readFile: (path) => report(() => inner.readFile(path)),
-		writeFile: (path, content) => report(() => inner.writeFile(path, content)),
 	};
 }
 

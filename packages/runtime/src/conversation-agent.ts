@@ -64,7 +64,7 @@ import {
 	type UIMessage,
 } from "ai";
 import { type ChatSession, sessionOpening } from "./chat-session";
-import { type CheckoutPort, repositoryNote, withCheckout, withCheckoutProgress } from "./checkout";
+import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
 import { ClaudeCodeTurn } from "./claude-code";
 import { CodexTurn } from "./codex";
 import { edgeTools } from "./edges";
@@ -682,8 +682,12 @@ ${runPageNote(runs, turn.runId)}`
 						this.#oauth(registry),
 					);
 					progress(null);
-					const checkout = sandbox && repository ? withCheckout(sandbox, repository, branch) : null;
-					const checkedOut = checkout ? withCheckoutProgress(checkout, progress) : null;
+					const checkedOut =
+						sandbox && repository
+							? withCheckout(sandbox, repository, branch, (waiting) =>
+									progress(waiting ? "Checking out the repository" : null),
+								)
+							: null;
 					const github = repository ? this.#pullRequests(repository) : null;
 					// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with
 					// them. An edge is named after a member of the team, so it wins over any tool of
@@ -913,8 +917,16 @@ ${runPageNote(runs, turn.runId)}`
 							meter: { conversation: this.name, token },
 						},
 					});
-					progress(null);
-					for await (const line of linesOf(events)) turn.take(line);
+					// startEngine resolving means the process is up, not that it has spoken; the
+					// label stays until the engine's first line (the finally clears a silent turn's).
+					let started = false;
+					for await (const line of linesOf(events)) {
+						if (!started) {
+							started = true;
+							progress(null);
+						}
+						turn.take(line);
+					}
 				} catch (error) {
 					console.error(`${ENGINE_NAMES[engine]}'s turn failed`, failureForLogs(error));
 				} finally {
