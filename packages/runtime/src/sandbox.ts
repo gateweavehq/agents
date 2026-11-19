@@ -70,7 +70,7 @@ import {
 	pushedRefs,
 	withGitHubToken,
 } from "./outbound";
-import { clipCommandOutput, clipOutput, readPrefix } from "./output";
+import { boundedSearchOutput, clipCommandOutput, clipOutput, readPrefix } from "./output";
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
 import {
 	type CommandResult,
@@ -226,6 +226,7 @@ export class RunnerSandbox
 		cwd: string,
 		timeoutSeconds: number,
 		captureOutput = false,
+		outputMode?: "search",
 	): Promise<CommandResult> {
 		const container = await this.#ready();
 		if (cwd !== SANDBOX_ROOT) {
@@ -233,7 +234,16 @@ export class RunnerSandbox
 			if (missing) return { exitCode: 1, output: missing, timedOut: false };
 		}
 		if (captureOutput) return this.#runCaptured(container, command, cwd, timeoutSeconds);
-		return this.#exec(container, ["bash", "-c", command], cwd, timeoutSeconds);
+		return this.#exec(
+			container,
+			["bash", "-c", command],
+			cwd,
+			timeoutSeconds,
+			{},
+			undefined,
+			false,
+			outputMode,
+		);
 	}
 
 	/** Stream one command into a private sandbox file; offer the path only after tee finishes. */
@@ -895,7 +905,7 @@ export class RunnerSandbox
 
 	/**
 	 * Runs `argv` under GNU `timeout`, with its output clipped as it streams, until `signal` gives
-	 * up. `outputLimit` bounds the output as a prefix instead, for output parsed whole.
+	 * up. A numeric output mode keeps a bounded prefix for output that must be parsed whole.
 	 */
 	async #exec(
 		container: Container,
@@ -905,7 +915,7 @@ export class RunnerSandbox
 		env: Record<string, string> = {},
 		signal?: AbortSignal,
 		commandPreview = false,
-		outputLimit?: number,
+		outputMode?: number | "search",
 	): Promise<CommandResult> {
 		const process = await container.exec(
 			["timeout", "--kill-after=5s", `${timeoutSeconds}s`, ...argv],
@@ -913,16 +923,28 @@ export class RunnerSandbox
 				cwd,
 				env: { ...COMMAND_ENV, ...env },
 				stdout: "pipe",
-				stderr: "combined",
+				stderr: outputMode === "search" ? "pipe" : "combined",
 				...(signal === undefined ? {} : { signal }),
 			},
 		);
+		if (outputMode === "search") {
+			const [matches, diagnostic, exitCode] = await Promise.all([
+				boundedSearchOutput(process.stdout),
+				clipOutput(process.stderr),
+				process.exitCode,
+			]);
+			return {
+				exitCode,
+				output: exitCode === 0 || exitCode === 1 ? matches : diagnostic.text,
+				timedOut: TIMED_OUT.has(exitCode),
+			};
+		}
 		const [output, exitCode] = await Promise.all([
-			outputLimit === undefined
+			outputMode === undefined
 				? commandPreview
 					? clipCommandOutput(process.stdout)
 					: clipOutput(process.stdout)
-				: readPrefix(process.stdout, outputLimit),
+				: readPrefix(process.stdout, outputMode),
 			process.exitCode,
 		]);
 		return {

@@ -63,10 +63,10 @@ export function withCheckout(
 	};
 	return {
 		ready: problem,
-		async run(command, cwd, timeoutSeconds, captureOutput) {
+		async run(command, cwd, timeoutSeconds, captureOutput, outputMode) {
 			const failed = await settled();
 			if (failed !== null) return { exitCode: 1, output: failed, timedOut: false };
-			return sandbox.run(command, cwd, timeoutSeconds, captureOutput);
+			return sandbox.run(command, cwd, timeoutSeconds, captureOutput, outputMode);
 		},
 		async readFile(path) {
 			const failed = await settled();
