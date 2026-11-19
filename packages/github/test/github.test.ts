@@ -294,9 +294,7 @@ describe("repository writes", () => {
 					state: "open",
 					merged_at: null,
 					head: { ref: "gateweave/c-1", sha: sha("e") },
-					additions: 4,
-					deletions: 1,
-					changed_files: 1,
+					// GitHub's list counts no changes; only an answer about one pull request does.
 				},
 			]),
 			Response.json([]),
@@ -309,9 +307,6 @@ describe("repository writes", () => {
 			state: "open",
 			head: sha("e"),
 			headRef: "gateweave/c-1",
-			additions: 4,
-			deletions: 1,
-			changedFiles: 1,
 		});
 		expect(await openPullRequestFrom("ghs_x", repository, "gateweave/c-2")).toBeNull();
 		expect(calls.map((call) => call.route)).toEqual([
