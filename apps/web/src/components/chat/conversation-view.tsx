@@ -1,4 +1,5 @@
 import { useAgentChat } from "@cloudflare/ai-chat/react";
+import type { ChangesPartData } from "@gateweave/agents-model";
 import { PULL_REQUEST_TOOL, SESSION_ENDED, type TeamEdgeKind } from "@gateweave/agents-model";
 import { Link } from "@tanstack/react-router";
 import { useAgent } from "agents/react";
@@ -26,6 +27,7 @@ import { EDGE_STYLES } from "#/components/registry/team-graph";
 import { Button } from "#/components/ui/button";
 import { Textarea } from "#/components/ui/textarea";
 import { useWorkspace } from "#/components/workspace/context";
+import { changesOf } from "#/lib/changes-part";
 import { edgeRunsOf } from "#/lib/edge-part";
 import { type PendingTurn, pendingTurnAfter, stopFrame } from "#/lib/pending-turn";
 import { runIdOf } from "#/lib/run-part";
@@ -504,6 +506,7 @@ function Message({
 	const calls = toolCallsOf(message);
 	const reasoning = reasoningOf(message);
 	const runId = mine ? null : runIdOf(message);
+	const changes = mine ? null : changesOf(message);
 	const edgeRuns = edgeRunsOf(message);
 	if (!text && !reasoning && calls.length === 0) return null;
 	if (mine) {
@@ -553,8 +556,54 @@ function Message({
 					</ul>
 				)}
 				{mine ? text : text && <Markdown>{text}</Markdown>}
+				{!mine && changes && <ChangesCard changes={changes} />}
 				{!mine && slug && runId && <RunLine slug={slug} runId={runId} />}
 			</div>
+		</div>
+	);
+}
+
+/**
+ * What the turn changed in its repository, summed from the reply's changes part (AGT-139). Each
+ * file opens to its diff as text — never HTML, since a diff is the repository's words, not
+ * markup — and the server already left secrets out of it.
+ */
+function ChangesCard({ changes }: { changes: ChangesPartData }) {
+	const added = changes.files.reduce((sum, file) => sum + file.added, 0);
+	const deleted = changes.files.reduce((sum, file) => sum + file.deleted, 0);
+	return (
+		<div className="mb-2 rounded-lg border bg-card px-3 py-2 text-xs">
+			<p className="font-medium text-muted-foreground">
+				{changes.files.length} file{changes.files.length === 1 ? "" : "s"} changed · +{added} -
+				{deleted}
+				{changes.truncated ? " · diff truncated" : ""}
+			</p>
+			<ul className="mt-1.5 space-y-1">
+				{changes.files.map((file) =>
+					file.diff === "" ? (
+						<li key={file.path} className="flex items-baseline gap-2">
+							<span className="min-w-0 flex-1 truncate font-mono text-[11px]">{file.path}</span>
+							<span className="shrink-0 text-muted-foreground">
+								binary · +{file.added} -{file.deleted}
+							</span>
+						</li>
+					) : (
+						<li key={file.path}>
+							<details>
+								<summary className="flex cursor-pointer select-none items-baseline gap-2">
+									<span className="min-w-0 flex-1 truncate font-mono text-[11px]">{file.path}</span>
+									<span className="shrink-0 text-muted-foreground">
+										+{file.added} -{file.deleted}
+									</span>
+								</summary>
+								<pre className="mt-1 max-h-64 overflow-auto rounded bg-muted p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
+									{file.diff}
+								</pre>
+							</details>
+						</li>
+					),
+				)}
+			</ul>
 		</div>
 	);
 }

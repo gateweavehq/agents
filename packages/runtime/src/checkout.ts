@@ -36,6 +36,7 @@ export function withCheckout(
 	repository: SandboxRepository,
 	branch: string,
 	onWait?: (waiting: boolean) => void,
+	onSettled?: () => Promise<void>,
 ): CheckedOutSandbox {
 	let pending: Promise<string | null> | undefined;
 	const problem = (): Promise<string | null> => {
@@ -54,19 +55,25 @@ export function withCheckout(
 			return found;
 		});
 	};
+	/** After a checkout that worked and before the tool's own command, for what the turn notes. */
+	const settled = async (): Promise<string | null> => {
+		const failed = await problem();
+		if (failed === null) await onSettled?.();
+		return failed;
+	};
 	return {
 		ready: problem,
 		async run(command, cwd, timeoutSeconds) {
-			const failed = await problem();
+			const failed = await settled();
 			if (failed !== null) return { exitCode: 1, output: failed, timedOut: false };
 			return sandbox.run(command, cwd, timeoutSeconds);
 		},
 		async readFile(path) {
-			const failed = await problem();
+			const failed = await settled();
 			return failed !== null ? { error: failed } : sandbox.readFile(path);
 		},
 		async writeFile(path, content) {
-			const failed = await problem();
+			const failed = await settled();
 			return failed !== null ? { error: failed } : sandbox.writeFile(path, content);
 		},
 	};

@@ -1,3 +1,4 @@
+export * from "./changes-part";
 export * from "./checks";
 export * from "./edge-part";
 export * from "./edge-tools";

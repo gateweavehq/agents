@@ -19,12 +19,14 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { sharedApp } from "@gateweave/agents-github";
 import {
+	type ChangesPartData,
 	SANDBOX_INSTANCE,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
 } from "@gateweave/agents-model";
 import { objectsIn } from "@gateweave/agents-registry";
+import { turnChanges as diffChanges, changesBase as writeChangesBase } from "./changes";
 import type { CheckoutResult } from "./checkout";
 import type { Comparison } from "./checks";
 import { claudeCodeCommand } from "./claude-code";
@@ -351,6 +353,23 @@ export class RunnerSandbox
 	 */
 	async changedSince(head: string): Promise<Comparison> {
 		return changedSince(this.#git(await this.#ready()), head);
+	}
+
+	/**
+	 * The checkout's state as a tree, before a turn's work (`./changes.ts`), or null when nothing
+	 * is checked out. A turn of a repository sums up what it changed against it.
+	 */
+	async changesBase(): Promise<string | null> {
+		const container = await this.#ready();
+		if (!(await this.#isGitCheckout(container))) return null;
+		return writeChangesBase(this.#git(container));
+	}
+
+	/** What the checkout changed since the state `base` names, as the reply's `data-changes` part. */
+	async turnChanges(base: string): Promise<ChangesPartData | null> {
+		const container = await this.#ready();
+		if (!(await this.#isGitCheckout(container))) return null;
+		return diffChanges(this.#git(container), base);
 	}
 
 	/**
