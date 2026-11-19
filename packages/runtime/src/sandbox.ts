@@ -70,7 +70,7 @@ import {
 	pushedRefs,
 	withGitHubToken,
 } from "./outbound";
-import { clipOutput } from "./output";
+import { clipOutput, readPrefix } from "./output";
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
 import {
 	type CommandResult,
@@ -342,8 +342,16 @@ export class RunnerSandbox
 
 	/** Git in the checkout, as `./git-work.ts` runs it. */
 	#git(container: Container): Git {
-		return (args, seconds = 60, env = {}) =>
-			this.#exec(container, ["git", ...args], SANDBOX_REPOSITORY_PATH, seconds, env);
+		return (args, seconds = 60, env = {}, outputLimit) =>
+			this.#exec(
+				container,
+				["git", ...args],
+				SANDBOX_REPOSITORY_PATH,
+				seconds,
+				env,
+				undefined,
+				outputLimit,
+			);
 	}
 
 	/**
@@ -794,7 +802,10 @@ export class RunnerSandbox
 		}
 	}
 
-	/** Runs `argv` under GNU `timeout`, with its output clipped as it streams, until `signal` gives up. */
+	/**
+	 * Runs `argv` under GNU `timeout`, with its output clipped as it streams, until `signal` gives
+	 * up. `outputLimit` bounds the output as a prefix instead, for output parsed whole.
+	 */
 	async #exec(
 		container: Container,
 		argv: string[],
@@ -802,6 +813,7 @@ export class RunnerSandbox
 		timeoutSeconds: number,
 		env: Record<string, string> = {},
 		signal?: AbortSignal,
+		outputLimit?: number,
 	): Promise<CommandResult> {
 		const process = await container.exec(
 			["timeout", "--kill-after=5s", `${timeoutSeconds}s`, ...argv],
@@ -813,8 +825,18 @@ export class RunnerSandbox
 				...(signal === undefined ? {} : { signal }),
 			},
 		);
-		const [output, exitCode] = await Promise.all([clipOutput(process.stdout), process.exitCode]);
-		return { exitCode, output: output.text, timedOut: TIMED_OUT.has(exitCode) };
+		const [output, exitCode] = await Promise.all([
+			outputLimit === undefined
+				? clipOutput(process.stdout)
+				: readPrefix(process.stdout, outputLimit),
+			process.exitCode,
+		]);
+		return {
+			exitCode,
+			output: output.text,
+			timedOut: TIMED_OUT.has(exitCode),
+			omitted: output.omitted,
+		};
 	}
 
 	async #ready(): Promise<Container> {

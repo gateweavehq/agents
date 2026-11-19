@@ -8,11 +8,16 @@ import type { Comparison } from "./checks";
 import type { CommitAuthor, CommitResult } from "./pull-requests";
 import type { CommandResult } from "./sandbox-tools";
 
-/** Runs git in the checkout with these arguments, for at most `seconds`, with `env` added. */
+/**
+ * Runs git in the checkout with these arguments, for at most `seconds`, with `env` added.
+ * `outputLimit` bounds the output as a prefix, for output parsed whole; without it the output
+ * keeps its start and end around what was left out.
+ */
 export type Git = (
 	args: string[],
 	seconds?: number,
 	env?: Record<string, string>,
+	outputLimit?: number,
 ) => Promise<CommandResult>;
 
 /** A commit's id as `git rev-parse` prints it, in SHA-1 or SHA-256. */

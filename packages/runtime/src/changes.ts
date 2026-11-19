@@ -25,6 +25,8 @@ const MAX_FILES = 100;
 const MAX_FILE_DIFF = 20_000;
 /** The longest every diff together may be; past it, files are left out. */
 const MAX_TOTAL_DIFF = 200_000;
+/** Bytes of patch `turnChanges` reads at most, before the part's own bounds cut it. */
+const DIFF_OUTPUT_BYTES = 1_000_000;
 
 /** A tree id as `git write-tree` prints it. */
 const TREE_ID = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -52,26 +54,36 @@ export async function turnChanges(git: Git, base: string): Promise<ChangesPartDa
 	try {
 		const added = await git(["add", "--all"]);
 		if (added.exitCode !== 0) return null;
+		// A patch can be long, so it is read whole up to a bound of its own, as a prefix: the
+		// head-and-tail clip a command's output gets would tear its sections apart.
 		const diff = await git(
 			["diff", "--cached", "--no-renames", "--unified=3", "--patch", base],
 			120,
+			undefined,
+			DIFF_OUTPUT_BYTES,
 		);
 		if (diff.exitCode !== 0) return null;
-		return summarize(diff.output);
+		return summarize(diff.output, diff.omitted !== undefined && diff.omitted > 0);
 	} catch {
 		return null;
 	}
 }
 
-/** The patch split into its files, counted and redacted, within the bounds. */
-function summarize(patch: string): ChangesPartData | null {
+/**
+ * The patch split into its files, counted and redacted, within the bounds. `clipped` says the
+ * patch itself was cut at its bound: its last section is then partial and dropped, and what
+ * follows it is gone, which `truncated` says.
+ */
+function summarize(patch: string, clipped = false): ChangesPartData | null {
 	const sections = patch
 		.split(/^(?=diff --git )/m)
 		.filter((each) => each.startsWith("diff --git "));
 	if (sections.length === 0) return null;
+	if (clipped) sections.pop();
+	if (sections.length === 0) return null;
 	const files: ChangesFile[] = [];
 	let total = 0;
-	let truncated = false;
+	let truncated = clipped;
 	for (const section of sections) {
 		if (files.length >= MAX_FILES || total >= MAX_TOTAL_DIFF) {
 			truncated = true;
@@ -80,12 +92,7 @@ function summarize(patch: string): ChangesPartData | null {
 		const path = pathOf(section);
 		if (path === null) continue;
 		const redacted = redact(section);
-		const added = redacted
-			.split("\n")
-			.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
-		const deleted = redacted
-			.split("\n")
-			.filter((line) => line.startsWith("-") && !line.startsWith("---")).length;
+		const { added, deleted } = lineCounts(redacted);
 		const text = redacted.length > MAX_FILE_DIFF ? redacted.slice(0, MAX_FILE_DIFF) : redacted;
 		if (text.length < redacted.length || total + text.length > MAX_TOTAL_DIFF) truncated = true;
 		files.push({ path, added, deleted, diff: text.slice(0, MAX_TOTAL_DIFF - total) });
@@ -96,40 +103,88 @@ function summarize(patch: string): ChangesPartData | null {
 	return { files, truncated };
 }
 
+/**
+ * A section's added and removed lines, counted inside its hunks: before the first `@@` are the
+ * file's headers, whose `+++` and `---` lines are not changes, and a content line that itself
+ * begins with marks (`+++counter;` adds `++counter;`) counts like any other.
+ */
+function lineCounts(section: string): { added: number; deleted: number } {
+	let added = 0;
+	let deleted = 0;
+	let inHunk = false;
+	for (const line of section.split("\n")) {
+		if (line.startsWith("@@")) {
+			inHunk = true;
+			continue;
+		}
+		if (!inHunk) continue;
+		if (line.startsWith("+")) added++;
+		else if (line.startsWith("-")) deleted++;
+	}
+	return { added, deleted };
+}
+
 /** The path a patch section's file has, from its `+++`/`---` header or its `diff --git` line. */
 function pathOf(section: string): string | null {
 	const lines = section.split("\n");
 	for (const line of lines) {
 		if (line.startsWith("+++ ")) {
-			const path = unquote(line.slice(4).replace(/^b\//, ""));
+			const path = headerPath(line.slice(4), "b/");
 			// A deleted file's `+++` is `/dev/null`; its `---` names it below.
 			if (path !== "/dev/null") return path;
 		}
 	}
 	for (const line of lines) {
 		if (line.startsWith("--- ")) {
-			const path = unquote(line.slice(4).replace(/^a\//, ""));
+			const path = headerPath(line.slice(4), "a/");
 			// A new file's `---` is `/dev/null`; nothing below names it.
 			if (path !== "/dev/null") return path;
 		}
 	}
 	// A binary file's section has no `---`/`+++` lines; its `diff --git` line names it.
 	const head = lines[0] ?? "";
-	const match = /^diff --git "?a\/(.+?)"? "?b\/(.+?)"?$/.exec(head);
-	return match?.[2] ? unquote(match[2]) : null;
+	const match = /^diff --git ("(?:[^"\\]|\\.)*"|\S+) ("(?:[^"\\]|\\.)*"|\S+)$/.exec(head);
+	if (match === null) return null;
+	const target = unquote(match[2] ?? "");
+	return target.startsWith("b/") ? target.slice(2) : target;
 }
 
-/** Git's quoting of a path it finds unusual, undone. */
+/**
+ * The path a `---`/`+++` header names: Git's quoting undone first, since a quoted path carries
+ * its `a/` or `b/` prefix inside the quotes, and only then the prefix dropped.
+ */
+function headerPath(text: string, prefix: string): string {
+	const path = unquote(text);
+	return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+}
+
+/** Git's quoting of a path it finds unusual, undone: `\NNN` octal bytes as UTF-8. */
 function unquote(path: string): string {
-	if (path.length > 1 && path.startsWith('"') && path.endsWith('"')) {
-		return path.slice(1, -1).replace(/\\(.)/g, "$1");
+	if (!(path.length > 1 && path.startsWith('"') && path.endsWith('"'))) return path;
+	const bytes: number[] = [];
+	const inner = path.slice(1, -1);
+	for (let at = 0; at < inner.length; at++) {
+		const char = inner.charAt(at);
+		if (char !== "\\" || at + 1 >= inner.length) {
+			for (const byte of new TextEncoder().encode(char)) bytes.push(byte);
+			continue;
+		}
+		const next = inner.charAt(at + 1);
+		const octal = inner.slice(at + 1, at + 4);
+		if (/^[0-7]{3}$/.test(octal)) {
+			bytes.push(Number.parseInt(octal, 8));
+			at += 3;
+		} else {
+			for (const byte of new TextEncoder().encode(next)) bytes.push(byte);
+			at += 1;
+		}
 	}
-	return path;
+	return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
 /** What a secret looks like on one line of a diff, and a private key's block around it. */
 const SECRET_LINE =
-	/(BEGIN [A-Z ]*PRIVATE KEY|authorization\s*:|bearer\s+\S|api[-_ ]?key\s*[:=]|secret\s*[:=]|token\s*[:=]|password\s*[:=]|passwd\s*[:=]|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|xox[a-z]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/i;
+	/(BEGIN [A-Z ]*PRIVATE KEY|["']?authorization["']?\s*:|bearer\s+\S|api[-_ ]?key["']?\s*[:=]|["']?secret["']?\s*[:=]|["']?token["']?\s*[:=]|["']?password["']?\s*[:=]|["']?passwd["']?\s*[:=]|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9]{20,}|xox[a-z]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/i;
 
 const REDACTED = " [redacted]";
 
@@ -146,14 +201,16 @@ function redact(patch: string): string {
 			const mark =
 				line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") ? line.charAt(0) : "";
 			if (mark === "") return line;
-			if (line.includes("PRIVATE KEY-----")) {
-				inKey = !line.includes("END");
+			// The block's own markers, matched whole: a body line can hold the letters "END".
+			if (/BEGIN [A-Z ]*PRIVATE KEY-----/.test(line)) {
+				inKey = true;
 				return `${mark}${REDACTED}`;
 			}
-			if (inKey) {
-				if (line.includes("END")) inKey = false;
+			if (/END [A-Z ]*PRIVATE KEY-----/.test(line)) {
+				inKey = false;
 				return `${mark}${REDACTED}`;
 			}
+			if (inKey) return `${mark}${REDACTED}`;
 			if (SECRET_LINE.test(line)) return `${mark}${REDACTED}`;
 			return line;
 		})

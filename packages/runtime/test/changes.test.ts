@@ -161,3 +161,96 @@ it("cuts one file's diff at its bound", async () => {
 	expect((file?.diff.length ?? 0) <= 20_000).toBe(true);
 	expect(changes?.truncated).toBe(true);
 });
+
+it("counts content lines that begin with diff marks, inside the hunks only", async () => {
+	const patch = [
+		"diff --git a/mixed.txt b/mixed.txt",
+		"--- a/mixed.txt",
+		"+++ b/mixed.txt",
+		"@@ -1,1 +1,1 @@",
+		"----",
+		"+++counter;",
+		"",
+	].join("\n");
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+	});
+	const changes = await turnChanges(git, TREE);
+	// `----` removes a line of `---`, `+++counter;` adds `++counter;`: the headers' own
+	// `---`/`+++` lines are not changes.
+	expect(changes?.files[0]?.added).toBe(1);
+	expect(changes?.files[0]?.deleted).toBe(1);
+});
+
+it("reads a path Git quoted, octal escapes and all", async () => {
+	const patch = [
+		'diff --git "a/\\303\\251.ts" "b/\\303\\251.ts"',
+		'--- "a/\\303\\251.ts"',
+		'+++ "b/\\303\\251.ts"',
+		"@@ -0,0 +1 @@",
+		"+x",
+		"",
+	].join("\n");
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+	});
+	const changes = await turnChanges(git, TREE);
+	expect(changes?.files[0]?.path).toBe("é.ts");
+});
+
+it("takes a credential out when its key is quoted, as JSON writes it", async () => {
+	const patch = [
+		"diff --git a/config.json b/config.json",
+		"--- a/config.json",
+		"+++ b/config.json",
+		"@@ -1,1 +1,2 @@",
+		'+"password": "hunter2",',
+		'+"api_key": "abcdef123456",',
+		"",
+	].join("\n");
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+	});
+	const changes = await turnChanges(git, TREE);
+	const diff = changes?.files[0]?.diff ?? "";
+	expect(diff).not.toContain("hunter2");
+	expect(diff).not.toContain("abcdef123456");
+	expect(diff.match(/ \[redacted\]/g)).toHaveLength(2);
+});
+
+it("keeps redacting a private key's body past a line that holds END", async () => {
+	const patch = [
+		"diff --git a/key.pem b/key.pem",
+		"--- a/key.pem",
+		"+++ b/key.pem",
+		"@@ -0,0 +1,4 @@",
+		"+-----BEGIN RSA PRIVATE KEY-----",
+		"+MIIEENDofffbody",
+		"+morebody",
+		"+-----END RSA PRIVATE KEY-----",
+		"",
+	].join("\n");
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+	});
+	const changes = await turnChanges(git, TREE);
+	const diff = changes?.files[0]?.diff ?? "";
+	expect(diff).not.toContain("MIIEENDofffbody");
+	expect(diff).not.toContain("morebody");
+	expect(diff.match(/ \[redacted\]/g)).toHaveLength(4);
+});
+
+it("drops a patch's partial last section when the patch itself was clipped", async () => {
+	const { git } = fakeGit({
+		"add --all": { exitCode: 0, output: "", timedOut: false },
+		"diff --cached": { exitCode: 0, output: PATCH, timedOut: false, omitted: 500 },
+	});
+	const changes = await turnChanges(git, TREE);
+	// PATCH's last section (old.txt) is the one the cut fell in: what remains is whole.
+	expect(changes?.files.map((file) => file.path)).toEqual(["src/app.ts", "docs/new.md"]);
+	expect(changes?.truncated).toBe(true);
+});

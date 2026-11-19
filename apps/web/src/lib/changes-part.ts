@@ -7,6 +7,7 @@ import type { UIMessage } from "ai";
  */
 const MAX_FILES = 100;
 const MAX_FILE_DIFF = 20_000;
+const MAX_TOTAL_DIFF = 200_000;
 const MAX_PATH = 1_000;
 
 /**
@@ -28,12 +29,22 @@ function readChanges(data: unknown): ChangesPartData | null {
 	const { files, truncated } = data as { files?: unknown; truncated?: unknown };
 	if (!Array.isArray(files)) return null;
 	const read: ChangesFile[] = [];
+	let total = 0;
+	let cut = false;
 	for (const file of files.slice(0, MAX_FILES)) {
 		const each = readFile(file);
-		if (each !== null) read.push(each);
+		if (each === null) continue;
+		if (total + each.diff.length > MAX_TOTAL_DIFF) {
+			const room = MAX_TOTAL_DIFF - total;
+			if (room > 0) read.push({ ...each, diff: each.diff.slice(0, room) });
+			cut = true;
+			break;
+		}
+		read.push(each);
+		total += each.diff.length;
 	}
 	if (read.length === 0) return null;
-	return { files: read, truncated: truncated === true };
+	return { files: read, truncated: truncated === true || cut || files.length > MAX_FILES };
 }
 
 function readFile(file: unknown): ChangesFile | null {

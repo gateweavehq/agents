@@ -695,14 +695,21 @@ ${runPageNote(runs, turn.runId)}`
 					progress(null);
 					// What the turn changes in the checkout, summed under the reply (AGT-139). The
 					// checkout is lazy here, so its state is noted as the first tool call starts,
-					// before that call can change anything.
+					// before that call can change anything. Concurrent tools share the one capture:
+					// a tool that starts while it is still running waits for it, so its change
+					// cannot slip into the base.
 					let changesFrom: string | null = null;
-					let baseCaptured = false;
-					const captureChangesBase = async () => {
-						if (baseCaptured || sandbox === null) return;
-						baseCaptured = true;
-						changesFrom = await sandbox.changesBase().catch(() => null);
+					let capture: Promise<void> | null = null;
+					const captureChangesBase = (): Promise<void> => {
+						if (sandbox === null) return Promise.resolve();
+						capture ??= (async () => {
+							changesFrom = await sandbox.changesBase().catch(() => null);
+						})();
+						return capture;
 					};
+					// Whether a sandbox tool ran this turn: only then is there a checkout whose
+					// changes are summed, and only then may the fallback below ask for its base.
+					let sandboxTouched = false;
 					const checkedOut =
 						sandbox && repository
 							? withCheckout(
@@ -710,7 +717,10 @@ ${runPageNote(runs, turn.runId)}`
 									repository,
 									branch,
 									(waiting) => progress(waiting ? "Checking out the repository" : null),
-									captureChangesBase,
+									async () => {
+										sandboxTouched = true;
+										await captureChangesBase();
+									},
 								)
 							: null;
 					const github = repository ? this.#pullRequests(repository) : null;
@@ -810,7 +820,9 @@ ${runPageNote(runs, turn.runId)}`
 						},
 					});
 					for await (const chunk of ui) writer.write(chunk);
-					await captureChangesBase();
+					// The capture itself waits for the first tool call, so a turn that never
+					// touched the sandbox has nothing to sum, and asking would start a container.
+					if (sandboxTouched) await captureChangesBase();
 					if (changesFrom !== null && sandbox !== null) {
 						const changes = await sandbox.turnChanges(changesFrom).catch(() => null);
 						if (changes !== null) writer.write({ type: CHANGES_PART, data: changes });
@@ -906,6 +918,14 @@ ${runPageNote(runs, turn.runId)}`
 				// What the turn changes in the checkout, summed under the reply (AGT-139). The
 				// checkout is done by now, before the CLI runs.
 				const changesFrom = repository ? await sandbox.changesBase().catch(() => null) : null;
+				// The capture awaited above is a window a stop can land in, before the listener
+				// below exists: a turn stopped here must not start its CLI.
+				if (signal?.aborted) {
+					await toolbox.close();
+					await end("stopped");
+					writer.write({ type: "finish" });
+					return;
+				}
 				const github = repository ? this.#pullRequests(repository) : null;
 				const tools: ToolSet = {
 					...toolbox.tools,

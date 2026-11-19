@@ -23,6 +23,35 @@ export async function clipOutput(
 }
 
 /**
+ * The first `limit` bytes of a stream, and how many bytes lay beyond them: for output that is
+ * parsed whole, where the head-and-tail clip of `clipOutput` would tear it apart.
+ */
+export async function readPrefix(
+	stream: ReadableStream<Uint8Array> | null,
+	limit: number,
+): Promise<ClippedOutput> {
+	if (!stream) return { text: "", omitted: 0 };
+	const chunks: Uint8Array[] = [];
+	let kept = 0;
+	let total = 0;
+	for await (const chunk of stream) {
+		total += chunk.length;
+		if (kept < limit) {
+			const take = chunk.subarray(0, limit - kept);
+			chunks.push(take);
+			kept += take.length;
+		}
+	}
+	const bytes = new Uint8Array(kept);
+	let at = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, at);
+		at += chunk.length;
+	}
+	return { text: new TextDecoder().decode(bytes), omitted: total - kept };
+}
+
+/**
  * Text that is already here, clipped the same way with nothing awaited: for an answer made from
  * rows that another call could change between two awaits (`./file-store.ts`).
  */

@@ -508,7 +508,7 @@ function Message({
 	const runId = mine ? null : runIdOf(message);
 	const changes = mine ? null : changesOf(message);
 	const edgeRuns = edgeRunsOf(message);
-	if (!text && !reasoning && calls.length === 0) return null;
+	if (!text && !reasoning && calls.length === 0 && !changes) return null;
 	if (mine) {
 		// A delivery's message is an event, not something a person wrote. Ones stored before the
 		// marker existed are recognised by their text.

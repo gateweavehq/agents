@@ -46,6 +46,8 @@ export interface CommandResult {
 	output: string;
 	/** It ran out of time and was stopped. */
 	timedOut: boolean;
+	/** Bytes of output the bound left out; absent when nothing was left out. */
+	omitted?: number;
 }
 
 /** A file's text, or why it could not be read, in words the model reads. */
