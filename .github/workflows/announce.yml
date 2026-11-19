@@ -1,13 +1,27 @@
 name: Announce
 
-# Gateweave's own: a published release is handed to the tool that posts its announcement, with one
-# workflow for each network (the LinkedIn page and X), so each can be changed or paused alone. The
-# post goes out without a person approving it; each workflow's prompt keeps it to the CHANGELOG
-# entry. It is apart from the deploys, so a failure here holds nothing back, and a fork without the
-# secrets skips it.
+# Gateweave's own: a published minor release (x.y.0) is announced on Gateweave's LinkedIn page and
+# X. The repository variable ANNOUNCE_VIA picks one route, never both:
+# - "agents": a signed release.published event goes to a trigger in Gateweave Agents, whose
+#   announcer writes the posts from the CHANGELOG entry and publishes them through Gateweave Growth,
+#   which logs, checks and gates each one;
+# - "ocoya", the default: the entry goes to one Ocoya workflow per network, each of which writes and
+#   posts its own text.
+# It is apart from the deploys, so a failure here holds nothing back, and a fork without the
+# secrets skips it. Run it by hand to announce a release again; through Agents, give a new attempt
+# number, since a delivery with an id the trigger has seen starts nothing.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release's tag, such as v0.42.0
+        required: true
+      attempt:
+        description: For a resend through Agents, a number not used before for this tag
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -18,17 +32,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
       - name: Send the release's CHANGELOG entry
         env:
+          VIA: ${{ vars.ANNOUNCE_VIA }}
+          TRIGGER_URL: ${{ secrets.AGENTS_ANNOUNCE_TRIGGER_URL }}
+          TRIGGER_SECRET: ${{ secrets.AGENTS_ANNOUNCE_TRIGGER_SECRET }}
           LINKEDIN_HOOK: ${{ secrets.OCOYA_RELEASE_HOOK }}
           X_HOOK: ${{ secrets.OCOYA_RELEASE_HOOK_X }}
-          TAG: ${{ github.event.release.tag_name }}
-          URL: ${{ github.event.release.html_url }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          ATTEMPT: ${{ inputs.attempt }}
+          REPO: ${{ github.repository }}
         run: |
-          if [ -z "$LINKEDIN_HOOK$X_HOOK" ]; then
-            echo "No address to send to; skipping."
-            exit 0
-          fi
           version="${TAG#v}"
           # A patch release (x.y.1 and up) is a fix, and a row of posts about fixes is noise for the
           # people who follow: only a release that ends in .0 is announced.
@@ -40,38 +56,83 @@ jobs:
             index($0, "## [" v "]") == 1 { found = 1; next }
             found && /^## \[/ { exit }
             found { print }
-          ' CHANGELOG.md | head -c 2000 > entry.md
+          ' CHANGELOG.md > full.md
+          # At most 2,000 bytes, cut at a character boundary so no letter is broken in half.
+          python3 -c 'import sys; d = open("full.md", "rb").read()[:2000]; sys.stdout.buffer.write(d.decode("utf-8", "ignore").encode())' > entry.md
           if [ -z "$(tr -d '[:space:]' < entry.md)" ]; then
             echo "CHANGELOG.md has no entry for $version; nothing to announce."
             exit 0
           fi
-          jq -n --arg product "Gateweave Agents" --arg version "$TAG" --arg url "$URL" \
-            --arg image "https://gateweave.com/og/agents.png" --rawfile entry entry.md \
-            '{product: $product, version: $version, url: $url, image: $image,
-              summary: ($product + " " + $version + "\n\n" + $entry)}' > body.json
-          # Each address is a password, so curl must not echo it: no -v, and errors without the URL.
-          # One network failing or hanging does not stop the other (each request has a time limit); the job
-          # fails afterwards so it shows.
-          failed=0
-          for network in linkedin x; do
-            case "$network" in
-              linkedin) hook="$LINKEDIN_HOOK" ;;
-              x) hook="$X_HOOK" ;;
-            esac
-            if [ -z "$hook" ]; then
-              echo "No address for $network; skipped."
-              continue
-            fi
-            # A request that times out after the headers still reports their status, so curl's own exit
-            # code decides too.
+          url="https://github.com/$REPO/releases/tag/$TAG"
+
+          # Every address here is a password, so curl must not echo one: no -v, and errors without
+          # the URL. Each request has a time limit, and a transfer that stalls after its status
+          # line fails on curl's own exit code.
+          send() {
             code=0
-            status="$(curl -sS --proto '=https' --connect-timeout 10 --max-time 60 -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' \
-              --data @body.json "$hook" 2>/dev/null)" || code=$?
-            echo "The $network workflow answered ${status:-nothing} (curl exit $code)."
-            if [ "$code" -ne 0 ]; then
-              failed=1
-              continue
-            fi
-            case "$status" in 2*) ;; *) failed=1 ;; esac
-          done
-          exit "$failed"
+            status="$(curl -sS --proto '=https' --connect-timeout 10 --max-time 60 -o /dev/null -w '%{http_code}' \
+              -X POST -H 'content-type: application/json' "$@" 2>/dev/null)" || code=$?
+            echo "${status:-nothing} (curl exit $code)"
+            [ "$code" -eq 0 ] && case "$status" in 2*) return 0 ;; esac
+            return 1
+          }
+
+          case "${VIA:-ocoya}" in
+            agents)
+              if [ -z "$TRIGGER_URL" ] || [ -z "$TRIGGER_SECRET" ]; then
+                echo "ANNOUNCE_VIA is agents, but the trigger's address or secret is missing."
+                exit 1
+              fi
+              # The trigger takes each webhook-id once, so the same release sent twice starts one run.
+              id="$REPO@$TAG"
+              if [ -n "$ATTEMPT" ]; then id="$id#$ATTEMPT"; fi
+              jq -cn --arg repo "$REPO" --arg product "Gateweave Agents" --arg tag "$TAG" --arg url "$url" \
+                --arg image "https://gateweave.com/og/agents.png" --rawfile changelog entry.md \
+                '{type: "release.published", data: {repo: $repo, product: $product, tag: $tag,
+                  url: $url, image: $image, changelog: $changelog}}' > event.json
+              ts="$(date +%s)"
+              # Standard Webhooks: base64 of HMAC-SHA256 over "id.timestamp.body", keyed with the
+              # bytes the whsec_ secret encodes.
+              sig="$(ID="$id" TS="$ts" python3 -c '
+          import base64, hashlib, hmac, os
+          key = base64.b64decode(os.environ["TRIGGER_SECRET"].removeprefix("whsec_"))
+          body = open("event.json", "rb").read()
+          signed = os.environ["ID"].encode() + b"." + os.environ["TS"].encode() + b"." + body
+          print(base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode())
+          ')"
+              printf 'webhook-id: %s\nwebhook-timestamp: %s\nwebhook-signature: v1,%s\n' "$id" "$ts" "$sig" > headers.txt
+              printf 'The announcer trigger answered '
+              send -H "webhook-id: $id" -H "webhook-timestamp: $ts" -H "webhook-signature: v1,$sig" \
+                --data-binary @event.json "$TRIGGER_URL"
+              ;;
+            ocoya)
+              if [ -z "$LINKEDIN_HOOK$X_HOOK" ]; then
+                echo "No address to send to; skipping."
+                exit 0
+              fi
+              jq -n --arg product "Gateweave Agents" --arg version "$TAG" --arg url "$url" \
+                --arg image "https://gateweave.com/og/agents.png" --rawfile entry entry.md \
+                '{product: $product, version: $version, url: $url, image: $image,
+                  summary: ($product + " " + $version + "\n\n" + $entry)}' > body.json
+              # One network failing or hanging does not stop the other; the job fails afterwards so
+              # it shows.
+              failed=0
+              for network in linkedin x; do
+                case "$network" in
+                  linkedin) hook="$LINKEDIN_HOOK" ;;
+                  x) hook="$X_HOOK" ;;
+                esac
+                if [ -z "$hook" ]; then
+                  echo "No address for $network; skipped."
+                  continue
+                fi
+                printf 'The %s workflow answered ' "$network"
+                send --data @body.json "$hook" || failed=1
+              done
+              exit "$failed"
+              ;;
+            *)
+              echo "ANNOUNCE_VIA must be agents or ocoya."
+              exit 1
+              ;;
+          esac
