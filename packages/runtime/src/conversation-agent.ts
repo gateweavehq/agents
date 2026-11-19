@@ -825,8 +825,10 @@ ${runPageNote(runs, turn.runId)}`
 					for await (const chunk of ui) writer.write(chunk);
 					// The capture itself waits for the first tool call, so a turn that never
 					// touched the sandbox has nothing to sum, and asking would start a container.
-					if (sandboxTouched) await captureChangesBase();
-					if (changesFrom !== null && sandbox !== null) {
+					// A stopped turn sums nothing either: its git reads would hold up the finish.
+					const stopped = options?.abortSignal?.aborted === true;
+					if (sandboxTouched && !stopped) await captureChangesBase();
+					if (!stopped && changesFrom !== null && sandbox !== null) {
 						const changes = await sandbox.turnChanges(changesFrom).catch(() => null);
 						if (changes !== null) writer.write({ type: CHANGES_PART, data: changes });
 					}
@@ -1034,7 +1036,7 @@ ${runPageNote(runs, turn.runId)}`
 						await end("succeeded");
 					}
 				}
-				if (changesFrom !== null) {
+				if (changesFrom !== null && !signal?.aborted) {
 					const changes = await sandbox.turnChanges(changesFrom).catch(() => null);
 					if (changes !== null) writer.write({ type: CHANGES_PART, data: changes });
 				}
