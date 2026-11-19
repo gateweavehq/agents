@@ -473,6 +473,35 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 
 	/**
+	 * The answer a run gave, for an MCP client's get_run (AGT-155): the text of the reply whose
+	 * run part names it. Null when the run has no reply here yet, or never will.
+	 */
+	runAnswer(runId: string): string | null {
+		if (typeof runId !== "string" || runId.length > 64) return null;
+		for (const message of this.messages) {
+			if (message.role !== "assistant") continue;
+			let own = false;
+			const texts: string[] = [];
+			for (const part of message.parts) {
+				if (part.type === RUN_PART) {
+					const data = (part as { data?: unknown }).data;
+					if (
+						typeof data === "object" &&
+						data !== null &&
+						(data as { runId?: unknown }).runId === runId
+					) {
+						own = true;
+					}
+					continue;
+				}
+				if (part.type === "text") texts.push(part.text);
+			}
+			if (own) return texts.join("\n");
+		}
+		return null;
+	}
+
+	/**
 	 * Takes the one turn this conversation exists for, which a turn of another conversation asked
 	 * for over a team's edge. The registry checks the edge and begins the turn; then a delegate or
 	 * an ask waits for the answer, and a report only for the start.

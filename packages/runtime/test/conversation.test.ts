@@ -251,6 +251,23 @@ describe("data parts", () => {
 		expect(typeof run?.data?.runId).toBe("string");
 		socket.close();
 	});
+
+	it("answers with the text of the reply its run part names, for get_run", async () => {
+		const { stub } = await conversation();
+		fakeModel(() => anthropicStream("Done."));
+		const socket = await connect(stub);
+
+		await ask(socket, "Hello");
+		const stored = (await (await stub.fetch("http://conversation/get-messages")).json()) as {
+			parts: { type: string; data?: { runId?: unknown } }[];
+		}[];
+		const runId = stored.at(-1)?.parts.find((part) => part.type === "data-run")?.data?.runId;
+		expect(typeof runId).toBe("string");
+
+		expect(await stub.runAnswer(runId as string)).toBe("Done.");
+		expect(await stub.runAnswer("no-such-run")).toBeNull();
+		socket.close();
+	});
 });
 
 describe("destroying a conversation's object", () => {

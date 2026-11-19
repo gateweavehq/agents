@@ -26,6 +26,7 @@ it("offers list_workspaces, which returns what access gives it and nothing more"
 		wikis: async () => [],
 		wikiRepos: async () => [],
 		startTask: async () => ({ status: "refused" as const, message: "not in this test" }),
+		runOf: async () => ({ status: "refused" as const, message: "not in this test" }),
 	});
 
 	const { tools } = await client.listTools();
@@ -55,9 +56,32 @@ it("offers run_agent only to a token with agents:run, and hands it the ask (AGT-
 			asked.push(input);
 			return { status: "started" as const, runId: "run-1", conversationId: "conv-1" };
 		},
+		runOf: async ({ workspace, runId }) => {
+			asked.push({ workspace, runId });
+			return {
+				status: "ok" as const,
+				run: {
+					runId,
+					state: "succeeded" as const,
+					error: null,
+					agent: "Reviewer",
+					steps: 3,
+					inputTokens: 100,
+					outputTokens: 50,
+					cost: null,
+					startedAt: 1,
+					endedAt: 2,
+					answer: "Looks good.",
+					conversationId: "conv-1",
+					link: `/${workspace}/runs/${runId}`,
+				},
+			};
+		},
 	};
 	const readOnly = await connect(access);
 	expect((await readOnly.listTools()).tools.map((tool) => tool.name)).not.toContain("run_agent");
+	// get_run comes with the same scope, so a read-only token does not get it either.
+	expect((await readOnly.listTools()).tools.map((tool) => tool.name)).not.toContain("get_run");
 	await readOnly.close();
 
 	const client = await connect(access, true);
@@ -71,6 +95,15 @@ it("offers run_agent only to a token with agents:run, and hands it the ask (AGT-
 	expect(asked).toEqual([
 		{ workspace: "acme", agent: "Reviewer", task: "Review it.", requestId: "req-1" },
 	]);
+	const read = await client.callTool({
+		name: "get_run",
+		arguments: { workspace: "acme", runId: "run-1" },
+	});
+	expect(read.structuredContent).toMatchObject({
+		status: "ok",
+		run: { runId: "run-1", state: "succeeded", answer: "Looks good." },
+	});
+	expect(asked.at(-1)).toEqual({ workspace: "acme", runId: "run-1" });
 	await client.close();
 });
 
@@ -112,6 +145,7 @@ async function call(
 			return repos;
 		},
 		startTask: async () => ({ status: "refused" as const, message: "not in this test" }),
+		runOf: async () => ({ status: "refused" as const, message: "not in this test" }),
 	});
 	const result = await client.callTool({ name, arguments: args });
 	await client.close();
