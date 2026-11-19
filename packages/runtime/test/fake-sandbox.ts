@@ -5,7 +5,8 @@
  * engine writes what a test scripted for it.
  */
 import { DurableObject, env } from "cloudflare:workers";
-import type { SandboxRepository } from "@gateweave/agents-model";
+import type { ChangesPartData, SandboxRepository } from "@gateweave/agents-model";
+import type { ChangesPort } from "../src/changes";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
 import type { Comparison } from "../src/checks";
 import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
@@ -55,7 +56,7 @@ export interface CommitPush {
 /** What a command answers; with `seconds`, how long it took by the sandbox's clock. */
 export type CommandAnswer = (CommandResult & { seconds?: number }) | Error;
 
-export class MemorySandbox implements CheckoutPort, PushPort, CheckPort {
+export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, ChangesPort {
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
 	readonly checkouts: Checkout[] = [];
@@ -72,6 +73,10 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort {
 	readonly commits: Commit[] = [];
 	/** What the next commits answer, in order; then each makes a new commit. */
 	readonly commitAnswers: CommitResult[] = [];
+	/** The trees the next `changesBase` calls answer, in order; then each answers null. */
+	readonly baseTrees: (string | null)[] = [];
+	/** What the next `turnChanges` calls answer, in order; then each answers null. */
+	readonly turnChangesAnswers: (ChangesPartData | null)[] = [];
 	readonly commitPushes: CommitPush[] = [];
 	/**
 	 * How the checkout compares with its commit the next times it is asked; then, and for a
@@ -116,6 +121,16 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort {
 		const answer = this.changes.shift() ?? null;
 		if (answer instanceof Error) throw answer;
 		return answer;
+	}
+
+	async changesBase(): Promise<string | null> {
+		this.log.push("changes base");
+		return this.baseTrees.shift() ?? null;
+	}
+
+	async turnChanges(base: string): Promise<ChangesPartData | null> {
+		this.log.push(`changes since ${base.slice(0, 7)}`);
+		return this.turnChangesAnswers.shift() ?? null;
 	}
 
 	async pushCommit(branch: string, head: string): Promise<PushResult> {
@@ -300,6 +315,20 @@ export class FakeSandbox
 
 	changedSince(head: string) {
 		return this.#memory.changedSince(head);
+	}
+
+	changesBase() {
+		return this.#memory.changesBase();
+	}
+
+	turnChanges(base: string) {
+		return this.#memory.turnChanges(base);
+	}
+
+	/** What the next `changesBase` and `turnChanges` calls answer, in order. */
+	answerTurnChanges(baseTrees: (string | null)[], changes: (ChangesPartData | null)[]): void {
+		this.#memory.baseTrees.push(...baseTrees);
+		this.#memory.turnChangesAnswers.push(...changes);
 	}
 
 	pushCommit(branch: string, head: string) {

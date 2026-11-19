@@ -2,6 +2,7 @@ import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
 import { sharedApp } from "@gateweave/agents-github";
 import {
 	type AgentSnapshot,
+	CHANGES_PART,
 	conversationBranch,
 	EDGE_PART,
 	ENGINE_NAMES,
@@ -64,6 +65,7 @@ import {
 	toUIMessageStream,
 	type UIMessage,
 } from "ai";
+import type { ChangesPort } from "./changes";
 import { type ChatSession, sessionOpening } from "./chat-session";
 import { type CheckoutPort, repositoryNote, withCheckout } from "./checkout";
 import { ClaudeCodeTurn } from "./claude-code";
@@ -122,7 +124,13 @@ interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
 }
 
 /** What a conversation reaches of its sandbox over RPC. */
-interface Sandbox extends CheckoutPort, PushPort, CheckPort, EnginePort, LocalServerPort {
+interface Sandbox
+	extends CheckoutPort,
+		PushPort,
+		CheckPort,
+		EnginePort,
+		LocalServerPort,
+		ChangesPort {
 	destroy(): Promise<void>;
 }
 
@@ -686,10 +694,34 @@ ${runPageNote(runs, turn.runId)}`
 						this.#oauth(registry),
 					);
 					progress(null);
+					// What the turn changes in the checkout, summed under the reply (AGT-139). The
+					// checkout is lazy here, so its state is noted as the first tool call starts,
+					// before that call can change anything. Concurrent tools share the one capture:
+					// a tool that starts while it is still running waits for it, so its change
+					// cannot slip into the base.
+					let changesFrom: string | null = null;
+					let capture: Promise<void> | null = null;
+					const captureChangesBase = (): Promise<void> => {
+						if (sandbox === null) return Promise.resolve();
+						capture ??= (async () => {
+							changesFrom = await sandbox.changesBase().catch(() => null);
+						})();
+						return capture;
+					};
+					// Whether a sandbox tool ran this turn: only then is there a checkout whose
+					// changes are summed, and only then may the fallback below ask for its base.
+					let sandboxTouched = false;
 					const checkedOut =
 						sandbox && repository
-							? withCheckout(sandbox, repository, branch, (waiting) =>
-									progress(waiting ? "Checking out the repository" : null),
+							? withCheckout(
+									sandbox,
+									repository,
+									branch,
+									(waiting) => progress(waiting ? "Checking out the repository" : null),
+									async () => {
+										sandboxTouched = true;
+										await captureChangesBase();
+									},
 								)
 							: null;
 					const github = repository ? this.#pullRequests(repository) : null;
@@ -774,21 +806,33 @@ ${runPageNote(runs, turn.runId)}`
 						onAbort: () => end("stopped"),
 						onError: ({ error }) => end("failed", describeFailure(agent, error)),
 					});
-					writer.merge(
-						toUIMessageStream({
-							stream: result.stream,
-							tools,
-							// The stream's own "start" would open a second message; this one opened it.
-							sendStart: false,
-							onError: (error) => {
-								console.error("A turn failed", {
-									agent: agent.agentId,
-									...failureForLogs(error),
-								});
-								return describeFailure(agent, error);
-							},
-						}),
-					);
+					// The finish is written here, not by `toUIMessageStream`, so the turn's changes
+					// can be summed into the reply first (AGT-139).
+					const ui = toUIMessageStream({
+						stream: result.stream,
+						tools,
+						// The stream's own "start" would open a second message; this one opened it.
+						sendStart: false,
+						sendFinish: false,
+						onError: (error) => {
+							console.error("A turn failed", {
+								agent: agent.agentId,
+								...failureForLogs(error),
+							});
+							return describeFailure(agent, error);
+						},
+					});
+					for await (const chunk of ui) writer.write(chunk);
+					// The capture itself waits for the first tool call, so a turn that never
+					// touched the sandbox has nothing to sum, and asking would start a container.
+					// A stopped turn sums nothing either: its git reads would hold up the finish.
+					const stopped = options?.abortSignal?.aborted === true;
+					if (sandboxTouched && !stopped) await captureChangesBase();
+					if (!stopped && changesFrom !== null && sandbox !== null) {
+						const changes = await sandbox.turnChanges(changesFrom).catch(() => null);
+						if (changes !== null) writer.write({ type: CHANGES_PART, data: changes });
+					}
+					writer.write({ type: "finish" });
 				} catch (error) {
 					const message = describeFailure(agent, error);
 					await end("failed", message);
@@ -879,6 +923,17 @@ ${runPageNote(runs, turn.runId)}`
 					return;
 				}
 				progress(null);
+				// What the turn changes in the checkout, summed under the reply (AGT-139). The
+				// checkout is done by now, before the CLI runs.
+				const changesFrom = repository ? await sandbox.changesBase().catch(() => null) : null;
+				// The capture awaited above is a window a stop can land in, before the listener
+				// below exists: a turn stopped here must not start its CLI.
+				if (signal?.aborted) {
+					await toolbox.close();
+					await end("stopped");
+					writer.write({ type: "finish" });
+					return;
+				}
 				const github = repository ? this.#pullRequests(repository) : null;
 				const tools: ToolSet = {
 					...toolbox.tools,
@@ -980,6 +1035,10 @@ ${runPageNote(runs, turn.runId)}`
 					} else {
 						await end("succeeded");
 					}
+				}
+				if (changesFrom !== null && !signal?.aborted) {
+					const changes = await sandbox.turnChanges(changesFrom).catch(() => null);
+					if (changes !== null) writer.write({ type: CHANGES_PART, data: changes });
 				}
 				writer.write({ type: "finish" });
 			},

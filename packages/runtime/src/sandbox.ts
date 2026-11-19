@@ -19,12 +19,14 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import { Files, SandboxFileError } from "@cloudflare/sandbox";
 import { sharedApp } from "@gateweave/agents-github";
 import {
+	type ChangesPartData,
 	SANDBOX_INSTANCE,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
 } from "@gateweave/agents-model";
 import { objectsIn } from "@gateweave/agents-registry";
+import { turnChanges as diffChanges, changesBase as writeChangesBase } from "./changes";
 import type { CheckoutResult } from "./checkout";
 import type { Comparison } from "./checks";
 import { claudeCodeCommand } from "./claude-code";
@@ -68,7 +70,7 @@ import {
 	pushedRefs,
 	withGitHubToken,
 } from "./outbound";
-import { clipCommandOutput, clipOutput } from "./output";
+import { clipCommandOutput, clipOutput, readPrefix } from "./output";
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
 import {
 	type CommandResult,
@@ -430,8 +432,17 @@ export class RunnerSandbox
 
 	/** Git in the checkout, as `./git-work.ts` runs it. */
 	#git(container: Container): Git {
-		return (args, seconds = 60, env = {}) =>
-			this.#exec(container, ["git", ...args], SANDBOX_REPOSITORY_PATH, seconds, env);
+		return (args, seconds = 60, env = {}, outputLimit) =>
+			this.#exec(
+				container,
+				["git", ...args],
+				SANDBOX_REPOSITORY_PATH,
+				seconds,
+				env,
+				undefined,
+				false,
+				outputLimit,
+			);
 	}
 
 	/**
@@ -441,6 +452,23 @@ export class RunnerSandbox
 	 */
 	async changedSince(head: string): Promise<Comparison> {
 		return changedSince(this.#git(await this.#ready()), head);
+	}
+
+	/**
+	 * The checkout's state as a tree, before a turn's work (`./changes.ts`), or null when nothing
+	 * is checked out. A turn of a repository sums up what it changed against it.
+	 */
+	async changesBase(): Promise<string | null> {
+		const container = await this.#ready();
+		if (!(await this.#isGitCheckout(container))) return null;
+		return writeChangesBase(this.#git(container));
+	}
+
+	/** What the checkout changed since the state `base` names, as the reply's `data-changes` part. */
+	async turnChanges(base: string): Promise<ChangesPartData | null> {
+		const container = await this.#ready();
+		if (!(await this.#isGitCheckout(container))) return null;
+		return diffChanges(this.#git(container), base);
 	}
 
 	/**
@@ -865,7 +893,10 @@ export class RunnerSandbox
 		}
 	}
 
-	/** Runs `argv` under GNU `timeout`, with its output clipped as it streams, until `signal` gives up. */
+	/**
+	 * Runs `argv` under GNU `timeout`, with its output clipped as it streams, until `signal` gives
+	 * up. `outputLimit` bounds the output as a prefix instead, for output parsed whole.
+	 */
 	async #exec(
 		container: Container,
 		argv: string[],
@@ -874,6 +905,7 @@ export class RunnerSandbox
 		env: Record<string, string> = {},
 		signal?: AbortSignal,
 		commandPreview = false,
+		outputLimit?: number,
 	): Promise<CommandResult> {
 		const process = await container.exec(
 			["timeout", "--kill-after=5s", `${timeoutSeconds}s`, ...argv],
@@ -886,10 +918,19 @@ export class RunnerSandbox
 			},
 		);
 		const [output, exitCode] = await Promise.all([
-			commandPreview ? clipCommandOutput(process.stdout) : clipOutput(process.stdout),
+			outputLimit === undefined
+				? commandPreview
+					? clipCommandOutput(process.stdout)
+					: clipOutput(process.stdout)
+				: readPrefix(process.stdout, outputLimit),
 			process.exitCode,
 		]);
-		return { exitCode, output: output.text, timedOut: TIMED_OUT.has(exitCode) };
+		return {
+			exitCode,
+			output: output.text,
+			timedOut: TIMED_OUT.has(exitCode),
+			omitted: output.omitted,
+		};
 	}
 
 	async #ready(): Promise<Container> {

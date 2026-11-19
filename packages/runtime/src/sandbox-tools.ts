@@ -49,6 +49,8 @@ export interface CommandResult {
 	timedOut: boolean;
 	/** Confirmed full combined output, kept until this sandbox stops. */
 	outputPath?: string;
+	/** Bytes of output the bound left out; absent when nothing was left out. */
+	omitted?: number;
 }
 
 /** A file's text, or why it could not be read, in words the model reads. */
