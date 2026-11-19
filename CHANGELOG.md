@@ -19,7 +19,8 @@ migration in this release.
 - **An MCP server whose OAuth connection has stopped working says "needs reconnecting"** on the
   MCP page and on the agents and teams that pin it. Before, the page went on saying it was
   connected, and the first sign was a run that failed. The page checks each such connection when
-  it loads, at most once in five minutes per server; a check never clears a connection, and a
+  it loads, at most once in five minutes per server (per agent, for a server whose headers use
+  a value from the agent's environment); a check never clears a connection, and a
   provider that cannot be reached is reported as "could not check", not as broken.
   ([#274](https://github.com/gateweavehq/agents/pull/274))
 - **An agent's model is picked from the provider's list**, with search, in the edit dialog as in
