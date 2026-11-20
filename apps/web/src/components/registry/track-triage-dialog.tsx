@@ -26,7 +26,8 @@ import { setUpTrackTriage, type TrackTriageSetUp } from "#/lib/track-triage";
 /** A model to start from for each provider: triage is short work, so a fast one. */
 const SUGGESTED_MODELS: Partial<Record<ModelProvider, string>> = {
 	anthropic: "claude-haiku-5-5",
-	"workers-ai": "@cf/meta/llama-4-scout-17b-16e-instruct",
+	// The same as the connect step's: see `SUGGESTED_MODELS` in `track-connect-step.tsx`.
+	"workers-ai": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
 };
 
 const SELECT = "h-9 w-full rounded-md border bg-transparent px-2 text-sm";
