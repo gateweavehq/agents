@@ -9,6 +9,7 @@ import { MemorySandbox } from "./fake-sandbox";
 function recorderOf() {
 	const errors: (string | null)[] = [];
 	const run = {
+		targets: { tainted: false },
 		toolStarted: () => "span",
 		toolEnded: (_span: string, outcome: { error: string | null }) => {
 			errors.push(outcome.error);

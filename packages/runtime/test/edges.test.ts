@@ -2,6 +2,13 @@ import type { TurnEdge } from "@gateweave/agents-model";
 import { expect, it } from "vitest";
 import { edgeTools } from "../src/edges";
 
+import type { RunRecorder } from "../src/trace";
+
+const run = {
+	targets: { tainted: true, trusted: new Set(["coder.example"]) },
+	edgeStarted: () => "span",
+} as unknown as RunRecorder;
+
 const CODER: TurnEdge = {
 	kind: "delegate",
 	team: "core",
@@ -13,24 +20,28 @@ const CODER: TurnEdge = {
 
 it("names each call to take by its tool's name, as the chat will know it", async () => {
 	const calls: { text: string; call: { toolCallId: string; toolName: string } }[] = [];
-	const tools = edgeTools([CODER], async (_edge, text, call) => {
+	const tools = edgeTools(run, [CODER], async (_edge, text, call) => {
 		calls.push({ text, call });
 		return "done";
 	});
 	const tool = tools["delegate__Coder"];
 	if (!tool?.execute) throw new Error("there is no delegate__Coder");
 	await tool.execute(
-		{ task: "Fix it" },
+		{ task: "Fix https://coder.example" },
 		{ toolCallId: "call-1", messages: [], abortSignal: undefined, context: undefined },
 	);
 	expect(calls).toEqual([
-		{ text: "Fix it", call: { toolCallId: "call-1", toolName: "delegate__Coder" } },
+		{
+			text: "Fix https://coder.example",
+			call: { toolCallId: "call-1", toolName: "delegate__Coder", span: "span" },
+		},
 	]);
 });
 
 it("gives a namesake's call the number its tool's name has", async () => {
 	const names: string[] = [];
 	const tools = edgeTools(
+		run,
 		[
 			{ ...CODER, to: "agent-1", name: "C o" },
 			{ ...CODER, to: "agent-2", name: "C_o" },

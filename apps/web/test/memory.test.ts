@@ -361,6 +361,41 @@ it("holds what a trigger's run remembers until an owner or admin approves it", a
 	expect(log).toContain("dismissed a decision about the workspace, which waited for approval");
 });
 
+it("counts an outside address and trusts only members of the agent's workspace", async () => {
+	const slug = "memory-contacts";
+	const { owner, registry, agent } = await workspace(slug);
+	await signUp(agents, origin, "outside-contacts");
+	const previous = models.script;
+	const addresses = ["grace-memory-contacts@example.com", "outside-contacts@example.com"];
+	let round = 0;
+	models.script = () => {
+		if (round++ === 0) return anthropicToolCall("recall", { query: "Contacts" });
+		const address = addresses.shift();
+		if (address) return anthropicToolCall("remember", { text: address, kind: "fact" });
+	};
+	try {
+		const conversation = await registry.startConversation(agent.id, owner.userId);
+		const { socket } = await agents.connect(`${origin}/api/chat/${slug}/${conversation?.id}`, {
+			cookie: owner.headers.cookie,
+			origin,
+		});
+		if (!socket) throw new Error("No WebSocket");
+		try {
+			await ask(socket, "Look up the contacts and remember them.");
+		} finally {
+			socket.close();
+		}
+		const [run] = await registry.listRuns();
+		if (!run) throw new Error("No run");
+		expect(round).toBe(4);
+		expect(await page(`/${slug}/runs/${run.id}`, owner.headers.cookie)).toContain(
+			"1 call would be refused by the target rule",
+		);
+	} finally {
+		models.script = previous;
+	}
+});
+
 it("shows on an agent's page whether it has memory", async () => {
 	const { owner, registry, agent } = await workspace("memory-agents");
 	const theirs = await page(`/memory-agents/agents/${agent.id}`, owner.headers.cookie);

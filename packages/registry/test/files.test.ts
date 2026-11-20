@@ -357,6 +357,7 @@ describe("a turn of an agent that works on files without a sandbox", () => {
 			files: true,
 			steps: MAX_SANDBOX_STEPS,
 			runId: expect.any(String),
+			origin: "person",
 		});
 		expect(MAX_SANDBOX_STEPS).toBe(40);
 		expect(JSON.stringify(turn)).not.toMatch(/token|ghs_/i);
@@ -545,6 +546,7 @@ describe("agents without the setting", () => {
 					repository: null,
 					memory: false,
 					runId: turn.runId,
+					origin: "person",
 				}),
 			);
 		}

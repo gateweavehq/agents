@@ -1,5 +1,7 @@
 import { createMCPClient } from "@ai-sdk/mcp";
+import { tool } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { ENGINE_TOOLS_URL, serveEngineTools } from "../src/engine-tools";
 import { connectTools } from "../src/tools";
 import type { RunRecorder } from "../src/trace";
@@ -23,6 +25,7 @@ async function connected(result: CallResult) {
 	const run = {
 		serverConnecting: () => "server",
 		serverConnected: () => {},
+		targets: { tainted: false },
 		toolStarted: () => "tool",
 		toolEnded: (_span: string, details: { outputBytes?: number; error?: string | null }) => {
 			ended.push(details);
@@ -125,6 +128,29 @@ describe("connected MCP result budget", () => {
 			expect(size(result)).toBeLessThanOrEqual(LIMIT);
 		} finally {
 			await toolbox.close();
+		}
+	});
+
+	it("leaves a tool with no local execute out of the engine's catalog", async () => {
+		const client = await createMCPClient({
+			transport: {
+				type: "http",
+				url: ENGINE_TOOLS_URL,
+				fetch: (input, init) =>
+					serveEngineTools(
+						{
+							provider: tool({ inputSchema: z.object({}) }),
+							local: tool({ inputSchema: z.object({}), execute: async () => "done" }),
+						},
+						new Request(input, { ...init, redirect: "manual" }),
+						new AbortController().signal,
+					),
+			},
+		});
+		try {
+			expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["local"]);
+		} finally {
+			await client.close();
 		}
 	});
 

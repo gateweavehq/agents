@@ -96,6 +96,8 @@ const AGENT_FIELDS = [
 	"engine",
 	"memory",
 	"files",
+	"allowedTargets",
+	"anyTarget",
 ] as const;
 
 function agentChanges(before: AgentDetail, after: AgentDetail): string[] {
@@ -173,10 +175,25 @@ export const createAgent = createServerFn({ method: "POST" })
 		await audit({
 			action: "agent.created",
 			target: { type: "agent", id: agent.id, label: agent.name },
-			detail: { provider: data.agent.provider, model: data.agent.model },
+			detail: {
+				provider: data.agent.provider,
+				model: data.agent.model,
+				...(data.agent.allowedTargets.length > 0 && {
+					allowedTargetCount: data.agent.allowedTargets.length,
+				}),
+				...(data.agent.anyTarget && { anyTarget: true }),
+			},
 		});
 		return agent;
 	});
+
+function changedTargets(values: string[], previous: string[]): string[] {
+	const known = new Set(previous);
+	const changed = values.filter((value) => !known.has(value));
+	return changed.length <= 10
+		? changed
+		: [...changed.slice(0, 10), `and ${changed.length - 10} more`];
+}
 
 export const updateAgent = createServerFn({ method: "POST" })
 	.validator(
@@ -201,7 +218,26 @@ export const updateAgent = createServerFn({ method: "POST" })
 			await audit({
 				action: "agent.updated",
 				target: { type: "agent", id: agent.id, label: agent.name },
-				detail: { fields },
+				detail: {
+					fields,
+					...(fields.includes("allowedTargets") &&
+						before?.definition &&
+						after?.definition && {
+							allowedTargetCount: after.definition.allowedTargets.length,
+							addedTargets: changedTargets(
+								after.definition.allowedTargets,
+								before.definition.allowedTargets,
+							),
+							removedTargets: changedTargets(
+								before.definition.allowedTargets,
+								after.definition.allowedTargets,
+							),
+						}),
+					...(fields.includes("anyTarget") && {
+						previousAnyTarget: before?.definition?.anyTarget ?? false,
+						anyTarget: data.agent.anyTarget,
+					}),
+				},
 			});
 		}
 		return agent;

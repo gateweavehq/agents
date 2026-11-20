@@ -1512,7 +1512,7 @@ export class RegistryDO extends DurableObject {
 				},
 				Date.now(),
 			);
-			return { ...prepared, runId };
+			return { ...prepared, runId, origin: parties.replayOf === null ? "person" : "replay" };
 		});
 	}
 
@@ -1542,7 +1542,7 @@ export class RegistryDO extends DurableObject {
 		if ("status" in plan) return settle(plan);
 		const prepared = await this.#prepareTurn(conversation, plan.agent, plan.position, true);
 		if ("status" in prepared) return settle(prepared);
-		const { startedBy } = parties;
+		const { startedBy, triggerId } = parties;
 		return this.#write(() => {
 			// A retry may have taken the delivery over while the key was opened.
 			if (!deliveryOf(this.#db, conversation)) {
@@ -1568,7 +1568,12 @@ export class RegistryDO extends DurableObject {
 				now,
 			);
 			settleDelivery(this.#db, conversation, { runId });
-			return { ...prepared, runId };
+			return {
+				...prepared,
+				runId,
+				origin: "trigger",
+				triggerPrompt: triggerRow(this.#db, triggerId)?.prompt,
+			};
 		});
 	}
 
@@ -1692,7 +1697,7 @@ export class RegistryDO extends DurableObject {
 				},
 				at,
 			);
-			return { ...prepared, runId };
+			return { ...prepared, runId, origin: "edge" };
 		});
 	}
 
@@ -1779,11 +1784,17 @@ export class RegistryDO extends DurableObject {
 			servers.length > 0 ? this.#openEnvironment(agent.agentId) : null,
 		]);
 		if ("status" in opened) return opened;
+		const mcpHosts = servers.flatMap(({ reading }) =>
+			"server" in reading && reading.server.transport !== "stdio"
+				? [new URL(reading.server.url).hostname]
+				: [],
+		);
 		const mcpServers = this.#write(() => turnServers(this.#db, servers, environment, sandbox));
 		return {
 			agent,
 			key: opened.key,
 			mcpServers,
+			...(mcpHosts.length > 0 && { mcpHosts }),
 			edges,
 			sandbox,
 			repository,

@@ -387,6 +387,17 @@ list. Say so in your privacy notice if you publish one, and remove an address wh
 An upgrade changes nothing for a server that has accounts: it stays open, with its oldest account as
 the owner.
 
+### Tool destinations
+
+The Worker variable `TARGET_RULE` defaults to `log`. Calls with a destination the agent learned
+only from outside content still run, and the run page counts them. Set the variable to
+`enforce` to return a tool error before the call runs. Unrecognised values use `log`.
+
+In the agent form, an owner or admin can allow up to 100 exact email addresses, email domains
+such as `@example.net`, or hosts. Domain entries cover addresses at that exact domain. A member
+can also name a destination in chat. To exempt an agent, enable its option to allow any target.
+Both settings are recorded in the audit log.
+
 ### Sandboxes
 
 A sandbox is a Linux machine for each conversation with an agent that has one. The agent runs

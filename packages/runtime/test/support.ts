@@ -6,6 +6,14 @@ import type { ScriptedAnswer } from "./fake-sandbox";
 // Its tail is not hexadecimal, so tests that look for it in a reply never find it in a random id.
 export const KEY = "sk-ant-api03-secret-wxyz";
 
+export function enforceTargets(instance: object): void {
+	const bindings = (instance as { env: object }).env;
+	Object.defineProperty(instance, "env", {
+		value: { ...bindings, TARGET_RULE: "enforce" },
+		configurable: true,
+	});
+}
+
 /** A session that holds for the length of a test, as the app's gateway would pass it on. */
 export const SESSION: ChatSession = {
 	id: "session-ada",

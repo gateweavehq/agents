@@ -85,6 +85,7 @@ export function storeOver(
 export function recorder() {
 	const ended: unknown[] = [];
 	const run = {
+		targets: { tainted: false },
 		toolStarted: () => "span",
 		toolEnded: (_span: string, outcome: unknown) => {
 			ended.push(outcome);

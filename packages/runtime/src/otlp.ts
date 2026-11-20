@@ -113,12 +113,7 @@ export function runTraces(workspaceId: string, run: ExportedRun, spans: RunSpan[
 			parentSpanId,
 			startTimeUnixNano: nanos(span.startedAt),
 			endTimeUnixNano: nanos(span.endedAt ?? ended),
-			status:
-				span.status === "ok"
-					? { code: 1 as const }
-					: span.status === "error"
-						? { code: 2 as const, ...(span.error ? { message: span.error } : {}) }
-						: { code: 0 as const },
+			status: spanStatus(span),
 		};
 		switch (span.kind) {
 			case "model":
@@ -149,6 +144,10 @@ export function runTraces(workspaceId: string, run: ExportedRun, spans: RunSpan[
 						"gen_ai.operation.name": "execute_tool",
 						"gen_ai.tool.name": span.tool,
 						"gateweave.tool.server": span.server,
+						"gateweave.target_rule.decision":
+							span.target?.decision ?? (span.status === "would_refuse" ? "would_refuse" : null),
+						"gateweave.target_rule.kind": span.target?.kind ?? null,
+						"gateweave.target_rule.host": span.target?.host ?? null,
 						"gateweave.tool.input_bytes": int(span.inputBytes),
 						"gateweave.tool.output_bytes": span.outputBytes === null ? null : int(span.outputBytes),
 					}),
@@ -170,6 +169,10 @@ export function runTraces(workspaceId: string, run: ExportedRun, spans: RunSpan[
 					name: `${span.edge} ${span.to}`,
 					kind: 1,
 					attributes: attributes({
+						"gateweave.target_rule.decision":
+							span.target?.decision ?? (span.status === "would_refuse" ? "would_refuse" : null),
+						"gateweave.target_rule.kind": span.target?.kind ?? null,
+						"gateweave.target_rule.host": span.target?.host ?? null,
 						"gateweave.team.edge": span.edge,
 						"gateweave.team.to": span.to,
 						"gateweave.child_run.id": span.childRunId,
@@ -223,6 +226,14 @@ function hexId(id: string, bytes: 8 | 16): string {
 
 function endOf(span: RunSpan): number {
 	return span.endedAt ?? span.startedAt;
+}
+
+function spanStatus(span: RunSpan): OtlpSpan["status"] {
+	if (span.status === "running") return { code: 0 };
+	if (span.status === "error" || span.status === "refused" || span.error !== null) {
+		return { code: 2, ...(span.error ? { message: span.error } : {}) };
+	}
+	return { code: 1 };
 }
 
 function statusOf(status: string, error: string | null): OtlpSpan["status"] {

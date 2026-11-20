@@ -192,6 +192,12 @@ function Definition({
 				)}
 			</section>
 
+			{definition.anyTarget && (
+				<p className="rounded-lg border p-3 text-sm">
+					This agent can use any target. Its tool calls skip the target rule.
+				</p>
+			)}
+
 			<section aria-labelledby="instructions-heading" className="space-y-3">
 				<h2 id="instructions-heading" className="text-sm font-medium">
 					Instructions

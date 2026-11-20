@@ -227,7 +227,9 @@ export function agentSnapshot(db: Db, id: string): AgentSnapshot | null {
 		sandbox: definition.sandbox,
 		engine: definition.engine,
 		memory: definition.memory,
-		// Left out of an agent without it, whose snapshot is then what it always was.
+		// Older snapshots omitted these settings when the agent used their defaults.
+		...(definition.allowedTargets.length ? { allowedTargets: definition.allowedTargets } : {}),
+		...(definition.anyTarget ? { anyTarget: true } : {}),
 		...(definition.files ? { files: true as const } : {}),
 		updatedAt: agent.updatedAt,
 	};
@@ -263,6 +265,8 @@ function definitionRow(agentId: string, input: Definition) {
 		memory: input.memory,
 		files: input.files,
 		outsideTasks: input.outsideTasks,
+		allowedTargets: input.allowedTargets,
+		anyTarget: input.anyTarget,
 	};
 }
 

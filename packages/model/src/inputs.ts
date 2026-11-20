@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { FILES_WITH_SANDBOX } from "./files";
+import { normalizeAllowedTarget } from "./targets";
 import {
 	AGENT_ENGINES,
 	ASSET_KINDS,
@@ -626,6 +627,23 @@ const agentDefinitionFields = projectInput.extend({
 	 * the setting existed takes no outside tasks until someone turns it on.
 	 */
 	outsideTasks: z.boolean().default(false),
+	allowedTargets: z
+		.array(
+			z
+				.string()
+				.trim()
+				.min(1)
+				.max(512)
+				.transform((value, ctx) => {
+					const target = normalizeAllowedTarget(value);
+					if (target !== null) return target;
+					ctx.addIssue({ code: "custom", message: "Enter an email address, @domain or host" });
+					return z.NEVER;
+				}),
+		)
+		.max(100, "An agent may have up to 100 allowed targets")
+		.default([]),
+	anyTarget: z.boolean().default(false),
 });
 
 /**
@@ -659,6 +677,8 @@ export const agentDefinitionUpdate = agentDefinitionFields
 		memory: agentDefinitionFields.shape.memory.removeDefault(),
 		files: agentDefinitionFields.shape.files.removeDefault(),
 		outsideTasks: agentDefinitionFields.shape.outsideTasks.removeDefault(),
+		allowedTargets: agentDefinitionFields.shape.allowedTargets.removeDefault(),
+		anyTarget: agentDefinitionFields.shape.anyTarget.removeDefault(),
 	})
 	.refine((agent) => !(agent.files && agent.sandbox), {
 		message: FILES_WITH_SANDBOX,

@@ -61,6 +61,8 @@ const definition: AgentDefinition = {
 	// Never with a sandbox, so this one is at its default here and away from it below.
 	files: false,
 	outsideTasks: false,
+	allowedTargets: ["@example.net"],
+	anyTarget: true,
 };
 
 /** An agent that works on its repository's files without a sandbox (AGT-122). */
@@ -94,6 +96,8 @@ it("leaves no field to its default", () => {
 		memory: true,
 		files: false,
 		outsideTasks: false,
+		allowedTargets: ["@example.net"],
+		anyTarget: true,
 	});
 	// What the server's validator makes of it is the same: nothing was filled in.
 	expect(agentDefinitionUpdate.parse(input)).toEqual(input);

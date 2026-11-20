@@ -122,6 +122,7 @@ describe("conversations", () => {
 			repository: null,
 			memory: false,
 			runId: expect.any(String),
+			origin: "person",
 		});
 
 		// A removed agent's conversations stay readable, and cannot go on.

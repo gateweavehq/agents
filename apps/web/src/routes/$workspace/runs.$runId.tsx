@@ -319,6 +319,8 @@ const SPAN_COLORS: Record<RunSpan["status"], string> = {
 	running: "bg-sky-500",
 	ok: "bg-emerald-500",
 	error: "bg-destructive",
+	would_refuse: "bg-amber-500",
+	refused: "bg-destructive",
 };
 
 function Trace({
@@ -345,7 +347,28 @@ function Trace({
 			<p className="text-sm text-muted-foreground">The run ended before it called the model.</p>
 		);
 	}
-	return <Timeline run={run} trace={trace} nested={nested} onReplay={onReplay} />;
+	const flagged = trace.filter(
+		(span) =>
+			span.status === "would_refuse" ||
+			((span.kind === "tool" || span.kind === "edge") &&
+				span.status !== "refused" &&
+				span.target?.decision === "would_refuse"),
+	).length;
+	const refused = trace.filter((span) => span.status === "refused").length;
+	return (
+		<>
+			{(flagged > 0 || refused > 0) && (
+				<p className="mb-3 text-sm">
+					{flagged > 0 &&
+						`${flagged === 1 ? "1 call" : `${flagged} calls`} would be refused by the target rule. `}
+					{refused > 0 &&
+						`${refused === 1 ? "1 call was" : `${refused} calls were`} refused by the target rule. `}
+					After receiving outside content, the agent used a target without a trusted source.
+				</p>
+			)}
+			<Timeline run={run} trace={trace} nested={nested} onReplay={onReplay} />
+		</>
+	);
 }
 
 /**
@@ -459,8 +482,7 @@ function describeSpan(
 					</>
 				),
 				meta: duration,
-				// The run it started shows below, with its link.
-				details: [],
+				details: span.target ? [`Target rule (${span.target.kind}): ${span.target.host}`] : [],
 			};
 		}
 		case "connect":
@@ -495,7 +517,7 @@ function describeSpan(
 				]
 					.filter(Boolean)
 					.join(" · "),
-				details: [],
+				details: span.target ? [`Target rule (${span.target.kind}): ${span.target.host}`] : [],
 			};
 		case "model":
 			return {
