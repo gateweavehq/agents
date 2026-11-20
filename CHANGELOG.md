@@ -23,9 +23,9 @@ registry, which adds two columns with defaults.
   tool call's network destinations (hosts, email addresses and URLs in its arguments) should
   come from the person's task, the agent's settings or its allowed list.
   ([#308](https://github.com/gateweavehq/agents/pull/308))
-  - **In this release the call still runs.** The run page counts the calls that would be
-    refused, and the trace records the destination's kind and its host or domain, never the
-    rest of the value.
+  - **In this release the call still runs**, under the default `TARGET_RULE` of `log`. The run
+    page counts the calls that would be refused, and the trace records the destination's kind
+    and its host or domain, never the rest of the value.
   - **The next release refuses them by default**, with a tool error that names the value and how
     to allow it. Look at your agents' runs before then: an agent that rightly reaches addresses
     it reads, such as one doing outreach, needs them on its allowed list, or its option to allow
