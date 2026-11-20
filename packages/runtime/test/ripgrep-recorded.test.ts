@@ -114,10 +114,20 @@ describe("the sandbox's ripgrep, as recorded", () => {
 		expect(recorded.ripgrep).toMatch(/^ripgrep \d+\.\d+\.\d+/);
 		const sandbox = new MemorySandbox();
 		const files = sandboxFiles(sandbox);
-		for (const found of recorded.finds) await files.findFiles(found.pattern, found.directory);
+		for (const found of recorded.finds) {
+			sandbox.answers.push({
+				exitCode: found.exitCode,
+				output: found.output,
+				timedOut: false,
+			});
+			await files.findFiles(found.pattern, found.directory);
+		}
 		for (const found of recorded.searches) await files.search(query(found));
 		expect(sandbox.commands.map((ran) => ran.command)).toEqual([
-			...recorded.finds.map((found) => found.command),
+			...recorded.finds.flatMap((found) => [
+				found.command,
+				...found.filters.map((filter) => filter.command),
+			]),
 			...recorded.searches.map((found) => found.command),
 		]);
 		expect(sandbox.commands.every((ran) => ran.cwd === ROOT)).toBe(true);
@@ -318,17 +328,39 @@ describe("the files store, beside the recorded ripgrep", () => {
 		});
 	});
 
-	it("does not read .gitignore, and has no .git, where ripgrep honours one and can list the other", async () => {
+	it("lists and searches as the words say: no .git, and nothing git ignores, though the glob matches it", async () => {
 		const { tree, finds, searches } = recorded.ignoring;
 		const listed = finds[0]?.output ?? "";
 		const searched = searches[0]?.output ?? "";
 		// ripgrep, with no glob of the model's: only the file no rule names.
 		expect(searched).toBe("/workspace/repo/kept.txt:1:a needle\n");
-		// ripgrep, with a glob that matches them: the ignored files are listed after all, and so
-		// is what lies in .git, since a glob given outranks both the ignore rules and `!.git`.
+		// ripgrep's own listing has them after all: a glob given outranks the ignore rules, and
+		// `.git` too, so the port drops what lies in `.git` itself and asks git about the rest.
 		expect(listed).toContain("/workspace/repo/debug.log\n");
 		expect(listed).toContain("/workspace/repo/build/out.txt\n");
 		expect(listed).toContain("/workspace/repo/.git/HEAD\n");
+		expect(finds[0]?.filters).toEqual([
+			{
+				command:
+					"git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '.gitignore' 'build/out.txt' 'debug.log' 'kept.txt' 'é.log'",
+				exitCode: 0,
+				output: "build/out.txt\ndebug.log\né.log\n",
+			},
+		]);
+
+		// The port, over the recorded exchange: the ignored files are gone, `é.log` among them.
+		const sandbox = new MemorySandbox();
+		sandbox.answers.push(
+			{ exitCode: finds[0]?.exitCode ?? 0, output: listed, timedOut: false },
+			...(finds[0]?.filters ?? []).map((filter) => ({
+				exitCode: filter.exitCode,
+				output: filter.output,
+				timedOut: false,
+			})),
+		);
+		expect(await sandboxFiles(sandbox).findFiles("*", ROOT)).toEqual({
+			found: "/workspace/repo/.gitignore\n/workspace/repo/kept.txt\n",
+		});
 
 		await store(tree, async (files) => {
 			// The store: every file of the commit, whatever the rules say, and no .git.
@@ -340,6 +372,7 @@ describe("the files store, beside the recorded ripgrep", () => {
 					"/workspace/repo/build/out.txt:1:a needle in a build\n",
 					"/workspace/repo/debug.log:1:a needle in a log\n",
 					"/workspace/repo/kept.txt:1:a needle\n",
+					"/workspace/repo/é.log:1:a needle in a log too\n",
 				].join(""),
 			});
 		});
