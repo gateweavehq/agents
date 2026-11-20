@@ -435,12 +435,13 @@ export function labelSkip(label: string, body: string): string | null {
 /**
  * Why an event does not start a run of a trigger that takes only issues assigned to `assignee`, in
  * words a person reads; null when it does. The issue must be assigned to them, and on
- * `issue.updated` they must have just been assigned: `updatedFrom` holds the fields the change
- * touched, so an edit of an issue that stayed theirs starts nothing. A comment starts a run while
- * the issue is theirs, but only a person's: Track does not send the member's own, and one by
- * another agent or by Track itself starts nothing, so two agents cannot keep each other going.
- * Other events start a run while the issue is theirs. The body is whatever the sender sent, so
- * every field is checked before it is used.
+ * `issue.updated` they must have just been assigned, or a Track source must have just reopened it
+ * (`sourceReopened`): `updatedFrom` holds the fields the change touched, so an edit of an issue
+ * that stayed theirs starts nothing. A comment starts a run while the issue is theirs, but only a
+ * person's: Track does not send the member's own, and one by another agent or by Track itself
+ * starts nothing, so two agents cannot keep each other going. Other events start a run while the
+ * issue is theirs. The body is whatever the sender sent, so every field is checked before it is
+ * used.
  */
 export function assigneeSkip(assignee: string, body: string): string | null {
 	const event = recordOf(parseJson(body));
@@ -452,7 +453,7 @@ export function assigneeSkip(assignee: string, body: string): string | null {
 	if (issue.assigneeId !== assignee) return "The issue is not assigned to its member";
 	if (event?.type === "issue.updated") {
 		const before = recordOf(data?.updatedFrom);
-		if (!before || !Object.hasOwn(before, "assigneeId")) {
+		if (!before || !(Object.hasOwn(before, "assigneeId") || sourceReopened(data, before))) {
 			return "The issue was assigned to its member already";
 		}
 	}
@@ -462,6 +463,29 @@ export function assigneeSkip(assignee: string, body: string): string | null {
 		}
 	}
 	return null;
+}
+
+/**
+ * Whether an `issue.updated` event is a Gateweave Track source reopening the issue: a product that
+ * reports findings, such as Gateweave Guard, saw the finding the issue is about again after the
+ * issue was closed, so whoever had it is asked to look again. Track sends the change as its own
+ * (`actor` is the `system` member `source`), with the status in `updatedFrom` and the issue's
+ * signal open. A source changes an issue's status only to close it, which leaves the signal
+ * cleared or dismissed, or to reopen it, and Track reopens an issue for the same finding at most
+ * three times a day, so a source cannot keep an agent going either.
+ */
+function sourceReopened(
+	data: Record<string, unknown> | null,
+	before: Record<string, unknown>,
+): boolean {
+	const actor = recordOf(data?.actor);
+	const signal = recordOf(recordOf(data?.issue)?.signal);
+	return (
+		actor?.type === "system" &&
+		actor.id === "source" &&
+		Object.hasOwn(before, "status") &&
+		signal?.state === "open"
+	);
 }
 
 /**

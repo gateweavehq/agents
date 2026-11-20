@@ -75,10 +75,10 @@ export function TrackWorkDialog({
 					>
 						{made.agentName} is ready. In Track, open Settings → Webhooks and add a webhook with
 						this URL. Under Events, choose Issue created, Issue changed and Comment added; the
-						trigger skips issues that are not just assigned to {made.memberName}, and comments that
-						are not a person's on one of its issues, which continue its work there. Under For agent,
-						choose {made.memberName}, so that its own changes do not come back to it. Then assign it
-						an issue.
+						trigger skips issues that are not just assigned to {made.memberName} or reopened by a
+						Track source, and comments that are not a person's on one of its issues, which continue
+						its work there. Under For agent, choose {made.memberName}, so that its own changes do
+						not come back to it. Then assign it an issue.
 					</TrackWebhookStep>
 				) : byHand ? (
 					<SetUpStep available={available} onMade={setMade} onClose={onClose} />

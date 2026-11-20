@@ -16,6 +16,11 @@ change to its pull request: it makes the change, pushes it to the same pull requ
 back. Each issue has one conversation in Agents, so it remembers what was said and done, and works
 on the same branch.
 
+A product that reports findings to Track as a source, such as Gateweave Guard, can file issues and
+assign them to the agent, and reopens an issue when its finding comes back after the issue was
+closed. The agent then looks again: it says why the earlier fix did not hold, and works on it as
+before.
+
 You need to be an owner or admin in both products, and the Agents workspace needs:
 
 - **sandboxes**, which Gateweave Cloud offers to the workspaces it invites, and a self-hosted server
@@ -73,9 +78,9 @@ the two products.
 
 1. Open **Settings → Webhooks** and choose **Add webhook**.
 2. Paste the URL. Under **Events**, choose **Issue created**, **Issue changed** and **Comment
-   added**: the trigger skips any issue that was not just assigned to the agent, and any comment
-   that is not a person's on one of its issues. Under **For agent**, choose the agent member from
-   step 1, so that its own changes never come back to it.
+   added**: the trigger skips any issue that was not just assigned to the agent or reopened by a
+   Track source, and any comment that is not a person's on one of its issues. Under **For
+   agent**, choose the agent member from step 1, so that its own changes never come back to it.
 3. Track shows the webhook's secret (`whsec_…`) once. Paste it into the dialog in Agents, and
    choose **Save and finish**.
 
@@ -92,7 +97,7 @@ Everything is ordinary and can be changed afterwards. The names get a number whe
 | Environment set        | `Track`            | Holds the key as the secret `TRACK_AGENT_KEY`, sealed.                                      |
 | MCP server (library)   | `track`            | Track's `/mcp`, with the header `Authorization: Bearer ${TRACK_AGENT_KEY}`.                 |
 | Agent                  | `Coder`            | Pins the three above, with a sandbox on the repository and the engine you chose.            |
-| Trigger                | `Assigned issues`  | One conversation per issue: an assignment, or a person's comment, starts a run; 20 a day.   |
+| Trigger                | `Assigned issues`  | One conversation per issue: an assignment, a comment or a reopen starts a run; 20 a day.    |
 
 ### What it may do
 
@@ -176,9 +181,10 @@ not a substitute for CI.
 ## Costs and limits
 
 Each assigned issue is one run, on your workspace's provider key, with a sandbox for up to an hour,
-and so is each comment it answers. They show under **Runs** with their tokens and cost, and count
-toward the workspace's sandbox time. The trigger starts at most 20 runs a day; change that on the
-agent's page, or pause the trigger there.
+and so is each comment it answers and each reopen; Track reopens an issue for the same finding at
+most three times a day. They show under **Runs** with their tokens and cost, and count toward the
+workspace's sandbox time. The trigger starts at most 20 runs a day; change that on the agent's
+page, or pause the trigger there.
 
 A comment that comes while the agent is still working on the issue waits: Agents asks Track to
 send it again, and Track tries again after 5 seconds, then 5 minutes, then 30 minutes.
