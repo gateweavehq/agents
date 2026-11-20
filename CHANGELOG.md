@@ -11,8 +11,8 @@ notes. Publishing a release deploys it to Gateweave Cloud.
 ## [0.33.0] - 2026-11-20
 
 An MCP client can hand one of your agents a task and read the run's result, and a moved
-workspace's old copies are erased a week after the move. This release has one migration in the
-workspace registry, which adds a column with a default.
+workspace's old copies are erased once a week has passed since the move. This release has one
+migration in the workspace registry, which adds a column with a default.
 
 ### Added
 
@@ -33,9 +33,9 @@ workspace registry, which adds a column with a default.
 
 ### Changed
 
-- **A moved workspace's old copies are erased a week after the move.** When a deployment moves
-  its objects into a jurisdiction, the old copies stay behind, sealed. The daily run now erases
-  them:
+- **A moved workspace's old copies are erased once a week has passed since the move.** When a
+  deployment moves its objects into a jurisdiction, the old copies stay behind, sealed. The daily
+  run now erases them:
   - **What goes:** the registry, the conversations and their sandboxes' saved keys.
   - **Only sealed copies.** Each object checks its own seal first, and a live one refuses.
   - **Over several runs if needed.** A workspace with many conversations finishes across runs.
@@ -60,7 +60,8 @@ workspace registry, which adds a column with a default.
 
 - **Update.** The migration is in each workspace's registry and runs by itself when the workspace
   is next used; there is no step for you.
-- **Old copies.** The daily run erases old copies a week after a move. A deployment that never
+- **Old copies.** From a week after a move, the daily run erases the old copies, at its next
+  run; a copy it could not erase is tried again the day after. A deployment that never
   moved its objects into a jurisdiction has nothing to erase.
 
 ## [0.32.0] - 2026-11-19
