@@ -101,6 +101,21 @@ describe("the tools for files", () => {
 		);
 	});
 
+	it("keep both edits of one file made in one step, whose calls run concurrently", async () => {
+		const files = new MemoryFiles();
+		const { call } = toolbox(files);
+		await call("write_file", { path: "docs/a.md", content: "one\ntwo\nthree\n" });
+		// Without a queue per path the second call reads before the first has written, and its
+		// write takes the first's place.
+		const [first, second] = await Promise.all([
+			call("edit_file", { path: "docs/a.md", old_text: "one", new_text: "1" }),
+			call("edit_file", { path: "docs/a.md", old_text: "three", new_text: "3" }),
+		]);
+		expect(first).toBe("Replaced 1 place in /workspace/docs/a.md.");
+		expect(second).toBe("Replaced 1 place in /workspace/docs/a.md.");
+		expect(files.files.get("/workspace/docs/a.md")).toBe("1\ntwo\n3\n");
+	});
+
 	it("bound numbered reads by UTF-8 bytes including the continuation hint", async () => {
 		const files = new MemoryFiles();
 		const { call } = toolbox(files);

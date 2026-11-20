@@ -219,7 +219,7 @@ export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
 }
 
 /** The tools that read, write, edit, find and search files, traced in `run`. */
-export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
+export function fileTools(files: FilePort, run: RunRecorder, writes = pathWrites()): ToolSet {
 	const words = files.words ?? SANDBOX_FILE_WORDS;
 	const tools: ToolSet = {
 		read_file: tool({
@@ -254,9 +254,11 @@ export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
 			}),
 			execute: async ({ path, content }) => {
 				const file = within(path);
-				const result = await files.writeFile(file, content);
-				if ("error" in result) throw new Error(result.error);
-				return `Wrote ${result.written} bytes to ${file}.`;
+				return writes(file, async () => {
+					const result = await files.writeFile(file, content);
+					if ("error" in result) throw new Error(result.error);
+					return `Wrote ${result.written} bytes to ${file}.`;
+				});
 			},
 		}),
 		edit_file: tool({
@@ -274,26 +276,28 @@ export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
 			execute: async ({ path, old_text, new_text, replace_all = false }) => {
 				const file = within(path);
 				if (old_text === new_text) throw new Error("The new text is the same as the old.");
-				const content = await readText(files, file);
-				const found = content.split(old_text).length - 1;
-				if (found === 0) {
-					throw new Error(
-						`The text to replace is not in ${file}. Read the file again and copy the text exactly, whitespace included.`,
-					);
-				}
-				if (found > 1 && !replace_all) {
-					throw new Error(
-						`The text to replace is in ${file} ${found} times. Give more of the text around it so that it is found once, or set replace_all.`,
-					);
-				}
-				const at = content.indexOf(old_text);
-				const changed = replace_all
-					? content.split(old_text).join(new_text)
-					: `${content.slice(0, at)}${new_text}${content.slice(at + old_text.length)}`;
-				const result = await files.writeFile(file, changed);
-				if ("error" in result) throw new Error(result.error);
-				const replaced = replace_all ? found : 1;
-				return `Replaced ${replaced === 1 ? "1 place" : `${replaced} places`} in ${file}.`;
+				return writes(file, async () => {
+					const content = await readText(files, file);
+					const found = content.split(old_text).length - 1;
+					if (found === 0) {
+						throw new Error(
+							`The text to replace is not in ${file}. Read the file again and copy the text exactly, whitespace included.`,
+						);
+					}
+					if (found > 1 && !replace_all) {
+						throw new Error(
+							`The text to replace is in ${file} ${found} times. Give more of the text around it so that it is found once, or set replace_all.`,
+						);
+					}
+					const at = content.indexOf(old_text);
+					const changed = replace_all
+						? content.split(old_text).join(new_text)
+						: `${content.slice(0, at)}${new_text}${content.slice(at + old_text.length)}`;
+					const result = await files.writeFile(file, changed);
+					if ("error" in result) throw new Error(result.error);
+					const replaced = replace_all ? found : 1;
+					return `Replaced ${replaced === 1 ? "1 place" : `${replaced} places`} in ${file}.`;
+				});
 			},
 		}),
 		find_files: tool({
@@ -342,6 +346,7 @@ export function fileTools(files: FilePort, run: RunRecorder): ToolSet {
  * goes only this way. A sandbox's turn is not offered it; there `run_command` deletes.
  */
 export function deletingFileTools(files: DeletingFilePort, run: RunRecorder): ToolSet {
+	const writes = pathWrites();
 	const tools: ToolSet = {
 		delete_file: tool({
 			description:
@@ -351,13 +356,37 @@ export function deletingFileTools(files: DeletingFilePort, run: RunRecorder): To
 			}),
 			execute: async ({ path }) => {
 				const file = within(path);
-				const result = await files.deleteFile(file);
-				if ("error" in result) throw new Error(result.error);
-				return `Deleted ${file}.`;
+				return writes(file, async () => {
+					const result = await files.deleteFile(file);
+					if ("error" in result) throw new Error(result.error);
+					return `Deleted ${file}.`;
+				});
 			},
 		}),
 	};
-	return { ...fileTools(files, run), ...tracedTools(tools, run) };
+	return { ...fileTools(files, run, writes), ...tracedTools(tools, run) };
+}
+
+/**
+ * Serializes what is written to one path, so two calls of one step cannot interleave a read and
+ * a write of the same file: a model's tool calls run concurrently, and without this the second
+ * `edit_file` reads before the first has written and its write takes the first's place.
+ */
+function pathWrites(): <T>(path: string, work: () => Promise<T>) => Promise<T> {
+	const tails = new Map<string, Promise<void>>();
+	return (path, work) => {
+		const tail = tails.get(path) ?? Promise.resolve();
+		const mine = tail.then(work, work);
+		const settled = mine.then(
+			() => undefined,
+			() => undefined,
+		);
+		tails.set(path, settled);
+		void settled.finally(() => {
+			if (tails.get(path) === settled) tails.delete(path);
+		});
+		return mine;
+	};
 }
 
 /**
