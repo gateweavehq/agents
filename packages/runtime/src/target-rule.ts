@@ -92,18 +92,23 @@ export function startTargetRule(
 }
 
 // Each is bounded, so a body of unclosed brackets costs a fixed amount per character, not a rescan.
-// Every bracketed destination, whatever opened it.
-const destination = /\]\(\s{0,10}<?([^\s)>]{1,4000})/g;
-// The `]` that ends a plain link: text with no bracket, backslash or line break, and no `!` before.
-const plainLinkEnd = /(?<![!\\])\[[^[\]\\\r\n]{0,500}\](?=\()/g;
+// Every bracketed destination, whatever opened it. Markdown allows any whitespace before it,
+// including a line break.
+const destination = /\]\(\s*<?([^\s)>]{1,4000})/g;
+// The `]` that ends a plain link: no `!` or backslash before its `[`, and text without a bracket,
+// backslash, line break, backtick or angle bracket. Code spans, raw HTML and autolinks bind more
+// tightly than a link's brackets, so a `[` inside one may belong to an image's description.
+const plainLinkEnd = /(?<![!\\])\[[^[\]\\\r\n`<>]{0,500}\](?=\()/g;
 const htmlOrReference =
 	/<(?:img|source|video)\b[^>]{0,1000}?\s(?:src|srcset|poster)\s{0,10}=\s{0,10}["']?([^"'>]{1,4000})|^ {0,3}\[[^\]\r\n]{1,500}\]:[ \t]{0,10}<?(\S{1,4000})/gim;
 
 /**
  * The addresses a page may fetch when it shows `text`: Markdown and HTML images, and reference
  * definitions, which an image can use. A link is followed only by a reader who chooses to, but
- * only a plain one is taken for a link: an image's description may nest brackets, escapes and code
- * spans, so any other bracketed destination counts as an image's.
+ * only a plain one is taken for a link: an image's description may nest brackets, escapes, code
+ * spans and raw HTML, so any other bracketed destination counts as an image's. A link whose text
+ * holds code is checked too: telling it from an image that hides a `[` in a code span would take
+ * Markdown's whole parser.
  */
 export function fetchedBy(text: string): string[] {
 	const plain = new Set<number>();

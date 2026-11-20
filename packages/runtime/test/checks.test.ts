@@ -156,7 +156,7 @@ describe("a repository without checks", () => {
 		run.targets.tainted = true;
 		run.targets.mode = "enforce";
 		const body =
-			"See https://elsewhere.example, [the docs](https://elsewhere.example/docs) and [`cart()`](<https://elsewhere.example/api>).";
+			"See https://elsewhere.example, [the docs](https://elsewhere.example/docs) and <https://elsewhere.example/api>.";
 		await call({ title: "Fix the cart", body });
 		expect(proposed[0]?.body).toContain(body);
 	});
@@ -169,6 +169,14 @@ describe("a repository without checks", () => {
 		"![a \\] b](https://collector.attacker.example/leak)",
 		"![a `]` b](https://collector.attacker.example/leak)",
 		"![a [b](https://elsewhere.example) c](https://collector.attacker.example/leak)",
+		// Code spans, raw HTML and autolinks bind before brackets, so each can hide a `[`.
+		"![a `[b`](https://collector.attacker.example/leak)",
+		"![a `[b` c `](https://collector.attacker.example/leak)",
+		'![a <x y="[b">](https://collector.attacker.example/leak)',
+		"![a <https://x.example/[b>](https://collector.attacker.example/leak)",
+		// Markdown allows any whitespace before a destination, a line break included.
+		`![chart](${" ".repeat(40)}https://collector.attacker.example/leak)`,
+		"![chart](\n   https://collector.attacker.example/leak)",
 	])("refuses an image the repository's page would fetch, in enforce mode: %s", async (body) => {
 		const { run, call, proposed } = setup([]);
 		run.targets.tainted = true;
