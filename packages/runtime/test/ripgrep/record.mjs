@@ -105,7 +105,7 @@ function listing(pattern, directory) {
 
 function searching({ pattern, path, glob, ignoreCase }) {
 	return [
-		"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git'",
+		"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**'",
 		ignoreCase ? "--ignore-case" : "",
 		glob ? `--glob ${quote(glob)}` : "",
 		`-e ${quote(pattern)} -- ${quote(path)}`,
@@ -197,15 +197,47 @@ function run(command) {
 	return { command, exitCode: ran.status, output: `${ran.stdout}${ran.stderr}` };
 }
 
+// The `git check-ignore` commands `sandboxFiles` runs after a listing, chunked as it chunks
+// them, so the recording holds the whole exchange the port makes.
+function filterCommands(output) {
+	const repo = `${ROOT}/repo`;
+	const inside = output
+		.split("\n")
+		.filter((line) => line.startsWith(`${repo}/`) && !line.split("/").includes(".git"));
+	const commands = [];
+	for (let start = 0; start < inside.length; ) {
+		const chunk = [];
+		let size = 0;
+		let end = start;
+		while (end < inside.length) {
+			const word = quote(inside[end].slice(repo.length + 1));
+			const added = chunk.length === 0 ? word.length : word.length + 1;
+			if (chunk.length > 0 && size + added > 12_000) break;
+			chunk.push(word);
+			size += added;
+			end += 1;
+		}
+		commands.push(`git -C ${quote(repo)} check-ignore -- ${chunk.join(" ")}`);
+		start = end;
+	}
+	return commands;
+}
+
+function find(pattern, directory) {
+	const ran = run(listing(pattern, directory));
+	return {
+		pattern,
+		directory,
+		...ran,
+		filters: ran.exitCode === 0 ? filterCommands(ran.output).map((command) => run(command)) : [],
+	};
+}
+
 function record(files) {
 	write(files);
 	return {
 		tree: files,
-		finds: finds.map(([pattern, directory]) => ({
-			pattern,
-			directory,
-			...run(listing(pattern, directory)),
-		})),
+		finds: finds.map(([pattern, directory]) => find(pattern, directory)),
 		searches: searches.map((query) => ({ query, ...run(searching(query)) })),
 	};
 }
@@ -217,7 +249,7 @@ const recorded = {
 		write(ignoring);
 		return {
 			tree: ignoring,
-			finds: [{ pattern: "*", directory: ROOT, ...run(listing("*", ROOT)) }],
+			finds: [find("*", ROOT)],
 			searches: [
 				{
 					query: { pattern: "needle", path: ROOT },
@@ -230,11 +262,7 @@ const recorded = {
 		write(naming);
 		return {
 			tree: naming,
-			finds: namingFinds.map((pattern) => ({
-				pattern,
-				directory: ROOT,
-				...run(listing(pattern, ROOT)),
-			})),
+			finds: namingFinds.map((pattern) => find(pattern, ROOT)),
 		};
 	})(),
 };

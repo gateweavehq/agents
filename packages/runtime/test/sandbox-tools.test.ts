@@ -207,8 +207,8 @@ describe("sandbox tools", () => {
 		await expect(call("search", { pattern: "(" })).rejects.toThrow("regex parse error");
 		expect(sandbox.commands.map((command) => command.command)).toEqual([
 			"rg --files --hidden --sort path --glob '!.git' --glob '**/*.ts' -- '/workspace'",
-			`rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --ignore-case --glob '*.md' -e 'it'\\''s' -- '/workspace'`,
-			"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' -e '(' -- '/workspace'",
+			`rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' --ignore-case --glob '*.md' -e 'it'\\''s' -- '/workspace'`,
+			"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e '(' -- '/workspace'",
 		]);
 		for (const command of sandbox.commands) {
 			expect(command.timeoutSeconds).toBe(SANDBOX_LIMITS.searchSeconds);

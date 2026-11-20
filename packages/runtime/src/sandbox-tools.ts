@@ -11,7 +11,7 @@
  * own SQLite. What a port answers is written down at `SearchResult`, and what it says of itself
  * to the model at `FileWords`.
  */
-import { SANDBOX_IDLE_MINUTES } from "@gateweave/agents-model";
+import { SANDBOX_IDLE_MINUTES, SANDBOX_REPOSITORY_PATH } from "@gateweave/agents-model";
 import { type ToolSet, tool } from "ai";
 import { z } from "zod";
 import { traced } from "./tools";
@@ -418,14 +418,17 @@ export function sandboxFiles(sandbox: SandboxPort): DeletingFilePort {
 			if (removed.exitCode === 0) return { deleted: true };
 			return { error: removed.output.trim() || `${path} could not be deleted.` };
 		},
-		findFiles: (pattern, directory) =>
-			ripgrep(
+		findFiles: async (pattern, directory) => {
+			const listed = await ripgrep(
 				`rg --files --hidden --sort path --glob '!.git' --glob ${quote(pattern)} -- ${quote(directory)}`,
-			),
+			);
+			if ("error" in listed || listed.found === null) return listed;
+			return { found: await withoutIgnored(sandbox, listed.found) };
+		},
 		search: ({ pattern, path, glob, ignoreCase }) =>
 			ripgrep(
 				[
-					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git'",
+					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**'",
 					ignoreCase ? "--ignore-case" : "",
 					glob ? `--glob ${quote(glob)}` : "",
 					`-e ${quote(pattern)} -- ${quote(path)}`,
@@ -435,6 +438,53 @@ export function sandboxFiles(sandbox: SandboxPort): DeletingFilePort {
 				true,
 			),
 	};
+}
+
+/** The most of one `git check-ignore` command's quoted paths, so any listing stays short commands. */
+const IGNORED_CHECK_CHARS = 12_000;
+
+/**
+ * The listed paths the tool's words leave out: what lies in `.git`, and what git ignores. A glob
+ * given to ripgrep outranks both the ignore rules and any negated glob, so ripgrep cannot be
+ * asked for either; `.git` is dropped here, and the rest is asked of git, in chunks. What git
+ * cannot say — no repository, a command that fails — leaves those paths as ripgrep gave them,
+ * which is what the rules mean outside a repository anyway.
+ */
+async function withoutIgnored(sandbox: SandboxPort, found: string): Promise<string | null> {
+	const paths = found
+		.split("\n")
+		.filter((line) => line !== "" && !line.split("/").includes(".git"));
+	if (paths.length === 0) return found === "" ? "" : null;
+	const repo = SANDBOX_REPOSITORY_PATH;
+	const inside = paths.filter((path) => path.startsWith(`${repo}/`));
+	if (inside.length === 0) return paths.map((path) => `${path}\n`).join("");
+	const rel = (path: string) => path.slice(repo.length + 1);
+	const ignored = new Set<string>();
+	for (let start = 0; start < inside.length; ) {
+		const chunk: string[] = [];
+		let size = 0;
+		let end = start;
+		while (end < inside.length) {
+			const word = quote(rel(inside[end] ?? ""));
+			const added = chunk.length === 0 ? word.length : word.length + 1;
+			if (chunk.length > 0 && size + added > IGNORED_CHECK_CHARS) break;
+			chunk.push(word);
+			size += added;
+			end += 1;
+		}
+		const checked = await sandbox.run(
+			`git -C ${quote(repo)} check-ignore -- ${chunk.join(" ")}`,
+			SANDBOX_ROOT,
+			SANDBOX_LIMITS.searchSeconds,
+		);
+		if (checked.timedOut || (checked.exitCode !== 0 && checked.exitCode !== 1)) {
+			return paths.map((path) => `${path}\n`).join("");
+		}
+		for (const line of checked.output.split("\n")) if (line !== "") ignored.add(line);
+		start = end;
+	}
+	const kept = paths.filter((path) => !path.startsWith(`${repo}/`) || !ignored.has(rel(path)));
+	return kept.length === 0 ? null : kept.map((path) => `${path}\n`).join("");
 }
 
 /** Each tool as the trace records it, under the sandbox's name, with the reason a call failed. */

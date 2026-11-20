@@ -199,6 +199,11 @@ export class RipgrepSandbox extends MemorySandbox {
 			const why = directory ? "Is a directory" : "No such file or directory";
 			return answer(1, `rm: cannot remove '${path}': ${why}\n`);
 		}
+		if (words[0] === "git") {
+			// `find_files` asks git which listed paths it ignores; the stand-in keeps no
+			// .gitignore, so nothing it holds is ignored.
+			return answer(1, "");
+		}
 		if (words[0] !== "rg") return answer(127, `${words[0]}: command not found\n`);
 		const target = words.at(-1) ?? "";
 		const globs: string[] = [];
@@ -221,7 +226,7 @@ export class RipgrepSandbox extends MemorySandbox {
 					: `${target}: ${why}\n`,
 			);
 		}
-		const wanted = globs.filter((glob) => glob !== "!.git").map((glob) => readGlob(glob));
+		const wanted = globs.filter((glob) => !glob.startsWith("!")).map((glob) => readGlob(glob));
 		const listed = under
 			.filter((file) => {
 				// A file named itself is taken whatever the globs say.

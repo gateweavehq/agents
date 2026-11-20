@@ -229,11 +229,47 @@ describe("a sandbox's files", () => {
 			},
 			{
 				command:
-					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' -e 'a' -- '/workspace/a.txt'",
+					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'a' -- '/workspace/a.txt'",
 				cwd: "/workspace",
 				timeoutSeconds: 60,
 			},
 		]);
+	});
+
+	it("leaves out what git ignores, though the glob matches it, and keeps what lies outside the repository", async () => {
+		const sandbox = new MemorySandbox();
+		const files = sandboxFiles(sandbox);
+		sandbox.answers.push(
+			{
+				exitCode: 0,
+				output: "/workspace/repo/debug.log\n/workspace/repo/src/a.ts\n/workspace/loose.txt\n",
+				timedOut: false,
+			},
+			{ exitCode: 0, output: "debug.log\n", timedOut: false },
+		);
+		expect(await files.findFiles("*", "/workspace")).toEqual({
+			found: "/workspace/repo/src/a.ts\n/workspace/loose.txt\n",
+		});
+		expect(sandbox.commands.map((ran) => ran.command)).toEqual([
+			"rg --files --hidden --sort path --glob '!.git' --glob '*' -- '/workspace'",
+			"git -C '/workspace/repo' check-ignore -- 'debug.log' 'src/a.ts'",
+		]);
+	});
+
+	it("keeps the listing as ripgrep gave it when git cannot say what is ignored", async () => {
+		const sandbox = new MemorySandbox();
+		const files = sandboxFiles(sandbox);
+		sandbox.answers.push(
+			{
+				exitCode: 0,
+				output: "/workspace/repo/debug.log\n/workspace/repo/kept.txt\n",
+				timedOut: false,
+			},
+			{ exitCode: 128, output: "fatal: not a git repository\n", timedOut: false },
+		);
+		expect(await files.findFiles("*", "/workspace")).toEqual({
+			found: "/workspace/repo/debug.log\n/workspace/repo/kept.txt\n",
+		});
 	});
 
 	it("say what ripgrep's exit means: nothing found, a complaint, or out of time", async () => {
