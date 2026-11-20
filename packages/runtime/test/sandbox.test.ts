@@ -605,6 +605,41 @@ describe("a conversation with a sandbox", () => {
 		expect(after.kept).toEqual({});
 	});
 
+	it("is not destroyed while its sandbox refuses the erase, so the registry asks again", async () => {
+		const { stub, machine } = await conversation({ sandbox: true, repository: true });
+		await machine.checkout(SITE, "gateweave/conversation");
+		await machine.push(
+			"gateweave/conversation",
+			"the work",
+			{ name: "Builder", email: "noreply@gateweave.com" },
+			"claude-sonnet-5-5",
+		);
+
+		await machine.failForgetKeys("the container would not stop");
+		// A refusal thrown over RPC is reported as unhandled, so the destroy is called inside the
+		// object and its failure caught there, as the registry's call would surface it.
+		const failure = await runInDurableObject(stub, async (instance) => {
+			try {
+				await instance.destroy();
+				return null;
+			} catch (error) {
+				return error instanceof Error ? error.message : String(error);
+			}
+		});
+		expect(failure).toContain("would not stop");
+
+		// The erase did not happen, so the sandbox and what it keeps are both still there.
+		const kept = await machine.seen();
+		expect(kept.destroyed).toBe(false);
+		expect(kept.kept).not.toEqual({});
+
+		// The registry's queue asks again, and the retry erases what the first try could not.
+		await stub.destroy();
+		const after = await machine.seen();
+		expect(after.destroyed).toBe(true);
+		expect(after.kept).toEqual({});
+	});
+
 	it("keeps its keys from a caller that forgets without its conversation being erased", async () => {
 		const { machine } = await conversation({ sandbox: true });
 		await machine.takeKeys([[REPOSITORY_KEY, SITE]]);

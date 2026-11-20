@@ -1331,14 +1331,12 @@ ${runPageNote(runs, turn.runId)}`
 
 	/** Deletes the conversation, and its sandbox with it, keeping nothing of either. */
 	override async destroy(): Promise<void> {
-		try {
-			const sandbox = this.#sandbox();
-			if (sandbox) {
-				await sandbox.markForForget();
-				await sandbox.forgetKeys();
-			}
-		} catch (error) {
-			console.error("A sandbox was not erased", failureForLogs(error));
+		const sandbox = this.#sandbox();
+		if (sandbox) {
+			// The sandbox's keys go first, and a failure fails the destroy: the registry's queue
+			// asks again while it does, so the conversation is noted done only once they are gone.
+			await sandbox.markForForget();
+			await sandbox.forgetKeys();
 		}
 		await super.destroy();
 	}

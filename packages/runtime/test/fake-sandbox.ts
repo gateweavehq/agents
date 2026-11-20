@@ -300,6 +300,8 @@ export class FakeSandbox
 	#release: (() => void) | null = null;
 	#stops = 0;
 	#exit: EngineExit | null = null;
+	/** The message the next `forgetKeys` fails with, once, as a container that would not stop can. */
+	#forgetFailure: string | null = null;
 
 	run(command: string, cwd: string, timeoutSeconds: number, captureOutput?: boolean) {
 		return this.#memory.run(command, cwd, timeoutSeconds, captureOutput);
@@ -453,7 +455,17 @@ export class FakeSandbox
 		markForgotten(new KeptMap(this.#kept));
 	}
 
+	/** Makes the next `forgetKeys` fail once. */
+	failForgetKeys(message: string): void {
+		this.#forgetFailure = message;
+	}
+
 	forgetKeys(): void {
+		if (this.#forgetFailure !== null) {
+			const failure = this.#forgetFailure;
+			this.#forgetFailure = null;
+			throw new Error(failure);
+		}
 		// As the real sandbox's `forgetKeys`: an unmarked one stops and keeps nothing-to-wipe
 		// refuses before anything of it is touched (AGT-156).
 		assertForgotten(new KeptMap(this.#kept));
