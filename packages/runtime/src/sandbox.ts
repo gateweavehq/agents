@@ -47,6 +47,7 @@ import { changedSince, commitWork, type Git, isCommitId, pushArguments } from ".
 import {
 	assertForgotten,
 	forgetKept,
+	isForgotten,
 	markForgotten,
 	OPENCODE_SESSION_KEY,
 	PUSHED_KEY,
@@ -755,7 +756,10 @@ export class RunnerSandbox
 			await this.#engineEnded(container);
 			throw error;
 		}
-		if (turn.session !== null) this.ctx.storage.kv.put(OPENCODE_SESSION_KEY, turn.session);
+		// A turn settling as its conversation was erased writes nothing back (AGT-156).
+		if (turn.session !== null && !isForgotten(this.ctx.storage.kv)) {
+			this.ctx.storage.kv.put(OPENCODE_SESSION_KEY, turn.session);
+		}
 		this.#openCode = turn;
 		const started = Date.now();
 		let timedOut = false;
@@ -830,7 +834,10 @@ export class RunnerSandbox
 					session !== undefined && (await this.#hasClaudeCodeSession(container, session));
 				if (!resume || session === undefined) {
 					session = crypto.randomUUID();
-					this.ctx.storage.kv.put(SESSION_KEY, session);
+					// A start racing its conversation's erasure writes nothing back (AGT-156).
+					if (!isForgotten(this.ctx.storage.kv)) {
+						this.ctx.storage.kv.put(SESSION_KEY, session);
+					}
 				}
 				return claudeCodeCommand(job, session, resume);
 			}

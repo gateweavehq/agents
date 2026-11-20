@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	forgetKept,
+	isForgotten,
 	KEPT_KEYS,
 	type KeptStorage,
 	markForgotten,
@@ -60,6 +61,19 @@ describe("what a sandbox keeps of its conversation", () => {
 		forgetKept(storage);
 		expect(readKept(storage)).toEqual([]);
 		expect(storage.get("other")).toBe("untouched");
+	});
+
+	it("keeps the mark after the wipe, so a late write still finds the erasure", () => {
+		const storage = memory();
+		expect(isForgotten(storage)).toBe(false);
+		markForgotten(storage);
+		expect(isForgotten(storage)).toBe(true);
+		storage.put(REPOSITORY_KEY, { owner: "acme" });
+		forgetKept(storage);
+		expect(readKept(storage)).toEqual([]);
+		// The name of an erased conversation's sandbox is never reused, so the mark staying is
+		// what keeps a session write that settles late from restoring a kept key.
+		expect(isForgotten(storage)).toBe(true);
 	});
 
 	it("keeps the mark out of what a move carries", () => {

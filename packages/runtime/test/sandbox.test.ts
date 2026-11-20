@@ -599,7 +599,10 @@ describe("a conversation with a sandbox", () => {
 
 		await stub.destroy();
 
-		expect(await machine.seen()).toMatchObject({ destroyed: true, kept: {} });
+		const after = await machine.seen();
+		expect(after.destroyed).toBe(true);
+		// `toEqual`, not a subset match: `{}` inside `toMatchObject` would pass with keys left.
+		expect(after.kept).toEqual({});
 	});
 
 	it("keeps its keys from a caller that forgets without its conversation being erased", async () => {

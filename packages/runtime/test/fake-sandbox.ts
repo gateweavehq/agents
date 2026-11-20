@@ -476,8 +476,10 @@ export class FakeSandbox
 			engine: this.#jobs,
 			stops: this.#stops,
 			destroyed: this.#destroyed,
-			// The RPC types cannot carry `unknown`: the stub's `seen()` would type as `never`.
-			kept: Object.fromEntries(this.#kept) as Record<string, never>,
+			// What the sandbox keeps of its conversation, as `readKept` sees it: the erasure mark
+			// is in the same store but is no kept key. The RPC types cannot carry `unknown`: the
+			// stub's `seen()` would type as `never`.
+			kept: Object.fromEntries(readKept(new KeptMap(this.#kept))) as Record<string, never>,
 			mcpServers: this.#servers,
 		};
 	}

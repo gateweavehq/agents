@@ -6,7 +6,9 @@
  *
  * The sandbox wipes them only through `forgetKept`, which asks for the mark its conversation left
  * when it was erased (`markForgotten`): a caller that reaches the sandbox directly cannot wipe a
- * live conversation's keys by mistake (AGT-156).
+ * live conversation's keys by mistake (AGT-156). The mark stays after the wipe, so a write that
+ * lands late — an engine turn settling as its conversation went — still finds the erasure and
+ * keeps out.
  */
 
 /** The repository the sandbox cloned for its conversation. */
@@ -29,7 +31,8 @@ export const KEPT_KEYS: readonly string[] = [
 /**
  * The sandbox's own mark that its conversation is being erased. Written only through the
  * conversation (`markForForget` in `sandbox.ts`), never carried by a move, and what lets
- * `forgetKept` wipe the kept keys.
+ * `forgetKept` wipe the kept keys. It stays after the wipe: the sandbox is never used again, and
+ * a writer that races the erasure must still see it.
  */
 export const FORGOTTEN_KEY = "sandbox.forgotten";
 
@@ -62,12 +65,17 @@ export function markForgotten(storage: KeptStorage): void {
 	storage.put(FORGOTTEN_KEY, true);
 }
 
+/** Whether the sandbox is marked as being erased, for a writer about to add a kept key. */
+export function isForgotten(storage: KeptStorage): boolean {
+	return storage.get(FORGOTTEN_KEY) !== undefined;
+}
+
 /**
  * Throws unless the conversation was marked as being erased, so a live conversation's sandbox
  * refuses a forget before anything of it is stopped or wiped.
  */
 export function assertForgotten(storage: KeptStorage): void {
-	if (storage.get(FORGOTTEN_KEY) === undefined) {
+	if (!isForgotten(storage)) {
 		throw new Error("Only a conversation being erased can forget its sandbox's kept keys.");
 	}
 }
@@ -79,6 +87,7 @@ export function assertForgotten(storage: KeptStorage): void {
 export function forgetKept(storage: KeptStorage): void {
 	assertForgotten(storage);
 	for (const key of KEPT_KEYS) storage.delete(key);
-	// The mark has done its work: the sandbox is empty, and nothing may forget it again by it.
-	storage.delete(FORGOTTEN_KEY);
+	// The mark stays. The conversation that owned this sandbox is gone and its name is never
+	// reused, so nothing may write its keys again — and a write that arrives late anyway, from a
+	// turn settling as the conversation was erased, sees the mark and stays out.
 }
