@@ -21,10 +21,32 @@ describe("an agent's files setting", () => {
 		const parsed = agentDefinitionInput.parse(agent());
 		expect(parsed.files).toBe(false);
 		expect(parsed.outsideTasks).toBe(false);
-		expect(Object.keys(parsed).at(-1)).toBe("outsideTasks");
+		expect(Object.keys(parsed).slice(-3)).toEqual(["outsideTasks", "allowedTargets", "anyTarget"]);
 		expect(agentDefinitionInput.parse(agent({ files: true })).files).toBe(true);
 		expect(agentDefinitionInput.safeParse(agent({ files: "yes" })).success).toBe(false);
 		expect(agentDefinitionInput.safeParse(agent({ outsideTasks: "yes" })).success).toBe(false);
+	});
+
+	it("validates and normalises an agent's target settings", () => {
+		expect(agentDefinitionInput.parse(agent())).toMatchObject({
+			allowedTargets: [],
+			anyTarget: false,
+		});
+		expect(
+			agentDefinitionInput.parse(
+				agent({ allowedTargets: ["Evil@Exämple.NET.", "@EXAMPLE.NET.", "Reports.EXAMPLE.NET."] }),
+			).allowedTargets,
+		).toEqual(["evil@xn--exmple-cua.net", "@example.net", "reports.example.net"]);
+		for (const entry of ["https://example.net/x", "*.example.net", "@", "a@b@c"]) {
+			expect(agentDefinitionInput.safeParse(agent({ allowedTargets: [entry] })).success).toBe(
+				false,
+			);
+		}
+		expect(
+			agentDefinitionInput.safeParse(agent({ allowedTargets: Array(101).fill("example.net") }))
+				.success,
+		).toBe(false);
+		expect(agentDefinitionInput.safeParse(agent({ anyTarget: "true" })).success).toBe(false);
 	});
 
 	it("is never had with a sandbox", () => {

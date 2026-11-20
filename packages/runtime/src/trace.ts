@@ -83,11 +83,27 @@ export function createTraceTables(sql: Sql): void {
 	sql`CREATE INDEX IF NOT EXISTS trace_spans_run_idx ON trace_spans (run_id, step)`;
 }
 
+interface TurnTargets {
+	tainted: boolean;
+	trusted: Set<string>;
+	buildTrusted?: () => Promise<void>;
+	source?: () => { trusted: string[]; texts: string[] };
+	mode: "log" | "enforce";
+	anyTarget: boolean;
+}
+
 /** Records one run as it happens. Each method writes at once, so a restart loses nothing. */
 export class RunRecorder {
 	readonly #sql: Sql;
 	readonly #agent: AgentSnapshot;
 	readonly runId: string;
+	/** The run keeps its trusted targets in memory. Only the host or domain of a flagged target reaches the trace. */
+	readonly targets: TurnTargets = {
+		tainted: true,
+		trusted: new Set(),
+		mode: "log",
+		anyTarget: false,
+	};
 	/** The model request under way, which the tools it calls belong to. */
 	#step = 0;
 	/** The step the next metered request takes. */
@@ -240,16 +256,39 @@ export class RunRecorder {
 
 	toolEnded(
 		span: string,
-		outcome: { outputBytes: number; error: string | null } | { error: string },
+		outcome: { outputBytes?: number; error: string | null; target?: ToolSpan["target"] },
 		now = Date.now(),
+		taints = true,
 	): void {
-		this.#end(span, outcome.error === null ? "ok" : "error", outcome, now);
+		this.targets.tainted ||= taints;
+		const status =
+			outcome.target && this.targets.mode === "enforce"
+				? "refused"
+				: outcome.error === null
+					? "ok"
+					: "error";
+		this.#end(span, status, outcome, now);
 	}
 
 	/** Starts a call over a team's edge, in the model request under way. Returns the span's id. */
-	edgeStarted(edge: TeamEdgeKind, to: string, now = Date.now()): string {
-		const attributes: EdgeAttributes = { edge, to, childRunId: null, error: null };
+	edgeStarted(
+		edge: TeamEdgeKind,
+		to: string,
+		now = Date.now(),
+		target?: EdgeSpan["target"],
+	): string {
+		const attributes: EdgeAttributes = {
+			edge,
+			to,
+			childRunId: null,
+			error: null,
+			...(target && { target }),
+		};
 		return this.#insert("edge", this.#step, attributes, now);
+	}
+
+	edgeRefused(span: string): void {
+		this.#end(span, "refused", { error: "The target has no trusted source" }, Date.now());
 	}
 
 	/** Ends a call over an edge, with the run it started, and why it failed when it did. */
@@ -258,6 +297,7 @@ export class RunRecorder {
 		outcome: { childRunId: string | null; error: string | null },
 		now = Date.now(),
 	): void {
+		this.targets.tainted = true;
 		this.#end(span, outcome.error === null ? "ok" : "error", outcome, now);
 	}
 
@@ -291,7 +331,12 @@ export class RunRecorder {
 	}
 
 	/** Ends a span, merging `attributes` into what it recorded. */
-	#end(id: string, status: "ok" | "error", attributes: object, now: number): void {
+	#end(
+		id: string,
+		status: Exclude<RunSpan["status"], "running">,
+		attributes: object,
+		now: number,
+	): void {
 		const [span] = this.#sql<{ attributes: string }>`
 			SELECT attributes FROM trace_spans WHERE id = ${id}`;
 		if (!span) return;

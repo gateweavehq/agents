@@ -32,6 +32,8 @@ export interface ConversationTurn {
 	agent: AgentSnapshot;
 	key: string | null;
 	mcpServers: TurnMcpServer[];
+	/** Configured remote hosts, including servers whose credentials are unavailable. */
+	mcpHosts?: string[];
 	edges: TurnEdge[];
 	/** Whether the turn has the agent's sandbox: it has one, and the turn has tools. */
 	sandbox: boolean;
@@ -53,6 +55,9 @@ export interface ConversationTurn {
 	 * turn with `files`. Left out otherwise, and the runtime's own limits hold.
 	 */
 	steps?: number;
+	origin?: "person" | "trigger" | "replay" | "edge";
+	/** The configured template, before a delivery fills its placeholders. */
+	triggerPrompt?: string;
 	runId: string;
 }
 

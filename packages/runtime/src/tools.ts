@@ -17,6 +17,7 @@ import {
 	SIGN_IN_AGAIN,
 } from "./mcp-oauth";
 import { failureForLogs } from "./models";
+import { decisionFor, missingTarget, refusalFor } from "./target-rule";
 import type { RunRecorder } from "./trace";
 
 /** How long a server has to connect and list its tools. */
@@ -52,12 +53,13 @@ export async function connectTools(
 		if (!server) continue;
 		clients.push(server.client);
 		const oauthAssetId = server.oauthAssetId;
-		for (const [name, tool] of Object.entries(server.tools)) {
+		for (const [name, tool] of server.tools) {
 			const toolName = toolNameOf(server.name, name);
 			// Names that only differ in characters a provider refuses: the first one wins.
 			if (!(toolName in tools))
 				tools[toolName] = traced(tool, server.name, name, run, {
 					limitMcpResult: true,
+					closedRead: closedReadMetadata.safeParse(tool.metadata).success,
 					onSignInFailure:
 						oauthAssetId && oauth
 							? async () => await oauth(oauthAssetId).invalidateHealth()
@@ -105,12 +107,13 @@ async function connect(
 		const { client, definitions } = opened;
 		// The allowlist names the server's own tool names; one it does not offer is just absent.
 		const allowed = server.tools && new Set(server.tools);
-		const tools = client.toolsFromDefinitions(
+		const offered = client.toolsFromDefinitions(
 			allowed
 				? { ...definitions, tools: definitions.tools.filter((tool) => allowed.has(tool.name)) }
 				: definitions,
 		);
-		run.serverConnected(span, Object.keys(tools).length);
+		const tools = locallyExecutedTools(offered);
+		run.serverConnected(span, tools.length);
 		return {
 			name: server.name,
 			client,
@@ -421,6 +424,8 @@ const fetchWithoutRedirects: typeof fetch = (input, init) =>
  * recorded; an MCP server's message can carry what a third party answered, so it is not.
  */
 export interface TraceOptions {
+	closedRead?: boolean;
+	confirmationOnly?: boolean;
 	/** Record the message the tool threw, not only that the call failed. */
 	showErrors?: boolean;
 	onSignInFailure?: () => Promise<void>;
@@ -440,8 +445,17 @@ function isSummarized(error: Error): error is SummarizedFailure {
 	return "summary" in error && typeof error.summary === "string";
 }
 
+/** A provider-executed tool cannot pass through the local target check. */
+export function locallyExecutedTools(tools: ToolSet) {
+	return Object.entries(tools).filter(([, tool]) => typeof tool.execute === "function");
+}
+
 /** The longest failure the trace records, the message included. */
 export const FAILURE_LIMIT = 500;
+
+const closedReadMetadata = z.object({
+	annotations: z.object({ readOnlyHint: z.literal(true), openWorldHint: z.literal(false) }),
+});
 
 /** A tool that records each call as a span: its timing and sizes, never its input or output. */
 export function traced(
@@ -452,22 +466,39 @@ export function traced(
 	options: TraceOptions = {},
 ): ToolSet[string] {
 	const { execute } = tool;
-	if (!execute) return tool;
+	if (!execute) throw new Error("Only locally executed tools can be traced");
 	return {
 		...tool,
 		execute: async (input, callOptions) => {
 			const span = run.toolStarted(server, name, byteSize(input));
+			const missing = options.closedRead ? undefined : await missingTarget(run, input);
+			const target = decisionFor(missing);
+			if (missing && run.targets.mode === "enforce") {
+				run.toolEnded(span, { error: "The target has no trusted source", target });
+				throw refusalFor(missing);
+			}
 			try {
 				const output: unknown = await execute(input, callOptions);
 				const outputBytes = byteSize(output);
-				run.toolEnded(span, {
-					outputBytes,
-					error: isToolError(output) ? "The tool answered with an error" : null,
-				});
+				run.toolEnded(
+					span,
+					{
+						outputBytes,
+						...(target && { target }),
+						error: isToolError(output) ? "The tool answered with an error" : null,
+					},
+					undefined,
+					!options.confirmationOnly,
+				);
 				return options.limitMcpResult ? limitedMcpResult(output, outputBytes) : output;
 			} catch (error) {
 				const failure = describeToolFailure(error, options);
-				run.toolEnded(span, { error: failure });
+				run.toolEnded(
+					span,
+					{ error: failure, ...(target && { target }) },
+					undefined,
+					!options.confirmationOnly,
+				);
 				if (error instanceof OAuthSignInNeeded || error instanceof UnauthorizedError)
 					await options
 						.onSignInFailure?.()

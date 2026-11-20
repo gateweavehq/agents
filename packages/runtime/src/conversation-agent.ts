@@ -114,11 +114,13 @@ import {
 } from "./pull-requests";
 import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
 import { SANDBOX_ROOT, sandboxTools } from "./sandbox-tools";
+import { type ParentTargets, startTargetRule } from "./target-rule";
 import { createOutbox, queueExport, sendDue } from "./telemetry-export";
 import { connectTools, type OAuthProviders } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
 interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
+	TARGET_RULE?: string;
 	REGISTRY: DurableObjectNamespace<RegistryDO>;
 	CONVERSATIONS: DurableObjectNamespace<Agent<Cloudflare.Env>>;
 	/** Each conversation's sandbox (`./sandbox.ts`), where the deployment offers them. */
@@ -162,6 +164,7 @@ export const MAX_ANSWER = 50_000;
 export interface NestedTurnRequest {
 	text: string;
 	via: TurnVia;
+	parentTargets?: ParentTargets;
 }
 
 /** How a nested turn went: its run and answer (none for a report), or why it had none. */
@@ -250,7 +253,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	/** The export of run traces under way, so two never send the same run at once. */
 	#exporting: Promise<void> | null = null;
 	/** The turn `nestedTurn` or `triggerTurn` began, which the next `onChatMessage` takes up. */
-	#begun: ConversationTurn | null = null;
+	#begun: (ConversationTurn & Pick<NestedTurnRequest, "parentTargets">) | null = null;
 	/** Stops the nested turn under way, when the turn waiting for it stops. */
 	#stopNested: AbortController | null = null;
 	/** Why the turn under way failed, in the app's words; null while it has not. */
@@ -312,6 +315,10 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 */
 	protected async sessionHolds(session: ChatSession, _workspaceId: string): Promise<boolean> {
 		return session.expiresAt > Date.now();
+	}
+
+	protected async memberEmails(_workspaceId: string): Promise<string[]> {
+		return [];
 	}
 
 	/**
@@ -568,16 +575,17 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 * for over a team's edge. The registry checks the edge and begins the turn; then a delegate or
 	 * an ask waits for the answer, and a report only for the start.
 	 */
-	async nestedTurn({ text, via }: NestedTurnRequest): Promise<NestedTurnOutcome> {
+	async nestedTurn({ text, via, parentTargets }: NestedTurnRequest): Promise<NestedTurnOutcome> {
 		const { conversationId, registry } = this.#parties();
 		const turn = await registry.beginTurn(conversationId, text, via);
 		if ("status" in turn) return { runId: null, error: turn.message };
-		this.#begun = turn;
+		this.#begun = { ...turn, parentTargets };
 		const stop = new AbortController();
 		this.#stopNested = stop;
 		const message: UIMessage = {
 			id: crypto.randomUUID(),
 			role: "user",
+			metadata: { source: "edge" },
 			parts: [{ type: "text", text }],
 		};
 		const done = this.saveMessages((messages) => [...messages, message], { signal: stop.signal });
@@ -773,6 +781,19 @@ ${runPageNote(runs, turn.runId)}`
 		const sandbox = turn.sandbox ? this.#sandbox() : null;
 		const branch = conversationBranch(conversationId);
 		const run = new RunRecorder(this.#sql, runId, agent);
+		const members = () =>
+			this.memberEmails(workspaceId).catch((error: unknown) => {
+				console.error("Could not read workspace member destinations", failureForLogs(error));
+				return [];
+			});
+		startTargetRule(
+			run.targets,
+			turn,
+			this.messages,
+			members,
+			(this.env as unknown as RuntimeEnv).TARGET_RULE,
+			begun?.parentTargets,
+		);
 		if (agent.engine !== "gateweave") {
 			return this.#engineTurn(agent.engine, turn, run, options?.abortSignal);
 		}
@@ -874,8 +895,8 @@ ${runPageNote(runs, turn.runId)}`
 									run,
 								)
 							: {}),
-						...edgeTools(edges, (edge, text, { toolCallId }, signal) =>
-							this.#takeEdge(run, edge, text, signal, (runId) =>
+						...edgeTools(run, edges, (edge, text, { toolCallId, span }, signal) =>
+							this.#takeEdge(run, span, edge, text, signal, (runId) =>
 								writer.write({ type: EDGE_PART, data: { toolCallId, runId } }),
 							),
 						),
@@ -1073,8 +1094,8 @@ ${runPageNote(runs, turn.runId)}`
 						: {}),
 					// An engine's chat knows the call by the engine's own id, not by the id the MCP path hands
 					// the tool, so the part names the tool and its text for it to match.
-					...edgeTools(edges, (edge, text, { toolName }, edgeSignal) =>
-						this.#takeEdge(run, edge, text, edgeSignal, (runId) =>
+					...edgeTools(run, edges, (edge, text, { toolName, span }, edgeSignal) =>
+						this.#takeEdge(run, span, edge, text, edgeSignal, (runId) =>
 							writer.write({ type: EDGE_PART, data: { toolName, text, runId } }),
 						),
 					),
@@ -1175,6 +1196,7 @@ ${runPageNote(runs, turn.runId)}`
 	 */
 	async #takeEdge(
 		run: RunRecorder,
+		span: string,
 		edge: TurnEdge,
 		text: string,
 		signal?: AbortSignal,
@@ -1182,7 +1204,6 @@ ${runPageNote(runs, turn.runId)}`
 	): Promise<string> {
 		const env = this.env as unknown as RuntimeEnv;
 		const { workspaceId } = this.#parties();
-		const span = run.edgeStarted(edge.kind, edge.name);
 		let nested: NestedConversation | undefined;
 		let outcome: NestedTurnOutcome;
 		// The nested turn stops with the turn that waits for it.
@@ -1197,6 +1218,10 @@ ${runPageNote(runs, turn.runId)}`
 			const { kind, team, to } = edge;
 			outcome = await nested.nestedTurn({
 				text,
+				parentTargets: {
+					tainted: run.targets.tainted,
+					...(run.targets.source?.() ?? { trusted: [...run.targets.trusted] }),
+				},
 				via: { parentRunId: run.runId, parentSpanId: span, kind, team, to },
 			});
 		} catch (error) {

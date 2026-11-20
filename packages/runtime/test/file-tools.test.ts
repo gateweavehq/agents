@@ -14,7 +14,11 @@ import {
 import type { RunRecorder } from "../src/trace";
 import { MemorySandbox } from "./fake-sandbox";
 
-const RUN = { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder;
+const RUN = {
+	targets: { tainted: false },
+	toolStarted: () => "span",
+	toolEnded: () => {},
+} as unknown as RunRecorder;
 
 /** Files in memory with no machine behind them: nothing here can run a command. */
 class MemoryFiles implements FilePort {

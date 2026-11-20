@@ -24,12 +24,14 @@ const SEARCH = {
 };
 
 /** A conversation whose one run searched, then answered: two model requests. */
-async function searchedOnce() {
+async function searchedOnce(checkReplay = false) {
 	const acme = new FakeMcpServer([SEARCH], () => ({ content: [{ type: "text", text: FOUND }] }));
 	const requests = fakeModel(
 		(call) => {
 			if (call === 0) return anthropicToolCall("acme__search", { query: "flaky" });
 			if (call === 1) return anthropicStream("Three issues match.");
+			if (checkReplay && call === 2)
+				return anthropicToolCall("acme__search", { query: "outside@example.net" });
 			return anthropicStream("Replayed.");
 		},
 		{ "mcp.acme.dev": acme.handle },
@@ -131,6 +133,18 @@ describe("replaying a run", () => {
 		const sent = JSON.stringify(requests[2]?.body.messages);
 		expect(sent).toContain(ASKED);
 		expect(sent).not.toContain(FOUND);
+	});
+
+	it("checks the replay's first tool even when replaying from before the original tool result", async () => {
+		const { workspaceId, stub, run } = await searchedOnce(true);
+		const { stub: replayed, replayId } = await replay(workspaceId, stub, run.id, 0);
+		expect(await replayed.runTrace(replayId)).toContainEqual(
+			expect.objectContaining({
+				kind: "tool",
+				status: "ok",
+				target: { decision: "would_refuse", kind: "email", host: "example.net" },
+			}),
+		);
 	});
 
 	it("has nothing to replay for a run of another conversation", async () => {

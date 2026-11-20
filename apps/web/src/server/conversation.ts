@@ -24,6 +24,15 @@ import { scriptedModel } from "./demo/scripted-model";
  * On the public demo, agents answer with the scripted model, and no request leaves for a provider.
  */
 export class ConversationAgent extends RuntimeConversationAgent {
+	protected override async memberEmails(workspaceId: string): Promise<string[]> {
+		const members = await db
+			.select({ email: schema.user.email })
+			.from(schema.member)
+			.innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
+			.where(eq(schema.member.organizationId, workspaceId));
+		return members.map((member) => member.email);
+	}
+
 	protected override async sessionHolds(
 		session: ChatSession,
 		workspaceId: string,

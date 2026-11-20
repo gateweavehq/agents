@@ -1625,6 +1625,48 @@ after a reconnect.
   call as its server and tool, running, done or failed; what went in and came back is in the
   messages, for the model, and not shown.
 
+### Where a tool call can send data
+
+Each turn keeps a private set of destinations mentioned by the person in the conversation, the
+agent's instructions, its configured MCP server hosts and allowed targets, and the workspace
+members' email addresses. A trigger also trusts the prompt in its definition, before any event
+values are substituted. Tool results, memory notes, the event body and model output supply no
+destinations. Nested turns inherit their caller's destinations and exposure to outside content.
+Even under an untainted parent, a nested turn never trusts its delegated message. This is
+deliberately stricter than first planned. The model wrote that message, and destinations from the
+person are already among the inherited sources.
+
+After a turn sees outside content in a tool result, Gateweave checks the destinations in each
+tool call, including memory writes and team edges. Trigger runs, replays and runs of unknown origin start with the
+check active. An MCP server can exempt a tool by explicitly marking it read-only and closed-world.
+Memory saves return Gateweave's confirmation and leave the turn's taint unchanged. A recall taints
+the turn. Claude Code, Codex and OpenCode use this check for Gateweave tools. Their own shell
+and fetch tools are governed by the sandbox outbound rule (`decideOutbound`), and their results
+still taint the run.
+
+The first release logs calls that would be refused so operators can measure the effect before
+enabling enforcement. Each flagged span records `target.decision = "would_refuse"` with the target
+kind and host or email domain. Its status records the execution outcome. Enforcement returns a
+tool error with the missing destination before execution.
+
+The rule checks where data goes. Data sent back to a trusted target can still disclose information.
+The check extracts destination-named fields, URLs with a scheme, email addresses and dotted IPs.
+A destination field holding a street address or another non-network value yields no target.
+In a tainted run, the rule checks `remember` and `recall` like any other call, so it flags a
+memory note naming an untrusted address.
+In free-text tool arguments, such as shell commands, a dotted name without a scheme counts when
+it is followed by a path or a port and its final label is 2 to 24 letters. The check skips the
+file extensions `js ts tsx jsx mjs cjs json md txt yaml yml toml lock html css scss py go rs rb
+java kt sh ps1 xml csv log png jpg jpeg gif svg webp pdf zip gz tar c h cc cpp hpp cs php sql vue
+svelte mdx ini conf cfg env map wasm jsonl tsv ipynb swift m mm scala dart lua r pl ex exs erl
+hs clj tf hcl proto gradle bat cmd`, regardless of case.
+A bare dotted name without a path or port is ignored to avoid treating filenames as destinations.
+After `//` or a scheme with one slash, a single numeric IPv4 part must be at least 2^24,
+and a dotted numeric host must have a nonzero first part. A full `scheme://` accepts either.
+Outside text pasted into chat by a person becomes trusted. Destinations other than addresses or
+URL hosts can escape the check, as can base64, percent-encoding embedded in text, and a destination
+split across fields. JSON strings inside arguments are inspected as JSON.
+
 ## Runs
 
 Every turn that reaches the model is a run. The registry keeps a summary of each, and the

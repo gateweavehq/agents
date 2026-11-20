@@ -11,6 +11,7 @@ export * from "./paths";
 export * from "./prices";
 export * from "./run-part";
 export * from "./sandbox";
+export * from "./targets";
 export * from "./track-connect";
 export * from "./track-triage";
 export * from "./track-work";

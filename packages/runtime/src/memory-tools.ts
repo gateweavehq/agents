@@ -101,7 +101,10 @@ export function memoryTools(memory: MemoryPort, run: RunRecorder): ToolSet {
 	});
 	// The registry's refusals are written for the model, so the trace keeps them too.
 	const traceOf = (name: string, made: ToolSet[string]) =>
-		traced(made, MEMORY_SERVER, name, run, { showErrors: true });
+		traced(made, MEMORY_SERVER, name, run, {
+			showErrors: true,
+			confirmationOnly: name !== MEMORY_TOOLS.recall,
+		});
 	return {
 		[MEMORY_TOOLS.remember]: traceOf(MEMORY_TOOLS.remember, remember),
 		[MEMORY_TOOLS.recall]: traceOf(MEMORY_TOOLS.recall, recall),

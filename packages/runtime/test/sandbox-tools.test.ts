@@ -18,7 +18,11 @@ import { MemorySandbox } from "./fake-sandbox";
 /** The sandbox's tools over files in memory, each called as the model would call it. */
 function toolbox() {
 	const sandbox = new MemorySandbox();
-	const run = { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder;
+	const run = {
+		targets: { tainted: false },
+		toolStarted: () => "span",
+		toolEnded: () => {},
+	} as unknown as RunRecorder;
 	const tools = sandboxTools(sandbox, run);
 	const call = (name: string, input: object) => {
 		const execute = tools[name]?.execute as
@@ -626,7 +630,11 @@ describe("pull requests from the sandbox", () => {
 				};
 			},
 		};
-		const run = { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder;
+		const run = {
+			targets: { tainted: false },
+			toolStarted: () => "span",
+			toolEnded: () => {},
+		} as unknown as RunRecorder;
 		const tools = pullRequestTools({
 			sandbox,
 			ready: options.ready ?? (async () => null),

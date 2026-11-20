@@ -380,6 +380,8 @@ export interface AgentDefinition {
 	 * `get_run` on /mcp, which spend the workspace's budget. Off unless someone turns it on.
 	 */
 	outsideTasks: boolean;
+	allowedTargets: string[];
+	anyTarget: boolean;
 }
 
 /**
@@ -448,6 +450,8 @@ export interface AgentSnapshot {
 	 * so the snapshot of an agent without the setting is what it was before the setting existed.
 	 */
 	files?: true;
+	allowedTargets?: string[];
+	anyTarget?: boolean;
 	/** When the definition last changed. */
 	updatedAt: number;
 }
@@ -710,7 +714,12 @@ export interface ModelSpan extends SpanBase {
 }
 
 /** A call to a tool of an MCP server. Its input and output are content: only their sizes stay. */
-export interface ToolSpan extends SpanBase {
+interface DestinationSpan extends Omit<SpanBase, "status"> {
+	status: SpanBase["status"] | "would_refuse" | "refused";
+	target?: { kind: "email" | "url" | "ip"; host: string; decision?: "would_refuse" };
+}
+
+export interface ToolSpan extends DestinationSpan {
 	kind: "tool";
 	/** The server's name in the library. */
 	server: string;
@@ -730,7 +739,7 @@ export interface ConnectSpan extends SpanBase {
 }
 
 /** A call over one of a team's edges, which runs a turn of another agent. Its words are not kept. */
-export interface EdgeSpan extends SpanBase {
+export interface EdgeSpan extends DestinationSpan {
 	kind: "edge";
 	edge: TeamEdgeKind;
 	/** The member it went to: an agent, or a team. */

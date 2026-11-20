@@ -216,6 +216,7 @@ describe("MCP servers", () => {
 		const bare = await stub.createAgent({ ...reviewer(servers), name: "Bare" });
 		const started = await stub.startConversation(bare.id, "user-ada");
 		expect(await stub.beginTurn(started?.id ?? "", "Hello")).toMatchObject({
+			mcpHosts: ["mcp.acme.dev", "docs.acme.dev"],
 			mcpServers: [
 				{
 					name: "acme",

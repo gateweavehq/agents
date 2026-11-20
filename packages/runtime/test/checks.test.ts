@@ -67,6 +67,7 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 	const spans: Span[] = [];
 	let open: number | null = null;
 	const run = {
+		targets: { tainted: false },
 		toolStarted: (server: string, tool: string, inputBytes: number) => {
 			spans.push({ server, tool, inputBytes, ended: null });
 			return String(spans.length - 1);
@@ -209,7 +210,11 @@ describe("a repository without checks", () => {
 			model: "model-1",
 			author: async () => AUTHOR,
 			record: async () => {},
-			run: { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder,
+			run: {
+				targets: { tainted: false },
+				toolStarted: () => "span",
+				toolEnded: () => {},
+			} as unknown as RunRecorder,
 		});
 		const execute = tools.open_pull_request?.execute as (
 			input: object,
@@ -239,6 +244,7 @@ describe("a repository's checks", () => {
 				},
 				"1".repeat(40),
 				{
+					targets: { tainted: false },
 					toolStarted: () => "span",
 					toolEnded: (_span: string, result: { error: string | null }) => {
 						ended.push(result);

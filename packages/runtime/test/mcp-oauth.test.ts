@@ -25,6 +25,7 @@ afterEach(() => {
 it("invalidates cached health when a connected tool later needs sign-in", async () => {
 	let invalidated = false;
 	const run = {
+		targets: { tainted: false },
 		toolStarted: () => "span",
 		toolEnded: () => {},
 	} as unknown as RunRecorder;
@@ -49,7 +50,11 @@ it("invalidates cached health when a connected tool later needs sign-in", async 
 });
 
 it("keeps the tool error when health invalidation fails", async () => {
-	const run = { toolStarted: () => "span", toolEnded: () => {} } as unknown as RunRecorder;
+	const run = {
+		targets: { tainted: false },
+		toolStarted: () => "span",
+		toolEnded: () => {},
+	} as unknown as RunRecorder;
 	const error = new OAuthSignInNeeded();
 	const tool = traced(
 		{
@@ -514,6 +519,7 @@ it("refreshes a tool after the connection deadline has passed", async () => {
 		serverConnecting: () => "span",
 		serverConnected: () => {},
 		serverFailed: () => {},
+		targets: { tainted: false },
 		toolStarted: () => "tool",
 		toolEnded: () => {},
 	} as unknown as RunRecorder;

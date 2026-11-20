@@ -166,6 +166,22 @@ describe("agents run by Gateweave", () => {
 		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(false);
 	});
 
+	it("keeps the target settings for the agent and its turns", async () => {
+		const stub = registry();
+		const agent = await stub.createAgent(reviewer(null));
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject({
+			allowedTargets: [],
+			anyTarget: false,
+		});
+		await stub.updateAgent(
+			agent.id,
+			reviewer(null, { allowedTargets: ["@EXAMPLE.NET"], anyTarget: true }),
+		);
+		const settings = { allowedTargets: ["@example.net"], anyTarget: true };
+		expect((await stub.getAgent(agent.id))?.definition).toMatchObject(settings);
+		expect(await stub.agentSnapshot(agent.id)).toMatchObject(settings);
+	});
+
 	it("take instructions only from a prompt or instructions in the library", async () => {
 		const stub = registry();
 		const skill = await stub.createLibraryAsset({

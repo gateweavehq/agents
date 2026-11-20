@@ -7,6 +7,8 @@
 import { EDGE_TOOL_NAME_LENGTH, edgeToolName, type TurnEdge } from "@gateweave/agents-model";
 import { type ToolSet, tool } from "ai";
 import { z } from "zod";
+import { decisionFor, missingTarget, refusalFor } from "./target-rule";
+import type { RunRecorder } from "./trace";
 
 /** The longest text one edge carries, as the registry takes a message. */
 const MAX_TEXT = 100_000;
@@ -21,20 +23,37 @@ const MAX_TEXT = 100_000;
 export type TakeEdge = (
 	edge: TurnEdge,
 	text: string,
-	call: { toolCallId: string; toolName: string },
+	call: { toolCallId: string; toolName: string; span: string },
 	signal?: AbortSignal,
 ) => Promise<string>;
 
-export function edgeTools(edges: TurnEdge[], take: TakeEdge): ToolSet {
+export function edgeTools(run: RunRecorder, edges: TurnEdge[], take: TakeEdge): ToolSet {
 	const tools: ToolSet = {};
 	for (const edge of edges) {
 		const name = nameOf(tools, edgeToolName(edge.kind, edge.name));
-		tools[name] = edgeTool(edge, name, take);
+		tools[name] = edgeTool(edge, name, async (edge, text, call, signal) => {
+			const missing = await missingTarget(run, text);
+			const span = run.edgeStarted(edge.kind, edge.name, undefined, decisionFor(missing));
+			if (missing && run.targets.mode === "enforce") {
+				run.edgeRefused(span);
+				throw refusalFor(missing);
+			}
+			return take(edge, text, { ...call, span }, signal);
+		});
 	}
 	return tools;
 }
 
-function edgeTool(edge: TurnEdge, toolName: string, take: TakeEdge): ToolSet[string] {
+function edgeTool(
+	edge: TurnEdge,
+	toolName: string,
+	take: (
+		edge: TurnEdge,
+		text: string,
+		call: { toolName: string; toolCallId: string },
+		signal?: AbortSignal,
+	) => Promise<string>,
+): ToolSet[string] {
 	const { name } = edge;
 	const who = edge.lead === null ? name : `${name}, a team that ${edge.lead} answers for`;
 	const about = edge.description ? ` About ${name}: ${edge.description}` : "";

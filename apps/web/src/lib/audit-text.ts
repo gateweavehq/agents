@@ -29,6 +29,8 @@ const FIELD_NAMES: Record<string, string> = {
 	memory: "memory",
 	files: "work on files without a sandbox",
 	outsideTasks: "tasks from MCP clients",
+	allowedTargets: "allowed targets",
+	anyTarget: "permission to use any target",
 	runtimes: "coding agents",
 	assets: "assets",
 	prompt: "prompt",
@@ -178,7 +180,18 @@ export function auditSentence(event: AuditEvent, people: People): string {
 				const from = typeof detail.from === "number" ? `from v${detail.from} ` : "";
 				return `moved the agent ${label} ${from}to v${detail.version} of ${asset}`;
 			}
-			return `changed the agent ${label}'s ${fieldsOf(detail.fields)}`;
+			const changes = [`changed the agent ${label}'s ${fieldsOf(detail.fields)}`];
+			if (typeof detail.allowedTargetCount === "number")
+				changes.push(`${detail.allowedTargetCount} allowed`);
+			for (const [verb, entries] of [
+				["added", detail.addedTargets],
+				["removed", detail.removedTargets],
+			] as const) {
+				if (Array.isArray(entries) && entries.length) changes.push(`${verb} ${entries.join(", ")}`);
+			}
+			if (typeof detail.previousAnyTarget === "boolean")
+				changes.push(`any target from ${detail.previousAnyTarget} to ${detail.anyTarget}`);
+			return changes.join(". ");
 		}
 		case "agent.removed":
 			return `removed the agent ${label}`;

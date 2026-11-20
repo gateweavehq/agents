@@ -115,6 +115,10 @@ export function AgentDialog({
 	const [engine, setEngine] = useState<AgentEngine>(agent?.definition.engine ?? "gateweave");
 	const [memory, setMemory] = useState(agent?.definition.memory ?? false);
 	const [outsideTasks, setOutsideTasks] = useState(agent?.definition.outsideTasks ?? false);
+	const [allowedTargets, setAllowedTargets] = useState(
+		agent?.definition.allowedTargets.join("\n") ?? "",
+	);
+	const [anyTarget, setAnyTarget] = useState(agent?.definition.anyTarget ?? false);
 	const chosenRepository = agent?.definition.repository ?? null;
 	const [repositoryId, setRepositoryId] = useState(chosenRepository?.id ?? "");
 	// The repositories the workspace's GitHub App reaches, which a sandbox can check out.
@@ -219,6 +223,11 @@ export function AgentDialog({
 				engine,
 				memory,
 				outsideTasks,
+				allowedTargets: allowedTargets
+					.split("\n")
+					.map((value) => value.trim())
+					.filter(Boolean),
+				anyTarget,
 				// The repository is checked out in the sandbox, so it goes with it.
 				repositoryId: repositoryId !== "" ? repositoryId : null,
 			});
@@ -489,6 +498,32 @@ export function AgentDialog({
 								An app connected over MCP with the agents:run scope can give this agent tasks and
 								read its runs, only for people who allow it. Each task runs like a trigger's and
 								spends the workspace's budget.
+							</span>
+						</span>
+					</Label>
+					<div className="space-y-2">
+						<Label htmlFor="agent-allowed-targets">Allowed targets</Label>
+						<Textarea
+							id="agent-allowed-targets"
+							value={allowedTargets}
+							onChange={(event) => setAllowedTargets(event.target.value)}
+							aria-describedby="agent-target-hint"
+						/>
+						<p id="agent-target-hint" className="text-xs text-muted-foreground">
+							Enter one email address, @domain or host per line, up to 100. A domain allows
+							addresses at that exact domain.
+						</p>
+					</div>
+					<Label className="flex cursor-pointer items-start gap-3 font-normal">
+						<Checkbox
+							className="mt-0.5"
+							checked={anyTarget}
+							onCheckedChange={(checked) => setAnyTarget(checked === true)}
+						/>
+						<span className="space-y-1">
+							<span className="block text-sm font-medium">Allow any target</span>
+							<span className="block text-xs text-muted-foreground">
+								Skip the target rule for this agent, including after it reads outside content.
 							</span>
 						</span>
 					</Label>

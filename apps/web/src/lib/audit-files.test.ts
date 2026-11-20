@@ -15,6 +15,8 @@ const definition = (fields: Partial<AgentDefinition> = {}): AgentDefinition => (
 	memory: false,
 	files: false,
 	outsideTasks: false,
+	allowedTargets: [],
+	anyTarget: false,
 	...fields,
 });
 

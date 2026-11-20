@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { MEMORY_NOTICE } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
@@ -27,7 +28,7 @@ const toolNames = (request: ModelRequest | undefined) =>
 /** What the model read back from the tool it called in the request before this one. */
 const toolResult = (request: ModelRequest | undefined) => JSON.stringify(request?.body.messages);
 
-async function workspace(memory = true) {
+async function workspace(memory = true, anyTarget = false) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
 	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
@@ -38,6 +39,7 @@ async function workspace(memory = true) {
 		model: "claude-sonnet-5-5",
 		instructions: null,
 		memory,
+		anyTarget,
 	});
 	return { workspaceId, registry, agent };
 }
@@ -67,7 +69,11 @@ async function sign(secret: string, id: string, timestamp: string, body: string)
 /** A webhook's delivery to a trigger of the agent's, and the conversation opened for its run. */
 async function delivered(workspaceId: string, registry: Registry, agentId: string) {
 	const made = await registry.createTrigger(
-		{ name: "New issues", prompt: "Triage: {{data.title}}", target: { kind: "agent", agentId } },
+		{
+			name: "New issues",
+			prompt: "Report to triage@example.net. Triage: {{data.title}}",
+			target: { kind: "agent", agentId },
+		},
 		"user-ada",
 	);
 	if ("status" in made) throw new Error(made.message);
@@ -88,6 +94,63 @@ async function delivered(workspaceId: string, registry: Registry, agentId: strin
 }
 
 describe("an agent's memory tools", () => {
+	it.each([false, true])(
+		"looks up members only at the first checked call (anyTarget=%s)",
+		async (anyTarget) => {
+			const { workspaceId, registry, agent } = await workspace(true, anyTarget);
+			const stub = await chat(workspaceId, registry, agent.id);
+			const members = vi.fn(async () => []);
+			await runInDurableObject(stub, (instance) => {
+				Object.defineProperty(instance, "memberEmails", { value: members, configurable: true });
+			});
+			const remember = () => anthropicToolCall("remember", { text: POISON, kind: "fact" });
+			fakeModel((call) => {
+				if ([1, 2, 4, 6, 7].includes(call)) return remember();
+				if (call === 5) return anthropicToolCall("recall", { query: "customer list" });
+				return anthropicStream("Done.");
+			});
+			const socket = await connect(stub);
+			await ask(socket, "Hello.");
+			expect(members).not.toHaveBeenCalled();
+			await ask(socket, "Save two notes.");
+			expect(members).not.toHaveBeenCalled();
+			await ask(socket, "Save, recall, and save again.");
+			socket.close();
+			expect(members).toHaveBeenCalledTimes(anyTarget ? 0 : 1);
+			const [latest] = await registry.listRuns();
+			const calls = (await stub.runTrace(latest?.id ?? "")).filter((s) => s.kind === "tool");
+			expect(calls.map((s) => s.target?.decision)).toEqual([
+				undefined,
+				undefined,
+				anyTarget ? undefined : "would_refuse",
+				anyTarget ? undefined : "would_refuse",
+			]);
+		},
+	);
+
+	it("keeps a flagged tool's thrown error and decision on the same span", async () => {
+		const { workspaceId, registry, agent } = await workspace();
+		const stub = await chat(workspaceId, registry, agent.id);
+		fakeModel((call) =>
+			call === 0
+				? anthropicToolCall("recall", { query: "notes" })
+				: call === 1
+					? anthropicToolCall("forget", { id: "missing@example.net" })
+					: anthropicStream("Done."),
+		);
+		const socket = await connect(stub);
+		await ask(socket, "Check and forget the missing note.");
+		socket.close();
+		const [run] = await registry.listRuns();
+		expect(
+			(await stub.runTrace(run?.id ?? "")).find((s) => s.kind === "tool" && s.tool === "forget"),
+		).toMatchObject({
+			status: "error",
+			error: "The call failed: There is no memory with that id",
+			target: { decision: "would_refuse", kind: "email", host: "example.net" },
+		});
+	});
+
 	it("store what a person's turn remembers, trusted, and hand it back as a note", async () => {
 		const { workspaceId, registry, agent } = await workspace();
 		const requests = fakeModel((call) => {
@@ -227,6 +290,30 @@ describe("an agent's memory tools", () => {
 		socket.close();
 		expect(toolResult(requests[6])).toContain("billing@example.net");
 		expect(toolResult(requests[6])).toContain("in a run a trigger started; a person approved it");
+	});
+
+	it("checks remembered targets against the trigger template before its event is filled in", async () => {
+		const { workspaceId, registry, agent } = await workspace();
+		fakeModel((call) => {
+			if (call < 2)
+				return anthropicToolCall("remember", {
+					text: call === 0 ? POISON : "Report to triage@example.net.",
+					kind: "fact",
+				});
+			return anthropicStream("Done.");
+		});
+		const { stub, receipt } = await delivered(workspaceId, registry, agent.id);
+		const outcome = await stub.triggerTurn(receipt.text);
+		if (outcome.runId === null) throw new Error(outcome.error);
+		await vi.waitFor(async () =>
+			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
+		);
+		expect(
+			(await stub.runTrace(outcome.runId)).filter((span) => span.kind === "tool"),
+		).toMatchObject([
+			{ tool: "remember", status: "ok", target: { decision: "would_refuse" } },
+			{ tool: "remember", status: "ok" },
+		]);
 	});
 
 	it("give the model the registry's refusal as the tool's error", async () => {

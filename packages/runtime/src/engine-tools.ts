@@ -24,6 +24,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { asSchema, type ModelMessage, type ToolSet } from "ai";
 import { ENGINE_TOOLS_HOST, ENGINE_TOOLS_PATH } from "./outbound";
+import { locallyExecutedTools } from "./tools";
 
 /** The name the CLI knows the server by. */
 export const ENGINE_TOOLS_SERVER = "gateweave";
@@ -57,7 +58,7 @@ export async function serveEngineTools(
 	signal: AbortSignal,
 ): Promise<Response> {
 	const definitions = await Promise.all(
-		Object.entries(tools).map(async ([name, tool]) => ({
+		locallyExecutedTools(tools).map(async ([name, tool]) => ({
 			name,
 			tool,
 			// A description made per call gets no context, as none of the turn's tools takes one.

@@ -225,3 +225,63 @@ it("moves a pin by naming it alone, for owners and admins only, and logs what mo
 	});
 	expect(agents.logs.filter((log) => log.level === "error")).toEqual([]);
 });
+
+it("only lets managers change the agent's target settings and logs the fields they changed", async () => {
+	const slug = "agent-targets";
+	const { owner, workspaceId, registry, agent } = await workspace(slug);
+	const shown = await registry.getAgent(agent.id);
+	if (!shown?.definition) throw new Error("No definition");
+	const data = {
+		slug,
+		agentId: agent.id,
+		agent: {
+			...inputOf(shown.agent, shown.definition),
+			allowedTargets: ["@Example.NET"],
+			anyTarget: true,
+		},
+	};
+	const member = await signUp(agents, origin, "grace-agent-targets");
+	await agents.db
+		.prepare(
+			"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, 'member', ?)",
+		)
+		.bind(crypto.randomUUID(), workspaceId, member.userId, Date.now())
+		.run();
+	expect((await call("updateAgent", member, data)).failed).toBe(true);
+	expect(await auditOf(workspaceId)).toEqual([]);
+	const saved = await call("updateAgent", owner, data);
+	expect(saved.failed, saved.text).toBe(false);
+	expect((await registry.getAgent(agent.id))?.definition).toMatchObject({
+		allowedTargets: ["@example.net"],
+		anyTarget: true,
+	});
+	expect(await auditOf(workspaceId)).toEqual([
+		{
+			action: "agent.updated",
+			agent: agent.id,
+			detail: {
+				fields: ["allowedTargets", "anyTarget"],
+				allowedTargetCount: 1,
+				addedTargets: ["@example.net"],
+				removedTargets: [],
+				previousAnyTarget: false,
+				anyTarget: true,
+			},
+		},
+	]);
+	const entries = Array.from(
+		{ length: 12 },
+		(_, i) => "host" + String(i).padStart(2, "0") + ".example",
+	);
+	const changed = await call("updateAgent", owner, {
+		...data,
+		agent: { ...data.agent, allowedTargets: entries },
+	});
+	expect(changed.failed, changed.text).toBe(false);
+	expect((await auditOf(workspaceId)).at(-1)?.detail).toEqual({
+		fields: ["allowedTargets"],
+		allowedTargetCount: 12,
+		addedTargets: [...entries.slice(0, 10), "and 2 more"],
+		removedTargets: ["@example.net"],
+	});
+});
