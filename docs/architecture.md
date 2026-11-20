@@ -286,10 +286,14 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
   after the seal leaves it out of reach until the next run, which finds the registry sealed and
   only finishes; its last steps are tried five times first. An object never takes a move's rows
   while it holds a workspace of its own.
-- **The sealed objects** refuse sockets and writes and run no alarm. They keep what the workspace
-  held when it moved until it is deleted, which destroys them in each place, as deleting a
-  conversation does where its registry is and where it moved from. Clearing them sooner is not
-  built yet. A backup reads only where the workspace is now.
+- **The sealed objects** refuse sockets and writes and run no alarm as soon as they seal. Seven
+  days after the move, the daily run erases the old registry, conversations and sandbox keys.
+  Only the seals remain, so the old objects stay closed. An old conversation already emptied
+  by deletion counts as done and is left untouched. The old registry records which conversations
+  are done, so large workspaces can resume across daily runs without revisiting them. The daily
+  run forgets old copies before it starts new moves, even if the deployment has unset its
+  jurisdiction. A workspace can move again once its previous copy is gone. Workspace deletion
+  also erases any copies still waiting. A backup reads only where the workspace is now.
 - **The sandbox meter** moves first: the new one takes the old one's readings, each workspace's
   larger figure and every share of the budget either one told of, then the old one is cleared.
   Rate limits are counted in the same jurisdiction; their objects don't move, so counts start

@@ -226,13 +226,25 @@ export class RegistryDO extends Registry {
 		const workspaceId = this.ctx.id.name;
 		if (!workspaceId) throw new Error("This registry does not know its workspace");
 		const name = conversationName(workspaceId, conversationId);
-		const places = [this.ctx.id.jurisdiction ?? ""];
+		const here = this.ctx.id.jurisdiction ?? "";
+		const conversation = await getAgentByName(objectsIn(this.env.CONVERSATIONS, here), name);
+		await destroyConversationObject(conversation);
+
 		const from = this.movedFrom();
-		if (from !== null && from !== places[0]) places.push(from);
-		for (const place of places) {
-			const conversation = await getAgentByName(objectsIn(this.env.CONVERSATIONS, place), name);
-			await destroyConversationObject(conversation);
-		}
+		if (from === null || from === here) return;
+		const location = await db
+			.select()
+			.from(schema.workspaceLocation)
+			.where(eq(schema.workspaceLocation.workspaceId, workspaceId))
+			.get();
+		if (location?.jurisdiction !== here || location.movedFrom !== from) return;
+		// The sealed registry still lists this conversation for the daily run. Leave its seal
+		// so that run can tell that the old copy has already been erased. A conversation started
+		// after the move has nothing there to forget.
+		const old = objectsIn(this.env.REGISTRY, from).getByName(workspaceId);
+		if (!(await old.moveConversationsToForget()).includes(conversationId)) return;
+		await objectsIn(this.env.CONVERSATIONS, from).getByName(name).moveForget();
+		await old.moveNoteForgotten([conversationId]);
 	}
 }
 

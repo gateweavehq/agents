@@ -12,7 +12,7 @@ export const workspaceLocation = sqliteTable("workspace_location", {
 	jurisdiction: text("jurisdiction").notNull(),
 	/**
 	 * Where it was before it moved here, "" for outside any jurisdiction. The objects there are
-	 * sealed and keep what the workspace held then, until they are destroyed.
+	 * sealed. Once the daily run forgets them, this is null.
 	 */
 	movedFrom: text("moved_from"),
 	/** When it moved here, or null if it was made here. */

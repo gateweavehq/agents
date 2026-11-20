@@ -30,12 +30,16 @@ import {
 	beginImport,
 	type ConversationTurn,
 	checkCopy,
+	clearForgottenStartup,
 	digestForMove,
 	endImport,
+	forgetSealed,
+	forgottenMove,
 	freezeEnds,
 	freezeForMove,
 	MOVING_MESSAGE,
 	type MoveCursor,
+	type MoveForgetResult,
 	type MoveKeys,
 	type MoveManifest,
 	type MoveOut,
@@ -133,6 +137,7 @@ interface Sandbox
 		LocalServerPort,
 		ChangesPort {
 	destroy(): Promise<void>;
+	forgetKeys(): Promise<void>;
 }
 
 const SEPARATOR = ":";
@@ -241,6 +246,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	static override options = { sendIdentityOnConnect: false };
 
 	#traceTables = false;
+	#forgetting: Promise<MoveForgetResult> | undefined;
 	/** The export of run traces under way, so two never send the same run at once. */
 	#exporting: Promise<void> | null = null;
 	/** The turn `nestedTurn` or `triggerTurn` began, which the next `onChatMessage` takes up. */
@@ -273,6 +279,15 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			if (await this.#sessionEnded(connection)) return;
 			return take(connection, message);
 		};
+		if (forgottenMove(ctx.storage)) {
+			void ctx.blockConcurrencyWhile(async () => {
+				// Cold RPCs start the SDK before entering our methods. Let it finish using its
+				// empty tables before erasing them, while no request can reach the conversation.
+				await this.lifecycle.start();
+				await this.lifecycle.disableAlarms();
+				clearForgottenStartup(ctx.storage);
+			});
+		}
 	}
 
 	/**
@@ -360,8 +375,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		return false;
 	}
 
-	// RPC for moving the workspace's objects somewhere else (`move.ts` in the registry package),
-	// which the app does from its daily run. Nothing else calls these.
+	// RPC for moving the workspace's objects somewhere else (`move.ts` in the registry package).
+	// The app's daily run uses these, and account erasure can forget a sealed conversation.
 
 	/**
 	 * Freezes the conversation for a move to `to` and says what it holds, or that it moved before.
@@ -401,6 +416,50 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		await sealForMove(this.ctx.storage, token, to, Date.now(), { keepBlocks: false });
 	}
 
+	async moveForget(): Promise<MoveForgetResult> {
+		if (this.#forgetting) {
+			const result = await this.#forgetting;
+			return result === "forgotten" ? "already" : result;
+		}
+		this.#forgetting = forgetSealed(
+			this.ctx.storage,
+			Date.now(),
+			async () => {
+				await this.#sandbox()?.forgetKeys();
+				// The SDK's destroy would also erase the seal and abort this instance.
+				await this.lifecycle.disableAlarms();
+				await this.lifecycle.dispose();
+				for (const socket of this.ctx.getWebSockets()) {
+					try {
+						socket.close(1012, "Conversation moved");
+					} catch {
+						// Already closing.
+					}
+				}
+			},
+			{
+				keys: [
+					// Starting a cold SDK records these versions even when a previous destroy left no data.
+					"cf_agents:mcp_schema_version",
+					"cf_agents:queue_schema_version",
+					"cf_agents:schedules_schema_version",
+					"cf_agents:schema_version",
+					"cf_agents:sessions_schema_version",
+					"cf_agents:state_schema_version",
+					"cf_agents:streams_schema_version",
+					"cf_agents:tasks_schema_version",
+				],
+			},
+		);
+		try {
+			const result = await this.#forgetting;
+			if (result === "forgotten") this.messages = [];
+			return result;
+		} finally {
+			this.#forgetting = undefined;
+		}
+	}
+
 	/** Ends the freeze of a move that gave up, so the conversation works where it is. */
 	async moveThaw(token: string): Promise<Thawed> {
 		const thawed = thawAfterMove(this.ctx.storage, token);
@@ -411,6 +470,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 
 	/** Empties this conversation, if it holds none, to take the rows of a move. */
 	async moveIn(token: string, manifest: MoveManifest): Promise<void> {
+		// This copy must stay sealed until any old sandbox erasure is done.
+		if (this.#forgetting) await this.#forgetting;
 		const tables = new Set(
 			this.ctx.storage.sql
 				.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -468,6 +529,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 
 	/** A run's trace, for the app's Runs page; none when this conversation has no such run. */
 	runTrace(runId: string): RunSpan[] {
+		if (forgottenMove(this.ctx.storage)) return [];
 		if (typeof runId !== "string" || runId.length > 64) return [];
 		return readTrace(this.#sql, runId);
 	}
@@ -1232,7 +1294,10 @@ ${runPageNote(runs, turn.runId)}`
 	#sandbox(): Sandbox | null {
 		const env = this.env as unknown as RuntimeEnv;
 		const sandboxes = env.SANDBOX && objectsIn(env.SANDBOX, this.ctx.id.jurisdiction);
-		return (sandboxes?.getByName(this.name) as unknown as Sandbox | undefined) ?? null;
+		return (
+			(sandboxes?.getByName(this.ctx.id.name ?? this.name) as unknown as Sandbox | undefined) ??
+			null
+		);
 	}
 
 	/** The conversation's SQLite, with the trace's tables made on first use. */

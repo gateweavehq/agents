@@ -426,6 +426,10 @@ export class FakeSandbox
 		this.#destroyed = true;
 	}
 
+	forgetKeys(): void {
+		this.destroy();
+	}
+
 	/**
 	 * What the tests check: files, commands, checkouts, pushes, local MCP servers, and whether
 	 * the conversation destroyed it.

@@ -27,14 +27,19 @@ export async function deleteWorkspaceData(db: Database, workspaceId: string): Pr
 		.from(schema.workspaceLocation)
 		.where(eq(schema.workspaceLocation.workspaceId, workspaceId))
 		.get();
-	const places = [
-		...new Set([
-			location?.jurisdiction ?? "",
-			location?.movedFrom ?? "",
-			deploymentJurisdiction() ?? "",
-		]),
-	];
-	for (const place of places) await deleteObjectsIn(place, workspaceId);
+	const places = new Set([location?.jurisdiction ?? ""]);
+	if (location) {
+		if (location.movedFrom !== null) places.add(location.movedFrom);
+		const target = deploymentJurisdiction();
+		if (target) places.add(target);
+	}
+	for (const place of places) {
+		await deleteObjectsIn(
+			place,
+			workspaceId,
+			place === location?.movedFrom && place !== location.jurisdiction,
+		);
+	}
 	if (location) {
 		await db
 			.delete(schema.workspaceLocation)
@@ -43,18 +48,21 @@ export async function deleteWorkspaceData(db: Database, workspaceId: string): Pr
 	}
 }
 
-async function deleteObjectsIn(place: string, workspaceId: string): Promise<void> {
+async function deleteObjectsIn(
+	place: string,
+	workspaceId: string,
+	oldCopy: boolean,
+): Promise<void> {
 	const registry = objectsIn(env.REGISTRY, place).getByName(workspaceId);
 	const ids = await registry.conversationIds();
 	for (let start = 0; start < ids.length; start += AT_ONCE) {
 		await Promise.all(
 			ids.slice(start, start + AT_ONCE).map(async (conversationId) => {
 				try {
-					const conversation = await getAgentByName(
-						objectsIn(env.CONVERSATIONS, place),
-						conversationName(workspaceId, conversationId),
-					);
-					await destroyConversationObject(conversation);
+					const name = conversationName(workspaceId, conversationId);
+					const conversations = objectsIn(env.CONVERSATIONS, place);
+					if (oldCopy) await conversations.getByName(name).moveForget();
+					else await destroyConversationObject(await getAgentByName(conversations, name));
 				} catch (error) {
 					console.error("A deleted workspace's conversation was not deleted", {
 						workspaceId,

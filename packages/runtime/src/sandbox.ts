@@ -888,6 +888,12 @@ export class RunnerSandbox
 		});
 	}
 
+	/** Forgets what a sealed conversation left in this place. */
+	async forgetKeys(): Promise<void> {
+		await this.destroy();
+		this.takeKeys([]);
+	}
+
 	#repository(): SandboxRepository | null {
 		return this.ctx.storage.kv.get<SandboxRepository>(REPOSITORY_KEY) ?? null;
 	}
