@@ -8,7 +8,7 @@
  * when it was erased (`markForgotten`): a caller that reaches the sandbox directly cannot wipe a
  * live conversation's keys by mistake (AGT-156). The mark stays after the wipe, so a write that
  * lands late — an engine turn settling as its conversation went — still finds the erasure and
- * keeps out.
+ * keeps out, until a move brings the sandbox back to life (`replaceKept` clears it).
  */
 
 /** The repository the sandbox cloned for its conversation. */
@@ -31,8 +31,9 @@ export const KEPT_KEYS: readonly string[] = [
 /**
  * The sandbox's own mark that its conversation is being erased. Written only through the
  * conversation (`markForForget` in `sandbox.ts`), never carried by a move, and what lets
- * `forgetKept` wipe the kept keys. It stays after the wipe: the sandbox is never used again, and
- * a writer that races the erasure must still see it.
+ * `forgetKept` wipe the kept keys. It stays after the wipe: a writer that races the erasure must
+ * still see it. A move back to the sandbox's location revives it — `replaceKept` clears the mark,
+ * as the days between the two moves leave no turn of the old conversation still settling.
  */
 export const FORGOTTEN_KEY = "sandbox.forgotten";
 
@@ -58,6 +59,9 @@ export function readKept(storage: KeptStorage): [string, unknown][] {
 export function replaceKept(storage: KeptStorage, entries: [string, unknown][]): void {
 	for (const key of KEPT_KEYS) storage.delete(key);
 	for (const [key, value] of entries) if (KEPT_KEYS.includes(key)) storage.put(key, value);
+	// A move repopulates a live conversation's sandbox, so an erasure mark an earlier forget left
+	// at this location is done with: the writes it guarded ended with that forget, days ago.
+	storage.delete(FORGOTTEN_KEY);
 }
 
 /** Marks the sandbox as being erased with its conversation, so `forgetKept` may wipe it. */
@@ -87,7 +91,7 @@ export function assertForgotten(storage: KeptStorage): void {
 export function forgetKept(storage: KeptStorage): void {
 	assertForgotten(storage);
 	for (const key of KEPT_KEYS) storage.delete(key);
-	// The mark stays. The conversation that owned this sandbox is gone and its name is never
-	// reused, so nothing may write its keys again — and a write that arrives late anyway, from a
-	// turn settling as the conversation was erased, sees the mark and stays out.
+	// The mark stays. A conversation's delete never reuses the sandbox's name, and a write that
+	// arrives late anyway, from a turn settling as the conversation was erased, sees the mark and
+	// stays out. A move back to the location does reuse it, and its `replaceKept` clears the mark.
 }

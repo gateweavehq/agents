@@ -76,13 +76,20 @@ describe("what a sandbox keeps of its conversation", () => {
 		expect(isForgotten(storage)).toBe(true);
 	});
 
-	it("keeps the mark out of what a move carries", () => {
-		const storage = memory();
-		markForgotten(storage);
-		storage.put(REPOSITORY_KEY, { owner: "acme" });
+	it("never carries the mark, and a move's take clears it: the sandbox lives again", () => {
+		const from = memory();
+		markForgotten(from);
+		from.put(REPOSITORY_KEY, { owner: "acme" });
 		// The mark is not one of KEPT_KEYS, so a move never brings it to the new sandbox.
-		expect(readKept(storage)).toEqual([[REPOSITORY_KEY, { owner: "acme" }]]);
-		replaceKept(storage, readKept(storage));
-		expect(storage.get("sandbox.forgotten")).toBe(true);
+		expect(readKept(from)).toEqual([[REPOSITORY_KEY, { owner: "acme" }]]);
+
+		// A workspace moved away and back reuses the sandbox's name at the old location, where an
+		// earlier forget left its mark: the move's take is what revives the sandbox.
+		const back = memory();
+		markForgotten(back);
+		expect(isForgotten(back)).toBe(true);
+		replaceKept(back, readKept(from));
+		expect(isForgotten(back)).toBe(false);
+		expect(readKept(back)).toEqual([[REPOSITORY_KEY, { owner: "acme" }]]);
 	});
 });
