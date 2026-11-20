@@ -44,6 +44,18 @@ import {
 	TIMED_OUT_STATUS,
 } from "./engines";
 import { changedSince, commitWork, type Git, isCommitId, pushArguments } from "./git-work";
+import {
+	assertForgotten,
+	forgetKept,
+	isForgotten,
+	markForgotten,
+	OPENCODE_SESSION_KEY,
+	PUSHED_KEY,
+	REPOSITORY_KEY,
+	readKept,
+	replaceKept,
+	SESSION_KEY,
+} from "./kept-keys";
 import type { LocalCommand, LocalServerPort } from "./local-servers";
 import type { EngineMeter } from "./meter";
 import { readAtMost, sendModelRequest } from "./model-requests";
@@ -124,21 +136,6 @@ const PUSH_SECONDS = 300;
 
 /** The largest push the Worker reads to check its ref updates; bigger work stays unpushed. */
 export const MAX_PUSH_BYTES = 50_000_000;
-
-const REPOSITORY_KEY = "repository";
-/** The commit the conversation last pushed to its branch. */
-const PUSHED_KEY = "pushed";
-/** The conversation's Claude Code session, which its turns resume while the container has it. */
-const SESSION_KEY = "claude-code-session";
-/** The conversation's OpenCode session, which its turns continue while the container has it. */
-const OPENCODE_SESSION_KEY = "opencode-session";
-/** What a sandbox keeps of its conversation, which goes with it when its workspace moves. */
-const KEPT_KEYS: readonly string[] = [
-	REPOSITORY_KEY,
-	PUSHED_KEY,
-	SESSION_KEY,
-	OPENCODE_SESSION_KEY,
-];
 
 /** How long `OPENCODE_SERVER_SCRIPT` may take, which waits up to 10 s for an old server to stop. */
 const OPENCODE_SCRIPT_SECONDS = 60;
@@ -759,7 +756,10 @@ export class RunnerSandbox
 			await this.#engineEnded(container);
 			throw error;
 		}
-		if (turn.session !== null) this.ctx.storage.kv.put(OPENCODE_SESSION_KEY, turn.session);
+		// A turn settling as its conversation was erased writes nothing back (AGT-156).
+		if (turn.session !== null && !isForgotten(this.ctx.storage.kv)) {
+			this.ctx.storage.kv.put(OPENCODE_SESSION_KEY, turn.session);
+		}
 		this.#openCode = turn;
 		const started = Date.now();
 		let timedOut = false;
@@ -834,7 +834,10 @@ export class RunnerSandbox
 					session !== undefined && (await this.#hasClaudeCodeSession(container, session));
 				if (!resume || session === undefined) {
 					session = crypto.randomUUID();
-					this.ctx.storage.kv.put(SESSION_KEY, session);
+					// A start racing its conversation's erasure writes nothing back (AGT-156).
+					if (!isForgotten(this.ctx.storage.kv)) {
+						this.ctx.storage.kv.put(SESSION_KEY, session);
+					}
 				}
 				return claudeCodeCommand(job, session, resume);
 			}
@@ -873,25 +876,32 @@ export class RunnerSandbox
 	 * files stay: a container starts without them after it sleeps anyway.
 	 */
 	moveKeys(): [string, unknown][] {
-		return KEPT_KEYS.flatMap((key) => {
-			const value = this.ctx.storage.kv.get(key);
-			return value === undefined ? [] : [[key, value] as [string, unknown]];
-		});
+		return readKept(this.ctx.storage.kv);
 	}
 
 	/** Takes what the old sandbox kept, in place of anything an earlier try of the move left. */
 	takeKeys(entries: [string, unknown][]): void {
-		const { kv } = this.ctx.storage;
-		this.ctx.storage.transactionSync(() => {
-			for (const key of KEPT_KEYS) kv.delete(key);
-			for (const [key, value] of entries) if (KEPT_KEYS.includes(key)) kv.put(key, value);
-		});
+		this.ctx.storage.transactionSync(() => replaceKept(this.ctx.storage.kv, entries));
 	}
 
-	/** Forgets what a sealed conversation left in this place. */
+	/**
+	 * Marks the sandbox as being erased with its conversation, which `forgetKeys` asks for before
+	 * it wipes what the sandbox kept. Only the conversation's own erasure paths call it (AGT-156).
+	 */
+	markForForget(): void {
+		markForgotten(this.ctx.storage.kv);
+	}
+
+	/**
+	 * Stops the container and forgets what the conversation left in this place. The conversation
+	 * calls it as it is deleted or forgotten after a move, after `markForForget`: an unmarked
+	 * sandbox keeps its keys, so a caller that reaches it directly cannot wipe a live one (AGT-156).
+	 */
 	async forgetKeys(): Promise<void> {
+		// The guard goes first: an unmarked sandbox is a live one, and stops nothing (AGT-156).
+		assertForgotten(this.ctx.storage.kv);
 		await this.destroy();
-		this.takeKeys([]);
+		forgetKept(this.ctx.storage.kv);
 	}
 
 	#repository(): SandboxRepository | null {

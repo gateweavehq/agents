@@ -140,6 +140,7 @@ interface Sandbox
 		ChangesPort {
 	destroy(): Promise<void>;
 	forgetKeys(): Promise<void>;
+	markForForget(): Promise<void>;
 }
 
 const SEPARATOR = ":";
@@ -432,7 +433,11 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 			this.ctx.storage,
 			Date.now(),
 			async () => {
-				await this.#sandbox()?.forgetKeys();
+				const sandbox = this.#sandbox();
+				if (sandbox) {
+					await sandbox.markForForget();
+					await sandbox.forgetKeys();
+				}
 				// The SDK's destroy would also erase the seal and abort this instance.
 				await this.lifecycle.disableAlarms();
 				await this.lifecycle.dispose();
@@ -1302,12 +1307,16 @@ ${runPageNote(runs, turn.runId)}`
 		}
 	}
 
-	/** Deletes the conversation, and its sandbox with it. */
+	/** Deletes the conversation, and its sandbox with it, keeping nothing of either. */
 	override async destroy(): Promise<void> {
 		try {
-			await this.#sandbox()?.destroy();
+			const sandbox = this.#sandbox();
+			if (sandbox) {
+				await sandbox.markForForget();
+				await sandbox.forgetKeys();
+			}
 		} catch (error) {
-			console.error("A sandbox was not stopped", failureForLogs(error));
+			console.error("A sandbox was not erased", failureForLogs(error));
 		}
 		await super.destroy();
 	}

@@ -186,6 +186,41 @@ it("deletes both workspace copies and forgets the sealed conversation through it
 	expect(statement.run).toHaveBeenCalledOnce();
 });
 
+it("keeps a refused old copy's registry and location row for the daily run to retry", async () => {
+	const { db, statement } = query(location);
+	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
+	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
+	const destroy = vi.fn();
+	const moveForget = vi
+		.fn()
+		.mockRejectedValue(new Error("Only a sealed object can forget a moved copy."));
+	place("eu", liveRegistry, { "workspace:one": { destroy } });
+	place("", oldRegistry, { "workspace:one": { moveForget } });
+	await deleteWorkspaceData(db, "workspace");
+	expect(moveForget).toHaveBeenCalledTimes(3);
+	expect(destroy).toHaveBeenCalledOnce();
+	expect(liveRegistry.destroy).toHaveBeenCalledOnce();
+	expect(oldRegistry.destroy).not.toHaveBeenCalled();
+	expect(statement.run).not.toHaveBeenCalled();
+});
+
+it("finishes the deletion when a refused old copy forget answers on a retry", async () => {
+	const { db, statement } = query(location);
+	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
+	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
+	const destroy = vi.fn();
+	const moveForget = vi
+		.fn()
+		.mockRejectedValueOnce(new Error("Only a sealed object can forget a moved copy."))
+		.mockResolvedValue("forgotten");
+	place("eu", liveRegistry, { "workspace:one": { destroy } });
+	place("", oldRegistry, { "workspace:one": { moveForget } });
+	await deleteWorkspaceData(db, "workspace");
+	expect(moveForget).toHaveBeenCalledTimes(2);
+	expect(oldRegistry.destroy).toHaveBeenCalledOnce();
+	expect(statement.run).toHaveBeenCalledOnce();
+});
+
 it("deletes only the default place when the workspace has no location row", async () => {
 	const { db, statement } = query(undefined);
 	deps.target.mockReturnValue("eu");

@@ -10,6 +10,16 @@ import type { ChangesPort } from "../src/changes";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
 import type { Comparison } from "../src/checks";
 import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
+import {
+	assertForgotten,
+	forgetKept,
+	type KeptStorage,
+	markForgotten,
+	PUSHED_KEY,
+	REPOSITORY_KEY,
+	readKept,
+	replaceKept,
+} from "../src/kept-keys";
 import type { LocalCommand, LocalServerPort } from "../src/local-servers";
 import { type EngineMeter, meterModelRequest } from "../src/meter";
 import type {
@@ -282,6 +292,8 @@ export class FakeSandbox
 {
 	readonly #memory = new MemorySandbox();
 	#destroyed = false;
+	/** What the fake sandbox keeps of its conversation, as the real one's `storage.kv` does (AGT-156). */
+	readonly #kept = new Map<string, unknown>();
 	readonly #jobs: EngineJob[] = [];
 	readonly #scripts: EngineScript[] = [];
 	/** Ends the turn of the engine that waits to be stopped. */
@@ -302,10 +314,13 @@ export class FakeSandbox
 	}
 
 	checkout(repository: SandboxRepository, branch: string) {
+		// As the real sandbox: the repository it cloned is what it keeps of the conversation.
+		this.#kept.set(REPOSITORY_KEY, repository);
 		return this.#memory.checkout(repository, branch);
 	}
 
 	push(branch: string, message: string, author: CommitAuthor, model: string) {
+		this.#kept.set(PUSHED_KEY, `pushed:${branch}`);
 		return this.#memory.push(branch, message, author, model);
 	}
 
@@ -426,8 +441,24 @@ export class FakeSandbox
 		this.#destroyed = true;
 	}
 
+	moveKeys(): [string, unknown][] {
+		return readKept(new KeptMap(this.#kept));
+	}
+
+	takeKeys(entries: [string, unknown][]): void {
+		replaceKept(new KeptMap(this.#kept), entries);
+	}
+
+	markForForget(): void {
+		markForgotten(new KeptMap(this.#kept));
+	}
+
 	forgetKeys(): void {
+		// As the real sandbox's `forgetKeys`: an unmarked one stops and keeps nothing-to-wipe
+		// refuses before anything of it is touched (AGT-156).
+		assertForgotten(new KeptMap(this.#kept));
 		this.destroy();
+		forgetKept(new KeptMap(this.#kept));
 	}
 
 	/**
@@ -445,7 +476,25 @@ export class FakeSandbox
 			engine: this.#jobs,
 			stops: this.#stops,
 			destroyed: this.#destroyed,
+			// What the sandbox keeps of its conversation, as `readKept` sees it: the erasure mark
+			// is in the same store but is no kept key. The RPC types cannot carry `unknown`: the
+			// stub's `seen()` would type as `never`.
+			kept: Object.fromEntries(readKept(new KeptMap(this.#kept))) as Record<string, never>,
 			mcpServers: this.#servers,
 		};
+	}
+}
+
+/** A `Map` as the kept keys' `KeptStorage`, so the fake shares the real one's rules (AGT-156). */
+class KeptMap implements KeptStorage {
+	constructor(private readonly entries: Map<string, unknown>) {}
+	get(key: string): unknown {
+		return this.entries.get(key);
+	}
+	put(key: string, value: unknown): void {
+		this.entries.set(key, value);
+	}
+	delete(key: string): void {
+		this.entries.delete(key);
 	}
 }

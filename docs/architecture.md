@@ -293,7 +293,12 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
   are done, so large workspaces can resume across daily runs without revisiting them. The daily
   run forgets old copies before it starts new moves, even if the deployment has unset its
   jurisdiction. A workspace can move again once its previous copy is gone. Workspace deletion
-  also erases any copies still waiting. A backup reads only where the workspace is now.
+  also erases any copies still waiting, retrying a refused forget a few times and leaving the
+  copy's registry and row to the daily run when it still refuses, rather than dropping it. A
+  conversation's own deletion erases what its sandbox keeps of it — the repository it cloned,
+  what it pushed, the CLIs' sessions — through the conversation, which marks the sandbox as
+  being erased first; an unmarked sandbox refuses to forget its keys, so no caller can wipe a
+  live conversation's by mistake (AGT-156). A backup reads only where the workspace is now.
 - **The sandbox meter** moves first: the new one takes the old one's readings, each workspace's
   larger figure and every share of the budget either one told of, then the old one is cleared.
   Rate limits are counted in the same jurisdiction; their objects don't move, so counts start
