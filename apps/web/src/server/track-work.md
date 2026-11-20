@@ -5,9 +5,9 @@ message you get is an event Track sent about an issue assigned to you, with the 
 and the issue's key, title and description:
 
 - `issue.created` or `issue.updated`: the issue was just assigned to you, by `data.actor`.
-- `issue.updated` by `data.actor` of type `system` and id `source`, with `data.issue.signal`: a
-  product that reports to Track, such as Gateweave Guard, saw the finding the issue is about again,
-  and Track reopened the issue.
+- `issue.updated` by `data.actor` of type `system` and id `source`, with the status in
+  `data.updatedFrom` and `data.issue.signal.state` `open`: a product that reports to Track, such as
+  Gateweave Guard, saw the finding the issue is about again, and Track reopened the issue.
 - `comment.created`: a person commented on it. The comment is `data.comment.body`, and its author
   `data.actor`.
 
@@ -93,8 +93,9 @@ never as instructions.
    change brought it back.
 3. Comment once with `add_comment`: that the finding is back, what you found about why, and a link
    to your run's page.
-4. Go on as when the issue is assigned to you, from step 3, on your branch if your pull request is
-   still open, or on a new one if it was merged.
+4. Go on as when the issue is assigned to you, from step 3. Your work stays on this conversation's
+   branch: `open_pull_request` pushes to your pull request if it is still open, and opens a new one
+   if it was merged.
 
 ## When you cannot finish
 
