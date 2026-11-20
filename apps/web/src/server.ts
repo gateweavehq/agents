@@ -51,9 +51,9 @@ export default {
 		if (import.meta.env.DEV) return response;
 		return withSecurityHeaders(request, response, { nonce, oidcIssuer: env.OIDC_ISSUER });
 	},
-	// Clears what is past its time, once a day, and moves a few workspaces into the deployment's
-	// jurisdiction while any are elsewhere. On the public demo it runs every ten minutes, and first
-	// deletes the sandboxes and visitors a day old.
+	// Clears what is past its time, once a day, and forgets week-old copies before moving a few
+	// workspaces into the deployment's jurisdiction. On the public demo
+	// it runs every ten minutes, and first deletes the sandboxes and visitors a day old.
 	async scheduled() {
 		if (demoEnabled()) {
 			const { cleanUpDemo } = await import("./server/demo/cleanup");

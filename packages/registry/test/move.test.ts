@@ -48,6 +48,111 @@ function providerAnswers() {
 }
 
 describe("moving a registry", () => {
+	it("erases the sealed registry's tables and secrets and keeps its seal across a restart", async () => {
+		const from = crypto.randomUUID();
+		const to = crypto.randomUUID();
+		const source = env.REGISTRY.getByName(from);
+		await source.saveProviderKey({ provider: "openai", key: KEY }, "Ada");
+		await runInDurableObject(source, (_instance, { storage }) => {
+			storage.kv.put("sealed-secret", { ciphertext: "test" });
+		});
+		await moveWorkspace(moving(from, to), { retryMs: 1 });
+		expect(await source.moveForget()).toBe("forgotten");
+		await runInDurableObject(source, (_instance, { storage }) => {
+			expect(
+				storage.sql
+					.exec(
+						"SELECT name FROM sqlite_schema WHERE name NOT IN ('_cf_KV', '_cf_METADATA', 'sqlite_sequence')",
+					)
+					.toArray(),
+			).toEqual([]);
+			expect([...storage.kv.list()]).toEqual([
+				["move.sealed", { to: "eu", at: expect.any(Number), forgottenAt: expect.any(Number) }],
+			]);
+		});
+		await runInDurableObject(source, (_instance, state) => state.abort("restart")).catch(() => {});
+		const restarted = env.REGISTRY.get(source.id);
+		expect(await restarted.conversationIds()).toEqual([]);
+		expect(await restarted.moveForget()).toBe("already");
+		await runInDurableObject(restarted, async (registry, { storage }) => {
+			expect(() =>
+				registry.createLibraryAsset({ kind: "instructions", name: "late", text: "Too late." }),
+			).toThrow(MOVING_MESSAGE);
+			expect(await storage.getAlarm()).toBeNull();
+		});
+		expect(await env.REGISTRY.getByName(to).listProviderKeys()).toHaveLength(1);
+	});
+
+	it("answers empty without writing a seal and refuses live, frozen and importing registries", async () => {
+		const live = env.REGISTRY.getByName(crypto.randomUUID());
+		const empty = env.REGISTRY.getByName(crypto.randomUUID());
+		await live.saveProviderKey({ provider: "openai", key: KEY }, "Ada");
+		async function refuses(stub: Registry) {
+			await runInDurableObject(stub, async (registry) => {
+				await expect(registry.moveForget()).rejects.toThrow("Only a sealed object");
+			});
+		}
+		await refuses(live);
+		const before = await empty.moveDigest();
+		expect(await empty.moveForget()).toBe("empty");
+		expect(await empty.moveDigest()).toEqual(before);
+		await runInDurableObject(empty, (_instance, { storage }) => {
+			expect([...storage.kv.list()]).toEqual([]);
+		});
+		expect(await live.listProviderKeys()).toHaveLength(1);
+		const token = crypto.randomUUID();
+		const out = await live.moveOut(token, "eu");
+		if (!("frozen" in out) || !out.frozen) throw new Error("Expected a freeze");
+		await refuses(live);
+		expect(await live.moveRead(token, { table: 0, after: null })).toBeDefined();
+		await empty.moveIn(token, out.manifest);
+		await refuses(empty);
+		await empty.moveWriteKeys(token, [["imported", true]]);
+	});
+
+	it("moves a workspace back into a registry that was forgotten", async () => {
+		const from = crypto.randomUUID();
+		const to = crypto.randomUUID();
+		const source = env.REGISTRY.getByName(from);
+		await source.saveProviderKey({ provider: "openai", key: KEY }, "Ada");
+		await moveWorkspace(moving(from, to), { retryMs: 1 });
+		expect(await source.moveForget()).toBe("forgotten");
+		await runInDurableObject(source, (_instance, state) => state.abort("restart")).catch(() => {});
+		const reopened = env.REGISTRY.getByName(from);
+		const returning = { ...moving(to, from), from: "eu", to: "" };
+		expect(await moveWorkspace(returning, { retryMs: 1 })).toMatchObject({ moved: true });
+		expect(await reopened.listProviderKeys()).toHaveLength(1);
+		expect(
+			await reopened.createLibraryAsset({ kind: "instructions", name: "rules", text: "Be brief." }),
+		).toBeTruthy();
+	});
+
+	it("keeps the list of forgotten conversations through a restart and waits for the rest", async () => {
+		const source = env.REGISTRY.getByName(crypto.randomUUID());
+		const agent = await source.createAgent({
+			name: "Reviewer",
+			description: null,
+			provider: "openai",
+			model: "gpt-5",
+			instructions: null,
+		});
+		const first = await source.startConversation(agent.id, "ada");
+		const second = await source.startConversation(agent.id, "ada");
+		if (!first || !second) throw new Error("Expected two conversations");
+		const token = crypto.randomUUID();
+		await source.moveOut(token, "eu");
+		await source.moveSeal(token, "eu");
+		await source.moveNoteForgotten([first.id]);
+		await runInDurableObject(source, (_instance, state) => state.abort("restart")).catch(() => {});
+		const restarted = env.REGISTRY.get(source.id);
+		expect(await restarted.moveConversationsToForget()).toEqual([second.id]);
+		await runInDurableObject(restarted, async (registry) => {
+			await expect(registry.moveForget()).rejects.toThrow("still lists conversations");
+		});
+		await restarted.moveNoteForgotten([second.id]);
+		expect(await restarted.moveForget()).toBe("forgotten");
+	});
+
 	it("copies every table and key, and its secrets still open where it went", async () => {
 		const from = crypto.randomUUID();
 		const to = crypto.randomUUID();

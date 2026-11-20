@@ -16,7 +16,7 @@
  *    old one's rows a page at a time, rowids too, then its key-value pairs.
  * 3. Both count their rows and keys and hash them, and the two must agree.
  * 4. The old registry seals, which commits the move: it refuses everything from then on. The old
- *    conversations seal too, and every old object keeps its data until it is destroyed. The new
+ *    conversations seal too, and the daily run forgets the old copies after a week. The new
  *    ones start, each with its old one's alarm, and the app records where the workspace is.
  */
 
@@ -52,6 +52,7 @@ interface Freeze {
 interface Sealed {
 	to: string;
 	at: number;
+	forgottenAt?: number;
 }
 
 interface Import {
@@ -413,7 +414,7 @@ export function readKeysForMove(
 
 /**
  * Seals the object once its copy is checked: it refuses everything from then on, and keeps its
- * data until it is destroyed. Its alarm goes, as its work is the new object's now. Without
+ * data until the daily run forgets it. Its alarm goes, as its work is the new object's now. Without
  * `keepBlocks`, its tables take writes again: an object that guards every way in itself, and whose
  * own start-up may write, stays able to start.
  */
@@ -424,6 +425,7 @@ export async function sealForMove(
 	now: number,
 	{ keepBlocks = true }: { keepBlocks?: boolean } = {},
 ): Promise<void> {
+	if (forgottenMove(storage)) throw new Error(MOVING_MESSAGE);
 	if (token !== null) checkFreeze(storage, token, now);
 	storage.transactionSync(() => {
 		if (!keepBlocks) dropBlocks(storage);
@@ -431,6 +433,93 @@ export async function sealForMove(
 		storage.kv.delete(FREEZE);
 	});
 	await storage.deleteAlarm();
+}
+
+/** Whether the only thing left of the move is its seal. */
+export function forgottenMove(storage: DurableObjectStorage): boolean {
+	return storage.kv.get<Sealed>(SEALED)?.forgottenAt !== undefined;
+}
+
+function emptyWithSeal(storage: DurableObjectStorage, seal: Sealed): void {
+	const { sql, kv } = storage;
+	// A storage-wide delete commits separately from putting back the seal. Drop the SQL schema
+	// and erase the KV entries in one transaction so a restart can never lose the seal.
+	storage.transactionSync(() => {
+		for (const { name, type } of sql
+			.exec<{ name: string; type: "trigger" | "view" }>(
+				"SELECT name, type FROM sqlite_schema WHERE type IN ('trigger', 'view')",
+			)
+			.toArray()) {
+			sql.exec(`DROP ${type} IF EXISTS ${quoteName(name)}`);
+		}
+		sql.exec("PRAGMA defer_foreign_keys = ON");
+		for (const { name } of copiedTables(storage).reverse())
+			sql.exec(`DROP TABLE ${quoteName(name)}`);
+		sql.exec("DROP TABLE IF EXISTS __drizzle_migrations");
+		for (const [key] of [...kv.list()]) if (key !== SEALED) kv.delete(key);
+		kv.put(SEALED, seal);
+	});
+}
+
+/** The Agents SDK makes its empty tables on construction, even if the conversation is sealed. */
+export function clearForgottenStartup(storage: DurableObjectStorage): void {
+	const seal = storage.kv.get<Sealed>(SEALED);
+	if (seal?.forgottenAt !== undefined) emptyWithSeal(storage, seal);
+}
+
+export type MoveForgetResult = "forgotten" | "already" | "empty";
+
+interface StartupStorage {
+	keys?: readonly string[];
+	tables?: readonly string[];
+}
+
+/** An unsealed object with only empty tables and startup bookkeeping has nothing to lose. */
+export function forgetState(
+	storage: DurableObjectStorage,
+	{ keys = [], tables = [] }: StartupStorage = {},
+): "sealed" | "already" | "empty" {
+	if (storage.kv.get(FREEZE) === undefined && storage.kv.get(IMPORT) === undefined) {
+		const seal = storage.kv.get<Sealed>(SEALED);
+		if (seal) return seal.forgottenAt === undefined ? "sealed" : "already";
+		if (
+			[...storage.kv.list()].every(([key]) => keys.includes(key)) &&
+			copiedTables(storage).every(
+				({ name }) =>
+					tables.includes(name) ||
+					storage.sql.exec(`SELECT 1 FROM ${quoteName(name)} LIMIT 1`).toArray().length === 0,
+			)
+		) {
+			return "empty";
+		}
+	}
+	throw new Error("Only a sealed object can forget a moved copy.");
+}
+
+/** Stops and empties a sealed object, leaving enough of the seal to keep it closed. */
+export async function forgetSealed(
+	storage: DurableObjectStorage,
+	now: number,
+	stop?: () => Promise<void>,
+	startup?: StartupStorage,
+): Promise<MoveForgetResult> {
+	const state = forgetState(storage, startup);
+	if (state !== "sealed") return state;
+	function seal() {
+		const sealed = storage.kv.get<Sealed>(SEALED);
+		if (!sealed || storage.kv.get(FREEZE) !== undefined || storage.kv.get(IMPORT) !== undefined) {
+			throw new Error("Only a sealed object can forget a moved copy.");
+		}
+		return sealed;
+	}
+	const sealed = seal();
+	if (stop) await stop();
+	const current = seal();
+	if (current.forgottenAt !== undefined) return "already";
+	if (current.at !== sealed.at || current.to !== sealed.to) throw new Error(MOVING_MESSAGE);
+	emptyWithSeal(storage, { ...sealed, forgottenAt: now });
+	await storage.deleteAlarm();
+	return "forgotten";
 }
 
 /** Where a sealed object's workspace went, or null while it has not moved away. */

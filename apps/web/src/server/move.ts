@@ -7,7 +7,7 @@ import {
 	objectsIn,
 } from "@gateweave/agents-registry";
 import { conversationName, MOVED_IN } from "@gateweave/agents-runtime";
-import { asc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { Database } from "./db";
 import { schema } from "./db";
 import { deploymentJurisdiction } from "./jurisdiction";
@@ -24,16 +24,29 @@ import type { WorkspaceRef } from "./workspaces";
  */
 const MOVES_PER_RUN = 3;
 
+const MOVED_COPY_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const FORGETS_PER_RUN = 3;
+// Each conversation can call its sandbox too. Leave room within the Free plan's thousand
+// calls for recording progress, the moves and the rest of the daily run.
+const CONVERSATION_FORGETS_PER_RUN = 200;
+const AT_ONCE = 10;
+
 /**
  * Moves workspaces whose Durable Objects are outside the deployment's jurisdiction into it, the
  * oldest first, a few each run: the registry and every conversation, with what each conversation's
  * sandbox keeps. Each workspace is paused for the seconds its copy takes; one with a turn under way
- * waits for the next run. The old objects are sealed and keep what the workspace held until it is
- * deleted. The deployment's sandbox meter moves first.
+ * waits for the next run. The deployment's sandbox meter moves first, and old sealed copies are
+ * forgotten after a week even if the deployment has since unset its jurisdiction.
  */
 export async function moveWorkspaces(db: Database): Promise<void> {
+	await forgetMovedCopies(db);
 	const target = deploymentJurisdiction();
-	if (!target) return;
+	if (target) await moveInto(db, target);
+}
+
+async function moveInto(db: Database, target: DurableObjectJurisdiction): Promise<void> {
 	try {
 		await moveMeter(target);
 	} catch (error) {
@@ -50,9 +63,13 @@ export async function moveWorkspaces(db: Database): Promise<void> {
 			eq(schema.workspaceLocation.workspaceId, schema.organization.id),
 		)
 		.where(
-			or(
-				isNull(schema.workspaceLocation.jurisdiction),
-				ne(schema.workspaceLocation.jurisdiction, target),
+			and(
+				// D1 has room for one old place. Forget it before taking the workspace elsewhere.
+				isNull(schema.workspaceLocation.movedFrom),
+				or(
+					isNull(schema.workspaceLocation.jurisdiction),
+					ne(schema.workspaceLocation.jurisdiction, target),
+				),
 			),
 		)
 		.orderBy(asc(schema.organization.createdAt))
@@ -78,6 +95,78 @@ export async function moveWorkspaces(db: Database): Promise<void> {
 			// The message itself: an error that came over RPC logs only the stack of this side.
 			console.error(
 				`move: workspace ${workspace.workspaceId} didn't move to ${target}: ${messageOf(error)}`,
+			);
+		}
+	}
+}
+
+export async function forgetMovedCopies(
+	db: Database,
+	budget = CONVERSATION_FORGETS_PER_RUN,
+): Promise<void> {
+	const location = schema.workspaceLocation;
+	const due = await db
+		.select()
+		.from(location)
+		.where(
+			and(
+				isNotNull(location.movedFrom),
+				lte(location.movedAt, Date.now() - MOVED_COPY_DAYS * DAY_MS),
+			),
+		)
+		// A few copies that keep failing must not take every slot on every run.
+		.orderBy(sql`random()`)
+		.limit(FORGETS_PER_RUN)
+		.all();
+	for (const { workspaceId, jurisdiction, movedFrom: from, movedAt } of due) {
+		if (from === null || movedAt === null) continue;
+		if (from === jurisdiction) {
+			console.error(`move: workspace ${workspaceId} lists its current place as its old copy`);
+			continue;
+		}
+		try {
+			const registry = objectsIn(env.REGISTRY, from).getByName(workspaceId);
+			const ids = await registry.moveConversationsToForget();
+			const taking = ids.slice(0, budget);
+			budget -= taking.length;
+			let failed = false;
+			const conversations = objectsIn(env.CONVERSATIONS, from);
+			for (let start = 0; start < taking.length; start += AT_ONCE) {
+				const results = await Promise.all(
+					taking.slice(start, start + AT_ONCE).map(async (id) => {
+						try {
+							const name = conversationName(workspaceId, id);
+							await conversations.getByName(name).moveForget();
+							return id;
+						} catch (error) {
+							failed = true;
+							console.error(
+								`move: workspace ${workspaceId} couldn't forget conversation ${id}: ${messageOf(error)}`,
+							);
+							return null;
+						}
+					}),
+				);
+				const forgotten = results.filter((id) => id !== null);
+				if (forgotten.length > 0) await registry.moveNoteForgotten(forgotten);
+			}
+			if (failed || taking.length < ids.length) continue;
+			await registry.moveForget();
+			await db
+				.update(location)
+				.set({ movedFrom: null })
+				.where(
+					and(
+						eq(location.workspaceId, workspaceId),
+						eq(location.jurisdiction, jurisdiction),
+						eq(location.movedFrom, from),
+						eq(location.movedAt, movedAt),
+					),
+				)
+				.run();
+		} catch (error) {
+			console.error(
+				`move: workspace ${workspaceId} couldn't forget its old copy: ${messageOf(error)}`,
 			);
 		}
 	}

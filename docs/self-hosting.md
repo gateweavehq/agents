@@ -132,8 +132,10 @@ on its own:
   conversations, their sandboxes, the sandbox meter and the rate limits are kept there. New
   workspaces are made there. Ones made before move there in the daily run at 03:29 UTC, three at a
   time, each paused for a few seconds while it is copied; one with a turn under way waits for the
-  next day. The copy each leaves behind is kept until the workspace is deleted. Unsetting it later
-  moves nothing back. Leave it unset in `.dev.vars`: local runtimes have no jurisdictions.
+  next day. The old objects seal at once, refuse sockets and writes, and run no alarms. Seven days
+  after the move, the daily run erases their data and the old sandbox keys. Unsetting the
+  jurisdiction later leaves workspaces where they are and the cleanup still runs. Leave it unset
+  in `.dev.vars`: local runtimes have no jurisdictions.
 - **Repository wikis**: add `"jurisdiction": "eu"` to the Workflow in `wrangler.jsonc`. A Workflow's
   jurisdiction is fixed when it is made, so an existing one needs a new `name` as well.
 - **Sandboxes' containers** follow their Durable Objects, so the setting above covers them too.

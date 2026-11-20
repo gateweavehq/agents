@@ -101,6 +101,10 @@ export interface SentEmail {
  * these Node tests do not load.
  */
 export interface RegistryStub {
+	moveOut(token: string, to: string): Promise<unknown>;
+	moveSeal(token: string | null, to: string): Promise<void>;
+	moveDigest(): Promise<Record<string, string>>;
+	moveForget(): Promise<string>;
 	/** How many sealed values each of the server's keys sealed. */
 	sealedCounts(): Promise<{ explicit: number; derived: number }>;
 	createProject(input: ProjectInput): Promise<Project>;
@@ -305,6 +309,7 @@ export async function startAgents(
 		secrets = true,
 		withoutDatabase = false,
 		withoutSecret = false,
+		withSandbox = false,
 		settings = {},
 		isolateSettings = [],
 	}: {
@@ -316,6 +321,7 @@ export async function startAgents(
 		/** What a branch's Preview lacks. */
 		withoutDatabase?: boolean;
 		withoutSecret?: boolean;
+		withSandbox?: boolean;
 		settings?: Record<string, string>;
 		/** Settings that only this copy has, as a deployment's old and new versions would differ. */
 		isolateSettings?: Record<string, string>[];
@@ -364,6 +370,9 @@ export async function startAgents(
 					d1Databases: { [withoutDatabase ? "UNBOUND_DB" : "DB"]: "agents-test" },
 					// Every copy uses the first one's Durable Objects.
 					durableObjects: {
+						...(withSandbox && {
+							SANDBOX: { className: "RunnerSandbox", useSQLite: true, scriptName: names[0] },
+						}),
 						REGISTRY: { className: "RegistryDO", useSQLite: true, scriptName: names[0] },
 						RATE_LIMITER: { className: "RateLimiter", useSQLite: true, scriptName: names[0] },
 						CONVERSATIONS: {
@@ -523,9 +532,24 @@ export async function startAgents(
 		/** A conversation's Durable Object, to check what it holds. */
 		async conversation(workspaceId: string, conversationId: string) {
 			const namespace = (await mf.getDurableObjectNamespace("CONVERSATIONS")) as unknown as {
-				getByName(name: string): { transcript(): Promise<string> };
+				getByName(name: string): {
+					transcript(): Promise<string>;
+					fetch(url: string): Promise<Response>;
+					moveOut(token: string, to: string): Promise<unknown>;
+					moveSeal(token: string, to: string): Promise<void>;
+					destroy(): Promise<void>;
+				};
 			};
 			// `conversationName` in packages/runtime.
+			return namespace.getByName(`${workspaceId}:${conversationId}`);
+		},
+		async sandbox(workspaceId: string, conversationId: string) {
+			const namespace = (await mf.getDurableObjectNamespace("SANDBOX")) as unknown as {
+				getByName(name: string): {
+					takeKeys(keys: [string, unknown][]): Promise<void>;
+					moveKeys(): Promise<[string, unknown][]>;
+				};
+			};
 			return namespace.getByName(`${workspaceId}:${conversationId}`);
 		},
 		/**

@@ -294,9 +294,14 @@ import {
 	checkCopy,
 	digestForMove,
 	endImport,
+	forgetSealed,
+	forgetState,
+	forgottenMove,
 	freezeEnds,
 	freezeForMove,
+	MOVING_MESSAGE,
 	type MoveCursor,
+	type MoveForgetResult,
 	type MoveKeys,
 	type MoveManifest,
 	type MovePage,
@@ -537,8 +542,8 @@ export class RegistryDO extends DurableObject {
 		super(ctx, env);
 		this.#db = drizzle(ctx.storage, { schema });
 		void ctx.blockConcurrencyWhile(async () => {
-			// A registry sealed by a move holds what the workspace held then, until it is destroyed,
-			// and runs nothing; its tables may be older than the code (`move.ts`).
+			// A registry sealed by a move runs nothing. Its tables may be older than the code,
+			// or gone once the daily run has forgotten it.
 			const moving = moveStateAtStart(ctx.storage, Date.now());
 			if (moving === "sealed") return;
 			// A frozen registry migrates too, so that it reads as the code expects. A migration that
@@ -2917,6 +2922,7 @@ export class RegistryDO extends DurableObject {
 	 * sandbox. The registry goes after, and nothing else would know of them.
 	 */
 	conversationIds(): string[] {
+		if (forgottenMove(this.ctx.storage)) return [];
 		const listed = this.#db
 			.select({ id: schema.conversations.id })
 			.from(schema.conversations)
@@ -2933,6 +2939,7 @@ export class RegistryDO extends DurableObject {
 	 * move with it; or that it moved before; or that turns are under way, which the move waits for.
 	 */
 	async moveOut(token: string, to: string): Promise<RegistryMoveOut> {
+		if (forgottenMove(this.ctx.storage)) throw new Error(MOVING_MESSAGE);
 		const now = Date.now();
 		const conversations = this.conversationIds();
 		if (moveStateNow(this.ctx.storage, now) !== "sealed") {
@@ -2970,6 +2977,32 @@ export class RegistryDO extends DurableObject {
 		await sealForMove(this.ctx.storage, token, to, Date.now());
 	}
 
+	/** The old registry keeps the list until all of its conversations have been forgotten. */
+	moveConversationsToForget(): string[] {
+		const storage = this.ctx.storage;
+		if (forgetState(storage, REGISTRY_STARTUP) !== "sealed") return [];
+		return this.conversationIds().filter((id) => !storage.kv.get(FORGOTTEN_CONVERSATION + id));
+	}
+
+	moveNoteForgotten(ids: string[]): void {
+		const storage = this.ctx.storage;
+		const state = forgetState(storage, REGISTRY_STARTUP);
+		if (state === "already") return;
+		if (state !== "sealed") throw new Error("Only a sealed registry can record forgotten copies.");
+		storage.transactionSync(() => {
+			for (const id of ids) storage.kv.put(FORGOTTEN_CONVERSATION + id, true);
+		});
+	}
+
+	async moveForget(): Promise<MoveForgetResult> {
+		if (this.moveConversationsToForget().length > 0) {
+			throw new Error("The registry still lists conversations to forget.");
+		}
+		const result = await forgetSealed(this.ctx.storage, Date.now(), undefined, REGISTRY_STARTUP);
+		if (result === "forgotten") this.#sealer = undefined;
+		return result;
+	}
+
 	/** Ends the freeze of a move that gave up, so the workspace works where it is. */
 	async moveThaw(token: string): Promise<Thawed> {
 		const thawed = thawAfterMove(this.ctx.storage, token);
@@ -2979,6 +3012,8 @@ export class RegistryDO extends DurableObject {
 
 	/** Empties this registry, if it holds no live workspace, to take the rows of a move. */
 	async moveIn(token: string, manifest: MoveManifest): Promise<void> {
+		// The migration ledger isn't part of a copy, so restore it when moving back here.
+		if (forgottenMove(this.ctx.storage)) await migrate(this.#db, migrations);
 		const fresh = [schema.projects, schema.repositories, schema.conversations, schema.runs].every(
 			(table) => this.#db.select().from(table).limit(1).all().length === 0,
 		);
@@ -3022,7 +3057,7 @@ export class RegistryDO extends DurableObject {
 
 	/**
 	 * Where the workspace was before it moved here: "" for outside any jurisdiction, null if it
-	 * never moved. Its conversations' old objects are there, sealed, until they are destroyed.
+	 * never moved. Its conversations' old objects are sealed there after the move.
 	 */
 	protected movedFrom(): string | null {
 		return movedFrom(this.ctx.storage);
@@ -3288,12 +3323,20 @@ export class RegistryDO extends DurableObject {
 	// Every write is one synchronous transaction: it applies whole or not at all, and nothing
 	// else runs in the middle of it.
 	#write<T>(fn: () => T): T {
+		if (forgottenMove(this.ctx.storage)) throw new Error(MOVING_MESSAGE);
 		return this.ctx.storage.transactionSync(fn);
 	}
 }
 
 /** The key under which a registry that moved keeps the scope its secrets are sealed with. */
 const SECRETS_SCOPE = "secrets.scope";
+
+// Each entry is small even when a workspace has thousands of conversations. The registry's
+// erasure removes them with its data, and importing into a sealed registry also clears them.
+const FORGOTTEN_CONVERSATION = "move.forgotten-conversation:";
+
+// The registry records one-time passes on its first wake, even when there is nothing to migrate.
+const REGISTRY_STARTUP = { tables: ["registry_passes"] };
 
 function refused(message: string): ProviderRefusal {
 	return { status: "refused", message };

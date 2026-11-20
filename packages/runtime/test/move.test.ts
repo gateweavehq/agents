@@ -1,4 +1,4 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
 	MOVING_MESSAGE,
@@ -8,7 +8,7 @@ import {
 } from "@gateweave/agents-registry";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { conversationName, MOVED_IN } from "../src";
+import { conversationName, destroyConversationObject, MOVED_IN } from "../src";
 import { anthropicStream, ask, connect, fakeModel, KEY } from "./support";
 
 // Moving a workspace's registry and conversations to other Durable Objects (`move.ts` in the
@@ -100,6 +100,102 @@ async function messagesOf(stub: { fetch(url: string): Promise<Response> }) {
 }
 
 describe("moving a workspace", () => {
+	it("erases the sealed conversation's storage and keeps its seal across a restart", async () => {
+		const { stub, workspaceId, conversationId } = await workspaceWithTalk();
+		const token = crypto.randomUUID();
+		await runInDurableObject(stub, (_instance, { storage }) => {
+			storage.kv.put("test-secret", { ciphertext: "test" });
+		});
+		await stub.moveOut(token, "eu");
+		await stub.moveSeal(token, "eu");
+		expect(await stub.moveForget()).toBe("forgotten");
+		const sandbox = env.SANDBOX.getByName(conversationName(workspaceId, conversationId));
+		expect((await sandbox.seen()).destroyed).toBe(true);
+		await runInDurableObject(stub, async (_instance, { storage }) => {
+			expect(
+				storage.sql
+					.exec(
+						"SELECT name FROM sqlite_schema WHERE name NOT IN ('_cf_KV', '_cf_METADATA', 'sqlite_sequence')",
+					)
+					.toArray(),
+			).toEqual([]);
+			expect([...storage.kv.list()]).toEqual([
+				["move.sealed", { to: "eu", at: expect.any(Number), forgottenAt: expect.any(Number) }],
+			]);
+			expect(await storage.getAlarm()).toBeNull();
+		});
+		await runInDurableObject(stub, (_instance, state) => state.abort("restart")).catch(() => {});
+		const restarted = env.CONVERSATIONS.getByName(conversationName(workspaceId, conversationId));
+		expect((await messagesOf(restarted)).status).toBe(503);
+		expect(await restarted.moveForget()).toBe("already");
+		expect(await restarted.transcript()).toBe("[]");
+		await runInDurableObject(restarted, (_instance, { storage }) => {
+			expect(
+				storage.sql
+					.exec(
+						"SELECT name FROM sqlite_schema WHERE name NOT IN ('_cf_KV', '_cf_METADATA', 'sqlite_sequence')",
+					)
+					.toArray(),
+			).toEqual([]);
+			expect([...storage.kv.list()].map(([key]) => key)).toEqual(["move.sealed"]);
+		});
+	});
+
+	it("answers empty without writing a seal and refuses live, frozen and importing conversations", async () => {
+		const { stub, workspaceId, conversationId } = await workspaceWithTalk();
+		const empty = await getAgentByName(
+			env.CONVERSATIONS,
+			conversationName(crypto.randomUUID(), "empty"),
+		);
+		async function refuses(conversation: typeof stub) {
+			await runInDurableObject(conversation, async (instance) => {
+				await expect(instance.moveForget()).rejects.toThrow("Only a sealed object");
+			});
+		}
+		await refuses(stub);
+		const liveSandbox = env.SANDBOX.getByName(conversationName(workspaceId, conversationId));
+		expect((await liveSandbox.seen()).destroyed).toBe(false);
+		const before = await empty.moveDigest();
+		expect(await empty.moveForget()).toBe("empty");
+		expect(await empty.moveDigest()).toEqual(before);
+		expect((await messagesOf(empty)).status).toBe(200);
+		await runInDurableObject(empty, (_instance, { storage }) => {
+			storage.kv.put("test-secret", { ciphertext: "test" });
+		});
+		await refuses(empty);
+		expect((await messagesOf(stub)).body).toHaveLength(2);
+		const token = crypto.randomUUID();
+		const out = await stub.moveOut(token, "eu");
+		if (!out.frozen) throw new Error("Expected a freeze");
+		await refuses(stub);
+		expect(await stub.moveRead(token, { table: 0, after: null })).toBeDefined();
+		await empty.moveIn(token, out.manifest);
+		await refuses(empty);
+		await empty.moveWriteKeys(token, [["imported", true]]);
+	});
+
+	it("completes a queued delete when the old conversation is already empty", async () => {
+		const { registry, stub, conversationId, workspaceId } = await workspaceWithTalk();
+		await destroyConversationObject(stub);
+		const forget = vi.fn(async () => {
+			const old = env.CONVERSATIONS.getByName(conversationName(workspaceId, conversationId));
+			expect(await old.moveForget()).toBe("empty");
+		});
+		await runInDurableObject(registry, (instance) => {
+			// workerd has one place. Supply the old-copy RPC for the registry's deletion hook.
+			vi.spyOn(
+				instance as unknown as { destroyConversation(id: string): Promise<void> },
+				"destroyConversation",
+			).mockImplementation(forget);
+		});
+		await registry.forgetPerson("user-ada");
+		await runDurableObjectAlarm(registry);
+		await vi.waitFor(async () => {
+			expect(await registry.conversationIds()).toEqual([]);
+		});
+		expect(forget).toHaveBeenCalledExactlyOnceWith(conversationId);
+	});
+
 	it("copies the registry and every conversation, which carry on where they went", async () => {
 		const { workspaceId, conversationId, registry, stub } = await workspaceWithTalk();
 		const before = await messagesOf(stub);

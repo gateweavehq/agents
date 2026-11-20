@@ -84,8 +84,9 @@ These are load-bearing. Breaking one breaks users' data or security, usually sil
    (`apps/web/src/server/backup.ts`), which has no route: a service binding from a Worker in the
    same account is its access. It reads only what D1 and the registry list, and sends only reads,
    which the object checks and always rolls back (`packages/registry/src/backup.ts`). The daily
-   run moves a workspace into the deployment's jurisdiction through the objects' `move…` methods
-   (`apps/web/src/server/move.ts`); nothing else calls them.
+   run moves a workspace into the deployment's jurisdiction and forgets its sealed copies after
+   seven days through the objects' `move…` methods (`apps/web/src/server/move.ts`); account erasure
+   can also forget a sealed conversation.
 3. **Registry writes stay synchronous.** Each runs inside `ctx.storage.transactionSync` with
    Drizzle's sync API (`.get()`, `.all()`, `.run()`), so it applies whole or not at all. Never
    `await` in the middle of a write. A scan awaits GitHub first and writes after, in a
