@@ -168,15 +168,22 @@ export interface PullRequestToolOptions {
 	memory?: PullRequestMemory;
 }
 
+/** A remembered proposal: the words it was made with, and what it came to. */
+export interface PullRequestMemoryEntry {
+	title: string;
+	body: string;
+	outcome: PullRequestOutcome;
+}
+
 /**
  * What a conversation's `open_pull_request` calls proposed, kept past the turn so a retried or
  * replayed call returns the first outcome instead of repeating the work (AGT-147).
  */
 export interface PullRequestMemory {
-	/** The outcome the first call under this key recorded, if there was one. */
-	recall(key: string): Promise<PullRequestOutcome | null>;
-	/** Records a call's outcome under its key. Only a call that proposed writes. */
-	remember(key: string, outcome: PullRequestOutcome): Promise<void>;
+	/** The proposal the latest call under this key recorded, if there was one. */
+	recall(key: string): Promise<PullRequestMemoryEntry | null>;
+	/** Records a call's proposal under its key. Only a call that proposed writes. */
+	remember(key: string, entry: PullRequestMemoryEntry): Promise<void>;
 }
 
 /** `open_pull_request`, traced in `run` like the sandbox's other tools. */
@@ -237,31 +244,27 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		};
 	};
 	/**
-	 * The memory's key for one call: the run, the branch, the commit the work is at, and the words
-	 * the model gave. A retry of the same call matches; new work, new words or a later run do not.
+	 * The memory's key for one head: the run and the branch it is on. The words stay out of it, in
+	 * the entry: a later call at the same head with other words supersedes what an earlier one
+	 * proposed, and only a call with the entry's own words replays it.
 	 */
-	const memoKey = async (head: string, title: string, body: string): Promise<string> => {
-		// As a pair: a newline in one must not move the boundary into the other.
-		const digest = await crypto.subtle.digest(
-			"SHA-256",
-			new TextEncoder().encode(JSON.stringify([title, body])),
-		);
-		const words = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0"));
-		return `gateweave:pull-request:${runId}:${branch}:${head}:${words.join("")}`;
-	};
+	const memoKey = (head: string): string => `gateweave:pull-request:${runId}:${branch}:${head}`;
 	const recall = async (
 		head: string,
 		title: string,
 		body: string,
-	): Promise<PullRequestOutcome | null> =>
-		memory === undefined ? null : memory.recall(await memoKey(head, title, body));
+	): Promise<PullRequestOutcome | null> => {
+		if (memory === undefined) return null;
+		const entry = await memory.recall(memoKey(head));
+		return entry !== null && entry.title === title && entry.body === body ? entry.outcome : null;
+	};
 	const remember = async (
 		head: string,
 		title: string,
 		body: string,
 		outcome: PullRequestOutcome,
 	): Promise<void> => {
-		if (memory !== undefined) await memory.remember(await memoKey(head, title, body), outcome);
+		if (memory !== undefined) await memory.remember(memoKey(head), { title, body, outcome });
 	};
 	const open = tool({
 		description: `Proposes your work on ${name} as a pull request against ${repository.defaultBranch}. It commits every change in ${SANDBOX_REPOSITORY_PATH} (git add --all) with the title as the message, pushes the branch ${branch}, and opens a pull request from it; called again, it pushes the new work and updates that pull request. To split the work into several commits, commit with git first. Run the project's checks before you call it. git push does not work in the sandbox: this is the only way to push.`,

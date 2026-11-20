@@ -109,6 +109,7 @@ import {
 	type CommitAuthor,
 	gitHubPullRequests,
 	type PullRequestMemory,
+	type PullRequestMemoryEntry,
 	type PullRequestPort,
 	type PushPort,
 	pullRequestTools,
@@ -1308,9 +1309,9 @@ ${runPageNote(runs, turn.runId)}`
 	#pullRequestMemory(): PullRequestMemory {
 		const kv = this.ctx.storage.kv;
 		return {
-			recall: async (key) => (await kv.get<PullRequestOutcome>(key)) ?? null,
-			remember: async (key, outcome) => {
-				await kv.put(key, outcome);
+			recall: async (key) => (await kv.get<PullRequestMemoryEntry>(key)) ?? null,
+			remember: async (key, entry) => {
+				await kv.put(key, entry);
 			},
 		};
 	}

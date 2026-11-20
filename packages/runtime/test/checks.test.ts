@@ -14,7 +14,7 @@ import {
 	withChecksSection,
 	withoutChecksSection,
 } from "../src/checks";
-import { pullRequestTools } from "../src/pull-requests";
+import { type PullRequestMemoryEntry, pullRequestTools } from "../src/pull-requests";
 import type { RunRecorder } from "../src/trace";
 import { type CommandAnswer, MemorySandbox } from "./fake-sandbox";
 
@@ -77,7 +77,7 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 			if (started) started.ended = outcome;
 		},
 	} as unknown as RunRecorder;
-	const memory = new Map<string, PullRequestOutcome>();
+	const memory = new Map<string, PullRequestMemoryEntry>();
 	const tools = pullRequestTools({
 		sandbox,
 		checks: {
@@ -121,8 +121,8 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 		run,
 		memory: {
 			recall: async (key) => memory.get(key) ?? null,
-			remember: async (key, outcome) => {
-				memory.set(key, outcome);
+			remember: async (key, entry) => {
+				memory.set(key, entry);
 			},
 		},
 	});
@@ -1228,13 +1228,17 @@ describe("a call retried or replayed (AGT-147)", () => {
 		expect(recorded).toHaveLength(1);
 	});
 
-	it("tells apart words whose plain join would collide: a newline moves no boundary", async () => {
+	it("does not replay a proposal a later one at the same head superseded", async () => {
 		const { sandbox, proposed, call } = setup(["pnpm test"]);
-		await call({ title: "Fix", body: "cart\nDetails" });
-		sandbox.commitAnswers.push({ head: "1".repeat(40) });
-		await call({ title: "Fix\ncart", body: "Details" });
-		expect(sandbox.commitPushes).toHaveLength(2);
-		expect(proposed).toHaveLength(2);
+		await call({ title: "First", body: "Same head." });
+		sandbox.commitAnswers.push({ head: "1".repeat(40) }, { head: "1".repeat(40) });
+		await call({ title: "Second", body: "Same head." });
+		// The first words come back: the memory holds the latest proposal, so this proposes again.
+		const third = await call({ title: "First", body: "Same head." });
+		expect(third.title).toBe("First");
+		expect(sandbox.commitPushes).toHaveLength(3);
+		expect(proposed).toHaveLength(3);
+		expect(proposed[2]?.title).toBe("First");
 	});
 
 	it("remembers a pull request made without checks too", async () => {
