@@ -655,8 +655,9 @@ function TriggerDialog({
 							/>
 							<p className="text-xs text-muted-foreground">
 								Start a run only for issues assigned to this Gateweave Track member, by the id Track
-								gives them. On <code>issue.updated</code> only when they were just assigned, and on
-								a comment only when a person wrote it. Leave it empty for no assignee filter.
+								gives them. On <code>issue.updated</code> only when they were just assigned or a
+								Track source reopened the issue, and on a comment only when a person wrote it. Leave
+								it empty for no assignee filter.
 							</p>
 							{trigger?.assigneeName && assignee.trim() === trigger.assignee && (
 								<p className="text-xs text-muted-foreground">

@@ -423,6 +423,24 @@ describe("triggers", () => {
 		if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
 		expect(receipt.text.startsWith("Work on ENG-7\n\n")).toBe(true);
 
+		// A Track source reopening the member's issue, because its finding came back, starts again.
+		const reopened = JSON.stringify({
+			type: "issue.updated",
+			data: {
+				actor: { id: "source", name: "Guard", type: "system" },
+				issue: {
+					id: "i-8",
+					key: "ENG-8",
+					assigneeId: "member-coder",
+					signal: { key: "lodash", state: "open" },
+				},
+				updatedFrom: { status: "done" },
+			},
+		});
+		const again = await deliver(stub, trigger.id, secret, { body: reopened });
+		if (again.status !== "start") throw new Error(`The reopen was ${again.status}`);
+		expect(again.text.startsWith("Work on ENG-8\n\n")).toBe(true);
+
 		// The assignee goes with a schedule, as event types and labels do, and can be taken away.
 		expect(await stub.updateTrigger(trigger.id, { assignee: null })).toMatchObject({
 			assignee: null,

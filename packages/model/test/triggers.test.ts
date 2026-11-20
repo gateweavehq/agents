@@ -245,6 +245,50 @@ it("starts runs on issues assigned to the member, and on issue.updated only when
 	expect(assigneeSkip("coder", taken)).toBe("The issue is not assigned to its member");
 });
 
+it("starts again when a Track source reopens the member's issue, and on nothing else a source does", () => {
+	const source = { id: "source", name: "Guard", type: "system" };
+	const event = (
+		updatedFrom: unknown,
+		state: unknown,
+		actor: unknown = source,
+		assignee = "coder",
+	) =>
+		JSON.stringify({
+			type: "issue.updated",
+			timestamp: "2026-11-20T12:00:00.000Z",
+			data: {
+				actor,
+				issue: { id: "issue-1", key: "WEB-8", assigneeId: assignee, signal: { key: "k", state } },
+				updatedFrom,
+			},
+		});
+	// The finding came back after the issue was completed.
+	expect(assigneeSkip("coder", event({ status: "done" }, "open"))).toBeNull();
+	const already = "The issue was assigned to its member already";
+	// The source closing the issue, or raising its priority, is not a new task.
+	expect(assigneeSkip("coder", event({ status: "todo" }, "cleared"))).toBe(already);
+	expect(assigneeSkip("coder", event({ status: "todo" }, "dismissed"))).toBe(already);
+	expect(assigneeSkip("coder", event({ priority: 3 }, "open"))).toBe(already);
+	// Only Track's source reopens: a person, an agent or Track otherwise moving it back does not.
+	for (const actor of [
+		{ id: "maya", name: "Maya", type: "person" },
+		{ id: "triage", name: "Triage", type: "agent" },
+		{ id: "github", name: "GitHub", type: "system" },
+		{ id: "source", name: "Guard", type: "person" },
+		"source",
+		null,
+	]) {
+		expect(assigneeSkip("coder", event({ status: "done" }, "open", actor))).toBe(already);
+	}
+	// Someone else's issue stays someone else's.
+	expect(assigneeSkip("coder", event({ status: "done" }, "open", source, "maya"))).toBe(
+		"The issue is not assigned to its member",
+	);
+	// Whatever the sender sent is checked before it is used.
+	expect(assigneeSkip("coder", event(["status"], "open"))).toBe(already);
+	expect(assigneeSkip("coder", event({ status: "done" }, ["open"]))).toBe(already);
+});
+
 it("starts on a person's comment on the member's issue, and skips what is not about an issue", () => {
 	const by = (type: unknown) => ({ actor: { id: "a", name: "A", type }, comment: { body: "Hi" } });
 	expect(assigneeSkip("coder", assigned("comment.created", "coder", by("person")))).toBeNull();
