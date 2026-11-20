@@ -324,6 +324,12 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			if ("error" in committed) throw new Error(committed.error);
 			const hit = await recall(committed.head, title, body);
 			if (hit !== null) {
+				// The branch may have moved on since the first call (a later proposal pushed a
+				// descendant, and the checkout came back): push again, so a head it does not have
+				// is refused as it would be without the memory. For a true retry the push is a
+				// no-op.
+				const pushedAgain = await machine.pushCommit(branch, committed.head);
+				if ("error" in pushedAgain) throw new Error(pushedAgain.error);
 				await record(hit);
 				return hit;
 			}
