@@ -61,6 +61,7 @@ describe("a failed tool call in the trace", () => {
 				defaultBranch: "main",
 			},
 			branch: "gateweave/conversation-1",
+			runId: "run-1",
 			agentName: "Builder",
 			model: "model-1",
 			author: async () => ({ name: "Builder", email: "noreply@gateweave.com" }),

@@ -647,6 +647,7 @@ describe("pull requests from the sandbox", () => {
 			github,
 			repository,
 			branch: BRANCH,
+			runId: "run-1",
 			agentName: "Builder",
 			model: "model-1",
 			author: async () => AUTHOR,

@@ -77,6 +77,7 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 			if (started) started.ended = outcome;
 		},
 	} as unknown as RunRecorder;
+	const memory = new Map<string, PullRequestOutcome>();
 	const tools = pullRequestTools({
 		sandbox,
 		checks: {
@@ -110,6 +111,7 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 		},
 		repository,
 		branch: BRANCH,
+		runId: "run-1",
 		agentName: "Builder",
 		model: "model-1",
 		author: async () => AUTHOR,
@@ -117,6 +119,12 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 			recorded.push(outcome);
 		},
 		run,
+		memory: {
+			recall: async (key) => memory.get(key) ?? null,
+			remember: async (key, outcome) => {
+				memory.set(key, outcome);
+			},
+		},
 	});
 	const tool = tools.open_pull_request;
 	const call = (
@@ -147,7 +155,19 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 	};
 	/** The spans of the checks, without the one of the tool itself. */
 	const checkSpans = () => spans.filter((span) => span.tool === "check");
-	return { sandbox, settings, proposed, recorded, spans, checkSpans, tool, call, refused, run };
+	return {
+		sandbox,
+		settings,
+		proposed,
+		recorded,
+		spans,
+		checkSpans,
+		tool,
+		call,
+		refused,
+		run,
+		memory,
+	};
 }
 
 describe("a repository without checks", () => {
@@ -241,6 +261,7 @@ describe("a repository without checks", () => {
 			},
 			repository,
 			branch: BRANCH,
+			runId: "run-1",
 			agentName: "Builder",
 			model: "model-1",
 			author: async () => AUTHOR,
@@ -1144,6 +1165,78 @@ describe("a repository's checks", () => {
 				].join("\n\n"),
 			},
 		]);
+	});
+});
+
+describe("a call retried or replayed (AGT-147)", () => {
+	it("R1: returns what the first call proposed, and runs neither the checks nor the push again", async () => {
+		const { sandbox, proposed, recorded, call } = setup(["pnpm test"]);
+		const first = await call();
+		expect(first.opened).toBe(true);
+		expect(sandbox.commands).toHaveLength(1);
+		expect(sandbox.commitPushes).toHaveLength(1);
+		expect(proposed).toHaveLength(1);
+		expect(recorded).toHaveLength(1);
+
+		// A retry after an eviction finds nothing new to commit: the same head, the same words.
+		sandbox.commitAnswers.push({ head: "1".repeat(40) });
+		const again = await call();
+		expect(again).toEqual(first);
+		expect(sandbox.commands).toHaveLength(1);
+		expect(sandbox.commitPushes).toHaveLength(1);
+		expect(proposed).toHaveLength(1);
+		expect(recorded).toHaveLength(1);
+	});
+
+	it("proposes afresh when the call has new work: a new commit is a new head", async () => {
+		const { sandbox, proposed, recorded, call } = setup(["pnpm test"]);
+		await call();
+		// The model committed more and calls again with the same words.
+		const second = await call();
+		expect(second.head).toBe("2".repeat(40));
+		expect(sandbox.commands).toHaveLength(2);
+		expect(sandbox.commitPushes).toHaveLength(2);
+		expect(proposed).toHaveLength(2);
+		expect(recorded).toHaveLength(2);
+	});
+
+	it("is not swallowed when only its words changed: the pull request is updated as before", async () => {
+		const { sandbox, proposed, call } = setup(["pnpm test"]);
+		await call();
+		sandbox.commitAnswers.push({ head: "1".repeat(40) });
+		await call({ title: "Fix the cart, and say so", body: "It ignored codes." });
+		expect(sandbox.commitPushes).toHaveLength(2);
+		expect(proposed).toHaveLength(2);
+		expect(proposed[1]?.title).toBe("Fix the cart, and say so");
+	});
+
+	it("remembers nothing from a call that failed, so the retry runs the checks again", async () => {
+		const { sandbox, proposed, recorded, call, refused } = setup(["pnpm test"]);
+		sandbox.answers.push(failed(), passed());
+		await refused();
+		expect(proposed).toEqual([]);
+		expect(recorded).toEqual([]);
+
+		// The retry finds the same head; with nothing remembered it checks and proposes again.
+		sandbox.commitAnswers.push({ head: "1".repeat(40) });
+		const outcome = await call();
+		expect(outcome.opened).toBe(true);
+		expect(sandbox.commands).toHaveLength(2);
+		expect(sandbox.commitPushes).toHaveLength(1);
+		expect(proposed).toHaveLength(1);
+		expect(recorded).toHaveLength(1);
+	});
+
+	it("remembers a pull request made without checks too", async () => {
+		const { sandbox, proposed, recorded, call } = setup([]);
+		const first = await call();
+		sandbox.pushAnswers.push({ head: "1".repeat(40), pushed: false });
+		const again = await call();
+		expect(again).toEqual(first);
+		// The retry's push was a no-op, and the proposal was skipped.
+		expect(sandbox.pushes).toHaveLength(2);
+		expect(proposed).toHaveLength(1);
+		expect(recorded).toHaveLength(1);
 	});
 });
 

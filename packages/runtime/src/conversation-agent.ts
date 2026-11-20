@@ -108,6 +108,7 @@ import {
 	COMMIT_EMAIL,
 	type CommitAuthor,
 	gitHubPullRequests,
+	type PullRequestMemory,
 	type PullRequestPort,
 	type PushPort,
 	pullRequestTools,
@@ -886,6 +887,8 @@ ${runPageNote(runs, turn.runId)}`
 									model: disclosureModel(agent.model, agent.engine),
 									author: this.#commitAuthor(agent.name, repository),
 									record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
+									runId,
+									memory: this.#pullRequestMemory(),
 									run,
 								})
 							: {}),
@@ -1094,6 +1097,8 @@ ${runPageNote(runs, turn.runId)}`
 								model: disclosureModel(agent.model, engine),
 								author: async () => author,
 								record: (outcome) => this.#recordPullRequest(registry, runId, outcome),
+								runId,
+								memory: this.#pullRequestMemory(),
 								run,
 							})
 						: {}),
@@ -1291,6 +1296,22 @@ ${runPageNote(runs, turn.runId)}`
 				console.error("A commit's author was not looked up", failureForLogs(error));
 				return fallback;
 			}
+		};
+	}
+
+	/**
+	 * What this conversation's `open_pull_request` calls proposed, kept in the conversation's own
+	 * store so it outlives the turn: a call retried after an eviction returns the first outcome
+	 * instead of running the checks and opening the pull request again (AGT-147). Only this tool
+	 * writes under the prefix, so what comes back is what it wrote.
+	 */
+	#pullRequestMemory(): PullRequestMemory {
+		const kv = this.ctx.storage.kv;
+		return {
+			recall: async (key) => (await kv.get<PullRequestOutcome>(key)) ?? null,
+			remember: async (key, outcome) => {
+				await kv.put(key, outcome);
+			},
 		};
 	}
 

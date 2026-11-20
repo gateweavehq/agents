@@ -9,6 +9,10 @@
  * body then ends with a section the tool writes, which says what ran. A repository without checks
  * gets none of this: its pull requests are made as before.
  *
+ * A call that is retried or replayed (AGT-147) finds what the first one proposed in the
+ * conversation's memory and returns it, so the checks do not run twice and a pull request the
+ * branch's open one cannot stand in for is not made again.
+ *
  * The push leaves through `SandboxOutbound`, which lets that one push through with a token that
  * writes, and only to the conversation's branch. The pull request is made here, in the Worker, with
  * a token that writes pull requests and only reads the code. The sandbox never holds either.
@@ -148,6 +152,8 @@ export interface PullRequestToolOptions {
 	github: PullRequestPort;
 	repository: SandboxRepository;
 	branch: string;
+	/** The run these tools serve: part of the memory's key, so a later run proposes afresh. */
+	runId: string;
 	agentName: string;
 	model: string;
 	/**
@@ -158,6 +164,19 @@ export interface PullRequestToolOptions {
 	/** Puts the pull request on the run. */
 	record: (outcome: PullRequestOutcome) => Promise<void>;
 	run: RunRecorder;
+	/** Left out, every call proposes as if it were the first. */
+	memory?: PullRequestMemory;
+}
+
+/**
+ * What a conversation's `open_pull_request` calls proposed, kept past the turn so a retried or
+ * replayed call returns the first outcome instead of repeating the work (AGT-147).
+ */
+export interface PullRequestMemory {
+	/** The outcome the first call under this key recorded, if there was one. */
+	recall(key: string): Promise<PullRequestOutcome | null>;
+	/** Records a call's outcome under its key. Only a call that proposed writes. */
+	remember(key: string, outcome: PullRequestOutcome): Promise<void>;
 }
 
 /** `open_pull_request`, traced in `run` like the sandbox's other tools. */
@@ -169,11 +188,13 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		github,
 		repository,
 		branch,
+		runId,
 		agentName,
 		model,
 		author,
 		record,
 		run,
+		memory,
 	} = options;
 	const name = `${repository.owner}/${repository.name}`;
 	// The tools are made once for a turn, which is one run: what its calls spent adds up here.
@@ -188,16 +209,15 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 	};
 	/**
 	 * Commits, runs the checks on the commit, and pushes it. A round that fails throws before the
-	 * push, until the run's last allowed failure, which pushes the work for a draft.
+	 * push, until the run's last allowed failure, which pushes the work for a draft. The commit is
+	 * the caller's: the memory is consulted between the two, so a retried call skips the checks.
 	 */
 	const checkAndPush = async (
 		commands: string[],
 		machine: CheckPort,
-		title: string,
+		committed: { head: string },
 		signal: AbortSignal | undefined,
 	): Promise<{ pushed: PushResult; round: CheckRound; head: string }> => {
-		const committed = await machine.commit(title, await author(), model);
-		if ("error" in committed) throw new Error(committed.error);
 		const round = await runChecks(commands, machine, committed.head, run, spent, {
 			now: checks?.now,
 			signal,
@@ -215,6 +235,32 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			round,
 			head: committed.head,
 		};
+	};
+	/**
+	 * The memory's key for one call: the run, the branch, the commit the work is at, and the words
+	 * the model gave. A retry of the same call matches; new work, new words or a later run do not.
+	 */
+	const memoKey = async (head: string, title: string, body: string): Promise<string> => {
+		const digest = await crypto.subtle.digest(
+			"SHA-256",
+			new TextEncoder().encode(`${title}\n${body}`),
+		);
+		const words = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0"));
+		return `gateweave:pull-request:${runId}:${branch}:${head}:${words.join("")}`;
+	};
+	const recall = async (
+		head: string,
+		title: string,
+		body: string,
+	): Promise<PullRequestOutcome | null> =>
+		memory === undefined ? null : memory.recall(await memoKey(head, title, body));
+	const remember = async (
+		head: string,
+		title: string,
+		body: string,
+		outcome: PullRequestOutcome,
+	): Promise<void> => {
+		if (memory !== undefined) await memory.remember(await memoKey(head, title, body), outcome);
 	};
 	const open = tool({
 		description: `Proposes your work on ${name} as a pull request against ${repository.defaultBranch}. It commits every change in ${SANDBOX_REPOSITORY_PATH} (git add --all) with the title as the message, pushes the branch ${branch}, and opens a pull request from it; called again, it pushes the new work and updates that pull request. To split the work into several commits, commit with git first. Run the project's checks before you call it. git push does not work in the sandbox: this is the only way to push.`,
@@ -251,12 +297,22 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		let about: Pick<PullRequestOutcome, "checks" | "draft" | "note"> = {};
 		if (commands.length === 0) {
 			pushed = await sandbox.push(branch, title, await author(), model);
+			// A retry's push is a no-op: the commit is there, so only the proposal is skipped.
+			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
+			if (hit !== null) return hit;
 		} else if (!checks?.sandbox) {
 			pushed = await sandbox.push(branch, title, await author(), model);
+			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
+			if (hit !== null) return hit;
 			section = checksNotRunSection(NO_SANDBOX);
 			about = { checks: "not run", draft: false };
 		} else {
-			const checked = await checkAndPush(commands, checks.sandbox, title, abortSignal);
+			const machine = checks.sandbox;
+			const committed = await machine.commit(title, await author(), model);
+			if ("error" in committed) throw new Error(committed.error);
+			const hit = await recall(committed.head, title, body);
+			if (hit !== null) return hit;
+			const checked = await checkAndPush(commands, machine, committed, abortSignal);
 			pushed = checked.pushed;
 			const { status } = checked.round;
 			const draft = status !== "passed";
@@ -298,6 +354,8 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			...about,
 		};
 		await record(outcome);
+		// Only a call that proposed is remembered: a failed one is retried as if it were the first.
+		await remember(pushed.head, title, body, outcome);
 		return outcome;
 	};
 	return {
