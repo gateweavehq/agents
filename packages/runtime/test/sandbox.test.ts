@@ -616,7 +616,17 @@ describe("a conversation with a sandbox", () => {
 		);
 
 		await machine.failForgetKeys("the container would not stop");
-		await expect(stub.destroy()).rejects.toThrow(/would not stop/);
+		// A refusal thrown over RPC is reported as unhandled, so the destroy is called inside the
+		// object and its failure caught there, as the registry's call would surface it.
+		const failure = await runInDurableObject(stub, async (instance) => {
+			try {
+				await instance.destroy();
+				return null;
+			} catch (error) {
+				return error instanceof Error ? error.message : String(error);
+			}
+		});
+		expect(failure).toContain("would not stop");
 
 		// The erase did not happen, so the sandbox and what it keeps are both still there.
 		const kept = await machine.seen();
