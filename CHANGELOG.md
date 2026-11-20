@@ -19,13 +19,13 @@ workspace registry, which adds a column with a default.
 - **An MCP client can hand an agent a task and follow its run.** A new scope, `agents:run`,
   sits beside `agents` on `/mcp`. Tokens issued before keep working unchanged, and the consent
   page says what the wider scope allows.
+  ([#300](https://github.com/gateweavehq/agents/pull/300), [#301](https://github.com/gateweavehq/agents/pull/301), [#302](https://github.com/gateweavehq/agents/pull/302))
   - With it, `run_agent` starts a run of an agent in the workspace. The agent must allow tasks
     from outside (off by default), and its per-minute and per-day limits count the run like a
     trigger's.
   - A client's `requestId` makes a retry find the run it already started.
   - `get_run` answers the run's state, steps, tokens and cost, and the agent's answer once it is
     written. It shows a run only to whoever the Runs pages show it to.
-  ([#300](https://github.com/gateweavehq/agents/pull/300), [#301](https://github.com/gateweavehq/agents/pull/301), [#302](https://github.com/gateweavehq/agents/pull/302))
 - **A turn that changed the repository sums it up under its reply**: each file changed, with
   lines added and removed, opening to its diff. Diffs are capped, and anything that looks like a
   secret is redacted before it is stored.
