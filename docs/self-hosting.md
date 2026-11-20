@@ -410,10 +410,14 @@ sandboxes on:
 
 Your account pays for the [Containers](https://developers.cloudflare.com/containers/pricing/) time,
 which needs the Workers Paid plan. Each sandbox is a `standard-1` instance, at most about $0.074 an
-hour while it runs. Each workspace has at most three sandboxes at once, and each stops 15 minutes
-after its conversation's last turn. To keep the bill in hand:
+hour while it runs. Each workspace has at most three sandboxes at once, and each stops 5 minutes
+after its conversation's last turn, unless `SANDBOX_IDLE_MINUTES` says otherwise. To keep the
+bill in hand:
 
 - `SANDBOX_WORKSPACES` limits sandboxes to the workspaces you invite.
+- `SANDBOX_IDLE_MINUTES` sets the minutes a sandbox stays up without a request (5 when unset): a
+  follow-up turn within them reuses its checkout and installed packages, and after them the next
+  turn pays for them again.
 - `SANDBOX_DAILY_MINUTES` limits each workspace's minutes per day.
 - `SANDBOX_MONTHLY_BUDGET` limits the server's spending per month. Agents prices sandbox time at
   the most it can cost, so Cloudflare's bill stays under the budget. Set `SANDBOX_ALERT_EMAIL` to
@@ -482,19 +486,19 @@ The dataset is created on the first write. From then on, each run that closes wr
 indexed by its workspace's id. Without the binding, nothing is written. The fields are in this
 order (`packages/registry/src/usage.ts`):
 
-| Field       | What it holds                                                                    |
-| ----------- | -------------------------------------------------------------------------------- |
-| `index1`    | The workspace's id                                                               |
-| `blob1`–`8` | Run id, agent id, agent name, provider, model, status, trigger id, top run's id  |
-| `double1`   | Input tokens (cached ones included)                                              |
-| `double2`   | Output tokens                                                                    |
-| `double3`   | Cached input tokens                                                              |
-| `double4`   | Estimated model cost in US dollars, 0 when unpriced                              |
-| `double5`   | 1 when the run has a cost estimate, 0 when a model it used has no prices         |
-| `double6`   | Model requests                                                                   |
-| `double7`   | Seconds the turn took                                                            |
-| `double8`   | Sandbox seconds, with the 15 idle minutes after the turn (an upper bound summed) |
-| `double9`   | Their estimated cost in US dollars                                               |
+| Field       | What it holds                                                                   |
+| ----------- | ------------------------------------------------------------------------------- |
+| `index1`    | The workspace's id                                                              |
+| `blob1`–`8` | Run id, agent id, agent name, provider, model, status, trigger id, top run's id |
+| `double1`   | Input tokens (cached ones included)                                             |
+| `double2`   | Output tokens                                                                   |
+| `double3`   | Cached input tokens                                                             |
+| `double4`   | Estimated model cost in US dollars, 0 when unpriced                             |
+| `double5`   | 1 when the run has a cost estimate, 0 when a model it used has no prices        |
+| `double6`   | Model requests                                                                  |
+| `double7`   | Seconds the turn took                                                           |
+| `double8`   | Sandbox seconds, with the idle minutes after the turn (an upper bound summed)   |
+| `double9`   | Their estimated cost in US dollars                                              |
 
 Query them with the [SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/)
 and an API token with Account Analytics Read. Analytics Engine samples heavy traffic, so weigh each

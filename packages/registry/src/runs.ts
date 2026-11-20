@@ -124,13 +124,13 @@ export function hasRuns(db: Db, conversationId: string): boolean {
 }
 
 /** The runs that replay a run, oldest first. */
-export function listReplays(db: Db, runId: string): TotaledRun[] {
+export function listReplays(db: Db, runId: string, idleMinutes?: number): TotaledRun[] {
 	const replays = selectRuns(db)
 		.where(eq(runs.replayOf, runId))
 		.orderBy(asc(runs.startedAt), asc(runs.id))
 		.all()
-		.map(toRun);
-	return withTotals(db, replays);
+		.map((run) => toRun(run, idleMinutes));
+	return withTotals(db, replays, idleMinutes);
 }
 
 /**
@@ -138,8 +138,13 @@ export function listReplays(db: Db, runId: string): TotaledRun[] {
  * going, or ended less than `SANDBOX_IDLE_MINUTES` ago. A run going for longer than
  * `RUN_TIMEOUT` was cut short and does not count.
  */
-export function sandboxesInUse(db: Db, conversationId: string, now: number): number {
-	const idle = now - SANDBOX_IDLE_MINUTES * 60_000;
+export function sandboxesInUse(
+	db: Db,
+	conversationId: string,
+	now: number,
+	idleMinutes = SANDBOX_IDLE_MINUTES,
+): number {
+	const idle = now - idleMinutes * 60_000;
 	const row = db
 		.select({ conversations: countDistinct(runs.conversationId) })
 		.from(runs)
@@ -165,8 +170,14 @@ export function sandboxesInUse(db: Db, conversationId: string, now: number): num
  * until `RUN_TIMEOUT` cut it short. The runs of a deleted conversation lost their link to it, so
  * each counts as a sandbox of its own: more than ran, never less.
  */
-export function sandboxSeconds(db: Db, from: number, to: number, now: number): number {
-	const idle = SANDBOX_IDLE_MINUTES * 60_000;
+export function sandboxSeconds(
+	db: Db,
+	from: number,
+	to: number,
+	now: number,
+	idleMinutes = SANDBOX_IDLE_MINUTES,
+): number {
+	const idle = idleMinutes * 60_000;
 	const rows = db
 		.select({
 			id: runs.id,
@@ -291,6 +302,7 @@ export function recordRunPullRequest(db: Db, id: string, pullRequest: RunPullReq
 export function listRuns(
 	db: Db,
 	{ startedBy, before }: { startedBy?: string; before?: RunCursor },
+	idleMinutes?: number,
 ): TotaledRun[] {
 	const page = selectRuns(db)
 		.where(
@@ -308,30 +320,30 @@ export function listRuns(
 		.orderBy(desc(runs.startedAt), desc(runs.id))
 		.limit(RUNS_PER_PAGE)
 		.all()
-		.map(toRun);
-	return withTotals(db, page);
+		.map((run) => toRun(run, idleMinutes));
+	return withTotals(db, page, idleMinutes);
 }
 
-export function getRun(db: Db, id: string): TotaledRun | null {
+export function getRun(db: Db, id: string, idleMinutes?: number): TotaledRun | null {
 	const row = selectRuns(db).where(eq(runs.id, id)).get();
-	return row ? (withTotals(db, [toRun(row)])[0] ?? null) : null;
+	return row ? (withTotals(db, [toRun(row, idleMinutes)], idleMinutes)[0] ?? null) : null;
 }
 
 /** The runs one run called over its team's edges, in the order it called them. */
-export function listNestedRuns(db: Db, parentRunId: string): TotaledRun[] {
+export function listNestedRuns(db: Db, parentRunId: string, idleMinutes?: number): TotaledRun[] {
 	const nested = selectRuns(db)
 		.where(eq(runs.parentRunId, parentRunId))
 		.orderBy(asc(runs.startedAt), asc(runs.id))
 		.all()
-		.map(toRun);
-	return withTotals(db, nested);
+		.map((run) => toRun(run, idleMinutes));
+	return withTotals(db, nested, idleMinutes);
 }
 
 /**
  * The runs of a conversation still going: the turn answering the person's message, and those it
  * led to over the team's edges, which may go on after it, as a report does.
  */
-export function activeRuns(db: Db, conversationId: string): Run[] {
+export function activeRuns(db: Db, conversationId: string, idleMinutes?: number): Run[] {
 	const turns = db
 		.select({ id: runs.id })
 		.from(runs)
@@ -345,14 +357,14 @@ export function activeRuns(db: Db, conversationId: string): Run[] {
 		)
 		.orderBy(asc(runs.startedAt), asc(runs.id))
 		.all()
-		.map(toRun);
+		.map((run) => toRun(run, idleMinutes));
 }
 
 /**
  * Each run with what it and the runs nested under it used. The runs one message led to are few
  * (`TEAM_TURN_LIMITS.perMessage`), so they are read whole and added up here.
  */
-function withTotals(db: Db, list: Run[]): TotaledRun[] {
+function withTotals(db: Db, list: Run[], idleMinutes = SANDBOX_IDLE_MINUTES): TotaledRun[] {
 	if (list.length === 0) return [];
 	const tops = [...new Set(list.map((run) => run.rootRunId ?? run.id))];
 	const now = Date.now();
@@ -374,7 +386,7 @@ function withTotals(db: Db, list: Run[]): TotaledRun[] {
 		.all()
 		.map(({ nextTurn, ...run }) => ({
 			...run,
-			sandboxSeconds: sandboxRunSeconds(run, nextTurn, now),
+			sandboxSeconds: sandboxRunSeconds(run, nextTurn, now, idleMinutes),
 		}));
 	const called = new Map<string, typeof family>();
 	for (const run of family) {
@@ -489,21 +501,24 @@ function selectRuns(db: Db) {
 		.$dynamic();
 }
 
-function toRun({
-	run,
-	agentName,
-	triggerName,
-	nextTurn,
-}: {
-	run: typeof runs.$inferSelect;
-	agentName: string;
-	triggerName: string | null;
-	nextTurn: number | null;
-}): Run {
+function toRun(
+	{
+		run,
+		agentName,
+		triggerName,
+		nextTurn,
+	}: {
+		run: typeof runs.$inferSelect;
+		agentName: string;
+		triggerName: string | null;
+		nextTurn: number | null;
+	},
+	idleMinutes = SANDBOX_IDLE_MINUTES,
+): Run {
 	return {
 		...run,
 		agentName,
 		triggerName,
-		sandboxSeconds: sandboxRunSeconds(run, nextTurn, Date.now()),
+		sandboxSeconds: sandboxRunSeconds(run, nextTurn, Date.now(), idleMinutes),
 	};
 }

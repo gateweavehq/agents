@@ -18,6 +18,12 @@ export interface SandboxSettings {
 	/** Minutes of sandbox time each workspace may use in a day (UTC); no limit when unset or empty. */
 	SANDBOX_DAILY_MINUTES?: string;
 	/**
+	 * Minutes without a request after which a sandbox stops, and its files go with it; the default
+	 * when unset. A mistyped value keeps the default: a sandbox that stops at once would lose
+	 * every turn's checkout.
+	 */
+	SANDBOX_IDLE_MINUTES?: string;
+	/**
 	 * US dollars the deployment may spend on sandboxes in a month (UTC), as `SANDBOX_SECOND_PRICE`
 	 * prices them; no limit when unset or empty. The deployment's meter adds up its workspaces.
 	 */
@@ -37,8 +43,20 @@ export const SANDBOX_INSTANCE = "standard-1";
  */
 export const SANDBOX_SECOND_PRICE = 4 * 0.0000025 + 0.5 * 0.00002 + 8 * 0.00000007;
 
-/** Minutes without a request after which a sandbox stops, and its files go with it. */
-export const SANDBOX_IDLE_MINUTES = 15;
+/**
+ * Minutes without a request after which a sandbox stops, and its files go with it. The default
+ * when the deployment sets none: a follow-up turn within it reuses the checkout and installed
+ * packages, and after it the next turn pays for them again.
+ */
+export const SANDBOX_IDLE_MINUTES = 5;
+
+/** The minutes a deployment's sandboxes stay up without a request; its setting, or the default. */
+export function sandboxIdleMinutes(settings: SandboxSettings): number {
+	const text = String(settings.SANDBOX_IDLE_MINUTES ?? "").trim();
+	if (text === "") return SANDBOX_IDLE_MINUTES;
+	const value = Number(text);
+	return Number.isFinite(value) && value > 0 ? value : SANDBOX_IDLE_MINUTES;
+}
 
 /** The estimated cost of `seconds` of sandbox time, in millionths of a dollar, as runs count cost. */
 export function sandboxCost(seconds: number): number {
@@ -59,6 +77,7 @@ export function sandboxRunSeconds(
 	run: { sandbox: boolean; status: string; startedAt: number; endedAt: number | null },
 	nextTurn: number | null,
 	now: number,
+	idleMinutes = SANDBOX_IDLE_MINUTES,
 ): number | null {
 	if (!run.sandbox) return null;
 	const { startedAt } = run;
@@ -67,7 +86,7 @@ export function sandboxRunSeconds(
 		end = Math.max(now, startedAt);
 	} else {
 		const ended = run.endedAt ?? startedAt + RUN_TIMEOUT_MS;
-		end = ended + SANDBOX_IDLE_MINUTES * 60_000;
+		end = ended + idleMinutes * 60_000;
 	}
 	if (nextTurn !== null) end = Math.min(end, nextTurn);
 	return Math.max(0, end - startedAt) / 1000;

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+	SANDBOX_IDLE_MINUTES,
 	SANDBOX_SECOND_PRICE,
 	sandboxCost,
+	sandboxIdleMinutes,
 	sandboxLimits,
 	sandboxOfferTo,
 	sandboxRunSeconds,
@@ -51,6 +53,20 @@ describe("sandbox settings", () => {
 		expect(sandboxLimits({ SANDBOX_DAILY_MINUTES: 90 as unknown as string }).dailyMinutes).toBe(90);
 	});
 
+	it("reads the idle minutes as a number, and a mistyped one as the default", () => {
+		expect(sandboxIdleMinutes({})).toBe(SANDBOX_IDLE_MINUTES);
+		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: "" })).toBe(SANDBOX_IDLE_MINUTES);
+		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: " 8 " })).toBe(8);
+		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: "2.5" })).toBe(2.5);
+		// A sandbox that would stop at once would lose every turn's checkout: a mistyped value
+		// keeps the default instead.
+		for (const mistyped of ["0", "-3", "soon"]) {
+			expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: mistyped })).toBe(SANDBOX_IDLE_MINUTES);
+		}
+		// Wrangler hands a number in `vars` over as one.
+		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: 10 as unknown as string })).toBe(10);
+	});
+
 	it("prices a second of sandbox at the most its machine costs", () => {
 		// $0.074 an hour: 4 GiB of memory, half a vCPU kept busy and 8 GB of disk.
 		expect(SANDBOX_SECOND_PRICE * 3600).toBeCloseTo(0.074016, 6);
@@ -62,14 +78,18 @@ describe("sandboxRunSeconds", () => {
 	const run = { sandbox: true, status: "succeeded", startedAt: 0, endedAt: 10 * MINUTE };
 
 	it("counts a run until its conversation's sandbox sleeps, or its next turn takes it over", () => {
-		expect(sandboxRunSeconds(run, null, 60 * MINUTE)).toBe(25 * 60);
+		expect(sandboxRunSeconds(run, null, 60 * MINUTE)).toBe((10 + SANDBOX_IDLE_MINUTES) * 60);
 		expect(sandboxRunSeconds(run, 12 * MINUTE, 60 * MINUTE)).toBe(12 * 60);
+		// The deployment's own idle minutes count instead of the default.
+		expect(sandboxRunSeconds(run, null, 60 * MINUTE, 20)).toBe(30 * 60);
 	});
 
 	it("counts a run still going until now, and one that never reported back until it timed out", () => {
 		const going = { ...run, status: "running", endedAt: null };
 		expect(sandboxRunSeconds(going, null, 3 * MINUTE)).toBe(3 * 60);
-		expect(sandboxRunSeconds(going, null, 5 * 60 * MINUTE)).toBe((60 + 15) * 60);
+		// An active run is never cut by the idle minutes, whatever they are.
+		expect(sandboxRunSeconds(going, null, 3 * MINUTE, 1)).toBe(3 * 60);
+		expect(sandboxRunSeconds(going, null, 5 * 60 * MINUTE)).toBe((60 + SANDBOX_IDLE_MINUTES) * 60);
 	});
 
 	it("gives a run without a sandbox none", () => {

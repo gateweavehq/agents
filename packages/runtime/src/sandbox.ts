@@ -24,6 +24,8 @@ import {
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
+	type SandboxSettings,
+	sandboxIdleMinutes,
 } from "@gateweave/agents-model";
 import { objectsIn } from "@gateweave/agents-registry";
 import { turnChanges as diffChanges, changesBase as writeChangesBase } from "./changes";
@@ -86,7 +88,6 @@ import { boundedSearchOutput, clipCommandOutput, clipOutput, readPrefix } from "
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
 import {
 	type CommandResult,
-	IDLE_MINUTES,
 	type ReadResult,
 	SANDBOX_ROOT,
 	type SandboxPort,
@@ -98,8 +99,6 @@ const MCP_SERVER_LOG = "/tmp/gateweave-mcp-servers.log";
 
 /** The largest file `readFile` opens: the model reads a bigger one with a command. */
 export const READ_BYTES = 5_000_000;
-
-const IDLE_MS = IDLE_MINUTES * 60_000;
 
 /** The certificate the container's HTTPS goes through on its way to `SandboxOutbound`. */
 const CA_PATH = "/etc/cloudflare/certs/cloudflare-containers-ca.crt";
@@ -206,15 +205,18 @@ export class RunnerSandbox
 		started: number;
 		ended: Promise<{ code: number | null; seconds: number }>;
 	} | null = null;
+	/** Milliseconds the container may sit without a request before it stops (`SANDBOX_IDLE_MINUTES`). */
+	#idleMs: number;
 
 	constructor(ctx: SandboxState, env: Cloudflare.Env) {
 		super(ctx, env);
+		this.#idleMs = sandboxIdleMinutes(env as SandboxSettings) * 60_000;
 		this.#container = ctx.container;
 		this.#outbound = ctx.exports.SandboxOutbound({ props: { sandbox: ctx.id.toString() } });
 		// Each instance sets its own timeout: a container that outlived the last one keeps none.
 		const container = this.#container;
 		if (container?.running) {
-			void ctx.blockConcurrencyWhile(() => container.setInactivityTimeout(IDLE_MS));
+			void ctx.blockConcurrencyWhile(() => container.setInactivityTimeout(this.#idleMs));
 		}
 	}
 
@@ -572,7 +574,7 @@ export class RunnerSandbox
 			model: job.model,
 			access: job.access,
 		};
-		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
+		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + this.#idleMs);
 		let process: ExecProcess;
 		try {
 			process = await container.exec(
@@ -725,7 +727,7 @@ export class RunnerSandbox
 	async #engineEnded(container: Container): Promise<void> {
 		this.#engine = null;
 		this.#running = null;
-		if (container.running) await container.setInactivityTimeout(IDLE_MS);
+		if (container.running) await container.setInactivityTimeout(this.#idleMs);
 	}
 
 	/**
@@ -741,7 +743,7 @@ export class RunnerSandbox
 			model: job.model,
 			access: job.access,
 		};
-		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + IDLE_MS);
+		await container.setInactivityTimeout(ENGINE_SECONDS * 1000 + this.#idleMs);
 		let turn: OpenCodeServerTurn;
 		try {
 			if (job.system !== "") {
@@ -996,7 +998,7 @@ export class RunnerSandbox
 			await container.interceptOutboundHttp(ENGINE_TOOLS_HOST, this.#outbound);
 			await container.interceptAllOutboundHttp(this.#outbound);
 			await container.interceptOutboundHttps("*", this.#outbound);
-			await container.setInactivityTimeout(IDLE_MS);
+			await container.setInactivityTimeout(this.#idleMs);
 		} catch (error) {
 			console.error("A sandbox did not start", failureForLogs(error));
 			if (container.running) await container.destroy().catch(() => {});

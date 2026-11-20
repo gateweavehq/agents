@@ -62,7 +62,8 @@ Today's container against a Docker cloud sandbox:
   engine a model key.
 - **Reach.** Today only its conversation reaches it, over RPC, with no route. On Docker a
   published port is a public HTTPS URL with no Docker sign-in in front of it.
-- **Lifetime.** Today it stops 15 minutes after its last call and lives as long as it is used.
+- **Lifetime.** Today it stops 5 minutes after its last call by default (`SANDBOX_IDLE_MINUTES`
+  sets its own) and lives as long as it is used.
   A Docker sandbox lives at most 24 hours from creation.
 - **Limits.** Today our own rules apply (three per workspace at once); Docker's account defaults
   are 10 at once and 50 stored.

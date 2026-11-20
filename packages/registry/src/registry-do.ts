@@ -100,7 +100,6 @@ import {
 	runPullRequest,
 	SANDBOX_BUDGET_SPENT,
 	SANDBOX_DAY_USED,
-	SANDBOX_IDLE_MINUTES,
 	SANDBOX_NOT_INVITED,
 	SANDBOX_NOT_OFFERED,
 	type SandboxBudgetPassed,
@@ -112,6 +111,7 @@ import {
 	type SetupImportInput,
 	type SetupInput,
 	type SetupPins,
+	sandboxIdleMinutes,
 	sandboxLimits,
 	sandboxOfferTo,
 	scanResult,
@@ -1859,6 +1859,11 @@ export class RegistryDO extends DurableObject {
 		return false;
 	}
 
+	/** The minutes the deployment's sandboxes stay up without a request (`SANDBOX_IDLE_MINUTES`). */
+	#idleMinutes(): number {
+		return sandboxIdleMinutes(this.env as SandboxSettings);
+	}
+
 	/**
 	 * Why a turn of `agent` in `conversation` may not have a sandbox now, or null when it may: the
 	 * workspace's sandboxes are all in use, or its minutes for the day are. Synchronous, so it can
@@ -1866,9 +1871,10 @@ export class RegistryDO extends DurableObject {
 	 * may begin meanwhile (AGT-63).
 	 */
 	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): ProviderRefusal | null {
-		if (sandboxesInUse(this.#db, conversation, Date.now()) >= MAX_WORKSPACE_SANDBOXES) {
+		const idle = this.#idleMinutes();
+		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
 			return refused(
-				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
+				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
 			);
 		}
 		const { dailyMinutes } = sandboxLimits(this.env as SandboxSettings);
@@ -1886,7 +1892,7 @@ export class RegistryDO extends DurableObject {
 		const data = runFinish.parse(finish);
 		const closed = this.#write(() => finishRun(this.#db, run, data));
 		if (closed) {
-			const done = getRun(this.#db, run);
+			const done = getRun(this.#db, run, this.#idleMinutes());
 			// Each registry is named for its workspace (`registryFor` in the app).
 			if (done) this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done));
 		}
@@ -1915,7 +1921,7 @@ export class RegistryDO extends DurableObject {
 	sandboxSecondsToday(): number {
 		const now = Date.now();
 		const today = utcDay(now);
-		return sandboxSeconds(this.#db, today.start, today.end, now);
+		return sandboxSeconds(this.#db, today.start, today.end, now, this.#idleMinutes());
 	}
 
 	/**
@@ -1938,13 +1944,13 @@ export class RegistryDO extends DurableObject {
 		const startedBy = id.optional().parse(options.startedBy);
 		const before = runCursor.optional().parse(options.before);
 		this.#write(() => expireRuns(this.#db, Date.now()));
-		return listRuns(this.#db, { startedBy, before });
+		return listRuns(this.#db, { startedBy, before }, this.#idleMinutes());
 	}
 
 	getRun(runId: string): TotaledRun | null {
 		const run = id.parse(runId);
 		this.#write(() => expireRuns(this.#db, Date.now()));
-		return getRun(this.#db, run);
+		return getRun(this.#db, run, this.#idleMinutes());
 	}
 
 	/**
@@ -1960,7 +1966,7 @@ export class RegistryDO extends DurableObject {
 		member: string,
 		admin: boolean,
 	): { conversationId: string } | ProviderRefusal {
-		const run = getRun(this.#db, id.parse(runId));
+		const run = getRun(this.#db, id.parse(runId), this.#idleMinutes());
 		const at = z.number().int().nonnegative().parse(step);
 		const by = id.parse(member);
 		if (!run || (run.startedBy !== by && !(admin === true && run.triggerId !== null))) {
@@ -1991,14 +1997,14 @@ export class RegistryDO extends DurableObject {
 
 	/** The runs that replay a run, oldest first. */
 	listReplays(runId: string): TotaledRun[] {
-		return listReplays(this.#db, id.parse(runId));
+		return listReplays(this.#db, id.parse(runId), this.#idleMinutes());
 	}
 
 	/** The runs one run called over its team's edges, in the order it called them. */
 	listNestedRuns(runId: string): TotaledRun[] {
 		const run = id.parse(runId);
 		this.#write(() => expireRuns(this.#db, Date.now()));
-		return listNestedRuns(this.#db, run);
+		return listNestedRuns(this.#db, run, this.#idleMinutes());
 	}
 
 	/**
@@ -2011,7 +2017,7 @@ export class RegistryDO extends DurableObject {
 		const parties = conversationParties(this.#db, conversation);
 		if (!parties || parties.startedBy !== member || parties.rootId !== null) return null;
 		this.#write(() => expireRuns(this.#db, Date.now()));
-		return activeRuns(this.#db, conversation);
+		return activeRuns(this.#db, conversation, this.#idleMinutes());
 	}
 
 	/** What runs used since `since`, a time. */
@@ -3238,7 +3244,7 @@ export class RegistryDO extends DurableObject {
 		if (!meter) return null;
 		const now = Date.now();
 		const month = utcMonth(now);
-		const seconds = sandboxSeconds(this.#db, month.start, month.end, now);
+		const seconds = sandboxSeconds(this.#db, month.start, month.end, now, this.#idleMinutes());
 		// Each registry is named for its workspace (`registryFor` in the app).
 		const workspace = this.ctx.id.name ?? this.ctx.id.toString();
 		// One meter for the deployment, kept where it keeps its workspaces.
