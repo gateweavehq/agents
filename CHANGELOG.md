@@ -8,6 +8,61 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.33.0] - 2026-11-20
+
+An MCP client can hand one of your agents a task and read the run's result, and a moved
+workspace's old copies are erased a week after the move. This release has one migration in the
+workspace registry, which adds a column with a default.
+
+### Added
+
+- **An MCP client can hand an agent a task and follow its run.** A new scope, `agents:run`,
+  sits beside `agents` on `/mcp`. Tokens issued before keep working unchanged, and the consent
+  page says what the wider scope allows.
+  - With it, `run_agent` starts a run of an agent in the workspace. The agent must allow tasks
+    from outside (off by default), and its per-minute and per-day limits count the run like a
+    trigger's.
+  - A client's `requestId` makes a retry find the run it already started.
+  - `get_run` answers the run's state, steps, tokens and cost, and the agent's answer once it is
+    written. It shows a run only to whoever the Runs pages show it to.
+  ([#300](https://github.com/gateweavehq/agents/pull/300), [#301](https://github.com/gateweavehq/agents/pull/301), [#302](https://github.com/gateweavehq/agents/pull/302))
+- **A turn that changed the repository sums it up under its reply**: each file changed, with
+  lines added and removed, opening to its diff. Diffs are capped, and anything that looks like a
+  secret is redacted before it is stored.
+  ([#294](https://github.com/gateweavehq/agents/pull/294))
+
+### Changed
+
+- **A moved workspace's old copies are erased a week after the move.** When a deployment moves
+  its objects into a jurisdiction, the old copies stay behind, sealed. The daily run now erases
+  them:
+  - **What goes:** the registry, the conversations and their sandboxes' saved keys.
+  - **Only sealed copies.** Each object checks its own seal first, and a live one refuses.
+  - **Over several runs if needed.** A workspace with many conversations finishes across runs.
+
+  ([#306](https://github.com/gateweavehq/agents/pull/306))
+
+### Fixed
+
+- **Large answers from a connected MCP server no longer fill the conversation**: the model
+  gets a bounded preview, and the trace records the full size.
+  ([#298](https://github.com/gateweavehq/agents/pull/298))
+- **Search results keep whole lines** when they are shortened, and say how many matches were
+  left out. ([#299](https://github.com/gateweavehq/agents/pull/299))
+- **The invitation page's buttons come back after a network error**, with an error you can
+  retry. ([#303](https://github.com/gateweavehq/agents/pull/303))
+- **Saving an agent's definition from an editor that is out of date is refused**, where it
+  could overwrite someone else's newer change. ([#304](https://github.com/gateweavehq/agents/pull/304))
+- **Only the owner and admin roles have admin rights.** A role Agents does not know, such as one
+  added later, gets none. ([#305](https://github.com/gateweavehq/agents/pull/305))
+
+### If you run your own
+
+- **Update.** The migration is in each workspace's registry and runs by itself when the workspace
+  is next used; there is no step for you.
+- **Old copies.** The daily run erases old copies a week after a move. A deployment that never
+  moved its objects into a jurisdiction has nothing to erase.
+
 ## [0.32.0] - 2026-11-19
 
 The chat shows what an agent did, not only what it said, and what an agent writes on GitHub
