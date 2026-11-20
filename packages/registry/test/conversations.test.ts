@@ -650,15 +650,15 @@ describe("sandbox time", () => {
 		const at = today + 60 * MINUTE;
 		await withSandboxes(stub, async (instance) => {
 			// Two turns of one conversation, close enough to share its sandbox: 10 minutes of turn,
-			// then 10 asleep, then 10 more and the sandbox's idle minutes.
+			// 4 asleep, then 10 more and the sandbox's idle minutes.
 			moveRun(instance, await turn(instance, first), at, at + 10 * MINUTE);
-			moveRun(instance, await turn(instance, first), at + 20 * MINUTE, at + 30 * MINUTE);
+			moveRun(instance, await turn(instance, first), at + 14 * MINUTE, at + 24 * MINUTE);
 			// A sandbox that went on past midnight counts from midnight.
-			moveRun(instance, await turn(instance, second), today - 20 * MINUTE, today - 5 * MINUTE);
+			moveRun(instance, await turn(instance, second), today - 20 * MINUTE, today - 2 * MINUTE);
 			// A turn without a sandbox counts for nothing.
 			moveRun(instance, await turn(instance, chat), at, at + 10 * MINUTE);
 		});
-		const minutes = 30 + IDLE + (IDLE - 5);
+		const minutes = 24 + IDLE + (IDLE - 2);
 		expect(await stub.sandboxSecondsToday()).toBe(minutes * 60);
 	});
 
@@ -673,17 +673,17 @@ describe("sandbox time", () => {
 			const two = await turn(instance, first);
 			const none = await turn(instance, chat);
 			moveRun(instance, one, at, at + 10 * MINUTE);
-			moveRun(instance, two, at + 20 * MINUTE, at + 30 * MINUTE);
+			moveRun(instance, two, at + 14 * MINUTE, at + 24 * MINUTE);
 			moveRun(instance, none, at, at + 10 * MINUTE);
 			return { one, two, none };
 		});
 		const seconds = async (id: string) => (await stub.getRun(id))?.sandboxSeconds;
 		// The first turn's sandbox ran on until the second turn took it over.
-		expect(await seconds(ids.one)).toBe(20 * 60);
+		expect(await seconds(ids.one)).toBe(14 * 60);
 		expect(await seconds(ids.two)).toBe((10 + IDLE) * 60);
 		expect(await seconds(ids.none)).toBeNull();
 		// Each second of the sandbox belongs to one run, so the runs add up to what the limits count.
-		expect((30 + IDLE) * 60).toBe(await stub.sandboxSecondsToday());
+		expect((24 + IDLE) * 60).toBe(await stub.sandboxSecondsToday());
 		const total = (await stub.getRun(ids.two))?.total;
 		expect(total).toMatchObject({
 			sandboxSeconds: (10 + IDLE) * 60,

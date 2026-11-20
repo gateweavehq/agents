@@ -187,10 +187,14 @@ export function sandboxPath(path: string): string | null {
 }
 
 /** The sandbox's tools for one turn, traced in `run`: `run_command`, then the tools for files. */
-export function sandboxTools(sandbox: SandboxPort, run: RunRecorder): ToolSet {
+export function sandboxTools(
+	sandbox: SandboxPort,
+	run: RunRecorder,
+	idleMinutes = IDLE_MINUTES,
+): ToolSet {
 	const tools: ToolSet = {
 		run_command: tool({
-			description: `Runs a bash command line on this conversation's Linux machine and returns its exit code and output, stdout and stderr together; long output keeps its start and end and may give the path to its complete log. It is Debian with Node.js 24, npm, Python 3, git, ripgrep (rg), curl and jq. Package registries (npm, PyPI, crates.io, Go modules) can be downloaded from; no other address can be reached. Files stay between turns while the machine is in use; after ${IDLE_MINUTES} minutes without use it stops, and the next command starts on an empty one. Nothing reads from stdin, so commands that ask questions must be told the answers.`,
+			description: `Runs a bash command line on this conversation's Linux machine and returns its exit code and output, stdout and stderr together; long output keeps its start and end and may give the path to its complete log. It is Debian with Node.js 24, npm, Python 3, git, ripgrep (rg), curl and jq. Package registries (npm, PyPI, crates.io, Go modules) can be downloaded from; no other address can be reached. Files stay between turns while the machine is in use; after ${idleMinutes} minutes without use it stops, and the next command starts on an empty one. Nothing reads from stdin, so commands that ask questions must be told the answers.`,
 			inputSchema: z.object({
 				command: z.string().min(1).max(SANDBOX_LIMITS.command).describe("The command line"),
 				cwd: z

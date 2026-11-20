@@ -17,7 +17,9 @@ import {
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
+	type SandboxSettings,
 	SESSION_ENDED,
+	sandboxIdleMinutes,
 	TRIGGER_MESSAGE_METADATA,
 	type TriggerTurnOutcome,
 	TURN_PROGRESS_PART,
@@ -121,7 +123,7 @@ import { createOutbox, queueExport, sendDue } from "./telemetry-export";
 import { connectTools, type OAuthProviders } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
-interface RuntimeEnv extends GatewaySettings, WorkersAiSettings {
+interface RuntimeEnv extends GatewaySettings, WorkersAiSettings, SandboxSettings {
 	TARGET_RULE?: string;
 	REGISTRY: DurableObjectNamespace<RegistryDO>;
 	CONVERSATIONS: DurableObjectNamespace<Agent<Cloudflare.Env>>;
@@ -875,7 +877,9 @@ ${runPageNote(runs, turn.runId)}`
 					// that name.
 					const tools = {
 						...toolbox.tools,
-						...(sandbox ? sandboxTools(checkedOut ?? sandbox, run) : {}),
+						...(sandbox
+							? sandboxTools(checkedOut ?? sandbox, run, sandboxIdleMinutes(this.env))
+							: {}),
 						...(sandbox && checkedOut && repository && github
 							? pullRequestTools({
 									sandbox,

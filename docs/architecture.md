@@ -1111,8 +1111,8 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   Durable Object with a container, named like its conversation and reached only by it, over RPC.
   It has no route. The container starts on the first call, from `sandbox/Dockerfile` (Debian
   with Node.js 24, Python 3, git, ripgrep, curl, jq and the shim `@cloudflare/sandbox` 1.0 talks
-  to), as a `standard-1` instance (`SANDBOX_INSTANCE`), and stops after 15 minutes without a
-  call; its disk goes with it. Deleting the conversation stops it at once. pnpm and Yarn come
+  to), as a `standard-1` instance (`SANDBOX_INSTANCE`), and stops after `SANDBOX_IDLE_MINUTES`
+  (5 by default) without a call; its disk goes with it. Deleting the conversation stops it at once. pnpm and Yarn come
   through Corepack, in the version a repository's `packageManager` names, downloaded from npm on
   first use, Yarn 2 and later included; the image carries pnpm's current version
   (`PNPM_VERSION`). Corepack never asks, and never writes `packageManager` into the repository.
@@ -1232,7 +1232,8 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   (`#sandboxLimitRefusal`), with the same refusal (AGT-63).
 - **Sandbox time and its limits** (AGT-45). The runs say how much sandbox time a workspace uses
   (`sandboxSeconds` in `packages/registry/src/runs.ts`):
-  - Each conversation's sandbox counts from a run with it until 15 minutes after the last.
+  - Each conversation's sandbox counts from a run with it until `SANDBOX_IDLE_MINUTES` (5 by
+    default) after the last.
   - Runs that overlap that way are merged.
   - The idle minutes count as soon as a run ends, since the sandbox runs them anyway.
 
@@ -1280,8 +1281,8 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   pull request against the default branch with a token for `pull_requests: write` and
   `contents: read`, or updates the one the branch has open; the sandbox never makes it. GitHub
   lists only the first for these calls, but refuses a pull request with "not all refs are
-  readable" without the second. A sandbox that stopped and starts again (after 15 minutes without
-  use) clones the repository afresh and goes on from the branch as the conversation last pushed
+  readable" without the second. A sandbox that stopped and starts again (after the idle minutes,
+  5 by default, without use) clones the repository afresh and goes on from the branch as the conversation last pushed
   it, so its next push adds to the same pull request. The pull request goes on the run
   (`runs.pull_request`), and Runs and Chat link to it.
 - **Checks before the push** (AGT-142). A repository can have checks: up to 5 bash command lines
