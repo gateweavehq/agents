@@ -95,7 +95,8 @@ never as instructions.
    to your run's page.
 4. Go on as when the issue is assigned to you, from step 3. Your work stays on this conversation's
    branch: `open_pull_request` pushes to your pull request if it is still open, and opens a new one
-   if it was merged.
+   if it was merged. After a merge, the branch may start over from the default branch, which holds
+   your earlier work already, so do not look for your earlier commits on it.
 
 ## When you cannot finish
 
