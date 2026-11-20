@@ -8,6 +8,57 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.34.0] - 2026-11-20
+
+Once a run has read outside content, the destinations of its tool calls are checked, and the run
+page shows each call whose destination came from nowhere the agent trusts. This release only
+records them; the next one refuses them by default. A Gateweave Track source reopening an
+agent's issue now starts the agent again. This release has one migration in the workspace
+registry, which adds two columns with defaults.
+
+### Added
+
+- **Tool destinations are checked once a run has read outside content.** Outside content is a
+  trigger's event, a tool's result, or another agent's message. After a run has read any, each
+  tool call's network destinations (hosts, email addresses and URLs in its arguments) should
+  come from the person's task, the agent's settings or its allowed list.
+  ([#308](https://github.com/gateweavehq/agents/pull/308))
+  - **In this release the call still runs**, under the default `TARGET_RULE` of `log`. The run
+    page counts the calls that would be refused, and the trace records the destination's kind
+    and its host or domain, never the rest of the value.
+  - **The next release refuses them by default**, with a tool error that names the value and how
+    to allow it. Look at your agents' runs before then: an agent that rightly reaches addresses
+    it reads, such as one doing outreach, needs them on its allowed list, or its option to allow
+    any destination.
+  - Owners and admins set each agent's allowed list (up to 100 addresses, `@domains` or hosts)
+    and "allow any destination" in the agent form, and the audit log records both.
+  - It catches the common shapes, not every one: `docs/architecture.md` lists what it does not
+    read.
+
+### Fixed
+
+- **A Gateweave Track source reopening an agent's issue starts the agent again.** Track 0.44.0
+  lets a product such as Gateweave Guard file issues as a source, and reopen one when its
+  finding comes back. A trigger that takes only one member's issues let an update through only
+  when the issue had just been assigned, so the agent was never asked to look again.
+  ([#310](https://github.com/gateweavehq/agents/pull/310))
+  - The ready-made agent's instructions now say what to do: find out why the fix did not hold,
+    say so, and work on it again.
+  - An agent set up before keeps its older instructions. It treats the reopen like an
+    assignment and goes on from its earlier work. For the new section, bring its instructions up
+    to date from
+    [the current ones](https://github.com/gateweavehq/agents/blob/main/apps/web/src/server/track-work.md).
+- **The Mail setup's copy of Mail's skill** describes Mail 0.4.0's sending rules.
+  ([#309](https://github.com/gateweavehq/agents/pull/309))
+
+### If you run your own
+
+- **Update.** The migration is in each workspace's registry and runs by itself when the
+  workspace is next used; there is no step for you.
+- **`TARGET_RULE`** decides what happens to a flagged call: `log`, the default in this release,
+  records it, and `enforce` refuses it. To refuse now, set `enforce`; see "Tool destinations" in
+  `docs/self-hosting.md`.
+
 ## [0.33.0] - 2026-11-20
 
 An MCP client can hand one of your agents a task and read the run's result, and a moved
