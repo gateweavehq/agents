@@ -173,7 +173,8 @@ describe("agents run by Gateweave", () => {
 			allowedTargets: [],
 			anyTarget: false,
 		});
-		await stub.updateAgent(
+		await saveAgent(
+			stub,
 			agent.id,
 			reviewer(null, { allowedTargets: ["@EXAMPLE.NET"], anyTarget: true }),
 		);

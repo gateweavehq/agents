@@ -234,6 +234,7 @@ it("only lets managers change the agent's target settings and logs the fields th
 	const data = {
 		slug,
 		agentId: agent.id,
+		expectedRevision: shown.agent.updatedAt,
 		agent: {
 			...inputOf(shown.agent, shown.definition),
 			allowedTargets: ["@Example.NET"],
@@ -251,7 +252,9 @@ it("only lets managers change the agent's target settings and logs the fields th
 	expect(await auditOf(workspaceId)).toEqual([]);
 	const saved = await call("updateAgent", owner, data);
 	expect(saved.failed, saved.text).toBe(false);
-	expect((await registry.getAgent(agent.id))?.definition).toMatchObject({
+	const updated = await registry.getAgent(agent.id);
+	if (!updated) throw new Error("No updated agent");
+	expect(updated.definition).toMatchObject({
 		allowedTargets: ["@example.net"],
 		anyTarget: true,
 	});
@@ -275,6 +278,7 @@ it("only lets managers change the agent's target settings and logs the fields th
 	);
 	const changed = await call("updateAgent", owner, {
 		...data,
+		expectedRevision: updated.agent.updatedAt,
 		agent: { ...data.agent, allowedTargets: entries },
 	});
 	expect(changed.failed, changed.text).toBe(false);

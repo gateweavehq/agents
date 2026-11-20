@@ -146,7 +146,31 @@ const explicitTarget = new RegExp(
 	"giu",
 );
 
-function* plainHosts(text: string, named: boolean, prose: boolean): Generator<ToolTarget> {
+// What a skipped file path's tail can still name: a URL with its own authority, or an address.
+const tailTarget = new RegExp(
+	`(?<![a-z0-9+.-])(?:(?:[a-z][a-z0-9+.-]*:)?//|https?:/)[^\\s<>"']+|(?<!\\.)(?<!${atomCharacter})${argumentAddress}`,
+	"giu",
+);
+
+function* tailTargets(tail: string, named: boolean): Generator<ToolTarget> {
+	for (const match of tail.matchAll(tailTarget)) yield* explicitTargets(match[0], named);
+}
+
+function* explicitTargets(raw: string, named: boolean): Generator<ToolTarget> {
+	const target = /^(?:(?:[a-z][a-z0-9+.-]*:)?\/\/|https?:\/)/i.test(raw)
+		? urlTarget(raw.replace(/(?<![),;.!])[),;.!]+$/, ""), named)
+		: (emailTarget(raw) ?? multipleAtTarget(raw));
+	if (target) yield target;
+}
+
+/** A dotted name a person wrote is a host unless it reads as a file name. */
+function proseHost(target: ToolTarget): boolean {
+	if (target.host === "localhost") return true;
+	const suffix = /\.([a-z]{2,24})$/.exec(target.host)?.[1];
+	return suffix !== undefined && !fileExtensions.has(suffix);
+}
+
+function* plainHosts(text: string, named: boolean, prose = false): Generator<ToolTarget> {
 	for (const match of text.matchAll(/\[[\da-f:.]+\]|[\p{L}\p{M}\p{N}_.:\u3002\uff0e\uff61-]+/giu)) {
 		const raw = match[0];
 		const possibleIp = /^\d/.test(raw) || raw.startsWith("[") || raw.includes(":");
@@ -155,15 +179,18 @@ function* plainHosts(text: string, named: boolean, prose: boolean): Generator<To
 		const target = hostTarget(name);
 		if (target?.kind === "ip") {
 			if (validIpSpelling(name, target.host, named)) yield target;
-		} else if (target && (named || prose) && target.host.includes(".")) yield target;
+		} else if (target && named && target.host.includes(".")) yield target;
+		else if (target && prose && proseHost(target)) yield target;
 	}
 }
 
 function normalizeText(text: string): string {
-	return text.replace(/[。．｡]/g, ".").replace(/([a-z][a-z0-9+.-]*:)(?:[/\\]{2}|\\)/gi, "$1//");
+	return text
+		.replace(/[。．｡]/g, ".")
+		.replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:)(?:[/\\]{2}|\\)/gi, "$1//");
 }
 
-function* textTargets(text: string, field: string, prose: boolean): Generator<ToolTarget> {
+function* textTargets(text: string, field: string, prose = false): Generator<ToolTarget> {
 	const named = field !== "";
 	const allowsLabel =
 		hostField.test(field) && !(/^(?:proxy|proxies)$/.test(field) && /^none\.?(?::|$)/i.test(text));
@@ -181,7 +208,7 @@ function* textTargets(text: string, field: string, prose: boolean): Generator<To
 		if (target) yield target;
 		return;
 	}
-	if (named && /^[^\s/@:]+(?::\d+|[/?#])[^\s]*$/.test(text) && !text.includes("://")) {
+	if (named && !/\s/.test(text) && /^[^/@:]+(?::\d|[/?#])/.test(text) && !text.includes("://")) {
 		// Slashes and question marks are valid in a mailbox's local part.
 		const target = emailTarget(text) ?? urlTarget(`//${text}`, named, true);
 		const port = /^[^\s/@:]+:(\d+)(?:[/?#]|$)/.exec(text)?.[1];
@@ -210,7 +237,7 @@ function* textTargets(text: string, field: string, prose: boolean): Generator<To
 		const groups = match.groups;
 		if (groups?.name && groups.suffix) {
 			if (
-				(named || prose || !fileExtensions.has(groups.suffix.toLowerCase())) &&
+				(named || !fileExtensions.has(groups.suffix.toLowerCase())) &&
 				(!groups.port || (Number(groups.port) >= 1 && Number(groups.port) <= 65535))
 			) {
 				const target = hostTarget(groups.name);
@@ -223,15 +250,13 @@ function* textTargets(text: string, field: string, prose: boolean): Generator<To
 					continue;
 				}
 			}
-			scanner.lastIndex = start = match.index + groups.name.length;
+			// Rescanning the tail from here would repeat for every file name in it: read it once.
+			yield* tailTargets(raw.slice(groups.name.length), named);
 			continue;
 		}
 		// A relative path can contain dotted filenames or addresses in its segments.
 		if (/^\.{0,2}\/(?!\/)/.test(raw)) continue;
-		const target = /^(?:(?:[a-z][a-z0-9+.-]*:)?\/\/|https?:\/)/i.test(raw)
-			? urlTarget(raw.replace(/[),;.!]+$/, ""), named)
-			: (emailTarget(raw) ?? multipleAtTarget(raw));
-		if (target) yield target;
+		yield* explicitTargets(raw, named);
 	}
 	yield* plainHosts(text.slice(start), named, prose);
 }
@@ -247,10 +272,10 @@ export function* targetsIn(value: unknown, trustedProse = false): Generator<Tool
 			for (const child of value) pending.push({ value: child, field });
 		} else if (value && typeof value === "object") {
 			for (const [key, child] of Object.entries(value)) {
-				pending.push({ value: child, field: destinationPart(key) });
+				pending.push({ value: child, field: trustedProse ? "" : destinationPart(key) });
 				const name = normalizeText(key);
 				if ((name.includes("@") && addressKey.test(name)) || /^[a-z][a-z0-9+.-]*:\/\//i.test(name))
-					yield* textTargets(name, "", false);
+					yield* textTargets(name, "");
 			}
 		} else if (typeof value === "string") {
 			const text = value.trim();

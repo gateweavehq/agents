@@ -1630,7 +1630,10 @@ after a reconnect.
 Each turn keeps a private set of destinations mentioned by the person in the conversation, the
 agent's instructions, its configured MCP server hosts and allowed targets, and the workspace
 members' email addresses. A trigger also trusts the prompt in its definition, before any event
-values are substituted. Tool results, memory notes, the event body and model output supply no
+values are substituted. A chat message from a person has no source marker. A marked delivery,
+including a trigger, team edge or outside MCP task, contributes no trusted text, even on replay.
+A later person turn starts tainted when its history contains such a delivery.
+Tool results, memory notes, the event body and model output supply no
 destinations. Nested turns inherit their caller's destinations and exposure to outside content.
 Even under an untainted parent, a nested turn never trusts its delegated message. This is
 deliberately stricter than first planned. The model wrote that message, and destinations from the
@@ -1638,7 +1641,15 @@ person are already among the inherited sources.
 
 After a turn sees outside content in a tool result, Gateweave checks the destinations in each
 tool call, including memory writes and team edges. Trigger runs, replays and runs of unknown origin start with the
-check active. An MCP server can exempt a tool by explicitly marking it read-only and closed-world.
+check active. The sandbox's own tools (`run_command` and the file tools) are not checked: the
+sandbox's outbound rule decides what a command can reach, and a file is no destination.
+A built-in tool can name its content fields: those for a destination its configuration fixes.
+`open_pull_request` names its title and body, since it opens in the configured repository.
+A link in a content field is not checked, because a reader follows it only by choice. An image is
+checked, because the page that shows it fetches it. That covers Markdown and HTML images and
+reference definitions. Every other field is checked whole, so a field added later is checked
+until someone decides otherwise. Connected MCP tools, including Track's, have their whole input
+checked. An MCP server can exempt a tool by explicitly marking it read-only and closed-world.
 Memory saves return Gateweave's confirmation and leave the turn's taint unchanged. A recall taints
 the turn. Claude Code, Codex and OpenCode use this check for Gateweave tools. Their own shell
 and fetch tools are governed by the sandbox outbound rule (`decideOutbound`), and their results
@@ -1654,13 +1665,20 @@ The check extracts destination-named fields, URLs with a scheme, email addresses
 A destination field holding a street address or another non-network value yields no target.
 In a tainted run, the rule checks `remember` and `recall` like any other call, so it flags a
 memory note naming an untrusted address.
-In free-text tool arguments, such as shell commands, a dotted name without a scheme counts when
+In a person's task, agent instructions and free-text tool arguments such as shell commands,
+a dotted name without a scheme counts when
 it is followed by a path or a port and its final label is 2 to 24 letters. The check skips the
 file extensions `js ts tsx jsx mjs cjs json md txt yaml yml toml lock html css scss py go rs rb
 java kt sh ps1 xml csv log png jpg jpeg gif svg webp pdf zip gz tar c h cc cpp hpp cs php sql vue
 svelte mdx ini conf cfg env map wasm jsonl tsv ipynb swift m mm scala dart lua r pl ex exs erl
 hs clj tf hcl proto gradle bat cmd`, regardless of case.
-A bare dotted name without a path or port is ignored to avoid treating filenames as destinations.
+In a free-text tool argument, a bare dotted name without a path or port is ignored, to avoid
+treating filenames as destinations. In a person's task and the agent's instructions, a bare
+dotted name names a host, as does `localhost`, unless its final label is one of those
+extensions. So `Edit deploy.sh` trusts nothing, while `check example.com` trusts
+`example.com`.
+Explicit URLs, authorities beginning with `//`, email addresses and bracketed IPs in trusted
+text always name destinations, including URLs whose host ends in a file extension.
 After `//` or a scheme with one slash, a single numeric IPv4 part must be at least 2^24,
 and a dotted numeric host must have a nonzero first part. A full `scheme://` accepts either.
 Outside text pasted into chat by a person becomes trusted. Destinations other than addresses or

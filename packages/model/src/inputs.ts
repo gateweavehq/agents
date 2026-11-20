@@ -677,6 +677,8 @@ export const agentDefinitionUpdate = agentDefinitionFields
 		memory: agentDefinitionFields.shape.memory.removeDefault(),
 		files: agentDefinitionFields.shape.files.removeDefault(),
 		outsideTasks: agentDefinitionFields.shape.outsideTasks.removeDefault(),
+		allowedTargets: agentDefinitionFields.shape.allowedTargets.removeDefault(),
+		anyTarget: agentDefinitionFields.shape.anyTarget.removeDefault(),
 	})
 	.refine((agent) => !(agent.files && agent.sandbox), {
 		message: FILES_WITH_SANDBOX,

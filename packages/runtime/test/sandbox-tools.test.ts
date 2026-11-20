@@ -16,10 +16,10 @@ import type { RunRecorder } from "../src/trace";
 import { MemorySandbox } from "./fake-sandbox";
 
 /** The sandbox's tools over files in memory, each called as the model would call it. */
-function toolbox() {
+function toolbox(targets: object = { tainted: false }) {
 	const sandbox = new MemorySandbox();
 	const run = {
-		targets: { tainted: false },
+		targets,
 		toolStarted: () => "span",
 		toolEnded: () => {},
 	} as unknown as RunRecorder;
@@ -48,6 +48,12 @@ describe("sandbox paths", () => {
 });
 
 describe("sandbox tools", () => {
+	it("are not held to the target rule: the sandbox's outbound rule governs them", async () => {
+		const { call, sandbox } = toolbox({ tainted: true, mode: "enforce", trusted: new Set() });
+		const content = "fetch('https://api.outside.example/v1')\n";
+		await call("write_file", { path: "src/client.ts", content });
+		expect(await sandbox.readFile("/workspace/src/client.ts")).toEqual({ content });
+	});
 	it("are the six a turn with a sandbox gets", () => {
 		expect(Object.keys(toolbox().tools).sort()).toEqual([
 			"edit_file",

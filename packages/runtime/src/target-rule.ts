@@ -15,20 +15,13 @@ export interface ParentTargets {
 }
 
 function outsideMessage(message: UIMessage): boolean {
+	if (message.role !== "user") return false;
 	const metadata = message.metadata;
-	if (
-		metadata &&
-		typeof metadata === "object" &&
-		"source" in metadata &&
-		(metadata.source === "trigger" || metadata.source === "edge")
-	)
-		return true;
+	// Chat messages have no source marker. Every marked delivery is outside content.
+	if (metadata && typeof metadata === "object" && "source" in metadata) return true;
 	// Deliveries saved before trigger metadata existed still carry the event introducer.
-	return (
-		message.role === "user" &&
-		message.parts.some(
-			(part) => part.type === "text" && part.text.includes("\n\nThe event, as it was sent:\n\n```"),
-		)
+	return message.parts.some(
+		(part) => part.type === "text" && part.text.includes("\n\nThe event, as it was sent:\n\n```"),
 	);
 }
 
@@ -98,13 +91,35 @@ export function startTargetRule(
 	policy.buildTrusted = () => (build ??= buildTrusted());
 }
 
+// Bounded, so a body of unclosed brackets costs a fixed amount per character, not a rescan.
+const imageSource =
+	/!\[[^\]\r\n]{0,500}\]\(\s{0,10}<?([^\s)>]{1,4000})|<(?:img|source|video)\b[^>]{0,1000}?\s(?:src|srcset|poster)\s{0,10}=\s{0,10}["']?([^"'>]{1,4000})|^ {0,3}\[[^\]\r\n]{1,500}\]:[ \t]{0,10}<?(\S{1,4000})/gim;
+
+/**
+ * The addresses a page fetches when it shows `text`: Markdown and HTML images, and reference
+ * definitions, which an image can use. A link is followed only by a reader who chooses to.
+ */
+export function fetchedBy(text: string): string[] {
+	return [...text.matchAll(imageSource)].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+}
+
 export async function missingTarget(
 	run: RunRecorder,
 	input: unknown,
+	contentFields?: readonly string[],
 ): Promise<ToolTarget | undefined> {
 	if (!run.targets.tainted || run.targets.anyTarget) return;
 	await run.targets.buildTrusted?.();
-	for (const target of targetsIn(input)) {
+	const destinations =
+		contentFields && input && typeof input === "object"
+			? Object.fromEntries(
+					Object.entries(input).map(([key, value]) => [
+						key,
+						contentFields.includes(key) && typeof value === "string" ? fetchedBy(value) : value,
+					]),
+				)
+			: input;
+	for (const target of targetsIn(destinations)) {
 		if (!targetTrusted(target, run.targets.trusted)) return target;
 	}
 }

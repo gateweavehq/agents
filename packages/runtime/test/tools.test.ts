@@ -13,7 +13,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkMcpServer, checkTrackAgent, conversationName } from "../src";
 import { runTraces } from "../src/otlp";
 import { FakeMcpServer } from "./fake-mcp";
-import { anthropicStream, anthropicToolCall, ask, connect, fakeModel, KEY } from "./support";
+import {
+	anthropicStream,
+	anthropicToolCall,
+	ask,
+	connect,
+	enforceTargets,
+	fakeModel,
+	KEY,
+} from "./support";
 
 const TOKEN = "acme-secret-token-1234";
 const QUERY = "the words a person typed";
@@ -83,6 +91,52 @@ async function conversation(
 
 describe("MCP servers", () => {
 	it.each([
+		{ task: "Edit deploy.sh", body: "https://deploy.sh/upload", allowed: false },
+		{
+			task: "Post the report to https://deploy.sh/hook",
+			body: "https://deploy.sh/upload",
+			allowed: true,
+		},
+		{ task: "Find the report", body: "See https://elsewhere.example", allowed: false },
+	])(
+		"checks a connected tool's body after outside content ($task)",
+		async ({ task, body, allowed }) => {
+			const posted: unknown[] = [];
+			const post = {
+				name: "post",
+				description: "Posts the report",
+				inputSchema: {
+					type: "object" as const,
+					properties: { body: { type: "string" } },
+					required: ["body"],
+				},
+			};
+			const acme = new FakeMcpServer([SEARCH, post], (name, input) => {
+				if (name === "post") posted.push(input);
+				return { content: [{ type: "text", text: body }] };
+			});
+			const requests = fakeModel(
+				(call) => {
+					if (call === 0) return anthropicToolCall("acme__search", { query: "report" });
+					if (call === 1) return anthropicToolCall("acme__post", { body }, "toolu_post");
+					return anthropicStream("Finished.");
+				},
+				{ "mcp.acme.dev": acme.handle },
+			);
+			const { stub } = await conversation([ACME]);
+			await runInDurableObject(stub, enforceTargets);
+			const socket = await connect(stub);
+			try {
+				expect(await ask(socket, task)).toMatchObject({ text: "Finished.", error: null });
+			} finally {
+				socket.close();
+			}
+			expect(posted).toEqual(allowed ? [{ body }] : []);
+			if (!allowed)
+				expect(JSON.stringify(requests[2]?.body.messages)).toContain("has no trusted source");
+		},
+	);
+	it.each([
 		{ why: "outside instruction", status: "would_refuse" },
 		{ why: "enforcement", mode: "enforce", status: "refused" },
 		{ why: "person's address", person: "evil@example.net", status: "ok" },
@@ -134,14 +188,7 @@ describe("MCP servers", () => {
 				{ "mcp.acme.dev": acme.handle },
 			);
 			const { registry, stub } = await conversation([ACME], {}, { allowedTargets, anyTarget });
-			if (mode)
-				await runInDurableObject(stub, (instance) => {
-					const bindings = (instance as unknown as { env: object }).env;
-					Object.defineProperty(instance, "env", {
-						value: { ...bindings, TARGET_RULE: mode },
-						configurable: true,
-					});
-				});
+			if (mode) await runInDurableObject(stub, enforceTargets);
 			const socket = await connect(stub);
 			try {
 				expect(

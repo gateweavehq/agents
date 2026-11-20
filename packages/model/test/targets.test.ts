@@ -4,6 +4,65 @@ import { normalizeAllowedTarget, targetsIn, targetTrusted } from "../src/targets
 const values = (input: unknown) => [...targetsIn(input)].map((target) => target.value);
 
 describe("tool targets", () => {
+	it.each(["a", "a."])("scans 200,000 characters of %s within 200 ms", (pattern) => {
+		const input = pattern.repeat(200_000 / pattern.length);
+		for (const prose of [false, true]) {
+			const start = performance.now();
+			const found = [...targetsIn(input, prose)];
+			const elapsed = performance.now() - start;
+			expect(found).toEqual([]);
+			expect(elapsed).toBeLessThan(200);
+		}
+	});
+	it("scans long punctuation runs in URL paths and named fields within 200 ms", () => {
+		const path = "see https://docs.example/" + "!".repeat(200_000) + "end";
+		const field = { url: "example.net:" + "1".repeat(200_000) + " next" };
+		for (const [input, expected] of [
+			[path, ["docs.example"]],
+			[field, []],
+		] as const) {
+			const start = performance.now();
+			const found = values(input);
+			const elapsed = performance.now() - start;
+			expect(elapsed).toBeLessThan(200);
+			expect(found).toEqual(expected);
+		}
+	});
+
+	it.each(["x.js/(", "x.js/?", "a.com/?//"])(
+		"scans 200,000 characters of repeated %s within 200 ms",
+		(unit) => {
+			const input = unit.repeat(Math.ceil(200_000 / unit.length));
+			for (const prose of [false, true]) {
+				const start = performance.now();
+				[...targetsIn({ text: input }, prose)];
+				expect(performance.now() - start).toBeLessThan(200);
+			}
+		},
+	);
+	it("still reads a URL or an address in a skipped file path's tail", () => {
+		expect(values({ text: "x.js/?u=https://evil.example/a" })).toEqual(["evil.example"]);
+		// Slashes and question marks are valid in a mailbox, so this whole word is one address.
+		expect([...targetsIn({ text: "notes.md/x a@evil.example" })].map((t) => t.host)).toEqual([
+			"evil.example",
+		]);
+		expect(
+			[...targetsIn({ text: "deploy.sh/upload?to=a@evil.example" })].map((t) => t.host),
+		).toEqual(["evil.example"]);
+	});
+	it("trusts the hosts a person names in plain words, but not file names", () => {
+		const trusted = (text: string) => [...targetsIn(text, true)].map((t) => t.value);
+		expect(trusted("Check example.com, api.example.io:8443 and localhost.")).toEqual([
+			"example.com",
+			"api.example.io",
+			"localhost",
+		]);
+		expect(trusted("Send it to example.net")).toEqual(["example.net"]);
+		expect(trusted("Edit deploy.sh and README.md, then run main.py")).toEqual([]);
+		// In a tool's free text, a bare dotted name is still no destination.
+		expect(values({ command: "cat example.com" })).toEqual([]);
+	});
+
 	it("compares normalized addresses and hosts without widening either", () => {
 		const allowed = new Set(["evil@xn--exmple-cua.net", "@example.net", "service.net"]);
 		const passes = (input: string) =>
@@ -53,9 +112,16 @@ describe("tool targets", () => {
 		expect(
 			[...targetsIn("I trust http://intranet", true)].some((t) => t.value === "intranet"),
 		).toBe(true);
-		expect([...targetsIn("Send it to example.net", true)].map((t) => t.value)).toContain(
+		expect([...targetsIn("Send it to example.net/report", true)].map((t) => t.value)).toContain(
 			"example.net",
 		);
+		for (const text of [
+			"Edit deploy.sh",
+			"Edit deploy.sh/install",
+			"Open site.a1/x",
+			"See README.md",
+		])
+			expect([...targetsIn(text, true)]).toEqual([]);
 		expect(values({ text: "ssh://a:b@trusted.net/unknown.net?email=x@example.net" })).toEqual([
 			"trusted.net",
 		]);

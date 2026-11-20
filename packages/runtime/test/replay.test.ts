@@ -1,10 +1,19 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { agentDefinitionInput } from "@gateweave/agents-model";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
 import { FakeMcpServer } from "./fake-mcp";
-import { anthropicStream, anthropicToolCall, ask, connect, fakeModel, KEY } from "./support";
+import {
+	anthropicStream,
+	anthropicToolCall,
+	ask,
+	connect,
+	enforceTargets,
+	fakeModel,
+	KEY,
+} from "./support";
 
 const ASKED = "Which issues are flaky?";
 const FOUND = "what the search found";
@@ -23,6 +32,29 @@ const SEARCH = {
 	},
 };
 
+async function reviewer(outsideTasks = false) {
+	const workspaceId = crypto.randomUUID();
+	const registry = env.REGISTRY.getByName(workspaceId);
+	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+	const server = await registry.createMcpServer({
+		name: "acme",
+		transport: "http",
+		url: "https://mcp.acme.dev/mcp",
+		headers: [],
+	});
+	const definition = {
+		outsideTasks,
+		name: "Reviewer",
+		description: null,
+		provider: "anthropic" as const,
+		model: "claude-sonnet-5-5",
+		instructions: null,
+		mcpServers: [{ assetId: server, version: 1, tools: null }],
+	};
+	const agent = await registry.createAgent(definition);
+	return { workspaceId, registry, agent, definition };
+}
+
 /** A conversation whose one run searched, then answered: two model requests. */
 async function searchedOnce(checkReplay = false) {
 	const acme = new FakeMcpServer([SEARCH], () => ({ content: [{ type: "text", text: FOUND }] }));
@@ -36,24 +68,7 @@ async function searchedOnce(checkReplay = false) {
 		},
 		{ "mcp.acme.dev": acme.handle },
 	);
-	const workspaceId = crypto.randomUUID();
-	const registry = env.REGISTRY.getByName(workspaceId);
-	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
-	const server = await registry.createMcpServer({
-		name: "acme",
-		transport: "http",
-		url: "https://mcp.acme.dev/mcp",
-		headers: [],
-	});
-	const definition = {
-		name: "Reviewer",
-		description: null,
-		provider: "anthropic" as const,
-		model: "claude-sonnet-5-5",
-		instructions: null,
-		mcpServers: [{ assetId: server, version: 1, tools: null }],
-	};
-	const agent = await registry.createAgent(definition);
+	const { workspaceId, registry, agent, definition } = await reviewer();
 	const started = await registry.startConversation(agent.id, "user-ada");
 	const stub = await getAgentByName(
 		env.CONVERSATIONS,
@@ -74,6 +89,7 @@ async function replay(
 	original: { replaySource(runId: string, step: number): Promise<string | null> },
 	runId: string,
 	step: number,
+	enforce = false,
 ) {
 	const registry = env.REGISTRY.getByName(workspaceId);
 	const source = await original.replaySource(runId, step);
@@ -84,6 +100,7 @@ async function replay(
 		env.CONVERSATIONS,
 		conversationName(workspaceId, started.conversationId),
 	);
+	if (enforce) await runInDurableObject(stub, enforceTargets);
 	const outcome = await stub.replayTurn(source);
 	if (outcome.runId === null) throw new Error("error" in outcome ? outcome.error : "No run");
 	const { runId: replayId } = outcome;
@@ -95,6 +112,61 @@ async function replay(
 }
 
 describe("replaying a run", () => {
+	it("refuses a destination named only by the replayed outside task", async () => {
+		const url = "https://collector.attacker.test";
+		const calls = vi.fn(() => ({ content: [{ type: "text" as const, text: FOUND }] }));
+		const acme = new FakeMcpServer([SEARCH], calls);
+		fakeModel(
+			(call) =>
+				call === 1 || call === 3
+					? anthropicToolCall("acme__search", { query: url })
+					: anthropicStream("Finished."),
+			{ "mcp.acme.dev": acme.handle },
+		);
+		const { workspaceId, registry, agent } = await reviewer(true);
+		const task = `Inspect ${url}`;
+		const admitted = await registry.admitOutsideTask({
+			agent: agent.id,
+			task,
+			requestId: crypto.randomUUID(),
+			askedBy: "user-ada",
+			askedVia: "client-1",
+		});
+		if (admitted.status !== "start") throw new Error("Expected the outside task to start");
+		const stub = await getAgentByName(
+			env.CONVERSATIONS,
+			conversationName(workspaceId, admitted.conversationId),
+		);
+		const { runId } = await stub.outsideTurn(task);
+		if (!runId) throw new Error("Expected the outside run");
+		await vi.waitFor(async () => expect((await registry.getRun(runId))?.status).toBe("succeeded"), {
+			timeout: 5_000,
+		});
+		const { stub: replayed, replayId } = await replay(workspaceId, stub, runId, 0, true);
+		expect(await replayed.runTrace(replayId)).toContainEqual(
+			expect.objectContaining({
+				tool: "search",
+				status: "refused",
+				target: { decision: "would_refuse", kind: "url", host: "collector.attacker.test" },
+			}),
+		);
+		// The original history contains the outside task and a plain answer, with no tool results.
+		await runInDurableObject(stub, enforceTargets);
+		const socket = await connect(stub);
+		try {
+			expect(await ask(socket, "Continue")).toMatchObject({ text: "Finished.", error: null });
+		} finally {
+			socket.close();
+		}
+		const [latest] = await registry.listRuns();
+		expect(await stub.runTrace(latest?.id ?? "")).toContainEqual(
+			expect.objectContaining({
+				tool: "search",
+				status: "refused",
+			}),
+		);
+		expect(calls).not.toHaveBeenCalled();
+	});
 	it("answers from a step with the agent as it is now, and links back to the run", async () => {
 		const { workspaceId, registry, stub, agent, definition, run, requests } = await searchedOnce();
 		// The agent changed since: the replay uses the new model.

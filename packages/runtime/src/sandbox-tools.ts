@@ -413,7 +413,7 @@ function tracedTools(tools: ToolSet, run: RunRecorder): ToolSet {
 	return Object.fromEntries(
 		Object.entries(tools).map(([name, each]) => [
 			name,
-			traced(each, SANDBOX_SERVER, name, run, { showErrors: true }),
+			traced(each, SANDBOX_SERVER, name, run, { showErrors: true, sandboxed: true }),
 		]),
 	);
 }

@@ -424,6 +424,14 @@ const fetchWithoutRedirects: typeof fetch = (input, init) =>
  * recorded; an MCP server's message can carry what a third party answered, so it is not.
  */
 export interface TraceOptions {
+	/**
+	 * Input fields that are content for a destination the tool's configuration fixes, such as the
+	 * repository a pull request opens in. A link in them is not where the tool sends, but an image
+	 * is, since the page that shows it fetches it. Every other field is checked whole.
+	 */
+	contentFields?: readonly string[];
+	/** The sandbox's outbound rule decides what its commands reach, and a file is no destination. */
+	sandboxed?: boolean;
 	closedRead?: boolean;
 	confirmationOnly?: boolean;
 	/** Record the message the tool threw, not only that the call failed. */
@@ -471,7 +479,10 @@ export function traced(
 		...tool,
 		execute: async (input, callOptions) => {
 			const span = run.toolStarted(server, name, byteSize(input));
-			const missing = options.closedRead ? undefined : await missingTarget(run, input);
+			const missing =
+				options.closedRead || options.sandboxed
+					? undefined
+					: await missingTarget(run, input, options.contentFields);
 			const target = decisionFor(missing);
 			if (missing && run.targets.mode === "enforce") {
 				run.toolEnded(span, { error: "The target has no trusted source", target });

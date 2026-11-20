@@ -301,7 +301,10 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		return outcome;
 	};
 	return {
-		[PULL_REQUEST_TOOL]: traced(open, SANDBOX_SERVER, PULL_REQUEST_TOOL, run, { showErrors: true }),
+		[PULL_REQUEST_TOOL]: traced(open, SANDBOX_SERVER, PULL_REQUEST_TOOL, run, {
+			showErrors: true,
+			contentFields: ["title", "body"],
+		}),
 	};
 }
 
