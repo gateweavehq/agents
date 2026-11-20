@@ -1185,7 +1185,8 @@ describe("a call retried or replayed (AGT-147)", () => {
 		expect(sandbox.commands).toHaveLength(1);
 		expect(sandbox.commitPushes).toHaveLength(1);
 		expect(proposed).toHaveLength(1);
-		expect(recorded).toHaveLength(1);
+		// Recorded again: the first record may have failed, and setting it twice changes nothing.
+		expect(recorded).toEqual([first, first]);
 	});
 
 	it("proposes afresh when the call has new work: a new commit is a new head", async () => {
@@ -1227,6 +1228,15 @@ describe("a call retried or replayed (AGT-147)", () => {
 		expect(recorded).toHaveLength(1);
 	});
 
+	it("tells apart words whose plain join would collide: a newline moves no boundary", async () => {
+		const { sandbox, proposed, call } = setup(["pnpm test"]);
+		await call({ title: "Fix", body: "cart\nDetails" });
+		sandbox.commitAnswers.push({ head: "1".repeat(40) });
+		await call({ title: "Fix\ncart", body: "Details" });
+		expect(sandbox.commitPushes).toHaveLength(2);
+		expect(proposed).toHaveLength(2);
+	});
+
 	it("remembers a pull request made without checks too", async () => {
 		const { sandbox, proposed, recorded, call } = setup([]);
 		const first = await call();
@@ -1236,7 +1246,7 @@ describe("a call retried or replayed (AGT-147)", () => {
 		// The retry's push was a no-op, and the proposal was skipped.
 		expect(sandbox.pushes).toHaveLength(2);
 		expect(proposed).toHaveLength(1);
-		expect(recorded).toHaveLength(1);
+		expect(recorded).toEqual([first, first]);
 	});
 });
 

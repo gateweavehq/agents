@@ -241,9 +241,10 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 	 * the model gave. A retry of the same call matches; new work, new words or a later run do not.
 	 */
 	const memoKey = async (head: string, title: string, body: string): Promise<string> => {
+		// As a pair: a newline in one must not move the boundary into the other.
 		const digest = await crypto.subtle.digest(
 			"SHA-256",
-			new TextEncoder().encode(`${title}\n${body}`),
+			new TextEncoder().encode(JSON.stringify([title, body])),
 		);
 		const words = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0"));
 		return `gateweave:pull-request:${runId}:${branch}:${head}:${words.join("")}`;
@@ -299,11 +300,19 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			pushed = await sandbox.push(branch, title, await author(), model);
 			// A retry's push is a no-op: the commit is there, so only the proposal is skipped.
 			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
-			if (hit !== null) return hit;
+			if (hit !== null) {
+				// Recorded again: the first call's record may have failed, and this sets the same
+				// pull request on the run, so recording twice changes nothing.
+				await record(hit);
+				return hit;
+			}
 		} else if (!checks?.sandbox) {
 			pushed = await sandbox.push(branch, title, await author(), model);
 			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
-			if (hit !== null) return hit;
+			if (hit !== null) {
+				await record(hit);
+				return hit;
+			}
 			section = checksNotRunSection(NO_SANDBOX);
 			about = { checks: "not run", draft: false };
 		} else {
@@ -311,7 +320,10 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			const committed = await machine.commit(title, await author(), model);
 			if ("error" in committed) throw new Error(committed.error);
 			const hit = await recall(committed.head, title, body);
-			if (hit !== null) return hit;
+			if (hit !== null) {
+				await record(hit);
+				return hit;
+			}
 			const checked = await checkAndPush(commands, machine, committed, abortSignal);
 			pushed = checked.pushed;
 			const { status } = checked.round;
