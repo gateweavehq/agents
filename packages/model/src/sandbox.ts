@@ -50,12 +50,16 @@ export const SANDBOX_SECOND_PRICE = 4 * 0.0000025 + 0.5 * 0.00002 + 8 * 0.000000
  */
 export const SANDBOX_IDLE_MINUTES = 5;
 
-/** The minutes a deployment's sandboxes stay up without a request; its setting, or the default. */
+/**
+ * The minutes a deployment's sandboxes stay up without a request; its setting, or the default.
+ * At most 300: the container's inactivity timeout holds six hours, and an engine turn adds its
+ * own hour on top.
+ */
 export function sandboxIdleMinutes(settings: SandboxSettings): number {
 	const text = String(settings.SANDBOX_IDLE_MINUTES ?? "").trim();
 	if (text === "") return SANDBOX_IDLE_MINUTES;
 	const value = Number(text);
-	return Number.isFinite(value) && value > 0 ? value : SANDBOX_IDLE_MINUTES;
+	return Number.isFinite(value) && value > 0 && value <= 300 ? value : SANDBOX_IDLE_MINUTES;
 }
 
 /** The estimated cost of `seconds` of sandbox time, in millionths of a dollar, as runs count cost. */

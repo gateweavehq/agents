@@ -58,11 +58,13 @@ describe("sandbox settings", () => {
 		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: "" })).toBe(SANDBOX_IDLE_MINUTES);
 		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: " 8 " })).toBe(8);
 		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: "2.5" })).toBe(2.5);
-		// A sandbox that would stop at once would lose every turn's checkout: a mistyped value
-		// keeps the default instead.
-		for (const mistyped of ["0", "-3", "soon"]) {
+		// A sandbox that would stop at once would lose every turn's checkout, and one over five
+		// hours would break the container's timeout with an engine turn's hour on top: a mistyped
+		// value keeps the default instead.
+		for (const mistyped of ["0", "-3", "soon", "301", "1000"]) {
 			expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: mistyped })).toBe(SANDBOX_IDLE_MINUTES);
 		}
+		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: "300" })).toBe(300);
 		// Wrangler hands a number in `vars` over as one.
 		expect(sandboxIdleMinutes({ SANDBOX_IDLE_MINUTES: 10 as unknown as string })).toBe(10);
 	});
