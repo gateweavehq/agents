@@ -54,8 +54,8 @@ your browser, choose **Set it up by hand** in the dialog and follow the steps be
    - **Provider and model**: a fast model does the job, such as Claude Haiku. The workspace
      needs a key for the provider (**Settings → Model providers**) before the agent can answer.
      Workers AI needs none where the server offers it, which it pays for itself; the dialog
-     starts from Llama 4 Scout (`@cf/meta/llama-4-scout-17b-16e-instruct`) there, and DeepSeek
-     V4.1 Flash (`@cf/deepseek-ai/deepseek-v4.1-flash-1017`) is the larger choice.
+     starts from DeepSeek V4.1 Flash (`@cf/deepseek-ai/deepseek-v4.1-flash-1017`) there. Gemma 4
+     (`@cf/google/gemma-4-26b-a4b-it`) costs about a fifth as much a run and is slower.
 3. Choose **Set up**. Agents first asks Track's MCP server, with the key, for its tools, so a
    wrong address or key is reported at once and nothing is made. Then it makes everything below
    in one go.

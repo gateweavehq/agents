@@ -38,7 +38,9 @@ const SUGGESTED_MODELS: Record<TrackConnectPurpose, Partial<Record<ModelProvider
 	},
 	triage: {
 		anthropic: "claude-haiku-5-5",
-		"workers-ai": "@cf/meta/llama-4-scout-17b-16e-instruct",
+		// Finished every run of a triage check with valid tool arguments, in about 10 s a run, where
+		// Llama 4 Scout took up to 21 s a turn; checked 2026-11-20.
+		"workers-ai": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
 	},
 };
 
