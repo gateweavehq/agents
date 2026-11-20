@@ -315,7 +315,7 @@ describe("MCP servers", () => {
 		).toEqual(expected.map((host) => (host ? { stringValue: host } : undefined)));
 	});
 
-	it.each(["trigger", "edge", "legacy"])(
+	it.each(["trigger", "edge", "outside-task", "legacy"])(
 		"checks a person's follow-up after a tool-free %s message",
 		async (source) => {
 			const acme = new FakeMcpServer([SEARCH], () => ({
