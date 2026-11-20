@@ -1,8 +1,10 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: "${VAR}" references are what is under test
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { getAgentByName } from "agents";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
+import { REPOSITORY_KEY } from "../src/kept-keys";
 import { commitEnvironment } from "../src/sandbox";
 import type { FakeSandbox } from "./fake-sandbox";
 import { anthropicStream, anthropicToolCall, ask, connect, fakeModel, KEY } from "./support";
@@ -581,10 +583,44 @@ describe("a conversation with a sandbox", () => {
 		expect(error).toHaveBeenCalledWith("A commit's author was not looked up", expect.anything());
 	});
 
-	it("goes when the conversation is deleted", async () => {
-		const { stub, machine } = await conversation({ sandbox: true });
+	it("goes when the conversation is deleted, its kept keys with it", async () => {
+		const { stub, machine } = await conversation({ sandbox: true, repository: true });
+		await machine.checkout(SITE, "gateweave/conversation");
+		await machine.push(
+			"gateweave/conversation",
+			"the work",
+			{ name: "Builder", email: "noreply@gateweave.com" },
+			"claude-sonnet-5-5",
+		);
+		expect((await machine.seen()).kept).toEqual({
+			repository: SITE,
+			pushed: "pushed:gateweave/conversation",
+		});
+
 		await stub.destroy();
-		expect(await machine.seen()).toMatchObject({ destroyed: true });
+
+		expect(await machine.seen()).toMatchObject({ destroyed: true, kept: {} });
+	});
+
+	it("keeps its keys from a caller that forgets without its conversation being erased", async () => {
+		const { machine } = await conversation({ sandbox: true });
+		await machine.takeKeys([[REPOSITORY_KEY, SITE]]);
+
+		// A refusal thrown over RPC is reported as unhandled, so it is caught inside the object.
+		const refusal = await runInDurableObject(machine, (instance) => {
+			try {
+				instance.forgetKeys();
+				return null;
+			} catch (error) {
+				return error instanceof Error ? error.message : String(error);
+			}
+		});
+		expect(refusal).toContain("being erased");
+		expect((await machine.seen()).kept).toEqual({ repository: SITE });
+
+		await machine.markForForget();
+		await machine.forgetKeys();
+		expect((await machine.seen()).kept).toEqual({});
 	});
 });
 
@@ -608,6 +644,7 @@ describe("a conversation without a sandbox", () => {
 			engine: [],
 			stops: 0,
 			destroyed: false,
+			kept: {},
 			mcpServers: [],
 		});
 	});
