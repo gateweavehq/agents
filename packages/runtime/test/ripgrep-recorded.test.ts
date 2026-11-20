@@ -342,13 +342,13 @@ describe("the files store, beside the recorded ripgrep", () => {
 		expect(finds[0]?.filters).toEqual([
 			{
 				command:
-					"git -C '/workspace/repo' check-ignore -- '.gitignore' 'build/out.txt' 'debug.log' 'kept.txt'",
+					"git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '.gitignore' 'build/out.txt' 'debug.log' 'kept.txt' 'é.log'",
 				exitCode: 0,
-				output: "build/out.txt\ndebug.log\n",
+				output: "build/out.txt\ndebug.log\né.log\n",
 			},
 		]);
 
-		// The port, over the recorded exchange: the two ignored files are gone.
+		// The port, over the recorded exchange: the ignored files are gone, `é.log` among them.
 		const sandbox = new MemorySandbox();
 		sandbox.answers.push(
 			{ exitCode: finds[0]?.exitCode ?? 0, output: listed, timedOut: false },
@@ -372,6 +372,7 @@ describe("the files store, beside the recorded ripgrep", () => {
 					"/workspace/repo/build/out.txt:1:a needle in a build\n",
 					"/workspace/repo/debug.log:1:a needle in a log\n",
 					"/workspace/repo/kept.txt:1:a needle\n",
+					"/workspace/repo/é.log:1:a needle in a log too\n",
 				].join(""),
 			});
 		});

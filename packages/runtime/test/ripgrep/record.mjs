@@ -54,6 +54,7 @@ const ignoring = {
 	"repo/.gitignore": "*.log\nbuild/\n",
 	"repo/kept.txt": "a needle\n",
 	"repo/debug.log": "a needle in a log\n",
+	"repo/é.log": "a needle in a log too\n",
 	"repo/build/out.txt": "a needle in a build\n",
 };
 
@@ -105,7 +106,7 @@ function listing(pattern, directory) {
 
 function searching({ pattern, path, glob, ignoreCase }) {
 	return [
-		"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**'",
+		"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**'",
 		ignoreCase ? "--ignore-case" : "",
 		glob ? `--glob ${quote(glob)}` : "",
 		`-e ${quote(pattern)} -- ${quote(path)}`,
@@ -217,7 +218,9 @@ function filterCommands(output) {
 			size += added;
 			end += 1;
 		}
-		commands.push(`git -C ${quote(repo)} check-ignore -- ${chunk.join(" ")}`);
+		commands.push(
+			`git -C ${quote(repo)} -c core.quotePath=false check-ignore -- ${chunk.join(" ")}`,
+		);
 		start = end;
 	}
 	return commands;

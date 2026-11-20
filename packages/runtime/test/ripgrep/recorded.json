@@ -30,7 +30,7 @@
 			"output": "/workspace/repo/README.md\n/workspace/repo/docs/api/reference.md\n/workspace/repo/docs/guide.md\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'README.md' 'docs/api/reference.md' 'docs/guide.md'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'README.md' 'docs/api/reference.md' 'docs/guide.md'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -44,7 +44,7 @@
 			"output": "/workspace/repo/README.md\n/workspace/repo/docs/api/reference.md\n/workspace/repo/docs/guide.md\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'README.md' 'docs/api/reference.md' 'docs/guide.md'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'README.md' 'docs/api/reference.md' 'docs/guide.md'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -58,7 +58,7 @@
 			"output": "/workspace/repo/src/Big.ts\n/workspace/repo/src/index.ts\n/workspace/repo/src/util/text.ts\n/workspace/repo/src/util.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/util/text.ts' 'src/util.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/util/text.ts' 'src/util.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -72,7 +72,7 @@
 			"output": "/workspace/repo/.github/CODEOWNERS\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- '.github/CODEOWNERS'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '.github/CODEOWNERS'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -86,7 +86,7 @@
 			"output": "/workspace/repo/src/Big.ts\n/workspace/repo/src/index.ts\n/workspace/repo/src/util.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/util.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/util.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -100,7 +100,7 @@
 			"output": "/workspace/repo/src/Big.ts\n/workspace/repo/src/index.ts\n/workspace/repo/src/util.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/util.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/util.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -138,7 +138,7 @@
 			"output": "/workspace/repo/src/util/text.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/util/text.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/util/text.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -160,7 +160,7 @@
 			"output": "/workspace/repo/src/index.ts\n/workspace/repo/src/util.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/index.ts' 'src/util.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/index.ts' 'src/util.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -174,7 +174,7 @@
 			"output": "/workspace/repo/src/Big.ts\n/workspace/repo/src/index.ts\n/workspace/repo/src/pages/[id].tsx\n/workspace/repo/src/pages/index.tsx\n/workspace/repo/src/util/text.ts\n/workspace/repo/src/util.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -188,7 +188,7 @@
 			"output": "/workspace/repo/README.md\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'README.md'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'README.md'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -234,7 +234,7 @@
 			"output": "/workspace/repo/.git/HEAD\n/workspace/repo/.git/config\n/workspace/repo/.git/description\n/workspace/repo/.git/hooks/applypatch-msg.sample\n/workspace/repo/.git/hooks/commit-msg.sample\n/workspace/repo/.git/hooks/fsmonitor-watchman.sample\n/workspace/repo/.git/hooks/post-update.sample\n/workspace/repo/.git/hooks/pre-applypatch.sample\n/workspace/repo/.git/hooks/pre-commit.sample\n/workspace/repo/.git/hooks/pre-merge-commit.sample\n/workspace/repo/.git/hooks/pre-push.sample\n/workspace/repo/.git/hooks/pre-rebase.sample\n/workspace/repo/.git/hooks/pre-receive.sample\n/workspace/repo/.git/hooks/prepare-commit-msg.sample\n/workspace/repo/.git/hooks/push-to-checkout.sample\n/workspace/repo/.git/hooks/update.sample\n/workspace/repo/.git/info/exclude\n/workspace/repo/.github/CODEOWNERS\n/workspace/repo/README.md\n/workspace/repo/a-b/x.txt\n/workspace/repo/docs/api/reference.md\n/workspace/repo/docs/guide.md\n/workspace/repo/lengths/crlf.txt\n/workspace/repo/lengths/euro.txt\n/workspace/repo/lengths/last-499.txt\n/workspace/repo/lengths/last-500.txt\n/workspace/repo/lengths/lf.txt\n/workspace/repo/marked.txt\n/workspace/repo/src/Big.ts\n/workspace/repo/src/index.ts\n/workspace/repo/src/pages/[id].tsx\n/workspace/repo/src/pages/index.tsx\n/workspace/repo/src/util/text.ts\n/workspace/repo/src/util.ts\n/workspace/repo/windows.txt\n/workspace/repo/zero.dat\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- '.github/CODEOWNERS' 'README.md' 'a-b/x.txt' 'docs/api/reference.md' 'docs/guide.md' 'lengths/crlf.txt' 'lengths/euro.txt' 'lengths/last-499.txt' 'lengths/last-500.txt' 'lengths/lf.txt' 'marked.txt' 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts' 'windows.txt' 'zero.dat'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '.github/CODEOWNERS' 'README.md' 'a-b/x.txt' 'docs/api/reference.md' 'docs/guide.md' 'lengths/crlf.txt' 'lengths/euro.txt' 'lengths/last-499.txt' 'lengths/last-500.txt' 'lengths/lf.txt' 'marked.txt' 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts' 'windows.txt' 'zero.dat'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -248,7 +248,7 @@
 			"output": "/workspace/repo/docs/api/reference.md\n/workspace/repo/docs/guide.md\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'docs/api/reference.md' 'docs/guide.md'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'docs/api/reference.md' 'docs/guide.md'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -262,7 +262,7 @@
 			"output": "/workspace/repo/docs/api/reference.md\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'docs/api/reference.md'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'docs/api/reference.md'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -276,7 +276,7 @@
 			"output": "/workspace/repo/.git/HEAD\n/workspace/repo/.git/config\n/workspace/repo/.git/description\n/workspace/repo/.git/hooks/applypatch-msg.sample\n/workspace/repo/.git/hooks/commit-msg.sample\n/workspace/repo/.git/hooks/fsmonitor-watchman.sample\n/workspace/repo/.git/hooks/post-update.sample\n/workspace/repo/.git/hooks/pre-applypatch.sample\n/workspace/repo/.git/hooks/pre-commit.sample\n/workspace/repo/.git/hooks/pre-merge-commit.sample\n/workspace/repo/.git/hooks/pre-push.sample\n/workspace/repo/.git/hooks/pre-rebase.sample\n/workspace/repo/.git/hooks/pre-receive.sample\n/workspace/repo/.git/hooks/prepare-commit-msg.sample\n/workspace/repo/.git/hooks/push-to-checkout.sample\n/workspace/repo/.git/hooks/update.sample\n/workspace/repo/.git/info/exclude\n/workspace/repo/.github/CODEOWNERS\n/workspace/repo/README.md\n/workspace/repo/a-b/x.txt\n/workspace/repo/docs/api/reference.md\n/workspace/repo/docs/guide.md\n/workspace/repo/lengths/crlf.txt\n/workspace/repo/lengths/euro.txt\n/workspace/repo/lengths/last-499.txt\n/workspace/repo/lengths/last-500.txt\n/workspace/repo/lengths/lf.txt\n/workspace/repo/marked.txt\n/workspace/repo/src/Big.ts\n/workspace/repo/src/index.ts\n/workspace/repo/src/pages/[id].tsx\n/workspace/repo/src/pages/index.tsx\n/workspace/repo/src/util/text.ts\n/workspace/repo/src/util.ts\n/workspace/repo/windows.txt\n/workspace/repo/zero.dat\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- '.github/CODEOWNERS' 'README.md' 'a-b/x.txt' 'docs/api/reference.md' 'docs/guide.md' 'lengths/crlf.txt' 'lengths/euro.txt' 'lengths/last-499.txt' 'lengths/last-500.txt' 'lengths/lf.txt' 'marked.txt' 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts' 'windows.txt' 'zero.dat'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '.github/CODEOWNERS' 'README.md' 'a-b/x.txt' 'docs/api/reference.md' 'docs/guide.md' 'lengths/crlf.txt' 'lengths/euro.txt' 'lengths/last-499.txt' 'lengths/last-500.txt' 'lengths/lf.txt' 'marked.txt' 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts' 'windows.txt' 'zero.dat'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -290,7 +290,7 @@
 			"output": "/workspace/repo/src/Big.ts\n/workspace/repo/src/index.ts\n/workspace/repo/src/pages/[id].tsx\n/workspace/repo/src/pages/index.tsx\n/workspace/repo/src/util/text.ts\n/workspace/repo/src/util.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/Big.ts' 'src/index.ts' 'src/pages/[id].tsx' 'src/pages/index.tsx' 'src/util/text.ts' 'src/util.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -304,7 +304,7 @@
 			"output": "/workspace/repo/a-b/x.txt\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'a-b/x.txt'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'a-b/x.txt'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -334,7 +334,7 @@
 			"output": "/workspace/repo/src/Big.ts\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/Big.ts'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/Big.ts'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -348,7 +348,7 @@
 			"output": "/workspace/repo/src/pages/[id].tsx\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/pages/[id].tsx'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/pages/[id].tsx'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -370,7 +370,7 @@
 			"output": "/workspace/repo/src/pages/[id].tsx\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'src/pages/[id].tsx'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/pages/[id].tsx'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -416,7 +416,7 @@
 			"output": "/workspace/repo/README.md\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'README.md'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'README.md'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -430,7 +430,7 @@
 			"output": "/workspace/repo/README.md\n",
 			"filters": [
 				{
-					"command": "git -C '/workspace/repo' check-ignore -- 'README.md'",
+					"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'README.md'",
 					"exitCode": 1,
 					"output": ""
 				}
@@ -443,16 +443,16 @@
 				"pattern": "needle",
 				"path": "/workspace"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace'",
 			"exitCode": 0,
-			"output": "/workspace/repo/lengths/euro.txt:1:€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ needle\n/workspace/repo/lengths/euro.txt:2:[Omitted long matching line]\n/workspace/repo/lengths/euro.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/lf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/lf.txt:4:[Omitted long matching line]\n/workspace/repo/lengths/last-499.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/last-500.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/marked.txt:1:needle after a mark\n/workspace/repo/lengths/crlf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/crlf.txt:4:[Omitted long matching line]\n/workspace/repo/README.md:3:A needle in the readme.\n/workspace/repo/docs/guide.md:4:Second needle line.\n/workspace/repo/.github/CODEOWNERS:1:* @acme/needle-team\n/workspace/repo/windows.txt:2:two needle\r\n"
+			"output": "/workspace/repo/lengths/euro.txt:1:€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ needle\n/workspace/repo/lengths/euro.txt:2:[Omitted long matching line]\n/workspace/repo/lengths/euro.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/last-499.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/lf.txt:4:[Omitted long matching line]\n/workspace/repo/lengths/crlf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/crlf.txt:4:[Omitted long matching line]\n/workspace/repo/lengths/last-500.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/marked.txt:1:needle after a mark\n/workspace/repo/.github/CODEOWNERS:1:* @acme/needle-team\n/workspace/repo/README.md:3:A needle in the readme.\n/workspace/repo/docs/guide.md:4:Second needle line.\n/workspace/repo/windows.txt:2:two needle\r\n"
 		},
 		{
 			"query": {
 				"pattern": "needle",
 				"path": "/workspace/repo/docs"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/docs'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/docs'",
 			"exitCode": 0,
 			"output": "/workspace/repo/docs/guide.md:4:Second needle line.\n"
 		},
@@ -462,7 +462,7 @@
 				"path": "/workspace",
 				"glob": "*.md"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' --glob '*.md' -e 'needle' -- '/workspace'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' --glob '*.md' -e 'needle' -- '/workspace'",
 			"exitCode": 0,
 			"output": "/workspace/repo/README.md:3:A needle in the readme.\n/workspace/repo/docs/guide.md:4:Second needle line.\n"
 		},
@@ -472,7 +472,7 @@
 				"path": "/workspace",
 				"glob": "*.rs"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' --glob '*.rs' -e 'needle' -- '/workspace'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' --glob '*.rs' -e 'needle' -- '/workspace'",
 			"exitCode": 1,
 			"output": ""
 		},
@@ -481,7 +481,7 @@
 				"pattern": "haystack",
 				"path": "/workspace"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'haystack' -- '/workspace'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'haystack' -- '/workspace'",
 			"exitCode": 1,
 			"output": ""
 		},
@@ -490,7 +490,7 @@
 				"pattern": "needle-team",
 				"path": "/workspace"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle-team' -- '/workspace'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle-team' -- '/workspace'",
 			"exitCode": 0,
 			"output": "/workspace/repo/.github/CODEOWNERS:1:* @acme/needle-team\n"
 		},
@@ -499,7 +499,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/src"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/src'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/src'",
 			"exitCode": 1,
 			"output": ""
 		},
@@ -509,7 +509,7 @@
 				"path": "/workspace/repo/src",
 				"ignoreCase": true
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' --ignore-case -e 'needle' -- '/workspace/repo/src'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' --ignore-case -e 'needle' -- '/workspace/repo/src'",
 			"exitCode": 0,
 			"output": "/workspace/repo/src/Big.ts:1:// NEEDLE in capitals\n"
 		},
@@ -518,7 +518,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/windows.txt"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/windows.txt'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/windows.txt'",
 			"exitCode": 0,
 			"output": "2:two needle\r\n"
 		},
@@ -527,7 +527,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/marked.txt"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/marked.txt'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/marked.txt'",
 			"exitCode": 0,
 			"output": "1:needle after a mark\n"
 		},
@@ -536,7 +536,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/README.md"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/README.md'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/README.md'",
 			"exitCode": 0,
 			"output": "3:A needle in the readme.\n"
 		},
@@ -546,7 +546,7 @@
 				"path": "/workspace/repo/README.md",
 				"glob": "*.ts"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' --glob '*.ts' -e 'needle' -- '/workspace/repo/README.md'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' --glob '*.ts' -e 'needle' -- '/workspace/repo/README.md'",
 			"exitCode": 0,
 			"output": "3:A needle in the readme.\n"
 		},
@@ -555,16 +555,16 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/lengths"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths'",
 			"exitCode": 0,
-			"output": "/workspace/repo/lengths/euro.txt:1:€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ needle\n/workspace/repo/lengths/euro.txt:2:[Omitted long matching line]\n/workspace/repo/lengths/euro.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/lf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/lf.txt:4:[Omitted long matching line]\n/workspace/repo/lengths/last-499.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/crlf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/crlf.txt:4:[Omitted long matching line]\n/workspace/repo/lengths/last-500.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n"
+			"output": "/workspace/repo/lengths/euro.txt:1:€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ needle\n/workspace/repo/lengths/euro.txt:2:[Omitted long matching line]\n/workspace/repo/lengths/euro.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/last-499.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n/workspace/repo/lengths/lf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/lf.txt:4:[Omitted long matching line]\n/workspace/repo/lengths/crlf.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n/workspace/repo/lengths/crlf.txt:3:[Omitted long matching line]\n/workspace/repo/lengths/crlf.txt:4:[Omitted long matching line]\n/workspace/repo/lengths/last-500.txt:1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n"
 		},
 		{
 			"query": {
 				"pattern": "needle",
 				"path": "/workspace/repo/lengths/lf.txt"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/lf.txt'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/lf.txt'",
 			"exitCode": 0,
 			"output": "1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n3:[Omitted long matching line]\n4:[Omitted long matching line]\n"
 		},
@@ -573,7 +573,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/lengths/crlf.txt"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/crlf.txt'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/crlf.txt'",
 			"exitCode": 0,
 			"output": "1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n2:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\r\n3:[Omitted long matching line]\n4:[Omitted long matching line]\n"
 		},
@@ -582,7 +582,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/lengths/last-499.txt"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/last-499.txt'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/last-499.txt'",
 			"exitCode": 0,
 			"output": "1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n"
 		},
@@ -591,7 +591,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/lengths/last-500.txt"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/last-500.txt'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/last-500.txt'",
 			"exitCode": 0,
 			"output": "1:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx needle\n"
 		},
@@ -600,7 +600,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/lengths/euro.txt"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/euro.txt'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/lengths/euro.txt'",
 			"exitCode": 0,
 			"output": "1:€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€ needle\n2:[Omitted long matching line]\n3:[Omitted long matching line]\n"
 		},
@@ -609,7 +609,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/zero.dat"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/zero.dat'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/zero.dat'",
 			"exitCode": 0,
 			"output": "binary file matches (found \"\\0\" byte around offset 8)\n"
 		},
@@ -618,7 +618,7 @@
 				"pattern": "needle",
 				"path": "/workspace/repo/absent"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/absent'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace/repo/absent'",
 			"exitCode": 2,
 			"output": "/workspace/repo/absent: No such file or directory (os error 2)\n"
 		},
@@ -628,16 +628,16 @@
 				"path": "/workspace",
 				"glob": "*.{ts,tsx}"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' --glob '*.{ts,tsx}' -e 'export' -- '/workspace'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' --glob '*.{ts,tsx}' -e 'export' -- '/workspace'",
 			"exitCode": 0,
-			"output": "/workspace/repo/src/util.ts:1:export * from './util/text';\n/workspace/repo/src/index.ts:1:export const name = \"site\";\n/workspace/repo/src/pages/[id].tsx:1:export const page = 1;\n/workspace/repo/src/pages/index.tsx:1:export const index = 1;\n/workspace/repo/src/util/text.ts:1:export function trim(text: string) {\n"
+			"output": "/workspace/repo/src/index.ts:1:export const name = \"site\";\n/workspace/repo/src/util.ts:1:export * from './util/text';\n/workspace/repo/src/pages/[id].tsx:1:export const page = 1;\n/workspace/repo/src/util/text.ts:1:export function trim(text: string) {\n/workspace/repo/src/pages/index.tsx:1:export const index = 1;\n"
 		},
 		{
 			"query": {
 				"pattern": "Site",
 				"path": "/workspace/repo"
 			},
-			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'Site' -- '/workspace/repo'",
+			"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'Site' -- '/workspace/repo'",
 			"exitCode": 0,
 			"output": "/workspace/repo/README.md:1:# Site\n"
 		}
@@ -647,6 +647,7 @@
 			"repo/.gitignore": "*.log\nbuild/\n",
 			"repo/kept.txt": "a needle\n",
 			"repo/debug.log": "a needle in a log\n",
+			"repo/é.log": "a needle in a log too\n",
 			"repo/build/out.txt": "a needle in a build\n"
 		},
 		"finds": [
@@ -655,12 +656,12 @@
 				"directory": "/workspace",
 				"command": "rg --files --hidden --sort path --glob '!.git' --glob '*' -- '/workspace'",
 				"exitCode": 0,
-				"output": "/workspace/repo/.git/HEAD\n/workspace/repo/.git/config\n/workspace/repo/.git/description\n/workspace/repo/.git/hooks/applypatch-msg.sample\n/workspace/repo/.git/hooks/commit-msg.sample\n/workspace/repo/.git/hooks/fsmonitor-watchman.sample\n/workspace/repo/.git/hooks/post-update.sample\n/workspace/repo/.git/hooks/pre-applypatch.sample\n/workspace/repo/.git/hooks/pre-commit.sample\n/workspace/repo/.git/hooks/pre-merge-commit.sample\n/workspace/repo/.git/hooks/pre-push.sample\n/workspace/repo/.git/hooks/pre-rebase.sample\n/workspace/repo/.git/hooks/pre-receive.sample\n/workspace/repo/.git/hooks/prepare-commit-msg.sample\n/workspace/repo/.git/hooks/push-to-checkout.sample\n/workspace/repo/.git/hooks/update.sample\n/workspace/repo/.git/info/exclude\n/workspace/repo/.gitignore\n/workspace/repo/build/out.txt\n/workspace/repo/debug.log\n/workspace/repo/kept.txt\n",
+				"output": "/workspace/repo/.git/HEAD\n/workspace/repo/.git/config\n/workspace/repo/.git/description\n/workspace/repo/.git/hooks/applypatch-msg.sample\n/workspace/repo/.git/hooks/commit-msg.sample\n/workspace/repo/.git/hooks/fsmonitor-watchman.sample\n/workspace/repo/.git/hooks/post-update.sample\n/workspace/repo/.git/hooks/pre-applypatch.sample\n/workspace/repo/.git/hooks/pre-commit.sample\n/workspace/repo/.git/hooks/pre-merge-commit.sample\n/workspace/repo/.git/hooks/pre-push.sample\n/workspace/repo/.git/hooks/pre-rebase.sample\n/workspace/repo/.git/hooks/pre-receive.sample\n/workspace/repo/.git/hooks/prepare-commit-msg.sample\n/workspace/repo/.git/hooks/push-to-checkout.sample\n/workspace/repo/.git/hooks/update.sample\n/workspace/repo/.git/info/exclude\n/workspace/repo/.gitignore\n/workspace/repo/build/out.txt\n/workspace/repo/debug.log\n/workspace/repo/kept.txt\n/workspace/repo/é.log\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- '.gitignore' 'build/out.txt' 'debug.log' 'kept.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '.gitignore' 'build/out.txt' 'debug.log' 'kept.txt' 'é.log'",
 						"exitCode": 0,
-						"output": "build/out.txt\ndebug.log\n"
+						"output": "build/out.txt\ndebug.log\né.log\n"
 					}
 				]
 			}
@@ -671,7 +672,7 @@
 					"pattern": "needle",
 					"path": "/workspace"
 				},
-				"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'needle' -- '/workspace'",
+				"command": "rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'needle' -- '/workspace'",
 				"exitCode": 0,
 				"output": "/workspace/repo/kept.txt:1:a needle\n"
 			}
@@ -700,7 +701,7 @@
 				"output": "/workspace/repo/{.txt\n/workspace/repo/}.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- '{.txt' '}.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '{.txt' '}.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -714,7 +715,7 @@
 				"output": "/workspace/repo/{.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- '{.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '{.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -728,7 +729,7 @@
 				"output": "/workspace/repo/a.txt\n/workspace/repo/{.txt\n/workspace/repo/}.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'a.txt' '{.txt' '}.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'a.txt' '{.txt' '}.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -742,7 +743,7 @@
 				"output": "/workspace/repo/a.txt\n/workspace/repo/{.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'a.txt' '{.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'a.txt' '{.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -756,7 +757,7 @@
 				"output": "/workspace/repo/src/index.ts\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'src/index.ts'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/index.ts'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -770,7 +771,7 @@
 				"output": "/workspace/repo/src/index.ts\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'src/index.ts'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'src/index.ts'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -784,7 +785,7 @@
 				"output": "/workspace/repo/README.md\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'README.md'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'README.md'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -798,7 +799,7 @@
 				"output": "/workspace/repo/a.txt\n/workspace/repo/{.txt\n/workspace/repo/}.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'a.txt' '{.txt' '}.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'a.txt' '{.txt' '}.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -812,7 +813,7 @@
 				"output": "/workspace/repo/[].txt\n/workspace/repo/é.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- '[].txt' 'é.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '[].txt' 'é.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -834,7 +835,7 @@
 				"output": "/workspace/repo/éé.txt\n/workspace/repo/😀.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'éé.txt' '😀.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'éé.txt' '😀.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -864,7 +865,7 @@
 				"output": "/workspace/repo/{.txt\n/workspace/repo/}.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- '{.txt' '}.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- '{.txt' '}.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -878,7 +879,7 @@
 				"output": "/workspace/repo/é.txt\n/workspace/repo/éé.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'é.txt' 'éé.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'é.txt' 'éé.txt'",
 						"exitCode": 1,
 						"output": ""
 					}
@@ -892,7 +893,7 @@
 				"output": "/workspace/repo/é.txt\n/workspace/repo/éé.txt\n",
 				"filters": [
 					{
-						"command": "git -C '/workspace/repo' check-ignore -- 'é.txt' 'éé.txt'",
+						"command": "git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'é.txt' 'éé.txt'",
 						"exitCode": 1,
 						"output": ""
 					}

@@ -229,7 +229,7 @@ describe("a sandbox's files", () => {
 			},
 			{
 				command:
-					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**' -e 'a' -- '/workspace/a.txt'",
+					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**' -e 'a' -- '/workspace/a.txt'",
 				cwd: "/workspace",
 				timeoutSeconds: 60,
 			},
@@ -252,7 +252,7 @@ describe("a sandbox's files", () => {
 		});
 		expect(sandbox.commands.map((ran) => ran.command)).toEqual([
 			"rg --files --hidden --sort path --glob '!.git' --glob '*' -- '/workspace'",
-			"git -C '/workspace/repo' check-ignore -- 'debug.log' 'src/a.ts'",
+			"git -C '/workspace/repo' -c core.quotePath=false check-ignore -- 'debug.log' 'src/a.ts'",
 		]);
 	});
 

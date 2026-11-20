@@ -428,7 +428,7 @@ export function sandboxFiles(sandbox: SandboxPort): DeletingFilePort {
 		search: ({ pattern, path, glob, ignoreCase }) =>
 			ripgrep(
 				[
-					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!**/.git/**'",
+					"rg --line-number --no-heading --color never --hidden --max-columns 500 --glob '!.git' --glob '!**/.git/**'",
 					ignoreCase ? "--ignore-case" : "",
 					glob ? `--glob ${quote(glob)}` : "",
 					`-e ${quote(pattern)} -- ${quote(path)}`,
@@ -472,8 +472,10 @@ async function withoutIgnored(sandbox: SandboxPort, found: string): Promise<stri
 			size += added;
 			end += 1;
 		}
+		// core.quotePath=false: check-ignore otherwise C-quotes non-ASCII names, which no
+		// listed path ever equals, so an ignored `é.log` would stay listed.
 		const checked = await sandbox.run(
-			`git -C ${quote(repo)} check-ignore -- ${chunk.join(" ")}`,
+			`git -C ${quote(repo)} -c core.quotePath=false check-ignore -- ${chunk.join(" ")}`,
 			SANDBOX_ROOT,
 			SANDBOX_LIMITS.searchSeconds,
 		);
