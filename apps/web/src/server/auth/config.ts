@@ -354,11 +354,18 @@ export function createAuth(config: AuthConfig) {
 					},
 					// The plugin deletes the members first, which the owner trigger would refuse. With the
 					// workspace gone they follow by cascade, and the plugin finds nothing left to delete.
+					// The note goes in the same batch, so what its objects hold is deleted even when
+					// the request can't finish it ("Deleting a workspace" in docs/architecture.md).
 					beforeDeleteOrganization: async ({ organization }) => {
-						await config.db
-							.delete(schema.organization)
-							.where(eq(schema.organization.id, organization.id))
-							.run();
+						await config.db.batch([
+							config.db
+								.insert(schema.workspaceDeletion)
+								.values({ workspaceId: organization.id, deletedAt: Date.now() })
+								.onConflictDoNothing(),
+							config.db
+								.delete(schema.organization)
+								.where(eq(schema.organization.id, organization.id)),
+						]);
 					},
 					afterDeleteOrganization: async ({ organization }) => {
 						await config.onWorkspaceDeleted?.(organization.id);

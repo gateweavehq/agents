@@ -35,10 +35,15 @@ async function workspace(days: number, currentPlace = "eu") {
 	const conversation = await agents.conversation(id, started.id);
 	const sandbox = await agents.sandbox(id, started.id);
 	await sandbox.takeKeys([["claude-code-session", "old-session"]]);
-	await agents.db
-		.prepare("INSERT INTO workspace_location VALUES (?, ?, ?, ?)")
-		.bind(id, currentPlace, "", Date.now() - days * day)
-		.run();
+	// A workspace that is still there: the daily run deletes the objects of a row whose workspace is gone.
+	await agents.db.batch([
+		agents.db
+			.prepare("INSERT INTO organization (id, name, slug, created_at) VALUES (?1, ?1, ?1, ?2)")
+			.bind(id, Date.now()),
+		agents.db
+			.prepare("INSERT INTO workspace_location VALUES (?, ?, ?, ?)")
+			.bind(id, currentPlace, "", Date.now() - days * day),
+	]);
 	return {
 		id,
 		conversationId: started.id,
