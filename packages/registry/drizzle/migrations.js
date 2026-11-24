@@ -44,6 +44,7 @@ import m0042 from "./0042_repository_checks.sql";
 import m0043 from "./0043_nifty_bulldozer.sql";
 import m0044 from "./0044_past_leper_queen.sql";
 import m0045 from "./0045_agent_target_rule.sql";
+import m0046 from "./0046_easy_hulk.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -95,5 +96,6 @@ export default {
 		m0043,
 		m0044,
 		m0045,
+		m0046,
 	},
 };

@@ -360,15 +360,22 @@ it("does not finish for someone who is no longer an admin, or never was a member
 	expect((await start(member, slug, TRIAGE)).failed).toBe(true);
 });
 
-it("sends a signed-out browser to sign in before it asks Track anything", async () => {
+it("resumes agent approval after sign-in without exchanging before it", async () => {
 	const { owner, slug } = await workspace();
 	const begun = await start(owner, slug, TRIAGE);
 	if (!begun.address) throw new Error(begun.text);
 	const before = track.exchanges.length;
-	const response = await agents.fetch(track.approve(begun.address));
+	const back = new URL(track.approve(begun.address));
+	const response = await agents.fetch(back);
 	expect(response.status).toBe(302);
-	expect(response.headers.get("location")).toMatch(/^\/login\?redirect=/);
+	const login = new URL(response.headers.get("location") ?? "/", origin);
+	expect(login.pathname).toBe("/login");
+	expect(login.searchParams.get("redirect")).toBe(back.pathname + back.search);
 	expect(track.exchanges).toHaveLength(before);
+	const resumed = await arrive(owner, back.href);
+	expect(resumed.response.status).toBe(302);
+	expect(resumed.location).toContain("trackConnected=triage");
+	expect(track.exchanges).toHaveLength(before + 1);
 });
 
 it("makes nothing and calls nothing when the person says no in Track", async () => {

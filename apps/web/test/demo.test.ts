@@ -448,6 +448,36 @@ describe("on the demo deployment", () => {
 		);
 	});
 
+	it("does not start or finish Track source approval in the demo", async () => {
+		const client = "203.0.113.26";
+		const { slug, cookie, registry, workspaceId } = await startVisitor(agents, client);
+		const app = await agents.fetch(`${origin}/${slug}/agents`, { headers: { cookie } });
+		expect(await app.text()).not.toContain("Track run reporting");
+		const start = await callServerFn(agents, "beginTrackSource", {
+			data: { slug, trackUrl: "https://track.example.net" },
+			cookie,
+			client,
+		});
+		expect(start.text).toContain(OFF_IN_DEMO);
+		const disconnected = await callServerFn(agents, "disconnectTrackSource", {
+			data: { slug, connectionId: crypto.randomUUID() },
+			cookie,
+			client,
+		});
+		expect(disconnected.text).toContain(OFF_IN_DEMO);
+		const callback = await agents.fetch(
+			`${origin}/api/track/source-connected?workspace=${workspaceId}&state=${"s".repeat(32)}&code=${"c".repeat(32)}`,
+			{ headers: { cookie } },
+		);
+		expect(callback.status).toBe(404);
+		expect(callback.headers.get("cache-control")).toContain("no-store");
+		expect(callback.headers.get("referrer-policy")).toBe("no-referrer");
+		expect(await registry.sealedCounts()).toEqual({ explicit: 0, derived: 0 });
+		expect(agents.outbound.filter((url) => new URL(url).hostname === "track.example.net")).toEqual(
+			[],
+		);
+	});
+
 	it("gives each visitor a workspace nobody else can open", async () => {
 		const first = await startVisitor(agents, "203.0.113.7");
 		const second = await startVisitor(agents, "203.0.113.8");

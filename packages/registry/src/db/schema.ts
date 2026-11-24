@@ -26,6 +26,7 @@ import {
 	TEAM_EDGE_KINDS,
 	TEAM_MEMBER_KINDS,
 	TRIGGER_DELIVERY_STATUSES,
+	type TrackPendingChoices,
 	type TriggerSchedule,
 	WIKI_STATUSES,
 	type WikiSource,
@@ -750,12 +751,38 @@ export const trackConnections = sqliteTable("track_connections", {
 	state: text("state").primaryKey(),
 	startedBy: text("started_by").notNull(),
 	expiresAt: integer("expires_at").notNull(),
-	/** The choices validated at the start (`trackConnectInput`), as the setup will take them. */
-	choices: text("choices", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-	/** The id the trigger will have, which the webhook's URL names before it exists. */
-	triggerId: text("trigger_id").notNull(),
+	/** The choices validated at the start. */
+	choices: text("choices", { mode: "json" }).$type<TrackPendingChoices>().notNull(),
+	/** Reserved id of the trigger or the reporting destination. */
+	targetId: text("trigger_id").notNull(),
 	sealedVerifier: text("sealed_verifier").notNull(),
 });
+
+/** Track Sources approved for reporting runs, with the event-writing key sealed. */
+export const trackSourceDestinations = sqliteTable(
+	"track_source_destinations",
+	{
+		id: text("id").primaryKey(),
+		trackOrigin: text("track_origin").notNull(),
+		workspaceId: text("workspace_id").notNull(),
+		workspaceSlug: text("workspace_slug").notNull(),
+		workspaceName: text("workspace_name").notNull(),
+		teamId: text("team_id").notNull(),
+		teamKey: text("team_key").notNull(),
+		teamName: text("team_name").notNull(),
+		sourceId: text("source_id").notNull(),
+		sourceName: text("source_name").notNull(),
+		sourceProduct: text("source_product").notNull(),
+		sealedKey: text("sealed_key").notNull(),
+	},
+	(table) => [
+		uniqueIndex("track_source_destinations_team_idx").on(
+			table.trackOrigin,
+			table.workspaceId,
+			table.teamId,
+		),
+	],
+);
 
 /**
  * A GitLab reached with an access token (AGT-79). The token and the webhook's secret token are

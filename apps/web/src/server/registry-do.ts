@@ -134,6 +134,19 @@ export class RegistryDO extends Registry {
 		return demoEnabled() ? offInDemo() : super.setUpTrackWork(...args);
 	}
 
+	override async trackConnectBegin(...args: Parameters<Registry["trackConnectBegin"]>) {
+		return demoEnabled() ? offInDemo() : super.trackConnectBegin(...args);
+	}
+
+	override async saveTrackSource(...args: Parameters<Registry["saveTrackSource"]>) {
+		return demoEnabled() ? ("refused" as const) : super.saveTrackSource(...args);
+	}
+
+	override removeTrackSource(...args: Parameters<Registry["removeTrackSource"]>) {
+		if (demoEnabled()) throw new Error(OFF_IN_DEMO);
+		return super.removeTrackSource(...args);
+	}
+
 	override async setTelemetry(...args: Parameters<Registry["setTelemetry"]>) {
 		return demoEnabled() ? offInDemo() : super.setTelemetry(...args);
 	}

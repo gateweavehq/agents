@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { challengeOf, trackConnectAddress } from "./track-connect-address";
+import { challengeOf, trackConnectAddress, trackSourceAddress } from "./track-connect-address";
 
 const options = {
 	trackUrl: "https://track.example.com",
@@ -57,4 +57,22 @@ describe("the address Track is sent to", () => {
 		);
 		expect(url.searchParams.get("name")).toBe("A&B=c");
 	});
+});
+
+it("sends exactly the source approval fields and a verifier challenge", async () => {
+	const address = await trackSourceAddress({
+		...options,
+		trackUrl: "https://self-hosted.test:8443/a",
+	});
+	const url = new URL(address);
+	expect(url.origin + url.pathname).toBe("https://self-hosted.test:8443/connect/source");
+	expect([...url.searchParams.entries()]).toEqual([
+		["product", "agents"],
+		["name", "Gateweave Agents"],
+		["links", options.origin],
+		["return", `${options.origin}/api/track/source-connected?workspace=ws1`],
+		["state", options.state],
+		["challenge", createHash("sha256").update(options.verifier).digest("base64url")],
+	]);
+	expect(address).not.toContain(options.verifier);
 });

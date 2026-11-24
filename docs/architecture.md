@@ -2072,6 +2072,23 @@ Threat model, briefly:
   address you trust.
 - The route is off in the demo, as the manual setup is.
 
+### Track run reporting destinations
+
+An owner or admin can connect a reporting destination from the Agents page. The browser goes to
+Track's `/connect/source` approval page to choose a workspace and team. The flow shares the
+one-time pending state, sealed verifier, and ten-minute lifetime of agent setup. It uses its own
+callback and checks admin access both before the exchange and before saving the destination.
+The exchange must name the exact `/api/events` endpoint at the approved Track origin.
+
+The registry keeps one destination per Track origin, workspace and team in
+`track_source_destinations`. It seals the source's event-writing key to the connection id and
+Track origin. Moves and backups carry its ciphertext. Admins see only destination metadata,
+and access to the key stays server-side. A second approval for the same destination keeps the
+original and asks Track to undo the unused source. If the save is interrupted, the callback
+checks the source's identity
+and reports uncertainty when it cannot confirm the save. Disconnect removes the local destination
+and credential. Revocation is managed in Track under Settings > Sources. The demo has the flow off.
+
 ## Memory
 
 A workspace keeps short notes for its agents to recall in later runs (AGT-107): facts, decisions

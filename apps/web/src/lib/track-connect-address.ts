@@ -3,7 +3,12 @@
  * what it needs to show what is asked and where the answer goes. No server code, so the tests
  * read it as they read `audit-events.ts`.
  */
-import { TRACK_CONNECT_EVENTS, type TrackConnectPurpose } from "@gateweave/agents-model";
+import {
+	TRACK_CONNECT_EVENTS,
+	TRACK_SOURCE_NAME,
+	TRACK_SOURCE_PRODUCT,
+	type TrackConnectPurpose,
+} from "@gateweave/agents-model";
 
 function base64Url(bytes: Uint8Array): string {
 	let text = "";
@@ -53,6 +58,27 @@ export async function trackConnectAddress(options: {
 	query.set("webhook", triggerUrl(options.origin, options.workspaceId, options.triggerId));
 	query.set("events", TRACK_CONNECT_EVENTS[options.purpose].join(","));
 	query.set("return", returnUrl(options.origin, options.workspaceId));
+	query.set("state", options.state);
+	query.set("challenge", await challengeOf(options.verifier));
+	return address.href;
+}
+
+export async function trackSourceAddress(options: {
+	trackUrl: string;
+	origin: string;
+	workspaceId: string;
+	state: string;
+	verifier: string;
+}): Promise<string> {
+	const address = new URL("/connect/source", options.trackUrl);
+	const query = address.searchParams;
+	query.set("product", TRACK_SOURCE_PRODUCT);
+	query.set("name", TRACK_SOURCE_NAME);
+	query.set("links", options.origin);
+	query.set(
+		"return",
+		`${options.origin}/api/track/source-connected?workspace=${encodeURIComponent(options.workspaceId)}`,
+	);
 	query.set("state", options.state);
 	query.set("challenge", await challengeOf(options.verifier));
 	return address.href;
