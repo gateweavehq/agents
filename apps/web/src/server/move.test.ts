@@ -192,6 +192,58 @@ it("deletes both workspace copies and forgets the sealed conversation through it
 	expect(batch).toHaveBeenCalledOnce();
 });
 
+it.each(["conversationIds", "destroy"] as const)(
+	"cleans the sealed copy before rejecting when the live registry's %s fails",
+	async (rpc) => {
+		const { db, statement, batch, deleted } = query(location);
+		const failure = new Error("registry unreachable");
+		const events: string[] = [];
+		const liveRegistry = {
+			conversationIds: vi.fn().mockResolvedValue(["one"]),
+			destroy: vi.fn().mockResolvedValue(undefined),
+		};
+		liveRegistry[rpc].mockImplementation(async () => {
+			await Promise.resolve();
+			events.push("live registry rejected");
+			throw failure;
+		});
+		const oldRegistry = {
+			conversationIds: async () => {
+				events.push("sealed registry listed");
+				return ["one"];
+			},
+			destroy: async () => {
+				events.push("sealed registry destroy started");
+				await Promise.resolve();
+				events.push("sealed registry destroyed");
+			},
+		};
+		const moveForget = async () => {
+			await Promise.resolve();
+			events.push("sealed conversation forgotten");
+		};
+		place("eu", liveRegistry, { "workspace:one": { destroy: vi.fn() } });
+		place("", oldRegistry, { "workspace:one": { moveForget } });
+
+		const deletion = deleteWorkspaceData(db, "workspace").catch((error) => {
+			events.push("deletion rejected");
+			throw error;
+		});
+		await expect(deletion).rejects.toBe(failure);
+		expect(events).toEqual([
+			"live registry rejected",
+			"sealed registry listed",
+			"sealed conversation forgotten",
+			"sealed registry destroy started",
+			"sealed registry destroyed",
+			"deletion rejected",
+		]);
+		expect(deleted).toEqual([]);
+		expect(statement.run).not.toHaveBeenCalled();
+		expect(batch).not.toHaveBeenCalled();
+	},
+);
+
 it("keeps a refused old copy's registry and location row for the daily run to retry", async () => {
 	const { db, statement, batch } = query(location);
 	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };

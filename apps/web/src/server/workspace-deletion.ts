@@ -34,7 +34,7 @@ const FORGET_RETRY_MS = 1_000;
  * it is what knows the conversations. A conversation that fails, or an old copy's that refuses to
  * be forgotten, is logged and the rest go on, but its registry stays, and this throws once every
  * place has been tried: a retry finds the same conversations again, and deleting one twice is
- * harmless.
+ * harmless. A registry failure also leaves the other places to be tried before this throws.
  *
  * Its objects can be in more than one place ("Where a workspace lives" in docs/architecture.md):
  * where it is, the sealed ones it moved from, and the half-filled copy of a move that gave up. Each
@@ -54,13 +54,24 @@ export async function deleteWorkspaceData(db: Database, workspaceId: string): Pr
 	const target = deploymentJurisdiction();
 	if (target) places.add(target);
 	let left = 0;
+	const failures: unknown[] = [];
 	for (const place of places) {
-		left += await deleteObjectsIn(
-			place,
-			workspaceId,
-			place === location?.movedFrom && place !== location.jurisdiction,
-		);
+		try {
+			left += await deleteObjectsIn(
+				place,
+				workspaceId,
+				place === location?.movedFrom && place !== location.jurisdiction,
+			);
+		} catch (error) {
+			failures.push(error);
+			console.error("A deleted workspace's registry cleanup failed", {
+				workspaceId,
+				jurisdiction: place || "default",
+				error: messageOf(error),
+			});
+		}
 	}
+	if (failures.length > 0) throw failures[0];
 	if (left > 0) {
 		throw new Error(`${left} of the workspace's conversations are left for the next try`);
 	}
