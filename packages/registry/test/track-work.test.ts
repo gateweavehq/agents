@@ -9,6 +9,8 @@ import {
 } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
+import { sealerFor } from "../src/secrets";
+import { trackSourceKeyPlace } from "../src/track-sources";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 type Stub = ReturnType<typeof registry>;
@@ -150,13 +152,29 @@ it("reuses an expired reservation, and orders the reports even if the clock does
 		agent.updatedAt,
 	);
 	await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-test-track-report" }, "Ada");
-	await stub.saveTrackSource(crypto.randomUUID(), {
+	const destinationId = crypto.randomUUID();
+	const sourceKey = `gws_${"s".repeat(43)}`;
+	await stub.saveTrackSource(destinationId, {
 		trackOrigin,
-		sourceKey: `gws_${"s".repeat(43)}`,
+		sourceKey,
 		source: { id: "source", name: "Gateweave Agents", product: "agents" },
 		workspace: { id: "workspace", slug: "acme", name: "Acme" },
 		team: { id: "team", key: "OPS", name: "Operations" },
 	});
+	await runInDurableObject(stub, async (_instance: RegistryDO, state) => {
+		const sealer = await sealerFor(
+			{ BETTER_AUTH_SECRET: env.BETTER_AUTH_SECRET },
+			state.id.toString(),
+		);
+		if ("unavailable" in sealer) throw new Error(sealer.unavailable);
+		const sealed = await sealer.seal(trackSourceKeyPlace(destinationId, trackOrigin), sourceKey);
+		state.storage.sql.exec(
+			"UPDATE track_source_destinations SET sealed_key = ? WHERE id = ?",
+			sealed,
+			destinationId,
+		);
+	});
+	expect((await stub.sealedCounts()).derived).toBe(1);
 
 	let now = Date.now();
 	const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -165,6 +183,7 @@ it("reuses an expired reservation, and orders the reports even if the clock does
 		expect(url).toBe(`${trackOrigin}/api/events`);
 		expect(init?.redirect).toBe("manual");
 		expect(init?.signal).toBeInstanceOf(AbortSignal);
+		expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sourceKey}`);
 		reports.push(JSON.parse(String(init?.body)));
 		return new Response(null, { status: 202 });
 	});
@@ -211,6 +230,7 @@ it("reuses an expired reservation, and orders the reports even if the clock does
 		if (first.status !== "start") throw new Error(first.status);
 		expect((await deliver("assignment")).status).toBe("starting");
 		await vi.waitFor(() => expect(reports).toHaveLength(1));
+		expect((await stub.sealedCounts()).derived).toBe(0);
 		const queued = reports[0];
 		now += 60_001;
 		const retry = await deliver("assignment");

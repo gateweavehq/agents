@@ -1,4 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
+import { setTimeout } from "node:timers/promises";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
@@ -312,10 +313,19 @@ it("reports daily budget and repository mapping refusals with their actionable T
 it("keeps the webhook and run independent of a delayed, redirecting Track endpoint", async () => {
 	const { registry, post, connect } = await setup("report-unavailable");
 	await connect();
+	const redirect = `${otherTrack}/unexpected`;
 	const release = Promise.withResolvers<void>();
-	answerReport = async () => {
+	const returned = Promise.withResolvers<void>();
+	const followed = Promise.withResolvers<boolean>();
+	let redirects = 0;
+	answerReport = async ({ url }) => {
+		if (url === redirect) {
+			followed.resolve(true);
+			return new Response(null, { status: 202 });
+		}
 		await release.promise;
-		return Response.redirect(`${otherTrack}/unexpected`, 307);
+		if (++redirects === 3) returned.resolve();
+		return Response.redirect(redirect, 307);
 	};
 	try {
 		const runId = await started(await post());
@@ -324,8 +334,11 @@ it("keeps the webhook and run independent of a delayed, redirecting Track endpoi
 	} finally {
 		release.resolve();
 	}
-	expect(agents.outbound).not.toContain(`${otherTrack}/unexpected`);
-});
+	await returned.promise;
+	// Observe the outbound requests through the sender's five-second timeout.
+	expect(await Promise.race([followed.promise, setTimeout(5_200, false)])).toBe(false);
+	expect(agents.outbound).not.toContain(redirect);
+}, 15_000);
 
 it("maps an authoritative stop and ignores a disconnected destination even after replacement", async () => {
 	const { registry, post, connect } = await setup("report-stop");

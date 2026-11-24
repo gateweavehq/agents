@@ -2422,14 +2422,18 @@ export class RegistryDO extends DurableObject {
 		if (!destination) return;
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return;
-		const key = await sealer.open(
-			trackSourceKeyPlace(target.destinationId, target.origin),
-			destination.sealedKey,
-		);
-		if (reportDestination(this.#db, target)?.sealedKey !== destination.sealedKey) return;
+		const place = trackSourceKeyPlace(target.destinationId, target.origin);
+		let opened = await this.#open(sealer, place, destination.sealedKey);
+		const current = reportDestination(this.#db, target);
+		if (!current) return;
+		// Another report may have renewed this destination while we opened its key.
+		if (current.sealedKey !== opened.sealed) {
+			opened = await this.#open(sealer, place, current.sealedKey);
+		}
+		if (reportDestination(this.#db, target)?.sealedKey !== opened.sealed) return;
 		const response = await fetch(`${target.origin}/api/events`, {
 			method: "POST",
-			headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+			headers: { authorization: `Bearer ${opened.plaintext}`, "content-type": "application/json" },
 			body: JSON.stringify(trackReportBody(report)),
 			redirect: "manual",
 			signal: AbortSignal.timeout(5_000),
