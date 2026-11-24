@@ -27,16 +27,17 @@ import {
 	type TrackConnectInput,
 	type TrackExchangeAnswer,
 	trackMcpUrl,
+	trackSourceOrigin,
 } from "@gateweave/agents-model";
 import { checkMcpServer, checkTrackAgent } from "@gateweave/agents-runtime";
 import { isAdmin } from "#/lib/roles";
-import { trackConnectAddress } from "#/lib/track-connect-address";
+import { trackConnectAddress, trackSourceAddress } from "#/lib/track-connect-address";
 import { hostOf } from "../lib/audit-events";
 import { auditFor } from "./audit";
 import { db, getAuth } from "./auth";
 import { demoEnabled } from "./demo/mode";
 import { registryFor } from "./registry";
-import { exchangeCode, undoConnection } from "./track-exchange";
+import { exchangeCode, exchangeSourceCode, undoConnection } from "./track-exchange";
 import { findMembershipById } from "./workspaces";
 
 /** How the connection ended, shown on the Agents page when nothing was made. */
@@ -71,12 +72,56 @@ export async function beginConnect(
 	});
 }
 
-export async function finishConnect(request: Request): Promise<Response> {
+export async function beginSourceConnect(
+	registry: ReturnType<typeof registryFor>,
+	userId: string,
+	workspaceId: string,
+	trackUrl: string,
+	origin: string,
+): Promise<string> {
+	if (!origin.startsWith("https://") || !trackSourceOrigin.safeParse(origin).success) {
+		throw new Error("Connecting a Track source requires a public HTTPS address for Agents.");
+	}
+	if (origin === trackUrl) throw new Error("Track and Agents must have different origins.");
+	const pending = await registry.trackConnectBegin({ purpose: "source", trackUrl }, userId);
+	if ("status" in pending) throw new Error(pending.message);
+	return trackSourceAddress({
+		trackUrl,
+		origin,
+		workspaceId,
+		state: pending.state,
+		verifier: pending.verifier,
+	});
+}
+
+export async function finishConnect(
+	request: Request,
+	flow: "agent" | "source" = "agent",
+): Promise<Response> {
+	try {
+		return await handleConnectCallback(request, flow);
+	} catch {
+		return page(
+			500,
+			"Track approval could not be completed",
+			"Open the Agents page to check the connection before trying again.",
+		);
+	}
+}
+
+async function handleConnectCallback(
+	request: Request,
+	flow: "agent" | "source",
+): Promise<Response> {
 	// Reaching out with a visitor's address is off in the demo, as the manual setup is.
 	if (demoEnabled()) return page(404, "Not found", "This page does not exist.");
 	const url = new URL(request.url);
 	const session = await getAuth().api.getSession({ headers: request.headers });
-	if (!session) return redirect(`/login?redirect=${encodeURIComponent(url.pathname + url.search)}`);
+	if (!session) {
+		return flow === "agent"
+			? redirect(`/login?redirect=${encodeURIComponent(url.pathname + url.search)}`)
+			: redirect("/login?redirect=%2F");
+	}
 	// The return address named the workspace; the state is the pending connection's alone.
 	const workspaceId = url.searchParams.get("workspace") ?? "";
 	const token = url.searchParams.get("state") ?? "";
@@ -100,6 +145,19 @@ export async function finishConnect(request: Request): Promise<Response> {
 		);
 	}
 	const { slug } = membership;
+	if ((pending.choices.purpose === "source") !== (flow === "source")) {
+		return page(400, "Not connected", "This approval belongs to another Track connection.");
+	}
+	if (pending.choices.purpose === "source") {
+		return finishSourceConnect(
+			url,
+			{ slug, workspaceId, userId: session.user.id },
+			pending.choices.trackUrl,
+			pending.triggerId,
+			pending.verifier,
+		);
+	}
+
 	const code = url.searchParams.get("code");
 	if (url.searchParams.get("error") || !code) {
 		return redirect(
@@ -173,6 +231,116 @@ export async function finishConnect(request: Request): Promise<Response> {
 		agentName: answer.agent.name,
 	});
 	return redirect(`${agentsPath(slug)}/${encodeURIComponent(made.agentId)}?${notice.toString()}`);
+}
+
+async function finishSourceConnect(
+	url: URL,
+	starter: { slug: string; workspaceId: string; userId: string },
+	trackOrigin: string,
+	connectionId: string,
+	verifier: string,
+): Promise<Response> {
+	const back = agentsPath(starter.slug);
+	const notice = (status: "connected" | "denied" | "failed" | "duplicate") =>
+		redirect(`${back}?trackSource=${status}`);
+	const code = url.searchParams.get("code");
+	const error = url.searchParams.get("error");
+	if (error === "denied") return notice("denied");
+	if (error || !code || !CODE.test(code)) {
+		return sourceLeftBehind(back, "Track did not return a usable approval code.");
+	}
+
+	const exchanged = await exchangeSourceCode(trackOrigin, code, verifier);
+	if (!exchanged.ok) {
+		if (exchanged.undo && (await undoConnection(trackOrigin, exchanged.undo))) {
+			return notice("failed");
+		}
+		const message = {
+			refused: "Track did not accept the approval code.",
+			busy: "Track asked Agents to wait before trying again.",
+			unreachable: "Agents could not reach Track.",
+			unexpected: "Track returned an unusable answer.",
+		}[exchanged.why];
+		return sourceLeftBehind(back, message);
+	}
+
+	const { sourceKey, source, workspace, team, undo } = exchanged.answer;
+	// Track supplies the labels and IDs. An untrusted reply must not copy a secret into them.
+	const labels = [source.id, ...Object.values(workspace), ...Object.values(team)];
+	if (
+		labels.some(
+			(label) =>
+				[sourceKey, code, verifier].some((secret) => label.includes(secret)) ||
+				label === undo ||
+				(undo.length >= 16 && label.includes(undo)),
+		)
+	) {
+		return (await undoConnection(trackOrigin, undo))
+			? notice("failed")
+			: sourceLeftBehind(back, "Track returned an unusable answer.");
+	}
+
+	// The exchange is a network call. Check whether the starter still has permission to save.
+	const membership = await findMembershipById(db, starter.workspaceId, starter.userId).catch(
+		() => undefined,
+	);
+	if (!membership || !isAdmin(membership.role)) {
+		const unavailable = membership === undefined;
+		const reason = unavailable
+			? "Agents could not confirm your workspace permissions."
+			: "Only a current workspace owner or admin can save a reporting destination.";
+		return (await undoConnection(trackOrigin, undo))
+			? page(unavailable ? 503 : 403, "Not connected", reason, back)
+			: sourceLeftBehind(back, reason);
+	}
+	const registry = registryFor(membership);
+
+	let saved: Awaited<ReturnType<typeof registry.saveTrackSource>>;
+	try {
+		saved = await registry.saveTrackSource(connectionId, {
+			trackOrigin,
+			sourceKey,
+			source,
+			workspace,
+			team,
+		});
+	} catch {
+		const present = await registry
+			.hasTrackSource({
+				trackOrigin,
+				workspaceId: workspace.id,
+				teamId: team.id,
+				sourceId: source.id,
+			})
+			.catch(() => false);
+		if (present) return notice("connected");
+		// An absent row can also mean an interrupted save has yet to settle.
+		return page(
+			503,
+			"Connection status unknown",
+			"Agents could not confirm whether this destination was saved. Check Track run reporting on the Agents page before trying again. You can manage the source under Settings > Sources in Track.",
+			back,
+		);
+	}
+	if (saved === "saved") return notice("connected");
+	if (await undoConnection(trackOrigin, undo)) {
+		return notice(saved === "duplicate" ? "duplicate" : "failed");
+	}
+	return sourceLeftBehind(
+		back,
+		saved === "duplicate"
+			? "This Track workspace and team are already connected."
+			: "Agents could not save this reporting destination.",
+	);
+}
+
+function sourceLeftBehind(back: string, reason: string): Response {
+	return page(
+		502,
+		"Track source could not be connected",
+		`${reason} A source from this approval may still exist in Track. Review it under Settings > Sources in Track before trying again.`,
+		back,
+	);
 }
 
 /**

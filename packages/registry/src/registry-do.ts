@@ -130,8 +130,10 @@ import {
 	type TotaledRun,
 	TRACK_KEY_VARIABLE,
 	TRIGGER_LIMITS,
-	type TrackConnectChoices,
-	type TrackConnectInput,
+	type TrackPendingChoices,
+	type TrackPendingInput,
+	type TrackSourceLocator,
+	type TrackSourceSave,
 	type TrackTriagePlan,
 	type TrackWorkPlan,
 	type Trigger,
@@ -149,7 +151,9 @@ import {
 	teamInput,
 	telemetryExportResult,
 	telemetryInput,
-	trackConnectInput,
+	trackPendingInput,
+	trackSourceLocator,
+	trackSourceSave,
 	trackTriagePlan,
 	trackWorkPlan,
 	triggerInput,
@@ -421,6 +425,7 @@ import {
 	tracesUrl,
 } from "./telemetry";
 import { beginConnection, newVerifier, takeConnection, trackVerifierPlace } from "./track-connect";
+import { listTrackSources, sourceAtTeam, trackSourceKeyPlace } from "./track-sources";
 import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
 import { setUpTrackWork, type TrackWorkMade } from "./track-work";
 import {
@@ -944,13 +949,13 @@ export class RegistryDO extends DurableObject {
 	/**
 	 * Keeps what `by` chose before their browser leaves for Track, after the rules the setup will
 	 * apply have been tried on it. Hands back the state to send, the verifier whose hash goes with
-	 * it, and the id the trigger will have, so its URL can be named first.
+	 * it, and the reserved id for the trigger or the reporting destination.
 	 */
 	async trackConnectBegin(
-		input: TrackConnectInput,
+		input: TrackPendingInput,
 		by: string,
 	): Promise<{ state: string; verifier: string; triggerId: string } | ProviderRefusal> {
-		const choices = trackConnectInput.parse(input);
+		const choices = trackPendingInput.parse(input);
 		const member = id.parse(by);
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
@@ -960,12 +965,14 @@ export class RegistryDO extends DurableObject {
 		const sealedVerifier = await sealer.seal(trackVerifierPlace(state), verifier);
 		try {
 			const kept = this.#write(() => {
-				if (choices.purpose === "work") checkSandboxChoices(this.#db, choices);
-				const full = triggerCapRefusal(this.#db);
-				if (full) return full;
+				if (choices.purpose !== "source") {
+					if (choices.purpose === "work") checkSandboxChoices(this.#db, choices);
+					const full = triggerCapRefusal(this.#db);
+					if (full) return full;
+				}
 				return beginConnection(
 					this.#db,
-					{ state, startedBy: member, choices, triggerId, sealedVerifier },
+					{ state, startedBy: member, choices, targetId: triggerId, sealedVerifier },
 					Date.now(),
 				)
 					? null
@@ -986,7 +993,7 @@ export class RegistryDO extends DurableObject {
 	async trackConnectTake(
 		state: string,
 		by: string,
-	): Promise<{ choices: TrackConnectChoices; triggerId: string; verifier: string } | null> {
+	): Promise<{ choices: TrackPendingChoices; triggerId: string; verifier: string } | null> {
 		const given = z.string().min(1).max(200).parse(state);
 		const member = id.parse(by);
 		const taken = this.#write(() => takeConnection(this.#db, given, member, Date.now()));
@@ -995,10 +1002,72 @@ export class RegistryDO extends DurableObject {
 		if ("unavailable" in sealer) return null;
 		try {
 			const verifier = await sealer.open(trackVerifierPlace(given), taken.sealedVerifier);
-			return { choices: taken.choices, triggerId: taken.triggerId, verifier };
+			return { choices: taken.choices, triggerId: taken.targetId, verifier };
 		} catch {
 			return null;
 		}
+	}
+
+	listTrackSources() {
+		return listTrackSources(this.#db);
+	}
+
+	/** Reconciles an interrupted save using only the immutable Track identity. */
+	hasTrackSource(input: TrackSourceLocator): boolean {
+		const locator = trackSourceLocator.parse(input);
+		// A copy being moved may be stale or incomplete.
+		if (moveStateNow(this.ctx.storage, Date.now()) || forgottenMove(this.ctx.storage)) {
+			throw new Error(MOVING_MESSAGE);
+		}
+		return sourceAtTeam(this.#db, locator)?.sourceId === locator.sourceId;
+	}
+
+	async saveTrackSource(
+		connectionId: string,
+		input: TrackSourceSave,
+	): Promise<"saved" | "duplicate" | "refused"> {
+		const localId = id.parse(connectionId);
+		const { trackOrigin, workspace, team, source, sourceKey } = trackSourceSave.parse(input);
+		const destination = {
+			id: localId,
+			trackOrigin,
+			workspaceId: workspace.id,
+			workspaceSlug: workspace.slug,
+			workspaceName: workspace.name,
+			teamId: team.id,
+			teamKey: team.key,
+			teamName: team.name,
+			sourceId: source.id,
+			sourceName: source.name,
+			sourceProduct: source.product,
+		};
+		const sealer = await this.#sealerOf();
+		const sealedKey =
+			"unavailable" in sealer
+				? null
+				: await sealer.seal(trackSourceKeyPlace(localId, trackOrigin), sourceKey);
+		return this.#write(() => {
+			const existing = sourceAtTeam(this.#db, destination);
+			if (existing) return existing.sourceId === source.id ? "saved" : "duplicate";
+			if (!sealedKey || moveStateNow(this.ctx.storage, Date.now())) return "refused";
+			this.#db
+				.insert(schema.trackSourceDestinations)
+				.values({ ...destination, sealedKey })
+				.run();
+			return "saved";
+		});
+	}
+
+	removeTrackSource(connectionId: string): boolean {
+		const localId = id.parse(connectionId);
+		return this.#write(
+			() =>
+				this.#db
+					.delete(schema.trackSourceDestinations)
+					.where(eq(schema.trackSourceDestinations.id, localId))
+					.returning({ id: schema.trackSourceDestinations.id })
+					.get() !== undefined,
+		);
 	}
 
 	/** A workspace-wide lease lets concurrent pages reuse one OAuth health check. */

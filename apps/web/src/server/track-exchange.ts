@@ -1,23 +1,25 @@
 /**
  * The two server-to-server calls of connecting Track (AGT-119): trading the one-time code for the
- * agent's key and the webhook's secret, and undoing what Track made when the rest failed. Neither
- * follows a redirect, both give up after ten seconds, and the answer is read only up to a cap and
- * checked against `trackExchangeAnswer` before any of it is used. Nothing here logs or returns a
+ * credentials and undoing what Track made when the rest failed. Neither follows a redirect, both
+ * give up after ten seconds, and the answer is size-capped and checked against the approval's
+ * schema before any of it is used. Nothing here logs or returns a
  * body: a failure is a name, since an answer can hold the key.
  */
 import {
 	TRACK_EXCHANGE_MAX_BYTES,
-	type TrackExchangeAnswer,
 	trackExchangeAnswer,
+	trackSourceAnswer,
+	trackSourceUndo,
 } from "@gateweave/agents-model";
+import type { ZodType } from "zod";
 
 export const TRACK_CALL_TIMEOUT_MS = 10_000;
 
 /** What went wrong with the exchange, in words the person can act on. */
 export type ExchangeFailure = "refused" | "busy" | "unreachable" | "unexpected";
 
-export type Exchange =
-	| { ok: true; answer: TrackExchangeAnswer }
+type Exchange<Answer> =
+	| { ok: true; answer: Answer }
 	/** `undo` is the token of an answer that could not be used but may have made things. */
 	| { ok: false; why: ExchangeFailure; undo?: string };
 
@@ -83,37 +85,61 @@ function errorOf(text: string | null): string | null {
 }
 
 /** Trades the code, with the verifier that proves this server started the flow. */
-export async function exchangeCode(
+export function exchangeCode(trackOrigin: string, code: string, verifier: string, fetcher = fetch) {
+	return exchange(trackOrigin, code, verifier, fetcher, trackExchangeAnswer);
+}
+
+export function exchangeSourceCode(
 	trackOrigin: string,
 	code: string,
 	verifier: string,
-	fetcher: typeof fetch = fetch,
-): Promise<Exchange> {
+	fetcher = fetch,
+) {
+	return exchange(trackOrigin, code, verifier, fetcher, trackSourceAnswer(trackOrigin), true);
+}
+
+async function exchange<Answer>(
+	trackOrigin: string,
+	code: string,
+	verifier: string,
+	fetcher: typeof fetch,
+	schema: ZodType<Answer>,
+	source = false,
+): Promise<Exchange<Answer>> {
 	const answered = await post(trackOrigin, "/api/connect/exchange", { code, verifier }, fetcher);
 	if (!answered) return { ok: false, why: "unreachable" };
-	if (answered.status === 429) return { ok: false, why: "busy" };
-	if (answered.status === 400 && errorOf(answered.text) === "invalid_code") {
-		return { ok: false, why: "refused" };
-	}
-	if (answered.status !== 200 || answered.text === null) return { ok: false, why: "unexpected" };
+	const { status, text } = answered;
+	const why =
+		status === 429
+			? "busy"
+			: status === 400 && errorOf(text) === "invalid_code"
+				? "refused"
+				: "unexpected";
+	if ((!source && status !== 200) || text === null) return { ok: false, why };
 	let json: unknown;
 	try {
-		json = JSON.parse(answered.text);
+		json = JSON.parse(text);
 	} catch {
-		return { ok: false, why: "unexpected" };
+		return { ok: false, why };
 	}
-	const parsed = trackExchangeAnswer.safeParse(json);
-	if (parsed.success) return { ok: true, answer: parsed.data };
+	if (status === 200) {
+		const parsed = schema.safeParse(json);
+		if (parsed.success) return { ok: true, answer: parsed.data };
+	}
 	const undo = (json as { undo?: unknown } | null)?.undo;
+	if (source) {
+		const token = trackSourceUndo.safeParse(undo);
+		return token.success ? { ok: false, why, undo: token.data } : { ok: false, why };
+	}
 	return {
 		ok: false,
-		why: "unexpected",
+		why,
 		...(typeof undo === "string" && undo.length > 0 && undo.length <= 4096 ? { undo } : {}),
 	};
 }
 
 /**
- * Asks Track to remove the agent member and the webhook it made. A 500 `try_again`, a timeout and
+ * Asks Track to remove what it created for the approval. A 500 `try_again`, a timeout and
  * an unreachable Track are tried again, three times in all, with short waits. True once Track
  * said it is done.
  */

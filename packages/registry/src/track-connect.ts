@@ -6,7 +6,7 @@
  * whether or not that call was allowed to have it. The verifier is sealed here by the caller and
  * opened only for that call, in the Worker's memory.
  */
-import { TRACK_CONNECT_LIFETIME_MS, type TrackConnectChoices } from "@gateweave/agents-model";
+import { TRACK_CONNECT_LIFETIME_MS, type TrackPendingChoices } from "@gateweave/agents-model";
 import { eq, lt } from "drizzle-orm";
 import { trackConnections } from "./db/schema";
 import type { Db } from "./state";
@@ -29,8 +29,8 @@ export const PENDING_LIMIT = 20;
 export interface PendingConnection {
 	state: string;
 	startedBy: string;
-	choices: TrackConnectChoices;
-	triggerId: string;
+	choices: TrackPendingChoices;
+	targetId: string;
 	sealedVerifier: string;
 }
 
@@ -49,7 +49,7 @@ export function beginConnection(db: Db, pending: PendingConnection, now: number)
 			startedBy: pending.startedBy,
 			expiresAt: now + TRACK_CONNECT_LIFETIME_MS,
 			choices: pending.choices,
-			triggerId: pending.triggerId,
+			targetId: pending.targetId,
 			sealedVerifier: pending.sealedVerifier,
 		})
 		.run();
@@ -73,8 +73,8 @@ export function takeConnection(
 	return {
 		state: row.state,
 		startedBy: row.startedBy,
-		choices: row.choices as TrackConnectChoices,
-		triggerId: row.triggerId,
+		choices: row.choices,
+		targetId: row.targetId,
 		sealedVerifier: row.sealedVerifier,
 	};
 }

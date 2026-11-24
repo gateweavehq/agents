@@ -17,6 +17,7 @@ export const SEALED_COLUMNS = [
 	["mcp_oauth", "sealed_verifier"],
 	["mcp_oauth", "sealed_tokens"],
 	["track_connections", "sealed_verifier"],
+	["track_source_destinations", "sealed_key"],
 	["gitlab_connections", "sealed_token"],
 	["gitlab_connections", "sealed_webhook_secret"],
 ] as const;

@@ -9,6 +9,7 @@ import {
 	trackConnectSearch,
 	useTrackConnectNotice,
 } from "#/components/registry/track-connect-notice";
+import { TrackSources, trackSourceSearch } from "#/components/registry/track-sources";
 import { TrackTriageDialog } from "#/components/registry/track-triage-dialog";
 import { TrackWorkDialog } from "#/components/registry/track-work-dialog";
 import { Button } from "#/components/ui/button";
@@ -19,7 +20,7 @@ import { createAgent, getAgents, getLibrary } from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 
 export const Route = createFileRoute("/$workspace/agents/")({
-	validateSearch: trackConnectSearch,
+	validateSearch: trackConnectSearch.extend({ trackSource: trackSourceSearch.optional() }),
 	loader: ({ params }) => getAgents({ data: params.workspace }),
 	component: AgentsPage,
 });
@@ -27,8 +28,10 @@ export const Route = createFileRoute("/$workspace/agents/")({
 function AgentsPage() {
 	const data = Route.useLoaderData();
 	const admin = isAdmin(useMyRole());
+	const { slug, demo } = useWorkspace();
+	const search = Route.useSearch();
 	useDocumentTitle("Agents");
-	useTrackConnectNotice(Route.useSearch().trackConnect);
+	useTrackConnectNotice(search.trackConnect);
 	const agents = data?.agents ?? [];
 
 	return (
@@ -51,6 +54,7 @@ function AgentsPage() {
 			) : (
 				<AgentList agents={agents} repositories={data?.repositories ?? []} />
 			)}
+			{admin && !demo && <TrackSources key={slug} slug={slug} notice={search.trackSource} />}
 			{admin && <ReadyMade />}
 		</div>
 	);
