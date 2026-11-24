@@ -2089,6 +2089,24 @@ checks the source's identity
 and reports uncertainty when it cannot confirm the save. Disconnect removes the local destination
 and credential. Revocation is managed in Track under Settings > Sources. The demo has the flow off.
 
+A signed Track Work delivery that passes the trigger's filters can report to that destination.
+The registry checks the issue URL against the origin bound to the agent's pinned
+`TRACK_AGENT_KEY`, and matches the signed workspace ID, team ID and issue team key against the
+approval.
+The issue key comes from the signed delivery. Manual webhook setup uses the same check.
+
+An accepted delivery reserves the run ID and reports `queued`. The registry uses that ID when
+the run begins and copies the destination and issue onto the run, so edits to the trigger
+cannot change where its finish goes. Reports use increasing timestamps for that ID. The running
+and terminal reports can include the run's canonical link from `BETTER_AUTH_URL` and the local
+workspace slug. An eligible refusal uses a fixed explanation without a link. Repeated refusals
+of the same delivery are deduplicated, and a retry that begins after a refusal gets a fresh ID.
+Only an authoritative finish produces a terminal report for a started run.
+
+After each write commits, the registry checks that the exact destination still exists, opens
+its event-writing key and makes a bounded HTTPS POST to `/api/events` with redirects disabled.
+Reports are best effort. Network failures have no effect on webhook admission or the run.
+
 ## Memory
 
 A workspace keeps short notes for its agents to recall in later runs (AGT-107): facts, decisions

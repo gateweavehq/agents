@@ -662,9 +662,13 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 * has a page only once it began, so the agent is told it after the trigger's message, to link
 	 * where it reports, such as an issue it comments on.
 	 */
-	async triggerTurn(text: string, runs: string | null = null): Promise<TriggerTurnOutcome> {
+	async triggerTurn(
+		text: string,
+		runs: string | null = null,
+		attemptId?: string,
+	): Promise<TriggerTurnOutcome> {
 		const { conversationId, registry } = this.#parties();
-		const turn = await registry.beginTriggerTurn(conversationId, text);
+		const turn = await registry.beginTriggerTurn(conversationId, text, attemptId);
 		if ("status" in turn) return { runId: null, error: turn.message };
 		this.#begun = turn;
 		const told =

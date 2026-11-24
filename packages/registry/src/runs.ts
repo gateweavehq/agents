@@ -39,6 +39,7 @@ import {
 } from "drizzle-orm";
 import { agents, runs, triggers } from "./db/schema";
 import type { Db } from "./state";
+import type { TrackRunAssociation } from "./track-reports";
 
 /** A run still going after this long was cut short and will not report back. */
 export const RUN_TIMEOUT = RUN_TIMEOUT_MS;
@@ -62,6 +63,8 @@ export function beginRun(
 		parent = null,
 		sandbox = false,
 		replayOf = null,
+		runId = crypto.randomUUID(),
+		trackReport = null,
 	}: {
 		agent: AgentSnapshot;
 		conversationId: string;
@@ -71,13 +74,14 @@ export function beginRun(
 		sandbox?: boolean;
 		/** The run this one replays, for the first run of a replay's conversation. */
 		replayOf?: string | null;
+		runId?: string;
+		trackReport?: TrackRunAssociation | null;
 	},
 	now: number,
 ): string {
-	const id = crypto.randomUUID();
 	db.insert(runs)
 		.values({
-			id,
+			id: runId,
 			agentId: agent.agentId,
 			conversationId,
 			startedBy,
@@ -90,10 +94,11 @@ export function beginRun(
 			triggerId: triggerOf(startedBy),
 			sandbox,
 			replayOf,
+			trackReport,
 			...parent,
 		})
 		.run();
-	return id;
+	return runId;
 }
 
 /**
@@ -515,8 +520,9 @@ function toRun(
 	},
 	idleMinutes = SANDBOX_IDLE_MINUTES,
 ): Run {
+	const { trackReport: _, ...visible } = run;
 	return {
-		...run,
+		...visible,
 		agentName,
 		triggerName,
 		sandboxSeconds: sandboxRunSeconds(run, nextTurn, Date.now(), idleMinutes),

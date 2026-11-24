@@ -27,7 +27,7 @@ export function listTrackSources(db: Db): TrackSourceDestination[] {
 
 export function sourceAtTeam(db: Db, destination: Omit<TrackSourceLocator, "sourceId">) {
 	return db
-		.select({ sourceId: destinations.sourceId })
+		.select({ id: destinations.id, sourceId: destinations.sourceId, teamKey: destinations.teamKey })
 		.from(destinations)
 		.where(
 			and(

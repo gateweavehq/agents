@@ -73,7 +73,7 @@ async function deliver(
 async function run(stub: Stub, triggerId: string, secret: string, id?: string) {
 	const receipt = await deliver(stub, triggerId, secret, { id });
 	if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
-	const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+	const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text, receipt.attemptId);
 	if ("status" in turn) throw new Error(turn.message);
 	return { receipt, turn };
 }
@@ -108,7 +108,11 @@ describe("triggers", () => {
 		expect(early).toMatchObject({ status: "starting" });
 		expect(early.status === "starting" && early.retryAfter).toBeLessThanOrEqual(60);
 
-		const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+		const turn = await stub.beginTriggerTurn(
+			receipt.conversationId,
+			receipt.text,
+			receipt.attemptId,
+		);
 		if ("status" in turn) throw new Error(turn.message);
 		expect(turn).toMatchObject({ key: KEY, agent: { name: "Triager" } });
 		expect(await stub.getRun(turn.runId)).toMatchObject({
@@ -123,7 +127,9 @@ describe("triggers", () => {
 			status: "duplicate",
 			runId: turn.runId,
 		});
-		expect(await stub.beginTriggerTurn(receipt.conversationId, receipt.text)).toEqual({
+		expect(
+			await stub.beginTriggerTurn(receipt.conversationId, receipt.text, receipt.attemptId),
+		).toEqual({
 			status: "refused",
 			message: "This delivery has had its run already",
 		});
@@ -137,6 +143,33 @@ describe("triggers", () => {
 		expect(await stub.beginTurn(receipt.conversationId, "And another thing")).toEqual({
 			status: "refused",
 			message: "This conversation was started by a trigger, so it cannot go on",
+		});
+	});
+
+	it("begins a delivery already accepted before attempt IDs were added", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const agentId = await withAgent(stub);
+		const { trigger, secret } = await create(stub, {
+			name: "New issues",
+			prompt: "Triage it",
+			target: { kind: "agent", agentId },
+		});
+		const id = crypto.randomUUID();
+		const receipt = await deliver(stub, trigger.id, secret, { id });
+		if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"UPDATE trigger_deliveries SET attempt_id = NULL WHERE trigger_id = ? AND id = ?",
+				trigger.id,
+				id,
+			);
+		});
+		const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+		if ("status" in turn) throw new Error(turn.message);
+		expect(await deliver(stub, trigger.id, secret, { id })).toEqual({
+			status: "duplicate",
+			runId: turn.runId,
 		});
 	});
 
@@ -271,7 +304,9 @@ describe("triggers", () => {
 		const id = crypto.randomUUID();
 		const first = await deliver(stub, trigger.id, secret, { id });
 		if (first.status !== "start") throw new Error(`The delivery was ${first.status}`);
-		expect(await stub.beginTriggerTurn(first.conversationId, first.text)).toMatchObject({
+		expect(
+			await stub.beginTriggerTurn(first.conversationId, first.text, first.attemptId),
+		).toMatchObject({
 			status: "refused",
 		});
 		const [failed] = await stub.listTriggers({ kind: "agent", agentId });
@@ -373,7 +408,11 @@ describe("triggers", () => {
 		const receipt = await deliver(stub, trigger.id, secret, { body: labelled });
 		if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
 		expect(receipt.text.startsWith("Work on TRK-7\n\n")).toBe(true);
-		const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+		const turn = await stub.beginTriggerTurn(
+			receipt.conversationId,
+			receipt.text,
+			receipt.attemptId,
+		);
 		if ("status" in turn) throw new Error(turn.message);
 		expect(await stub.getRun(turn.runId)).toMatchObject({ triggerId: trigger.id });
 
@@ -543,8 +582,12 @@ describe("triggers", () => {
 			if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
 			return receipt;
 		};
-		const begin = async (receipt: { conversationId: string; text: string }) => {
-			const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+		const begin = async (receipt: Awaited<ReturnType<typeof started>>) => {
+			const turn = await stub.beginTriggerTurn(
+				receipt.conversationId,
+				receipt.text,
+				receipt.attemptId,
+			);
 			if ("status" in turn) throw new Error(turn.message);
 			return turn.runId;
 		};
@@ -590,7 +633,9 @@ describe("triggers", () => {
 		await stub.removeProviderKey("anthropic");
 		const retried = crypto.randomUUID();
 		const noKey = await started(about("comment.created", "ENG-7"), retried);
-		expect(await stub.beginTriggerTurn(noKey.conversationId, noKey.text)).toMatchObject({
+		expect(
+			await stub.beginTriggerTurn(noKey.conversationId, noKey.text, noKey.attemptId),
+		).toMatchObject({
 			status: "refused",
 		});
 		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
