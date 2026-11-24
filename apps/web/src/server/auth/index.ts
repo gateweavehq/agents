@@ -5,7 +5,7 @@ import { mailer } from "../email";
 import { forgetInWorkspaces } from "../erasure";
 import { allowPasswordTry, allowSpentTriesEmail, authRateLimits } from "../rate-limit";
 import { countedByWhoSentIt } from "../workers-address";
-import { deleteWorkspaceData } from "../workspace-deletion";
+import { finishWorkspaceDeletion } from "../workspace-deletion";
 import { placeNewWorkspace } from "../workspaces";
 import { createAuth } from "./config";
 
@@ -97,11 +97,11 @@ function buildAuth() {
 		// they are made outside any jurisdiction, and the daily run moves them.
 		onWorkspaceCreated: (workspaceId) =>
 			logFailure(placeNewWorkspace(db, workspaceId), "placing a new workspace"),
-		// The conversations and the registry are deleted with their workspace. A failure is logged
-		// for the operator; until then the data stays unreachable, since only members get through
-		// and none are left.
+		// The conversations and the registry are deleted with their workspace. One that fails keeps
+		// its note, and the daily run tries again; until then nothing of it is reachable, since only
+		// members get through and none are left.
 		onWorkspaceDeleted: (workspaceId) =>
-			logFailure(deleteWorkspaceData(db, workspaceId), "workspace deletion"),
+			logFailure(finishWorkspaceDeletion(db, workspaceId), "workspace deletion"),
 		// A workspace that does not answer is asked again by the daily cron.
 		onAccountDeleted: (userId) =>
 			logFailure(forgetInWorkspaces(db, userId), "forgetting a deleted account"),

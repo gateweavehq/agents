@@ -8,6 +8,7 @@ import { retryErasures } from "./server/erasure";
 import { handleMcpRequest, isMcpRequest } from "./server/mcp";
 import { moveWorkspaces } from "./server/move";
 import { newNonce, withSecurityHeaders } from "./server/security-headers";
+import { retryWorkspaceDeletions } from "./server/workspace-deletion";
 
 export { SandboxMeterDO } from "@gateweave/agents-registry";
 export { RunnerSandbox, SandboxOutbound } from "@gateweave/agents-runtime";
@@ -61,6 +62,9 @@ export default {
 		}
 		await retryErasures(db);
 		await pruneExpired(db);
+		// What a deleted workspace left, if its request couldn't finish it. Before the moves, which
+		// can use up the run's calls.
+		await retryWorkspaceDeletions(db);
 		await moveWorkspaces(db);
 	},
 } satisfies ExportedHandler<Cloudflare.Env>;

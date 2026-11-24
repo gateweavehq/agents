@@ -1,7 +1,7 @@
 import { and, inArray, like, lt } from "drizzle-orm";
 import { db } from "../auth";
 import { schema } from "../db";
-import { deleteWorkspaceData } from "../workspace-deletion";
+import { deleteWorkspaceWithData } from "../workspace-deletion";
 import { assertDemo, SANDBOX_LIFETIME_MS, VISITOR_DOMAIN } from "./mode";
 
 /**
@@ -19,8 +19,9 @@ export interface CleanupResult {
 
 /**
  * Deletes visitors, and the workspaces they belong to, once they are a day old: each workspace's
- * conversations and registry through the same path as deleting a workspace in the app, then its
- * row, then the visitor's. Run by the demo's Cron Trigger. Safe to run twice, and to run while a
+ * row with a deletion note, then its conversations and registry through the same path as deleting
+ * a workspace in the app, then the visitor's. Objects that fail keep the note, which the daily
+ * run finishes, so a visitor never waits on them. Run by the demo's Cron Trigger. Safe to run twice, and to run while a
  * run before it was cut short: what is left is found again.
  *
  * A visitor is a user under {@link VISITOR_DOMAIN}. Members, invitations, sessions and accounts
@@ -56,10 +57,7 @@ export async function cleanUpDemo(now = Date.now()): Promise<CleanupResult> {
 	for (const { workspaceId, userId } of memberships) {
 		if (deleted.has(workspaceId)) continue;
 		try {
-			// Its objects first: were the row deleted first and this to fail, nothing would point at
-			// them any more.
-			await deleteWorkspaceData(db, workspaceId);
-			await db.delete(schema.organization).where(inArray(schema.organization.id, [workspaceId]));
+			await deleteWorkspaceWithData(db, workspaceId);
 			deleted.add(workspaceId);
 			result.workspaces++;
 		} catch (error) {

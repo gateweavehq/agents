@@ -229,15 +229,25 @@ not synced to the browser yet (see "Decisions" in the spec).
 
 - **Deleting a workspace** (AGT-76). An owner deletes it in Settings > Workspace, after typing
   its name; Better Auth's organization plugin lets only an owner, and deletes its D1 rows
-  (members, invitations, and its GitHub installation link, by cascade). Its
-  `afterDeleteOrganization` hook then deletes what it held elsewhere
+  (members, invitations, and its GitHub installation link, by cascade). The same D1 batch that
+  deletes its row writes a note in `workspace_deletion`, so what it held elsewhere is deleted
+  even when the request can't finish. Its `afterDeleteOrganization` hook then deletes that
   (`apps/web/src/server/workspace-deletion.ts`): each conversation the registry knows, nested ones
   too and those waiting to be destroyed, with its messages, traces and sandbox, ten at a time, then
-  the registry's storage with its
-  sealed keys and secrets. A conversation that fails is logged and the rest go on; nothing is
-  reachable either way, since no member is left. The GitHub App installation stays on GitHub
-  until someone uninstalls it there. A workspace that moved ([below](#where-a-workspace-lives))
-  has objects in more than one place, and each is emptied.
+  the registry's storage with its sealed keys and secrets. A workspace that moved
+  ([below](#where-a-workspace-lives)) has objects in more than one place, and each is emptied, as
+  is the deployment's own jurisdiction, where a first move that gave up leaves a copy no row
+  records.
+  Last, one batch deletes the location row, only as it was read, and the note, only when no
+  location row is left: a move that recorded a new place meanwhile keeps both, and its copy goes
+  on the next try. A conversation that fails is logged and the rest go on, but its registry
+  stays, since it is what lists the conversations, and the note stays too; nothing is reachable
+  meanwhile, since no member is left. The daily run, after the prune and before the moves, notes
+  any location row whose workspace is gone, then finishes two notes a run, those never tried
+  first; deleting a conversation or registry twice is harmless. Every try starts again from the
+  registry's list, so a workspace with thousands of conversations can need more calls than one run
+  has. A note for a workspace that still exists is dropped and nothing is deleted. The GitHub App installation stays on GitHub until
+  someone uninstalls it there.
 
 ### Where a workspace lives
 
@@ -294,7 +304,8 @@ aren't there yet. Track does the same for its workspaces (TRK-129); this is AGT-
   run forgets old copies before it starts new moves, even if the deployment has unset its
   jurisdiction. A workspace can move again once its previous copy is gone. Workspace deletion
   also erases any copies still waiting, retrying a refused forget a few times and leaving the
-  copy's registry and row to the daily run when it still refuses, rather than dropping it. A
+  copy's registry, row and deletion note to the daily run when it still refuses, rather than
+  dropping it. A
   conversation's own deletion erases what its sandbox keeps of it — the repository it cloned,
   what it pushed, the CLIs' sessions — through the conversation, which marks the sandbox as
   being erased first; an unmarked sandbox refuses to forget its keys, so no caller can wipe a
@@ -2448,9 +2459,11 @@ the EU. The same code ships to every deployment, and everything the demo does is
   every sandbox. The environment binds no email, Workflow, sandbox container, Workers AI or
   Analytics Engine, which `test/wrangler-config.test.ts` checks.
 - **Cleanup.** The demo's Cron Trigger runs every ten minutes and deletes visitors a day old, up to
-  100 a run (`cleanup.ts`): each one's workspace through the path deleting a workspace takes (its
-  conversations' objects, then its registry), then the workspace's row, then the visitor's. A
-  workspace that fails to go keeps its visitor, so the next run finds it again.
+  100 a run (`cleanup.ts`): each one's workspace row with a deletion note in one batch, then its
+  objects through the path deleting a workspace takes (its conversations, then its registry),
+  then the visitor's row. Objects that fail keep the note, which the same Cron Trigger's retry
+  finishes, so the visitor goes anyway; a workspace whose row fails to go keeps its visitor, so the
+  next run finds it again.
 
 `apps/web/test/demo.test.ts` checks each refusal, and that none of it happens anywhere else; the
 smoke tests (`apps/web/smoke`) open a sandbox on the live demo after each deploy.

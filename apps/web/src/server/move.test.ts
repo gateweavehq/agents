@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import type { Database } from "./db";
+import { type Database, schema } from "./db";
 import { forgetMovedCopies, moveWorkspaces } from "./move";
 import { RegistryDO } from "./registry-do";
 import { deleteWorkspaceData } from "./workspace-deletion";
@@ -57,12 +57,17 @@ function query(row: typeof location | undefined) {
 		run: vi.fn(),
 	};
 	deps.select.mockReturnValue(statement);
+	const deleted: unknown[] = [];
 	const db = {
 		select: deps.select,
 		update: () => ({ set: () => statement }),
-		delete: () => statement,
+		delete: (table: unknown) => {
+			deleted.push(table);
+			return statement;
+		},
+		batch: vi.fn(),
 	};
-	return { db: db as unknown as Database, statement };
+	return { db: db as unknown as Database, statement, batch: db.batch, deleted };
 }
 
 function place(name: string, registry: object, conversations: Record<string, object>) {
@@ -171,7 +176,7 @@ it("leaves the old place's conversation untouched when the conversation started 
 });
 
 it("deletes both workspace copies and forgets the sealed conversation through its own RPC", async () => {
-	const { db, statement } = query(location);
+	const { db, batch } = query(location);
 	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
 	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
 	const destroy = vi.fn();
@@ -183,11 +188,64 @@ it("deletes both workspace copies and forgets the sealed conversation through it
 	expect(moveForget).toHaveBeenCalledOnce();
 	expect(liveRegistry.destroy).toHaveBeenCalledOnce();
 	expect(oldRegistry.destroy).toHaveBeenCalledOnce();
-	expect(statement.run).toHaveBeenCalledOnce();
+	// Its location row and its deletion note, together.
+	expect(batch).toHaveBeenCalledOnce();
 });
 
+it.each(["conversationIds", "destroy"] as const)(
+	"cleans the sealed copy before rejecting when the live registry's %s fails",
+	async (rpc) => {
+		const { db, statement, batch, deleted } = query(location);
+		const failure = new Error("registry unreachable");
+		const events: string[] = [];
+		const liveRegistry = {
+			conversationIds: vi.fn().mockResolvedValue(["one"]),
+			destroy: vi.fn().mockResolvedValue(undefined),
+		};
+		liveRegistry[rpc].mockImplementation(async () => {
+			await Promise.resolve();
+			events.push("live registry rejected");
+			throw failure;
+		});
+		const oldRegistry = {
+			conversationIds: async () => {
+				events.push("sealed registry listed");
+				return ["one"];
+			},
+			destroy: async () => {
+				events.push("sealed registry destroy started");
+				await Promise.resolve();
+				events.push("sealed registry destroyed");
+			},
+		};
+		const moveForget = async () => {
+			await Promise.resolve();
+			events.push("sealed conversation forgotten");
+		};
+		place("eu", liveRegistry, { "workspace:one": { destroy: vi.fn() } });
+		place("", oldRegistry, { "workspace:one": { moveForget } });
+
+		const deletion = deleteWorkspaceData(db, "workspace").catch((error) => {
+			events.push("deletion rejected");
+			throw error;
+		});
+		await expect(deletion).rejects.toBe(failure);
+		expect(events).toEqual([
+			"live registry rejected",
+			"sealed registry listed",
+			"sealed conversation forgotten",
+			"sealed registry destroy started",
+			"sealed registry destroyed",
+			"deletion rejected",
+		]);
+		expect(deleted).toEqual([]);
+		expect(statement.run).not.toHaveBeenCalled();
+		expect(batch).not.toHaveBeenCalled();
+	},
+);
+
 it("keeps a refused old copy's registry and location row for the daily run to retry", async () => {
-	const { db, statement } = query(location);
+	const { db, statement, batch } = query(location);
 	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
 	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
 	const destroy = vi.fn();
@@ -196,16 +254,41 @@ it("keeps a refused old copy's registry and location row for the daily run to re
 		.mockRejectedValue(new Error("Only a sealed object can forget a moved copy."));
 	place("eu", liveRegistry, { "workspace:one": { destroy } });
 	place("", oldRegistry, { "workspace:one": { moveForget } });
-	await deleteWorkspaceData(db, "workspace");
+	await expect(deleteWorkspaceData(db, "workspace")).rejects.toThrow(
+		"1 of the workspace's conversations are left for the next try",
+	);
 	expect(moveForget).toHaveBeenCalledTimes(3);
 	expect(destroy).toHaveBeenCalledOnce();
 	expect(liveRegistry.destroy).toHaveBeenCalledOnce();
 	expect(oldRegistry.destroy).not.toHaveBeenCalled();
 	expect(statement.run).not.toHaveBeenCalled();
+	expect(batch).not.toHaveBeenCalled();
+});
+
+it("keeps the registry of a conversation that could not be deleted, for the next try", async () => {
+	const { db, statement, batch } = query(location);
+	const liveRegistry = { conversationIds: async () => ["one", "two"], destroy: vi.fn() };
+	const oldRegistry = { conversationIds: async () => [], destroy: vi.fn() };
+	const deleted = vi.fn();
+	const failed = vi.fn().mockRejectedValue(new Error("unreachable"));
+	place("eu", liveRegistry, {
+		"workspace:one": { destroy: deleted },
+		"workspace:two": { destroy: failed },
+	});
+	place("", oldRegistry, {});
+	await expect(deleteWorkspaceData(db, "workspace")).rejects.toThrow(
+		"1 of the workspace's conversations are left for the next try",
+	);
+	expect(deleted).toHaveBeenCalledOnce();
+	expect(liveRegistry.destroy).not.toHaveBeenCalled();
+	// The other place is still emptied.
+	expect(oldRegistry.destroy).toHaveBeenCalledOnce();
+	expect(statement.run).not.toHaveBeenCalled();
+	expect(batch).not.toHaveBeenCalled();
 });
 
 it("finishes the deletion when a refused old copy forget answers on a retry", async () => {
-	const { db, statement } = query(location);
+	const { db, batch } = query(location);
 	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
 	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
 	const destroy = vi.fn();
@@ -218,17 +301,27 @@ it("finishes the deletion when a refused old copy forget answers on a retry", as
 	await deleteWorkspaceData(db, "workspace");
 	expect(moveForget).toHaveBeenCalledTimes(2);
 	expect(oldRegistry.destroy).toHaveBeenCalledOnce();
-	expect(statement.run).toHaveBeenCalledOnce();
+	expect(batch).toHaveBeenCalledOnce();
 });
 
-it("deletes only the default place when the workspace has no location row", async () => {
-	const { db, statement } = query(undefined);
+it("deletes the default place and the deployment's when the workspace has no location row", async () => {
+	const { db, batch, deleted } = query(undefined);
 	deps.target.mockReturnValue("eu");
 	const destroy = vi.fn();
+	// What a first move that gave up left behind, which no row records.
+	const halfFilled = vi.fn();
+	const leftBehind = vi.fn();
 	place("", { conversationIds: async () => [], destroy }, {});
-	const elsewhere = place("eu", {}, {});
+	place(
+		"eu",
+		{ conversationIds: async () => ["one"], destroy: halfFilled },
+		{ "workspace:one": { destroy: leftBehind } },
+	);
 	await deleteWorkspaceData(db, "workspace");
 	expect(destroy).toHaveBeenCalledOnce();
-	expect(elsewhere.registry).not.toHaveBeenCalled();
-	expect(statement.run).not.toHaveBeenCalled();
+	expect(leftBehind).toHaveBeenCalledOnce();
+	expect(halfFilled).toHaveBeenCalledOnce();
+	// Only its deletion note: there is no location row to delete.
+	expect(deleted).toEqual([schema.workspaceDeletion]);
+	expect(batch).not.toHaveBeenCalled();
 });

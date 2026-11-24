@@ -4,7 +4,7 @@ import { db, getAuth } from "../auth";
 import { schema } from "../db";
 import { limitDemoStarts } from "../rate-limit";
 import { findRegistry } from "../registry";
-import { deleteWorkspaceData } from "../workspace-deletion";
+import { deleteWorkspaceWithData } from "../workspace-deletion";
 import { assertDemo, DemoError, VISITOR_DOMAIN } from "./mode";
 import { WORKSPACE_NAME } from "./sample-data";
 
@@ -65,10 +65,7 @@ export async function startDemoSandbox(headers: Headers): Promise<{ slug: string
 }
 
 async function discardSandbox(userId: string, workspaceId: string | undefined) {
-	if (workspaceId) {
-		await deleteWorkspaceData(db, workspaceId);
-		await db.delete(schema.organization).where(eq(schema.organization.id, workspaceId));
-	}
+	if (workspaceId) await deleteWorkspaceWithData(db, workspaceId);
 	await db.delete(schema.user).where(eq(schema.user.id, userId));
 }
 
