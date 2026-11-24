@@ -89,7 +89,7 @@ async function triggerRun(
 	const signature = await sign(made.secret, id, timestamp, EVENT);
 	const receipt = await stub.receiveTrigger(made.trigger.id, { id, timestamp, signature }, EVENT);
 	if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
-	const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text);
+	const turn = await stub.beginTriggerTurn(receipt.conversationId, receipt.text, receipt.attemptId);
 	if ("status" in turn) throw new Error(turn.message);
 	return turn.runId;
 }

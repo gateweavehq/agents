@@ -330,6 +330,13 @@
       "when": 1795546597321,
       "tag": "0046_easy_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1795553986002,
+      "tag": "0047_adorable_vargas",
+      "breakpoints": true
     }
   ]
 }

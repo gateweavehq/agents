@@ -66,7 +66,7 @@ describe("a trigger's turn", () => {
 		const { registry, stub, receipt } = await delivered();
 		const requests = fakeModel(() => anthropicStream("Triaged: a login bug."));
 
-		const outcome = await stub.triggerTurn(receipt.text);
+		const outcome = await stub.triggerTurn(receipt.text, null, receipt.attemptId);
 		if (outcome.runId === null) throw new Error(outcome.error);
 		await vi.waitFor(async () =>
 			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
@@ -88,7 +88,7 @@ describe("a trigger's turn", () => {
 		expect(JSON.stringify(transcript[1]?.parts)).toContain("Triaged: a login bug.");
 
 		// The delivery had its run; the conversation takes no other.
-		expect(await stub.triggerTurn(receipt.text)).toEqual({
+		expect(await stub.triggerTurn(receipt.text, null, receipt.attemptId)).toEqual({
 			runId: null,
 			error: "This delivery has had its run already",
 		});
@@ -98,7 +98,11 @@ describe("a trigger's turn", () => {
 		const { registry, stub, receipt } = await delivered();
 		const requests = fakeModel(() => anthropicStream("On it."));
 
-		const outcome = await stub.triggerTurn(receipt.text, "https://agents.example.com/acme/runs/");
+		const outcome = await stub.triggerTurn(
+			receipt.text,
+			"https://agents.example.com/acme/runs/",
+			receipt.attemptId,
+		);
 		if (outcome.runId === null) throw new Error(outcome.error);
 		await vi.waitFor(async () =>
 			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
@@ -113,7 +117,11 @@ describe("a trigger's turn", () => {
 		const { registry, stub, receipt } = await delivered();
 		const requests = fakeModel(() => anthropicStream("On it."));
 
-		const outcome = await stub.triggerTurn(receipt.text, "javascript:alert(1)//");
+		const outcome = await stub.triggerTurn(
+			receipt.text,
+			"javascript:alert(1)//",
+			receipt.attemptId,
+		);
 		if (outcome.runId === null) throw new Error(outcome.error);
 		await vi.waitFor(async () =>
 			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
@@ -168,12 +176,12 @@ describe("a trigger's turn", () => {
 		};
 		const answers = ["Which button do you mean?", "Done: the blue one."];
 		const requests = fakeModel(() => anthropicStream(answers.shift() ?? "Nothing more."));
-		const turn = async (receipt: { conversationId: string; text: string }) => {
+		const turn = async (receipt: Awaited<ReturnType<typeof deliver>>) => {
 			const stub = await getAgentByName(
 				env.CONVERSATIONS,
 				conversationName(workspaceId, receipt.conversationId),
 			);
-			const outcome = await stub.triggerTurn(receipt.text);
+			const outcome = await stub.triggerTurn(receipt.text, null, receipt.attemptId);
 			if (outcome.runId === null) throw new Error(outcome.error);
 			await vi.waitFor(async () =>
 				expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
@@ -206,7 +214,7 @@ describe("a trigger's turn", () => {
 		const { registry, stub, receipt, trigger } = await delivered({ key: false });
 		const requests = fakeModel(() => anthropicStream("Never sent"));
 
-		const outcome = await stub.triggerTurn(receipt.text);
+		const outcome = await stub.triggerTurn(receipt.text, null, receipt.attemptId);
 		expect(outcome).toEqual({
 			runId: null,
 			error: expect.stringContaining("has no Anthropic key"),

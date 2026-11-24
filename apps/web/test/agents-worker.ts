@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type {
 	Agent,
 	AgentDefinitionInput,
+	AgentDefinitionUpdate,
 	AgentDetail,
 	AgentSnapshot,
 	ApplyOutcome,
@@ -54,6 +55,7 @@ import type {
 	TeamGraphInput,
 	TelemetryInput,
 	TotaledRun,
+	TrackSourceSave,
 	TrackTriagePlan,
 	TrackWorkPlan,
 	Trigger,
@@ -147,6 +149,11 @@ export interface RegistryStub {
 	): Promise<{ connection: GitLabConnection; webhookSecret: string } | ProviderRefusal>;
 	gitlabConnections(): Promise<GitLabConnection[]>;
 	createAgent(input: AgentDefinitionInput): Promise<Agent>;
+	updateAgent(
+		agentId: string,
+		input: AgentDefinitionUpdate,
+		revision: number,
+	): Promise<Agent | null>;
 	getAgent(agentId: string): Promise<AgentDetail | null>;
 	agentSnapshot(agentId: string): Promise<AgentSnapshot | null>;
 	getAsset(assetId: string, version?: number): Promise<AssetDetail | null>;
@@ -213,6 +220,8 @@ export interface RegistryStub {
 		createdBy: string,
 		setBy: string,
 	): Promise<{ agent: Agent; trigger: Trigger; mcpServerId: string } | TriggerRefusal>;
+	saveTrackSource(id: string, input: TrackSourceSave): Promise<"saved" | "duplicate" | "refused">;
+	removeTrackSource(id: string): Promise<boolean>;
 	setTelemetry(input: TelemetryInput, setBy: string): Promise<unknown>;
 	listMemories(filter: MemoryFilter): Promise<MemoryPage>;
 }

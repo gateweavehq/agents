@@ -41,6 +41,8 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
+import type { TrackReservation, TrackRunAssociation } from "../track-reports";
+
 /** One file of an asset version, by its path relative to the asset. */
 export interface FileEntry {
 	path: string;
@@ -594,6 +596,8 @@ export const runs = sqliteTable(
 		pullRequest: text("pull_request", { mode: "json" }).$type<RunPullRequest>(),
 		/** The run this one replays from one of its steps; null for any other. */
 		replayOf: text("replay_of"),
+		/** The approved Track issue and report timing captured when the webhook run began. */
+		trackReport: text("track_report", { mode: "json" }).$type<TrackRunAssociation>(),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),
@@ -665,6 +669,9 @@ export const triggerDeliveries = sqliteTable(
 		runId: text("run_id"),
 		error: text("error"),
 		receivedAt: integer("received_at").notNull(),
+		/** Changes on every admission, so a late start cannot settle a newer one. */
+		attemptId: text("attempt_id"),
+		trackReport: text("track_report", { mode: "json" }).$type<TrackReservation>(),
 	},
 	(table) => [
 		primaryKey({ columns: [table.triggerId, table.id] }),

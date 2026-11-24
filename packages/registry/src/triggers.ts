@@ -30,12 +30,13 @@ import {
 	triggerMessage,
 	triggerStarter,
 } from "@gateweave/agents-model";
-import { and, count, desc, eq, gte, inArray, isNull, lt, lte, min } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lt, lte, min, ne, or } from "drizzle-orm";
 import {
 	agentDefinitions,
 	agents,
 	conversations,
 	runs,
+	type TriggerDeliveryRow,
 	teams,
 	triggerDeliveries,
 	triggers,
@@ -43,6 +44,13 @@ import {
 import { RUN_TIMEOUT } from "./runs";
 import type { Db } from "./state";
 import { teamLead } from "./teams";
+import {
+	sameTrackIssue,
+	type TrackRefusal,
+	type TrackReport,
+	type TrackReservation,
+	trackRunTarget,
+} from "./track-reports";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -55,6 +63,9 @@ export const DELIVERY_RETENTION = 7 * DAY;
  * again on a retry after this long.
  */
 export const ACCEPT_TIMEOUT = MINUTE;
+
+// A null attempt ID belongs to a delivery accepted before attempt IDs were introduced.
+const SUPERSEDED_ATTEMPT = "";
 
 /** Signatures of one delivery looked at, at most: senders rotating secrets send two. */
 const MAX_SIGNATURES = 5;
@@ -328,7 +339,7 @@ export function nextScheduleAt(db: Db): number | null {
 /** What a schedule's run came to: started, with its message, or what `admitDelivery` said. */
 export type ScheduledAdmission =
 	| Exclude<Admission, { status: "start" }>
-	| { status: "start"; conversationId: string; text: string };
+	| { status: "start"; conversationId: string; text: string; attemptId: string };
 
 /**
  * Admits the run a schedule is due for, as a webhook's delivery is, with the time it was due as
@@ -374,7 +385,7 @@ function learnAssigneeName(
 
 /** What `admitDelivery` decided, before the message is made. */
 export type Admission =
-	| { status: "start"; conversationId: string }
+	| { status: "start"; conversationId: string; attemptId: string }
 	| { status: "duplicate"; runId: string | null }
 	| { status: "starting"; retryAfter: number }
 	| { status: "skipped" }
@@ -395,6 +406,7 @@ export function admitDelivery(
 	trigger: NonNullable<ReturnType<typeof triggerRow>>,
 	delivery: { id: string; body: string },
 	now: number,
+	reporting?: { runsPage: string | null; collect: (report: TrackReport) => void },
 ): Admission {
 	db.delete(triggerDeliveries)
 		.where(
@@ -421,9 +433,11 @@ export function admitDelivery(
 		}
 		// The conversation opened for it had no run, so the retry opens another in its place. One a
 		// per-issue trigger kept, with runs of earlier deliveries, stays.
+		const pending = earlier.conversationId && deliveryOf(db, earlier.conversationId);
 		if (
 			earlier.conversationId !== null &&
 			earlier.runId === null &&
+			(!pending || pending.id === earlier.id) &&
 			!hasRuns(db, earlier.conversationId)
 		) {
 			db.delete(conversations).where(eq(conversations.id, earlier.conversationId)).run();
@@ -433,7 +447,12 @@ export function admitDelivery(
 	learnAssigneeName(db, trigger, delivery.body);
 	const record = (
 		status: TriggerDelivery["status"],
-		values: { error?: string | null; conversationId?: string | null } = {},
+		values: {
+			error?: string;
+			conversationId?: string;
+			attemptId?: string;
+			trackReport?: TrackReservation;
+		} = {},
 	) => {
 		const row = {
 			status,
@@ -441,6 +460,8 @@ export function admitDelivery(
 			conversationId: values.conversationId ?? null,
 			runId: null,
 			error: values.error ?? null,
+			attemptId: values.attemptId ?? null,
+			trackReport: values.trackReport ?? null,
 			receivedAt: now,
 		};
 		db.insert(triggerDeliveries)
@@ -476,10 +497,48 @@ export function admitDelivery(
 		record("skipped", { error: unassigned });
 		return { status: "skipped" };
 	}
+	const targetForReport =
+		reporting && trackRunTarget(db, trigger, delivery.body, reporting.runsPage);
+	const previous = earlier?.trackReport;
+	const sameReport =
+		targetForReport && previous && sameTrackIssue(targetForReport, previous.target);
+	const reservation = targetForReport
+		? sameReport
+			? previous.refused
+				? { ...previous, target: targetForReport }
+				: previous
+			: { target: targetForReport, key: crypto.randomUUID(), queuedAt: now, refused: false }
+		: undefined;
+	const decline = (status: "limited" | "failed", error: string, refusal: TrackRefusal) => {
+		if (reservation && !reservation.refused) {
+			reporting?.collect(trackRefusalReport(reservation, refusal, now));
+		}
+		record(status, { error, trackReport: reservation && { ...reservation, refused: true } });
+	};
+	const accept = (conversationId: string): Admission => {
+		const attemptId = crypto.randomUUID();
+		// An expired admission may still have a callback in flight. Keep its count and
+		// reservation, but only this admission can now begin a turn in the conversation.
+		db.update(triggerDeliveries)
+			.set({ attemptId: SUPERSEDED_ATTEMPT })
+			.where(
+				and(
+					eq(triggerDeliveries.conversationId, conversationId),
+					eq(triggerDeliveries.status, "accepted"),
+				),
+			)
+			.run();
+		record("accepted", { conversationId, attemptId, trackReport: reservation });
+		if (reservation && !reservation.refused && reservation !== previous) {
+			reporting?.collect(trackQueuedReport(reservation));
+		}
+		return { status: "start", conversationId, attemptId };
+	};
 	const limited = limitOf(db, trigger, now);
 	if (limited) {
-		record("limited", { error: limited.message });
-		return { status: "limited", ...limited };
+		const { reason, ...receipt } = limited;
+		decline("limited", receipt.message, reason);
+		return { status: "limited", ...receipt };
 	}
 	const target: TriggerTarget = trigger.teamId
 		? { kind: "team", teamId: trigger.teamId }
@@ -489,7 +548,7 @@ export function admitDelivery(
 		target.kind === "team" ? teamLead(db, target.teamId)?.leadAgentId : target.agentId;
 	if (refusal || !answers) {
 		const message = refusal ?? "Nobody can answer this trigger";
-		record("failed", { error: message });
+		decline("failed", message, "unavailable");
 		return { status: "refused", message };
 	}
 	const issue = trigger.perIssue ? issueOfEvent(delivery.body) : null;
@@ -497,12 +556,11 @@ export function admitDelivery(
 	if (kept) {
 		if (onTurn(db, kept, now)) {
 			const message = "The agent is still on its last turn about this issue";
-			record("limited", { error: message });
+			decline("limited", message, "waiting-for-slot");
 			return { status: "limited", retryAfter: BUSY_RETRY_SECONDS, message };
 		}
 		db.update(conversations).set({ updatedAt: now }).where(eq(conversations.id, kept)).run();
-		record("accepted", { conversationId: kept });
-		return { status: "start", conversationId: kept };
+		return accept(kept);
 	}
 	const conversationId = crypto.randomUUID();
 	db.insert(conversations)
@@ -524,15 +582,14 @@ export function admitDelivery(
 			updatedAt: now,
 		})
 		.run();
-	record("accepted", { conversationId });
-	return { status: "start", conversationId };
+	return accept(conversationId);
 }
 
 /**
  * The delivery whose run is about to begin in a trigger's conversation: the one it was opened
  * for, or a later one about the same issue. Null once that run began or could not.
  */
-export function deliveryOf(db: Db, conversationId: string) {
+export function deliveryOf(db: Db, conversationId: string, attemptId?: string | null) {
 	return (
 		db
 			.select()
@@ -541,8 +598,17 @@ export function deliveryOf(db: Db, conversationId: string) {
 				and(
 					eq(triggerDeliveries.conversationId, conversationId),
 					eq(triggerDeliveries.status, "accepted"),
+					attemptId === undefined
+						? or(
+								isNull(triggerDeliveries.attemptId),
+								ne(triggerDeliveries.attemptId, SUPERSEDED_ATTEMPT),
+							)
+						: attemptId === null
+							? isNull(triggerDeliveries.attemptId)
+							: eq(triggerDeliveries.attemptId, attemptId),
 				),
 			)
+			.orderBy(desc(triggerDeliveries.receivedAt))
 			.get() ?? null
 	);
 }
@@ -603,22 +669,53 @@ function hasRuns(db: Db, conversationId: string): boolean {
 /** Notes that a delivery's run began, or why it could not. */
 export function settleDelivery(
 	db: Db,
-	conversationId: string,
+	delivery: TriggerDeliveryRow,
 	outcome: { runId: string } | { error: string },
 ): void {
 	db.update(triggerDeliveries)
 		.set(
 			"runId" in outcome
-				? { status: "started", runId: outcome.runId, error: null }
-				: { status: "failed", error: outcome.error },
+				? {
+						status: "started",
+						runId: outcome.runId,
+						error: null,
+						trackReport: delivery.trackReport,
+					}
+				: {
+						status: "failed",
+						error: outcome.error,
+						trackReport: delivery.trackReport && { ...delivery.trackReport, refused: true },
+					},
 		)
 		.where(
 			and(
-				eq(triggerDeliveries.conversationId, conversationId),
-				eq(triggerDeliveries.status, "accepted"),
+				eq(triggerDeliveries.triggerId, delivery.triggerId),
+				eq(triggerDeliveries.id, delivery.id),
 			),
 		)
 		.run();
+}
+
+export function trackQueuedReport(reservation: TrackReservation): TrackReport {
+	return {
+		target: reservation.target,
+		key: reservation.key,
+		sentAt: reservation.queuedAt,
+		phase: { state: "queued" },
+	};
+}
+
+export function trackRefusalReport(
+	reservation: TrackReservation,
+	refusal: TrackRefusal,
+	now: number,
+): TrackReport {
+	return {
+		target: reservation.target,
+		key: reservation.key,
+		sentAt: Math.max(now, reservation.queuedAt + 1),
+		phase: { state: "failed", refusal },
+	};
 }
 
 /**
@@ -629,7 +726,7 @@ function limitOf(
 	db: Db,
 	trigger: { id: string; perDay: number },
 	now: number,
-): { retryAfter: number; message: string } | null {
+): { retryAfter: number; message: string; reason: TrackRefusal } | null {
 	const counted = (since: number) =>
 		db
 			.select({ n: count(), oldest: min(triggerDeliveries.receivedAt) })
@@ -645,6 +742,7 @@ function limitOf(
 	const minute = counted(now - MINUTE);
 	if ((minute?.n ?? 0) >= TRIGGER_LIMITS.perMinute) {
 		return {
+			reason: "waiting-for-slot",
 			retryAfter: secondsUntil((minute?.oldest ?? now) + MINUTE, now),
 			message: `The trigger started ${TRIGGER_LIMITS.perMinute} runs in the last minute`,
 		};
@@ -652,6 +750,7 @@ function limitOf(
 	const day = counted(now - DAY);
 	if ((day?.n ?? 0) >= trigger.perDay) {
 		return {
+			reason: "budget-limit",
 			retryAfter: secondsUntil((day?.oldest ?? now) + DAY, now),
 			message: `The trigger started its ${trigger.perDay} ${trigger.perDay === 1 ? "run" : "runs"} for the day`,
 		};

@@ -264,7 +264,7 @@ describe("an agent's memory tools", () => {
 			return anthropicStream("Done.");
 		});
 		const { stub, receipt } = await delivered(workspaceId, registry, agent.id);
-		const outcome = await stub.triggerTurn(receipt.text);
+		const outcome = await stub.triggerTurn(receipt.text, null, receipt.attemptId);
 		if (outcome.runId === null) throw new Error(outcome.error);
 		await vi.waitFor(async () =>
 			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),
@@ -303,7 +303,7 @@ describe("an agent's memory tools", () => {
 			return anthropicStream("Done.");
 		});
 		const { stub, receipt } = await delivered(workspaceId, registry, agent.id);
-		const outcome = await stub.triggerTurn(receipt.text);
+		const outcome = await stub.triggerTurn(receipt.text, null, receipt.attemptId);
 		if (outcome.runId === null) throw new Error(outcome.error);
 		await vi.waitFor(async () =>
 			expect(await registry.getRun(outcome.runId)).toMatchObject({ status: "succeeded" }),

@@ -55,6 +55,7 @@ export async function receiveTrigger(
 		triggerId,
 		{ id, timestamp, signature },
 		body,
+		runsPage(workspace.slug),
 	);
 	const runs = runsPage(workspace.slug, new URL(request.url).origin);
 	return answer(ref, runs, receipt);
@@ -67,7 +68,7 @@ async function answer(
 ): Promise<Response> {
 	switch (receipt.status) {
 		case "start":
-			return start(workspace, receipt.conversationId, receipt.text, runs);
+			return start(workspace, receipt.conversationId, receipt.text, runs, receipt.attemptId);
 		case "duplicate":
 			return Response.json({ runId: receipt.runId, duplicate: true }, { status: 202 });
 		case "starting":
@@ -93,11 +94,12 @@ async function start(
 	conversationId: string,
 	text: string,
 	runs: string | null,
+	attemptId: string,
 ) {
 	let outcome: TriggerTurnOutcome;
 	try {
 		const conversation = await conversationFor(workspace, conversationId);
-		outcome = await conversation.triggerTurn(text, runs);
+		outcome = await conversation.triggerTurn(text, runs, attemptId);
 	} catch (error) {
 		// The delivery stays taken for a minute, then a retry starts it again.
 		console.error("triggers: a run could not be started", error);

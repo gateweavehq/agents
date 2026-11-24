@@ -425,6 +425,13 @@ import {
 	tracesUrl,
 } from "./telemetry";
 import { beginConnection, newVerifier, takeConnection, trackVerifierPlace } from "./track-connect";
+import {
+	reportDestination,
+	type TrackRefusal,
+	type TrackReport,
+	trackFinishReport,
+	trackReportBody,
+} from "./track-reports";
 import { listTrackSources, sourceAtTeam, trackSourceKeyPlace } from "./track-sources";
 import { setUpTrackTriage, type TrackTriageMade } from "./track-triage";
 import { setUpTrackWork, type TrackWorkMade } from "./track-work";
@@ -442,6 +449,8 @@ import {
 	replaceSecret,
 	secretStartOf,
 	settleDelivery,
+	trackQueuedReport,
+	trackRefusalReport,
 	triggerCapRefusal,
 	triggerPlace,
 	triggerRow,
@@ -1561,12 +1570,12 @@ export class RegistryDO extends DurableObject {
 		if ("status" in plan) return plan;
 		const { agent, position } = plan;
 		const prepared = await this.#prepareTurn(conversation, agent, position, true);
-		if ("status" in prepared) return prepared;
+		if ("status" in prepared) return refused(prepared.message);
 		// The limits decide again as the run begins: other turns may have begun while this one
 		// awaited.
 		return this.#write(() => {
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
-			if (over) return over;
+			if (over) return refused(over.message);
 			const replayOf =
 				parties.replayOf !== null && !hasRuns(this.#db, conversation) ? parties.replayOf : null;
 			const runId = beginRun(
@@ -1593,37 +1602,63 @@ export class RegistryDO extends DurableObject {
 	async beginTriggerTurn(
 		conversationId: string,
 		text: string,
+		attemptId?: string,
 	): Promise<ConversationTurn | ProviderRefusal> {
 		const conversation = id.parse(conversationId);
 		const message = z.string().max(100_000).parse(text);
+		// A callback from before the upgrade may only start a row from before the upgrade.
+		const attempt = attemptId === undefined ? null : id.parse(attemptId);
 		const parties = conversationParties(this.#db, conversation);
 		if (!parties || parties.triggerId === null) {
 			return refused("This conversation was not opened by a trigger");
 		}
-		if (!deliveryOf(this.#db, conversation)) {
-			return refused("This delivery has had its run already");
-		}
-		const settle = (refusal: ProviderRefusal) => {
-			this.#write(() => settleDelivery(this.#db, conversation, { error: refusal.message }));
-			return refusal;
+		const delivery = deliveryOf(this.#db, conversation, attempt);
+		const gone = refused("This delivery has had its run already");
+		if (!delivery) return gone;
+		const current = () => {
+			const active = deliveryOf(this.#db, conversation, delivery.attemptId);
+			return (
+				active?.id === delivery.id &&
+				active.receivedAt === delivery.receivedAt &&
+				active.attemptId === delivery.attemptId
+			);
+		};
+		let reservation = delivery.trackReport;
+		let queued: TrackReport | undefined;
+		let report: TrackReport | undefined;
+		const decline = (refusal: TurnRefusal) => {
+			settleDelivery(this.#db, delivery, { error: refusal.message });
+			if (reservation && !reservation.refused) {
+				report = trackRefusalReport(reservation, refusal.trackReason ?? "unavailable", Date.now());
+			}
+			return refused(refusal.message);
+		};
+		const settle = (refusal: TurnRefusal) => {
+			const result = this.#write(() => (current() ? decline(refusal) : gone));
+			this.#publishTrackReport(report);
+			return result;
 		};
 		const plan = this.#planTurn(parties);
 		if ("status" in plan) return settle(plan);
 		const prepared = await this.#prepareTurn(conversation, plan.agent, plan.position, true);
 		if ("status" in prepared) return settle(prepared);
 		const { startedBy, triggerId } = parties;
-		return this.#write(() => {
-			// A retry may have taken the delivery over while the key was opened.
-			if (!deliveryOf(this.#db, conversation)) {
-				return refused("This delivery has had its run already");
-			}
-			// And other turns may have taken the sandboxes, or the day's minutes.
+		const result = this.#write((): ConversationTurn | ProviderRefusal => {
+			// A retry or another delivery about this issue may have taken the turn while we awaited.
+			if (!current()) return gone;
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
-			if (over) {
-				settleDelivery(this.#db, conversation, { error: over.message });
-				return over;
-			}
+			if (over) return decline(over);
 			const now = Date.now();
+			// Further refusals of this delivery keep the first terminal report. A retry
+			// that can run reserves a new ID, so it never reopens that terminal report.
+			if (reservation?.refused) {
+				reservation = { ...reservation, key: crypto.randomUUID(), queuedAt: now, refused: false };
+				queued = trackQueuedReport(reservation);
+			}
+			const trackReport = reservation && {
+				target: reservation.target,
+				runningAt: Math.max(now, reservation.queuedAt + 1),
+			};
 			noteTurn(this.#db, conversation, message, now);
 			const runId = beginRun(
 				this.#db,
@@ -1633,10 +1668,20 @@ export class RegistryDO extends DurableObject {
 					startedBy,
 					teamPath: plan.position?.path ?? null,
 					sandbox: prepared.sandbox,
+					runId: reservation?.key,
+					trackReport,
 				},
 				now,
 			);
-			settleDelivery(this.#db, conversation, { runId });
+			settleDelivery(this.#db, { ...delivery, trackReport: reservation }, { runId });
+			if (trackReport) {
+				report = {
+					target: trackReport.target,
+					key: runId,
+					sentAt: trackReport.runningAt,
+					phase: { state: "running", startedAt: now },
+				};
+			}
 			return {
 				...prepared,
 				runId,
@@ -1644,6 +1689,9 @@ export class RegistryDO extends DurableObject {
 				triggerPrompt: triggerRow(this.#db, triggerId)?.prompt,
 			};
 		});
+		this.#publishTrackReport(queued);
+		this.#publishTrackReport(report);
+		return result;
 	}
 
 	/**
@@ -1730,7 +1778,7 @@ export class RegistryDO extends DurableObject {
 			plan.position,
 			via.kind !== "ask",
 		);
-		if ("status" in prepared) return prepared;
+		if ("status" in prepared) return refused(prepared.message);
 		// The graphs and the limits decide as the run begins, since they may have changed while the
 		// key was opened, and other nested turns may have begun.
 		return this.#write(() => {
@@ -1740,7 +1788,7 @@ export class RegistryDO extends DurableObject {
 				return refused("The team changed as this turn began");
 			}
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
-			if (over) return over;
+			if (over) return refused(over.message);
 			const at = Date.now();
 			const started = startNestedConversation(
 				this.#db,
@@ -1779,7 +1827,7 @@ export class RegistryDO extends DurableObject {
 		agent: AgentSnapshot,
 		position: TeamPosition | null,
 		tools: boolean,
-	): Promise<Omit<ConversationTurn, "runId"> | ProviderRefusal> {
+	): Promise<Omit<ConversationTurn, "runId"> | TurnRefusal> {
 		const { provider } = agent;
 		const standIn = this.standInTurns();
 		// The runtime's stand-in answers a stand-in turn, so it needs no provider's key or offer.
@@ -1795,11 +1843,13 @@ export class RegistryDO extends DurableObject {
 		if (offer === "none") {
 			return refused(
 				`${SANDBOX_NOT_OFFERED}, so ${agent.name} cannot answer. Whoever runs this server can turn them on; see the README.`,
+				"sandbox-policy",
 			);
 		}
 		if (offer === "by-invitation") {
 			return refused(
 				`${SANDBOX_NOT_INVITED}, so ${agent.name} cannot answer. Whoever runs this server can invite this workspace.`,
+				"sandbox-policy",
 			);
 		}
 		if (sandbox) {
@@ -1813,7 +1863,7 @@ export class RegistryDO extends DurableObject {
 		// agent told it can edit files does not quietly answer as one that cannot.
 		const files = agent.files === true && tools;
 		if (files && !filesOffered(this.env as FilesSettings)) {
-			return refused(`${FILES_NOT_OFFERED}, so ${agent.name} cannot answer.`);
+			return refused(`${FILES_NOT_OFFERED}, so ${agent.name} cannot answer.`, "files-policy");
 		}
 		const limits = sandboxLimits(this.env as SandboxSettings);
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
@@ -1821,6 +1871,7 @@ export class RegistryDO extends DurableObject {
 		if (repository && "problem" in repository) {
 			return refused(
 				`${repository.problem}, so ${agent.name} cannot answer. An owner or admin can choose another repository on the agent, or reconnect it in Repositories.`,
+				"needs-mapping",
 			);
 		}
 		if (repository && !githubSetUp(this.env as SourceEnv)) {
@@ -1828,6 +1879,7 @@ export class RegistryDO extends DurableObject {
 			const cannot = files ? "read" : "check out";
 			return refused(
 				`${GITHUB_NOT_SET_UP}, so ${agent.name} cannot ${cannot} ${repository.owner}/${repository.name}. Whoever runs this server can set it up; see the README.`,
+				"needs-mapping",
 			);
 		}
 		// A stand-in turn reaches nothing outside, so none of the agent's MCP servers either.
@@ -1838,11 +1890,13 @@ export class RegistryDO extends DurableObject {
 			if (reading === null) {
 				return refused(
 					`This server has a sandbox budget but no meter to keep it, so ${agent.name} cannot answer. Whoever runs this server can bind SANDBOX_METER; see the README.`,
+					"sandbox-policy",
 				);
 			}
 			if (reading.spent >= limits.monthlyBudget) {
 				return refused(
 					`${SANDBOX_BUDGET_SPENT}, so ${agent.name} cannot answer until the month ends (UTC). Whoever runs this server can raise it.`,
+					"budget-limit",
 				);
 			}
 		}
@@ -1852,7 +1906,7 @@ export class RegistryDO extends DurableObject {
 			isKeyedProvider(provider) && !standIn ? this.#openKey(provider) : { key: null },
 			servers.length > 0 ? this.#openEnvironment(agent.agentId) : null,
 		]);
-		if ("status" in opened) return opened;
+		if ("status" in opened) return refused(opened.message, "provider");
 		const mcpHosts = servers.flatMap(({ reading }) =>
 			"server" in reading && reading.server.transport !== "stdio"
 				? [new URL(reading.server.url).hostname]
@@ -1875,12 +1929,13 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/** Why no model of `agent`'s provider can answer here, or null when one can. */
-	#providerRefusal(agent: AgentSnapshot): ProviderRefusal | null {
+	#providerRefusal(agent: AgentSnapshot): TurnRefusal | null {
 		const { provider } = agent;
 		if (isKeyedProvider(provider)) {
 			if (sealedKeyOf(this.#db, provider) === null) {
 				return refused(
 					`${providerMissing(provider)}, so ${agent.name} cannot answer. An owner or admin can add one in Settings.`,
+					"provider",
 				);
 			}
 			return null;
@@ -1888,17 +1943,19 @@ export class RegistryDO extends DurableObject {
 		if (!workersAiOffered(this.env as WorkersAiSettings)) {
 			return refused(
 				`${providerMissing(provider)}, so ${agent.name} cannot answer. Whoever runs this server can turn it on; see the README.`,
+				"provider",
 			);
 		}
 		const settings = this.env as WorkersAiSettings;
 		// Each registry is named for its workspace (`registryFor` in the app).
 		if (workersAiOfferTo(settings, this.ctx.id.name ?? "") !== "offered") {
-			return refused(`${WORKERS_AI_NOT_INVITED}, so ${agent.name} cannot answer.`);
+			return refused(`${WORKERS_AI_NOT_INVITED}, so ${agent.name} cannot answer.`, "provider");
 		}
 		const limit = workersAiDailyLimit(settings);
 		if (limit !== null && this.workersAiSpentToday() >= limit) {
 			return refused(
 				`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
+				"budget-limit",
 			);
 		}
 		return null;
@@ -1939,17 +1996,19 @@ export class RegistryDO extends DurableObject {
 	 * decide again in the `#write` that begins the run: a turn awaits as it is prepared, and others
 	 * may begin meanwhile (AGT-63).
 	 */
-	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): ProviderRefusal | null {
+	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): TurnRefusal | null {
 		const idle = this.#idleMinutes();
 		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
 			return refused(
 				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
+				"waiting-for-slot",
 			);
 		}
 		const { dailyMinutes } = sandboxLimits(this.env as SandboxSettings);
 		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
 			return refused(
 				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
+				"budget-limit",
 			);
 		}
 		return null;
@@ -1962,6 +2021,16 @@ export class RegistryDO extends DurableObject {
 		const closed = this.#write(() => finishRun(this.#db, run, data));
 		if (closed) {
 			const done = getRun(this.#db, run, this.#idleMinutes());
+			const reporting = this.#db
+				.select({ association: schema.runs.trackReport, startedAt: schema.runs.startedAt })
+				.from(schema.runs)
+				.where(eq(schema.runs.id, run))
+				.get();
+			if (reporting?.association) {
+				this.#publishTrackReport(
+					trackFinishReport(run, reporting.association, reporting.startedAt, data, Date.now()),
+				);
+			}
 			// Each registry is named for its workspace (`registryFor` in the app).
 			if (done) this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done));
 		}
@@ -2283,6 +2352,7 @@ export class RegistryDO extends DurableObject {
 		triggerId: string,
 		headers: TriggerHeaders,
 		body: string,
+		runsPage: string | null = null,
 	): Promise<TriggerReceipt> {
 		const parsed = z
 			.object({
@@ -2310,20 +2380,65 @@ export class RegistryDO extends DurableObject {
 		if (!(await verifyDelivery(secret, delivery.headers, delivery.body, Date.now()))) {
 			return { status: "unauthorized" };
 		}
-		return this.#write((): TriggerReceipt => {
+		let report: TrackReport | undefined;
+		const receipt = this.#write((): TriggerReceipt => {
 			// The trigger as it is now: it, or its secret, may have changed while that was opened.
 			const current = triggerRow(this.#db, trigger.id);
-			if (!current) return { status: "not_found" };
+			if (!current || current.schedule !== null) return { status: "not_found" };
 			if (current.sealed !== trigger.sealed) return { status: "unauthorized" };
 			const admitted = admitDelivery(
 				this.#db,
 				current,
 				{ id: delivery.headers.id, body: delivery.body },
 				Date.now(),
+				this.standInTurns()
+					? undefined
+					: {
+							runsPage,
+							collect: (next) => {
+								report = next;
+							},
+						},
 			);
 			if (admitted.status !== "start") return admitted;
 			return { ...admitted, text: triggerMessage(current.prompt, delivery.body) };
 		});
+		this.#publishTrackReport(report);
+		return receipt;
+	}
+
+	#publishTrackReport(report: TrackReport | undefined): void {
+		if (!report || this.standInTurns()) return;
+		this.ctx.waitUntil(
+			this.#sendTrackReport(report).catch(() => {
+				// The run and delivery have already been recorded.
+			}),
+		);
+	}
+
+	async #sendTrackReport(report: TrackReport): Promise<void> {
+		const { target } = report;
+		const destination = reportDestination(this.#db, target);
+		if (!destination) return;
+		const sealer = await this.#sealerOf();
+		if ("unavailable" in sealer) return;
+		const place = trackSourceKeyPlace(target.destinationId, target.origin);
+		let opened = await this.#open(sealer, place, destination.sealedKey);
+		const current = reportDestination(this.#db, target);
+		if (!current) return;
+		// Another report may have renewed this destination while we opened its key.
+		if (current.sealedKey !== opened.sealed) {
+			opened = await this.#open(sealer, place, current.sealedKey);
+		}
+		if (reportDestination(this.#db, target)?.sealedKey !== opened.sealed) return;
+		const response = await fetch(`${target.origin}/api/events`, {
+			method: "POST",
+			headers: { authorization: `Bearer ${opened.plaintext}`, "content-type": "application/json" },
+			body: JSON.stringify(trackReportBody(report)),
+			redirect: "manual",
+			signal: AbortSignal.timeout(5_000),
+		});
+		await response.body?.cancel();
 	}
 
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the
@@ -3236,10 +3351,10 @@ export class RegistryDO extends DurableObject {
 				return admitted.status === "start" ? [admitted] : [];
 			}),
 		);
-		for (const { conversationId, text } of starts) {
+		for (const { conversationId, text, attemptId } of starts) {
 			let outcome: TriggerTurnOutcome;
 			try {
-				outcome = await this.startTriggerTurn(conversationId, text);
+				outcome = await this.startTriggerTurn(conversationId, text, attemptId);
 			} catch (error) {
 				console.error(
 					"registry: a scheduled run could not be started",
@@ -3249,7 +3364,10 @@ export class RegistryDO extends DurableObject {
 			}
 			if (outcome.runId === null) {
 				const { error } = outcome;
-				this.#write(() => settleDelivery(this.#db, conversationId, { error }));
+				this.#write(() => {
+					const delivery = deliveryOf(this.#db, conversationId, attemptId);
+					if (delivery) settleDelivery(this.#db, delivery, { error });
+				});
 			}
 		}
 	}
@@ -3262,6 +3380,7 @@ export class RegistryDO extends DurableObject {
 	protected async startTriggerTurn(
 		_conversationId: string,
 		_text: string,
+		_attemptId: string,
 	): Promise<TriggerTurnOutcome> {
 		return { runId: null, error: "This server does not start scheduled runs" };
 	}
@@ -3424,8 +3543,10 @@ const FORGOTTEN_CONVERSATION = "move.forgotten-conversation:";
 // The registry records one-time passes on its first wake, even when there is nothing to migrate.
 const REGISTRY_STARTUP = { tables: ["registry_passes"] };
 
-function refused(message: string): ProviderRefusal {
-	return { status: "refused", message };
+type TurnRefusal = ProviderRefusal & { trackReason?: TrackRefusal };
+
+function refused(message: string, trackReason?: TrackRefusal): TurnRefusal {
+	return { status: "refused", message, ...(trackReason && { trackReason }) };
 }
 
 /** The part of GitLab's push event a scan needs. */

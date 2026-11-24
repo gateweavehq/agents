@@ -30,10 +30,11 @@ export class RegistryDO extends Registry {
 	protected override async startTriggerTurn(
 		conversationId: string,
 		text: string,
+		attemptId: string,
 	): Promise<TriggerTurnOutcome> {
 		const started = this.ctx.storage.kv.get<StartedTurn[]>(STARTED_KEY) ?? [];
 		this.ctx.storage.kv.put(STARTED_KEY, [...started, { conversationId, text }]);
-		const turn = await this.beginTriggerTurn(conversationId, text);
+		const turn = await this.beginTriggerTurn(conversationId, text, attemptId);
 		return "status" in turn ? { runId: null, error: turn.message } : { runId: turn.runId };
 	}
 

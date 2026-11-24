@@ -214,6 +214,7 @@ export class RegistryDO extends Registry {
 	protected override async startTriggerTurn(
 		conversationId: string,
 		text: string,
+		attemptId: string,
 	): Promise<TriggerTurnOutcome> {
 		// Each registry is named for its workspace (`registryFor`).
 		const workspaceId = this.ctx.id.name;
@@ -228,7 +229,7 @@ export class RegistryDO extends Registry {
 			.from(schema.organization)
 			.where(eq(schema.organization.id, workspaceId))
 			.get();
-		return conversation.triggerTurn(text, workspace ? runsPage(workspace.slug) : null);
+		return conversation.triggerTurn(text, workspace ? runsPage(workspace.slug) : null, attemptId);
 	}
 
 	/**

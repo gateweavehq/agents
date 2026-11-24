@@ -161,7 +161,7 @@ export type TriggerReceipt =
 	 * Signed and within the limits: the run starts in this conversation, with this message. The
 	 * conversation is new, or the one a per-issue trigger keeps for the event's issue.
 	 */
-	| { status: "start"; conversationId: string; text: string }
+	| { status: "start"; conversationId: string; text: string; attemptId: string }
 	/** A retry of a delivery that started a run, or was skipped. */
 	| { status: "duplicate"; runId: string | null }
 	/** A retry of a delivery whose run is starting now: the sender may ask again in `retryAfter`. */
