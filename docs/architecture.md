@@ -1341,9 +1341,13 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     branch (`review` of `PullRequestPort`). A test, a `package.json` whose scripts differ, a file
     under `.github/`, or lint, type or test configuration that is modified, deleted or renamed
     away opens the pull request as a draft, and the tool's section lists the paths (`editsSection`,
-    or inside `checksSection`). Added files are never flagged. A comparison that cannot be read is
-    a draft too. As with failed checks, an open pull request stays as it is, but its section is
-    rewritten.
+    or inside `checksSection`). Check scripts count too: a file under the top-level `scripts/`, and
+    any script a `package.json` at the base names in one of its scripts; so do snapshots, fixtures
+    and Vite or Python test and lint configuration. Added files are never flagged. A comparison
+    that cannot be read, or that lists 300 files (GitHub's limit), is a draft too. A pull request
+    that is open already is converted to a draft (GraphQL `convertPullRequestToDraft`, which REST
+    cannot do) and its section is rewritten; a pull request that failed its checks still stays
+    as it is.
   - A command gets 10 minutes, a call's checks 20 and a run's 40, counted where the tools are made
     for the turn. A command stopped at its limit is timed out, never passed. Checks a call has no
     time left for fail the round; when the run has none left before a round begins, the checks

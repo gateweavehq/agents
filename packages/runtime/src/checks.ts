@@ -322,7 +322,7 @@ export function reviewFlagged(review: OracleReview | null): boolean {
 }
 
 /**
- * What the section says of the files that decide whether the checks pass (AGT-167): which were
+ * What the section says of the files that decide whether the checks pass: which were
  * modified or deleted, from GitHub's list of what the branch changes, and not from anything the
  * agent wrote. A branch that touched none says nothing.
  */
@@ -330,12 +330,12 @@ function oracleLines(review: OracleReview | null): string[] {
 	if (review === null) return [];
 	if ("unverified" in review) {
 		return [
-			`Gateweave could not tell whether this pull request edits the files its checks rely on (${review.unverified}), so it opens the pull request as a draft. One that was open already stays as it was.`,
+			`Gateweave could not tell whether this pull request edits the files its checks rely on (${review.unverified}), so it makes the pull request a draft, converting one that was open already.`,
 		];
 	}
 	if (review.edits.length === 0) return [];
 	return [
-		"This pull request modifies or deletes files that decide whether its own checks pass, so passing checks prove less. Gateweave opens it as a draft until a person has read these changes (one that was open already stays as it was):",
+		"This pull request modifies or deletes files that decide whether its own checks pass, so passing checks prove less. Gateweave makes it a draft, converting one that was open already, until a person has read these changes:",
 		review.edits.map((edit) => `- ${code(edit.path)}: ${edit.change} (${edit.kind})`).join("\n"),
 	];
 }
@@ -347,7 +347,7 @@ export function describeEdits(review: OracleReview | null): string | null {
 		return `Gateweave could not tell whether the work edits the files its checks rely on (${review.unverified}), so the pull request is opened as a draft.`;
 	}
 	const listed = review.edits.map((edit: OracleEdit) => `${edit.path} (${edit.change})`);
-	return `The work modifies or deletes files that decide whether its checks pass: ${listed.join(", ")}. The pull request lists them and a new one is opened as a draft. Adding tests is not flagged; change these only when the task needs it, and say why in the description.`;
+	return `The work modifies or deletes files that decide whether its checks pass: ${listed.join(", ")}. The pull request lists them and is made a draft. Adding tests is not flagged; change these only when the task needs it, and say why in the description.`;
 }
 
 /**

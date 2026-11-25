@@ -1,11 +1,12 @@
 /**
- * An agent's edits to the files that decide whether its own checks pass (AGT-167). The pull
+ * An agent's edits to the files that decide whether its own checks pass. The pull
  * request stays a draft and its section lists the paths; adding a test is not flagged.
  */
+import type { GitHubApp } from "@gateweave/agents-github";
 import type { PullRequestOutcome } from "@gateweave/agents-model";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ChangedFile, oracleKind, reviewOracles } from "../src/oracles";
-import { pullRequestTools } from "../src/pull-requests";
+import { gitHubPullRequests, pullRequestTools } from "../src/pull-requests";
 import type { RunRecorder } from "../src/trace";
 import { MemorySandbox } from "./fake-sandbox";
 
@@ -20,11 +21,23 @@ const repository = {
 /** `scripts` of a package.json as the base and the branch have them. */
 const manifest = (scripts: Record<string, string>) => JSON.stringify({ name: "x", scripts });
 
-/** `open_pull_request` with no checks set, over a branch that changes `files`. */
-function setup(files: ChangedFile[], texts: Record<string, string> = {}, unreadable = false) {
-	const proposed: { body: string; draft?: boolean }[] = [];
+/**
+ * `open_pull_request` over a branch that changes `files`; with `checks`, the repository has
+ * those commands and they pass.
+ */
+function setup(
+	files: ChangedFile[],
+	texts: Record<string, string> = {},
+	unreadable = false,
+	checks: string[] = [],
+) {
+	const sandbox = new MemorySandbox();
+	const proposed: { body: string; draft?: boolean; convert?: boolean }[] = [];
 	const tools = pullRequestTools({
-		sandbox: new MemorySandbox(),
+		sandbox,
+		...(checks.length > 0
+			? { checks: { commands: async () => checks, sandbox, now: () => sandbox.clock } }
+			: {}),
 		ready: async () => null,
 		github: {
 			async propose(input) {
@@ -85,15 +98,26 @@ describe("which paths are oracles", () => {
 		["eslint.config.mjs", "lint or type config"],
 		["packages/a/tsconfig.json", "lint or type config"],
 		["vitest.config.ts", "test"],
+		["vite.config.ts", "test"],
+		["apps/web/vite.config.mts", "test"],
+		["scripts/check-one-agents.mjs", "check script"],
+		["packages/a/test/__snapshots__/cart.test.ts.snap", "test"],
+		["src/cart.snap", "test"],
+		["apps/web/fixtures/cart.json", "test"],
+		["pyproject.toml", "lint or type config"],
+		["services/api/setup.cfg", "lint or type config"],
 	])("%s is a %s", (path, kind) => {
 		expect(oracleKind(path)).toBe(kind);
 	});
-	it.each(["src/cart.ts", "README.md", "docs/testing.md", "src/latest.ts"])(
-		"%s is not one",
-		(path) => {
-			expect(oracleKind(path)).toBeNull();
-		},
-	);
+	it.each([
+		"src/cart.ts",
+		"README.md",
+		"docs/testing.md",
+		"src/latest.ts",
+		"packages/a/scripts/x.ts",
+	])("%s is not one", (path) => {
+		expect(oracleKind(path)).toBeNull();
+	});
 });
 
 describe("open_pull_request and an agent's edits to its checks", () => {
@@ -122,6 +146,15 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 		expect(body).toContain("- `.github/workflows/ci.yml`: modified (CI)");
 		expect(body).toContain("- `biome.json`: deleted (lint or type config)");
 		expect(proposed[0]?.draft).toBe(true);
+	});
+	it("lists a modified check script", async () => {
+		const { call, proposed } = setup([
+			{ path: "scripts/check-one-agents.mjs", status: "modified" },
+		]);
+		expect((await call()).draft).toBe(true);
+		expect(proposed[0]?.body).toContain(
+			"- `scripts/check-one-agents.mjs`: modified (check script)",
+		);
 	});
 	it("lists the old path of a renamed test", async () => {
 		const { call, proposed } = setup([
@@ -152,6 +185,7 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 		const { call, proposed } = setup([
 			{ path: "test/new.test.ts", status: "added" },
 			{ path: ".github/workflows/new.yml", status: "added" },
+			{ path: "scripts/new.mjs", status: "added" },
 			{ path: "src/cart.ts", status: "modified" },
 		]);
 		const outcome = await call();
@@ -159,10 +193,178 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 		expect(proposed[0]?.draft).toBeUndefined();
 		expect(proposed[0]?.body).not.toContain("Checks run by Gateweave");
 	});
+	it("lists the edits in the section of a repository whose checks pass, and keeps a draft", async () => {
+		const { call, proposed } = setup(
+			[{ path: "test/cart.test.ts", status: "modified" }],
+			{},
+			false,
+			["pnpm test"],
+		);
+		const outcome = await call();
+		expect(outcome).toMatchObject({ checks: "passed", draft: true });
+		expect(proposed[0]?.draft).toBe(true);
+		expect(proposed[0]?.convert).toBe(true);
+		const body = proposed[0]?.body ?? "";
+		expect(body).toContain("- `pnpm test`: passed");
+		expect(body).toContain("- `test/cart.test.ts`: modified (test)");
+		expect(body.indexOf("`pnpm test`")).toBeLessThan(body.indexOf("`test/cart.test.ts`"));
+		expect(outcome.note).toContain("test/cart.test.ts (modified)");
+	});
+	it("keeps a pull request with passing checks and no edits a ready one", async () => {
+		const { call, proposed } = setup([{ path: "src/cart.ts", status: "modified" }], {}, false, [
+			"pnpm test",
+		]);
+		expect(await call()).toMatchObject({ checks: "passed", draft: false });
+		expect(proposed[0]?.draft).toBeUndefined();
+		expect(proposed[0]?.convert).toBeUndefined();
+		expect(proposed[0]?.body).not.toContain("modifies or deletes");
+	});
 	it("opens a draft when it cannot tell what the branch changes", async () => {
 		const { call, proposed } = setup([], {}, true);
 		expect((await call()).draft).toBe(true);
 		expect(proposed[0]?.draft).toBe(true);
 		expect(proposed[0]?.body).toContain("could not tell whether");
+	});
+});
+
+describe("the files a package.json script names", () => {
+	const root = JSON.stringify({
+		scripts: { lint: "node tools/lint.mjs --strict", pack: "tsc -b" },
+	});
+	const web = JSON.stringify({ scripts: { check: "bash ./ci/check.sh" } });
+	const texts = async (path: string) =>
+		path === "package.json" ? root : path === "apps/web/package.json" ? web : null;
+
+	it("flags a modified or deleted script that a package.json at the base runs", async () => {
+		const edits = await reviewOracles(
+			[
+				{ path: "tools/lint.mjs", status: "modified" },
+				{ path: "apps/web/ci/check.sh", status: "removed" },
+			],
+			texts,
+		);
+		expect(edits).toEqual([
+			{ path: "apps/web/ci/check.sh", change: "deleted", kind: "check script" },
+			{ path: "tools/lint.mjs", change: "modified", kind: "check script" },
+		]);
+	});
+	it("leaves a script no package.json runs, and a script that is added", async () => {
+		expect(
+			await reviewOracles(
+				[
+					{ path: "tools/other.mjs", status: "modified" },
+					{ path: "apps/web/tools/lint.mjs", status: "modified" },
+					{ path: "tools/new.mjs", status: "added" },
+					{ path: "tools/lint.mjs", status: "added" },
+				],
+				texts,
+			),
+		).toEqual([]);
+	});
+});
+
+describe("the review of a branch on GitHub", () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** GitHub as a spy on fetch: `answer` gets each request's route and the routes are returned. */
+	const github = (answer: (route: string) => Response | Promise<Response>) => {
+		const routes: string[] = [];
+		vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+			const route = `${init?.method ?? "GET"} ${String(input).replace("https://api.github.com", "")}`;
+			routes.push(route);
+			return answer(route);
+		});
+		return routes;
+	};
+	const app = { repositoryToken: async () => "ghs_x" } as unknown as GitHubApp;
+	const port = () => gitHubPullRequests(app, repository);
+
+	it("is unverified when the comparison is at GitHub's limit of files", async () => {
+		const files = Array.from({ length: 300 }, (_, index) => ({
+			filename: `src/f${index}.ts`,
+			status: "modified",
+		}));
+		const routes = github(() =>
+			Response.json({ merge_base_commit: { sha: "e".repeat(40) }, files }),
+		);
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			unverified: "the branch changes more files than GitHub's comparison lists",
+		});
+		// One request: the files come with the first page, and the other pages hold commits.
+		expect(routes).toEqual([
+			"GET /repos/acme/site/compare/main...gateweave%2Fc-1?per_page=1&page=1",
+		]);
+	});
+	it("is unverified when GitHub cannot be asked", async () => {
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		github(() => Response.json({ message: "Server Error" }, { status: 500 }));
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			unverified: "GitHub's comparison could not be read",
+		});
+		error.mockRestore();
+	});
+	it("reads a package.json at the merge base and at the branch", async () => {
+		const routes = github((route) =>
+			route.includes("/compare/")
+				? Response.json({
+						merge_base_commit: { sha: "e".repeat(40) },
+						files: [{ filename: "package.json", status: "modified" }],
+					})
+				: new Response(
+						JSON.stringify({
+							scripts: { test: route.includes("ref=gateweave") ? "true" : "vitest" },
+						}),
+					),
+		);
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			edits: [{ path: "package.json", change: "modified", kind: "package script" }],
+		});
+		expect(routes).toContain(`GET /repos/acme/site/contents/package.json?ref=${"e".repeat(40)}`);
+		expect(routes).toContain("GET /repos/acme/site/contents/package.json?ref=gateweave%2Fc-1");
+	});
+
+	const pull = (draft: boolean) => ({
+		number: 5,
+		node_id: "PR_node",
+		draft,
+		html_url: "https://github.com/acme/site/pull/5",
+		title: "Fix",
+		state: "open",
+		merged_at: null,
+		head: { sha: "1".repeat(40), ref: "gateweave/c-1" },
+	});
+	/** A repository that has this pull request open from the branch already. */
+	const open = (draft: boolean) => (route: string) =>
+		route.startsWith("POST /graphql")
+			? Response.json({ data: { convertPullRequestToDraft: { pullRequest: { isDraft: true } } } })
+			: route.startsWith("GET /repos/acme/site/pulls?")
+				? Response.json([pull(draft)])
+				: Response.json(pull(draft));
+	const input = { branch: "gateweave/c-1", title: "Fix", body: "b" };
+
+	it("makes a pull request that is open and ready a draft when it edits a check", async () => {
+		const routes = github(open(false));
+		const made = await port().propose({ ...input, draft: true, convert: true });
+		expect(made).toMatchObject({ opened: false, draft: true });
+		expect(routes.filter((route) => route.includes("graphql"))).toEqual(["POST /graphql"]);
+	});
+	it("does not convert a draft, or a pull request that edits nothing", async () => {
+		const drafts = github(open(true));
+		await port().propose({ ...input, draft: true, convert: true });
+		expect(drafts.some((route) => route.includes("graphql"))).toBe(false);
+		const ready = github(open(false));
+		await port().propose(input);
+		await port().propose({ ...input, draft: true });
+		expect(ready.some((route) => route.includes("graphql"))).toBe(false);
+	});
+	it("fails the call when GitHub does not convert the pull request", async () => {
+		github((route) =>
+			route.startsWith("POST /graphql")
+				? Response.json({ data: null, errors: [{ message: "Resource not accessible" }] })
+				: open(false)(route),
+		);
+		await expect(port().propose({ ...input, draft: true, convert: true })).rejects.toThrow(
+			"could not make the pull request a draft",
+		);
 	});
 });

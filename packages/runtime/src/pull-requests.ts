@@ -19,6 +19,7 @@
  */
 import {
 	changedFiles,
+	convertPullRequestToDraft,
 	type GitHubApp,
 	GitHubError,
 	openPullRequest,
@@ -103,6 +104,8 @@ export interface PullRequestPort {
 		body: string;
 		/** Opens a new pull request as a draft. One that is open already stays as it is. */
 		draft?: boolean;
+		/** With `draft`, an open pull request that is ready for review is made a draft too. */
+		convert?: boolean;
 	}): Promise<PullRequest & { opened: boolean }>;
 	/**
 	 * Which files the pushed branch changes that decide whether its checks pass (`./oracles.ts`),
@@ -115,7 +118,7 @@ export interface PullRequestPort {
 export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository): PullRequestPort {
 	const name = { owner: repository.owner, name: repository.name };
 	return {
-		async propose({ branch, title, body, draft = false }) {
+		async propose({ branch, title, body, draft = false, convert = false }) {
 			// GitHub lists only Pull requests for these calls, but refuses to open one with "not all
 			// refs are readable" unless the token can also read the branches.
 			const token = await app.repositoryToken(repository.installationId, repository.externalId, {
@@ -125,6 +128,16 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 			const open = await openPullRequestFrom(token, name, branch);
 			if (open) {
 				const updated = await updatePullRequest(token, name, open.number, { title, body });
+				// REST cannot make a pull request a draft; GraphQL can. An answer that does not say
+				// whether it is one is converted too, as converting a draft is the lesser mistake.
+				if (draft && convert && updated.draft !== true) {
+					const nodeId = updated.nodeId ?? open.nodeId;
+					if (nodeId === undefined) {
+						throw new GitHubError(422, "GitHub did not say which pull request to make a draft");
+					}
+					await convertPullRequestToDraft(token, nodeId);
+					return { ...updated, draft: true, opened: false };
+				}
 				return { ...updated, opened: false };
 			}
 			const head = branch;
@@ -380,7 +393,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		}
 		if ("error" in pushed) throw new Error(pushed.error);
 		// After the push, so the branch is on GitHub to be compared. A branch that edits what its
-		// checks rely on is a draft, whether or not the repository has checks (AGT-167).
+		// checks rely on is a draft, whether or not the repository has checks.
 		const review = (await github.review?.(branch)) ?? null;
 		section = commands.length === 0 ? editsSection(review) : write(review);
 		if (reviewFlagged(review)) {
@@ -401,6 +414,9 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 				title,
 				body: written,
 				...(about.draft ? { draft: true } : {}),
+				// A pull request that was open already is made a draft for what it edited; one that
+				// failed its checks stays as it is.
+				...(reviewFlagged(review) ? { convert: true } : {}),
 			});
 		} catch (error) {
 			console.error("A pull request was not made", failureForLogs(error));

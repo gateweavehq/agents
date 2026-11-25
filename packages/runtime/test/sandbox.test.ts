@@ -359,7 +359,7 @@ describe("a conversation with a sandbox", () => {
 				body: { repository_ids: [7], permissions: { contents: "read" } },
 			},
 			{
-				route: `GET /repos/acme/site/compare/main...${branch.replace("/", "%2F")}?per_page=100&page=1`,
+				route: `GET /repos/acme/site/compare/main...${encodeURIComponent(branch)}?per_page=1&page=1`,
 				body: null,
 			},
 			{

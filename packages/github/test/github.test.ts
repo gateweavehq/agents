@@ -197,7 +197,7 @@ describe("repository writes", () => {
 		expect(await textAt("ghs_x", repository, "a b/package.json", sha("e"))).toBe('{"scripts":{}}');
 		expect(await textAt("ghs_x", repository, "gone.json", sha("e"))).toBeNull();
 		expect(calls.map((call) => call.route)).toEqual([
-			"GET /repos/acme/site/compare/main...gateweave%2Fc-1?per_page=100&page=1",
+			"GET /repos/acme/site/compare/main...gateweave%2Fc-1?per_page=1&page=1",
 			`GET /repos/acme/site/contents/a%20b/package.json?ref=${sha("e")}`,
 			`GET /repos/acme/site/contents/gone.json?ref=${sha("e")}`,
 		]);
