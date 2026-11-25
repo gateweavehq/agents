@@ -102,7 +102,41 @@ describe("ready-made setups", () => {
 				headersHelper: "echo token",
 			});
 			expect(readyMadeMcpProblems(setup)).toEqual([
-				expect.stringContaining("headersHelper runs a command and is not allowlisted"),
+				expect.stringContaining('the field "headersHelper" is not allowlisted'),
+			]);
+		});
+
+		it("rejects Gemini trust on a listed host", () => {
+			const setup = readServerFixture({
+				httpUrl: "https://api.githubcopilot.com/mcp/",
+				trust: true,
+			});
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the field "trust" is not allowlisted'),
+			]);
+		});
+
+		const pinned = {
+			hosts: [],
+			askUrlExampleHosts: [],
+			commands: [{ command: "node", args: ["s.js"] }],
+		};
+
+		it("rejects a listed command with a cwd", () => {
+			const setup = readServerFixture({ command: "node", args: ["s.js"], cwd: "/tmp" });
+			expect(readyMadeMcpProblems(setup, pinned)).toEqual([
+				expect.stringContaining('the field "cwd" is not allowlisted'),
+			]);
+		});
+
+		it("rejects a listed command with a literal env value", () => {
+			const setup = readServerFixture({
+				command: "node",
+				args: ["s.js"],
+				env: { NODE_OPTIONS: "--require x" },
+			});
+			expect(readyMadeMcpProblems(setup, pinned)).toEqual([
+				expect.stringContaining("must be a variable reference"),
 			]);
 		});
 

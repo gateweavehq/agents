@@ -23,8 +23,20 @@ export const READY_MADE_MCP_ALLOWLIST: ReadyMadeMcpAllowlist = {
 	commands: [],
 };
 
-/** Remote-server fields a client can execute locally, rather than only connect with. */
-const EXECUTABLE_REMOTE_FIELDS = ["headersHelper"];
+/**
+ * The only keys a stored server may have. Anything else is carried into the written files by the
+ * writer, and a client may run it (`headersHelper`) or widen its trust (`trust`), so the set is closed.
+ */
+const REMOTE_KEYS = [
+	"type",
+	"url",
+	"httpUrl",
+	"headers",
+	"http_headers",
+	"env_http_headers",
+	"bearer_token_env_var",
+];
+const COMMAND_KEYS = ["type", "command", "args", "env", "env_vars"];
 
 /** Why a setup's MCP servers break the ready-made policy; empty when they follow it. */
 export function readyMadeMcpProblems(
@@ -38,6 +50,14 @@ export function readyMadeMcpProblems(
 		const read = readMcpConnection(asset.files);
 		if (!read.ok) continue;
 		const { connection } = read;
+		const stray = strayKey(
+			asset.files,
+			connection.transport === "stdio" ? COMMAND_KEYS : REMOTE_KEYS,
+		);
+		if (stray !== null) {
+			problems.push(`${asset.name}: the field "${stray}" is not allowlisted`);
+			continue;
+		}
 		if (connection.transport === "stdio") {
 			const listed = allowlist.commands.some(
 				(command) =>
@@ -45,16 +65,15 @@ export function readyMadeMcpProblems(
 					command.args.length === connection.args.length &&
 					command.args.every((arg, index) => arg === connection.args[index]),
 			);
+			const literal = connection.env.find((entry) => typeof entry.value === "string");
+			if (listed && literal) {
+				problems.push(`${asset.name}: env "${literal.name}" must be a variable reference`);
+				continue;
+			}
 			if (!listed) {
 				const shown = [connection.command, ...connection.args].join(" ");
 				problems.push(`${asset.name}: the command server "${shown}" is not allowlisted`);
 			}
-			continue;
-		}
-
-		const executable = executableRemoteField(asset.files);
-		if (executable !== null) {
-			problems.push(`${asset.name}: ${executable} runs a command and is not allowlisted`);
 			continue;
 		}
 
@@ -79,13 +98,13 @@ export function readyMadeMcpProblems(
 	return problems;
 }
 
-/** The first field of a stored remote server that a client can execute, or null. */
-function executableRemoteField(files: SetupFolder["assets"][number]["files"]): string | null {
-	const [file, ...rest] = files;
-	if (!file?.content || rest.length > 0) return null;
+/** The first key of the stored server outside `allowed` (including `cwd`), or null. */
+function strayKey(files: SetupFolder["assets"][number]["files"], allowed: string[]): string | null {
+	const [file] = files;
+	if (!file?.content) return null;
 	const parsed = file.path.endsWith(".toml")
 		? parseTomlConfig(file.content)
 		: parseJsonConfig(file.content);
 	if (!parsed.ok) return null;
-	return EXECUTABLE_REMOTE_FIELDS.find((field) => field in parsed.value) ?? null;
+	return Object.keys(parsed.value).find((key) => !allowed.includes(key)) ?? null;
 }
