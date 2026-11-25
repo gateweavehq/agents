@@ -88,6 +88,24 @@ describe("ready-made setups", () => {
 			expect(readyMadeMcpProblems(setup)).toEqual([]);
 		});
 
+		it("rejects a fixed server over plain http", () => {
+			const setup = readServerFixture({ type: "http", url: "http://api.githubcopilot.com/mcp/" });
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining("the server address must use https"),
+			]);
+		});
+
+		it("rejects a remote server with an executable helper", () => {
+			const setup = readServerFixture({
+				type: "http",
+				url: "https://api.githubcopilot.com/mcp/",
+				headersHelper: "echo token",
+			});
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining("headersHelper runs a command and is not allowlisted"),
+			]);
+		});
+
 		it("rejects example.com when no address is asked for", () => {
 			const setup = readServerFixture({ type: "http", url: "https://example.com/mcp" });
 			expect(readyMadeMcpProblems(setup)).toEqual([

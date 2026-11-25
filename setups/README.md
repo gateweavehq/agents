@@ -55,8 +55,9 @@ adding it. For each folder:
 - `detect` finds each asset again in what it writes, for each runtime.
 - The MCP configuration it writes holds no literal token.
 - Every MCP server passes the allowlist in `packages/adapters/src/ready-made-policy.ts`: a fixed
-  network server uses a listed host, an `askUrl` example may use `example.com` or a host under
-  it, and a command server uses a listed command with exactly its arguments.
+  network server uses HTTPS and a listed host, an `askUrl` example may use `example.com` or a
+  host under it, a command server uses a listed command with exactly its arguments, and a remote
+  server carries no field a client executes locally, such as `headersHelper`.
 - Every address it asks for (`askUrl`) can be given, as its example is.
 
 `apps/web/src/server/ready-made.test.ts` checks that the app can load every folder.

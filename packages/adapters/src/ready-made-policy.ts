@@ -3,6 +3,7 @@
  * MCP server in one may point only at a reviewed host, or start only a reviewed command. This
  * applies to the folders under `setups/`; a workspace's own setup folder is not held to it.
  */
+import { parseJsonConfig, parseTomlConfig } from "./assets";
 import type { SetupFolder } from "./setup-folder";
 import { readMcpConnection } from "./write-mcp";
 
@@ -21,6 +22,9 @@ export const READY_MADE_MCP_ALLOWLIST: ReadyMadeMcpAllowlist = {
 	askUrlExampleHosts: ["example.com"],
 	commands: [],
 };
+
+/** Remote-server fields a client can execute locally, rather than only connect with. */
+const EXECUTABLE_REMOTE_FIELDS = ["headersHelper"];
 
 /** Why a setup's MCP servers break the ready-made policy; empty when they follow it. */
 export function readyMadeMcpProblems(
@@ -48,9 +52,20 @@ export function readyMadeMcpProblems(
 			continue;
 		}
 
+		const executable = executableRemoteField(asset.files);
+		if (executable !== null) {
+			problems.push(`${asset.name}: ${executable} runs a command and is not allowlisted`);
+			continue;
+		}
+
 		let host: string;
 		try {
-			host = new URL(connection.url).hostname.toLowerCase();
+			const url = new URL(connection.url);
+			if (url.protocol !== "https:") {
+				problems.push(`${asset.name}: the server address must use https`);
+				continue;
+			}
+			host = url.hostname.toLowerCase();
 		} catch {
 			problems.push(`${asset.name}: the server address is not a valid URL`);
 			continue;
@@ -62,4 +77,15 @@ export function readyMadeMcpProblems(
 		if (!allowed) problems.push(`${asset.name}: the host "${host}" is not allowlisted`);
 	}
 	return problems;
+}
+
+/** The first field of a stored remote server that a client can execute, or null. */
+function executableRemoteField(files: SetupFolder["assets"][number]["files"]): string | null {
+	const [file, ...rest] = files;
+	if (!file?.content || rest.length > 0) return null;
+	const parsed = file.path.endsWith(".toml")
+		? parseTomlConfig(file.content)
+		: parseJsonConfig(file.content);
+	if (!parsed.ok) return null;
+	return EXECUTABLE_REMOTE_FIELDS.find((field) => field in parsed.value) ?? null;
 }
