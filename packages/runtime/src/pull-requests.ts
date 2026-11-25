@@ -18,6 +18,7 @@
  * a token that writes pull requests and only reads the code. The sandbox never holds either.
  */
 import {
+	branchCommit,
 	changedFiles,
 	convertPullRequestToDraft,
 	type GitHubApp,
@@ -25,7 +26,9 @@ import {
 	openPullRequest,
 	openPullRequestFrom,
 	type PullRequest,
+	readCommit,
 	readTextAt,
+	readTreeEntries,
 	updatePullRequest,
 } from "@gateweave/agents-github";
 import {
@@ -157,7 +160,11 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 					contents: "read",
 				});
 				const base = repository.defaultBranch;
-				const compared = await changedFiles(token, name, base, branch);
+				// The commit the branch is at now. The comparison and every read of the branch's
+				// files are made at it, so a branch that moves meanwhile cannot split them.
+				const head = await branchCommit(token, name, branch);
+				if (head === null) return { unverified: "the branch is not on GitHub" };
+				const compared = await changedFiles(token, name, base, head);
 				// A comparison at GitHub's limit may have left files out, and what it did not list
 				// was not looked at.
 				if (!compared.complete) {
@@ -165,8 +172,21 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 				}
 				// A 404 is a file that is not there; a denied or failed read throws, and the review
 				// says it could not tell rather than take the file for an empty one.
-				return await reviewOracles(compared.files, (path, side) =>
-					readTextAt(token, name, path, side === "base" ? compared.mergeBase : branch),
+				return await reviewOracles(
+					compared.files,
+					(path, side) =>
+						readTextAt(token, name, path, side === "base" ? compared.mergeBase : head),
+					async () => {
+						// One read of the base's whole tree, for the `package.json` files in it.
+						const { tree } = await readCommit(token, name, compared.mergeBase);
+						const found = await readTreeEntries(token, name, tree);
+						return {
+							paths: found.entries
+								.map((entry) => entry.path)
+								.filter((path) => path === "package.json" || path.endsWith("/package.json")),
+							complete: !found.truncated,
+						};
+					},
 				);
 			} catch (error) {
 				console.error("A branch's edits to its checks were not reviewed", failureForLogs(error));

@@ -106,7 +106,11 @@ function pullRequestGitHub(
 		if (request.headers.get("authorization") !== "Bearer ghs_pulls") {
 			return Response.json({ message: "Bad credentials" }, { status: 401 });
 		}
-		// What the branch changes against the default branch: nothing that edits a check.
+		// The commit the branch is at, and what it changes against the default branch: nothing
+		// that edits a check.
+		if (url.pathname.includes("/git/ref/heads/")) {
+			return Response.json({ object: { sha: "a".repeat(40) } });
+		}
 		if (url.pathname.includes("/compare/")) {
 			return Response.json({ merge_base_commit: { sha: "e".repeat(40) }, files: [] });
 		}
@@ -359,7 +363,11 @@ describe("a conversation with a sandbox", () => {
 				body: { repository_ids: [7], permissions: { contents: "read" } },
 			},
 			{
-				route: `GET /repos/acme/site/compare/main...${encodeURIComponent(branch)}?per_page=1&page=1`,
+				route: `GET /repos/acme/site/git/ref/heads/${branch}`,
+				body: null,
+			},
+			{
+				route: `GET /repos/acme/site/compare/main...${"a".repeat(40)}?per_page=1&page=1`,
 				body: null,
 			},
 			{

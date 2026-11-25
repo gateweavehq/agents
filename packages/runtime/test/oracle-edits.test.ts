@@ -5,7 +5,7 @@
 import type { GitHubApp } from "@gateweave/agents-github";
 import type { PullRequestOutcome } from "@gateweave/agents-model";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ChangedFile, oracleKind, reviewOracles } from "../src/oracles";
+import { type ChangedFile, MANIFESTS_LIMIT, oracleKind, reviewOracles } from "../src/oracles";
 import { gitHubPullRequests, pullRequestTools } from "../src/pull-requests";
 import type { RunRecorder } from "../src/trace";
 import { MemorySandbox } from "./fake-sandbox";
@@ -57,7 +57,16 @@ function setup(
 			},
 			async review() {
 				if (unreadable) return { unverified: "GitHub's comparison could not be read" };
-				return reviewOracles(files, async (path, side) => texts[`${side}:${path}`] ?? null);
+				return reviewOracles(
+					files,
+					async (path, side) => texts[`${side}:${path}`] ?? null,
+					async () => ({
+						paths: Object.keys(texts)
+							.filter((key) => key.startsWith("base:") && key.endsWith("package.json"))
+							.map((key) => key.slice("base:".length)),
+						complete: true,
+					}),
+				);
 			},
 		},
 		repository,
@@ -108,6 +117,14 @@ describe("which paths are oracles", () => {
 		["services/api/pytest.ini", "test"],
 		["services/api/.pytest.ini", "test"],
 		["services/api/conftest.py", "test"],
+		["Makefile", "check script"],
+		["services/api/Makefile", "check script"],
+		["justfile", "check script"],
+		["tools/justfile", "check script"],
+		["Taskfile.yml", "check script"],
+		["apps/web/Taskfile.yml", "check script"],
+		["noxfile.py", "check script"],
+		["services/api/noxfile.py", "check script"],
 		["pyproject.toml", "lint or type config"],
 		["services/api/setup.cfg", "lint or type config"],
 	])("%s is a %s", (path, kind) => {
@@ -121,6 +138,10 @@ describe("which paths are oracles", () => {
 		"packages/a/scripts/x.ts",
 		"src/conftest.pyc",
 		"src/my-pytest.ini.md",
+		"docs/Makefile.md",
+		"src/justfile.ts",
+		"src/Taskfile.yaml",
+		"src/mynoxfile.py",
 	])("%s is not one", (path) => {
 		expect(oracleKind(path)).toBeNull();
 	});
@@ -240,6 +261,37 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 			`- \`${path}\`: ${status === "removed" ? "deleted" : "modified"} (test)`,
 		);
 	});
+	it.each([
+		["Makefile", "modified"],
+		["justfile", "modified"],
+		["Taskfile.yml", "modified"],
+		["noxfile.py", "modified"],
+		["Makefile", "removed"],
+		["justfile", "removed"],
+		["Taskfile.yml", "removed"],
+		["noxfile.py", "removed"],
+	])("opens a draft for a %s that is %s", async (path, status) => {
+		const { call, proposed } = setup([{ path, status }]);
+		expect((await call()).draft).toBe(true);
+		expect(proposed[0]?.draft).toBe(true);
+		expect(proposed[0]?.body).toContain(
+			`- \`${path}\`: ${status === "removed" ? "deleted" : "modified"} (check script)`,
+		);
+	});
+	it("opens a draft for a script a package.json at the base names, and not for a glob's file", async () => {
+		const texts = {
+			"base:package.json": manifest({
+				lint: "sh -c 'cd tools && node lint.mjs'",
+				t: "eslint 'src/**/*.ts'",
+			}),
+		};
+		const named = setup([{ path: "tools/lint.mjs", status: "modified" }], texts);
+		expect((await named.call()).draft).toBe(true);
+		expect(named.proposed[0]?.body).toContain("- `tools/lint.mjs`: modified (check script)");
+		const source = setup([{ path: "src/cart.ts", status: "modified" }], texts);
+		expect((await source.call()).draft).toBeUndefined();
+		expect(source.proposed[0]?.draft).toBeUndefined();
+	});
 	it("opens a draft when it cannot tell what the branch changes", async () => {
 		const { call, proposed } = setup([], {}, true);
 		expect((await call()).draft).toBe(true);
@@ -248,139 +300,231 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 	});
 });
 
-describe("the files a package.json script names", () => {
-	const root = JSON.stringify({
-		scripts: { lint: "node tools/lint.mjs --strict", pack: "tsc -b" },
-	});
-	const web = JSON.stringify({ scripts: { check: "bash ./ci/check.sh" } });
-	const texts = async (path: string) =>
-		path === "package.json" ? root : path === "apps/web/package.json" ? web : null;
+/** A `package.json` text whose scripts are these commands. */
+const scriptsOf = (...scripts: string[]) =>
+	JSON.stringify({ scripts: Object.fromEntries(scripts.map((script, i) => [`s${i}`, script])) });
 
-	it("flags a modified or deleted script that a package.json at the base runs", async () => {
-		const edits = await reviewOracles(
-			[
-				{ path: "tools/lint.mjs", status: "modified" },
-				{ path: "apps/web/ci/check.sh", status: "removed" },
-			],
-			texts,
-		);
-		expect(edits).toEqual({
+/** The tree of a base that holds these `package.json` files (path to text), as the review lists it. */
+const treeOf = (manifests: Record<string, string>) => async () => ({
+	paths: Object.keys(manifests),
+	complete: true,
+});
+
+/**
+ * The review of a branch that modifies `paths` (or has them in `status`), when the base holds
+ * these `package.json` files.
+ */
+function review(
+	paths: string[],
+	manifests: Record<string, string>,
+	status: ChangedFile["status"] = "modified",
+) {
+	const read = vi.fn(async (path: string) => manifests[path] ?? null);
+	const list = vi.fn(treeOf(manifests));
+	return {
+		list,
+		read,
+		result: reviewOracles(
+			paths.map((path) => ({ path, status })),
+			read,
+			list,
+		),
+	};
+}
+const checkScripts = (...paths: string[]) => ({
+	edits: paths.map((path) => ({ path, change: "modified", kind: "check script" })),
+});
+const unverified = expect.objectContaining({ unverified: expect.any(String) });
+
+describe("the files a package.json script names", () => {
+	it("flags a modified or deleted file that a package.json at the base names", async () => {
+		const manifests = {
+			"package.json": scriptsOf("node tools/lint.mjs --strict", "tsc -b"),
+			"apps/web/package.json": scriptsOf("bash ./ci/check.sh"),
+		};
+		expect(
+			await reviewOracles(
+				[
+					{ path: "tools/lint.mjs", status: "modified" },
+					{ path: "apps/web/ci/check.sh", status: "removed" },
+				],
+				async (path) => manifests[path as keyof typeof manifests] ?? null,
+				treeOf(manifests),
+			),
+		).toEqual({
 			edits: [
 				{ path: "apps/web/ci/check.sh", change: "deleted", kind: "check script" },
 				{ path: "tools/lint.mjs", change: "modified", kind: "check script" },
 			],
 		});
 	});
-	it("leaves a script no package.json runs, and a script that is added", async () => {
+	it("flags the old path of a renamed file that a script names", async () => {
 		expect(
 			await reviewOracles(
-				[
-					{ path: "tools/other.mjs", status: "modified" },
-					{ path: "apps/web/tools/lint.mjs", status: "modified" },
-					{ path: "tools/new.mjs", status: "added" },
-					{ path: "tools/lint.mjs", status: "added" },
-				],
-				texts,
+				[{ path: "tools/check.mjs", status: "renamed", previousPath: "tools/lint.mjs" }],
+				async () => scriptsOf("node tools/lint.mjs"),
+				treeOf({ "package.json": "" }),
+			),
+		).toEqual({ edits: [{ path: "tools/lint.mjs", change: "renamed", kind: "check script" }] });
+	});
+	it("names a file by the end of its path, at a path boundary", async () => {
+		const manifests = {
+			"package.json": scriptsOf("node tools/lint.mjs && node ./x.mjs && ../y.mjs"),
+		};
+		const flagged = ["packages/a/tools/lint.mjs", "src/x.mjs", "tools/lint.mjs", "x.mjs", "y.mjs"];
+		const left = [
+			"xtools/lint.mjs",
+			"lint.mjs",
+			"src/mylint.mjs",
+			"tools/lint.mjs.bak",
+			"src/z.mjs",
+		];
+		expect(await review([...left, ...flagged], manifests).result).toEqual(checkScripts(...flagged));
+	});
+	it("leaves a file no package.json names, and a file that is added", async () => {
+		const manifests = { "package.json": scriptsOf("node tools/lint.mjs") };
+		expect(await review(["tools/other.mjs", "src/cart.ts"], manifests).result).toEqual({
+			edits: [],
+		});
+		expect(await review(["tools/lint.mjs"], manifests, "added").result).toEqual({ edits: [] });
+	});
+	it("does not look at the directory a script runs in", async () => {
+		const manifests = { "package.json": scriptsOf("cd tools && node lint.mjs") };
+		// `lint.mjs` names every `lint.mjs`, wherever the `cd` went.
+		expect(await review(["tools/lint.mjs", "lint.mjs"], manifests).result).toEqual(
+			checkScripts("lint.mjs", "tools/lint.mjs"),
+		);
+	});
+	it.each([
+		"sh -c 'cd tools && node lint.mjs'",
+		'bash -c "cd tools && node lint.mjs"',
+		"pnpm --dir tools exec node lint.mjs",
+		"(cd tools && node lint.mjs)",
+	])("names the file in `%s`", async (script) => {
+		expect(await review(["tools/lint.mjs"], { "package.json": scriptsOf(script) }).result).toEqual(
+			checkScripts("tools/lint.mjs"),
+		);
+	});
+	it("takes a manifest outside the folders of the changed file", async () => {
+		const manifests = {
+			"package.json": scriptsOf("tsc -b"),
+			"apps/web/package.json": scriptsOf("cd ../../tools && node lint.mjs"),
+		};
+		expect(await review(["tools/lint.mjs"], manifests).result).toEqual(
+			checkScripts("tools/lint.mjs"),
+		);
+	});
+	it("does not take a glob over source files for a check script", async () => {
+		const manifests = {
+			"package.json": scriptsOf("eslint 'src/**/*.ts'", "node tools/{a,b}.mjs"),
+		};
+		const { result } = review(["src/cart.ts", "src/deep/cart.ts", "tools/a.mjs"], manifests);
+		expect(await result).toEqual({ edits: [] });
+	});
+	it.each([
+		"node $TOOLS/lint.mjs",
+		"node $NAME.mjs",
+		`node \${DIR}/lint.mjs`,
+		"node tools/l?nt.mjs",
+		"node tools/[l]int.mjs",
+		"node tools/*.mjs",
+	])("names nothing with `%s`, and does not make the review unverified", async (script) => {
+		expect(
+			await review(["tools/lint.mjs", "lint.mjs"], { "package.json": scriptsOf(script) }).result,
+		).toEqual({ edits: [] });
+	});
+	it("reads the tree once, and not at all when no file needs it", async () => {
+		const manifests = { "package.json": scriptsOf("node tools/lint.mjs") };
+		const some = review(["tools/lint.mjs", "src/a.ts", "src/b.ts"], manifests);
+		await some.result;
+		expect(some.list).toHaveBeenCalledTimes(1);
+		expect(some.read).toHaveBeenCalledTimes(1);
+		const none = review(["test/a.test.ts", ".github/workflows/ci.yml", "package.json"], manifests);
+		await none.result;
+		expect(none.list).not.toHaveBeenCalled();
+	});
+});
+
+describe("a base tree and its package.json files that cannot be read", () => {
+	const manifest = scriptsOf("node tools/lint.mjs");
+	const files: ChangedFile[] = [{ path: "tools/lint.mjs", status: "modified" }];
+
+	it("is unverified when the tree cannot be read", async () => {
+		expect(
+			await reviewOracles(
+				files,
+				async () => manifest,
+				async () => {
+					throw new Error("403");
+				},
+			),
+		).toEqual({ unverified: "the base's file tree could not be read" });
+	});
+	it("is unverified when the tree is cut short", async () => {
+		expect(
+			await reviewOracles(
+				files,
+				async () => manifest,
+				async () => ({ paths: ["package.json"], complete: false }),
+			),
+		).toEqual({ unverified: "the base's file tree is too large to be listed in full" });
+	});
+	it("is unverified when a package.json the tree lists cannot be read, and clean when it is gone", async () => {
+		expect(
+			await reviewOracles(
+				files,
+				async () => {
+					throw new Error("403");
+				},
+				async () => ({ paths: ["apps/web/package.json"], complete: true }),
+			),
+		).toEqual({ unverified: "the base's apps/web/package.json could not be read" });
+		expect(
+			await reviewOracles(
+				files,
+				async () => null,
+				async () => ({ paths: ["package.json"], complete: true }),
 			),
 		).toEqual({ edits: [] });
 	});
-});
-
-describe("the directory a script runs its file in", () => {
-	/** The review of a branch that modifies `paths`, when the base's root package.json has `script`. */
-	const review = (script: string, ...paths: string[]) =>
-		reviewOracles(
-			paths.map((path) => ({ path, status: "modified" })),
-			async (path) =>
-				path === "package.json" ? JSON.stringify({ scripts: { check: script } }) : null,
+	it("reads up to 40 package.json files and is unverified for more", async () => {
+		const many = (count: number) =>
+			Object.fromEntries(
+				Array.from({ length: count }, (_, index) => [
+					`packages/p${index}/package.json`,
+					index === 0 ? manifest : scriptsOf("tsc -b"),
+				]),
+			);
+		expect(await review(["tools/lint.mjs"], many(MANIFESTS_LIMIT)).result).toEqual(
+			checkScripts("tools/lint.mjs"),
 		);
-	const edit = (path: string) => ({
-		edits: [{ path, change: "modified", kind: "check script" }],
-	});
-	const unverified = expect.objectContaining({ unverified: expect.any(String) });
-
-	it("looks for the file where a cd has gone", async () => {
-		expect(await review("cd tools && node lint.mjs", "tools/lint.mjs")).toEqual(
-			edit("tools/lint.mjs"),
-		);
-		expect(await review("cd tools; node lint.mjs", "tools/lint.mjs")).toEqual(
-			edit("tools/lint.mjs"),
-		);
-		expect(await review('cd "tools/x" && node ../lint.mjs', "tools/lint.mjs")).toEqual(
-			edit("tools/lint.mjs"),
-		);
-		expect(await review("cd tools && cd .. && node lint.mjs", "lint.mjs")).toEqual(
-			edit("lint.mjs"),
-		);
-		expect(
-			await review("cd a && node x.mjs && cd ../b && node y.mjs", "b/y.mjs", "a/x.mjs"),
-		).toEqual({
-			edits: [
-				{ path: "a/x.mjs", change: "modified", kind: "check script" },
-				{ path: "b/y.mjs", change: "modified", kind: "check script" },
-			],
+		const over = review(["tools/lint.mjs"], many(MANIFESTS_LIMIT + 1));
+		expect(await over.result).toEqual({
+			unverified: "the base has 41 package.json files, and more than 40 are not read",
 		});
+		expect(over.read).not.toHaveBeenCalled();
 	});
-	it("does not take the package's own file for the one in the directory it went to", async () => {
-		expect(await review("cd tools && node lint.mjs", "lint.mjs")).toEqual({ edits: [] });
-	});
-	it("is unverified when the directory a script runs in cannot be told", async () => {
-		for (const script of [
-			'cd "$DIR" && node lint.mjs',
-			"cd ~/x && node lint.mjs",
-			"cd /opt/x && node lint.mjs",
-			"cd - && node lint.mjs",
-			"(cd tools && node lint.mjs)",
-			"cd tools | node lint.mjs",
-			"pnpm --dir tools exec node lint.mjs",
-			"npm --prefix tools exec -- node lint.mjs",
-			"env -C tools node lint.mjs",
-			"node $TOOLS/lint.mjs",
-			"node tools/*.mjs",
-			"node tools/{lint,fmt}.mjs",
-			"node /abs/lint.mjs",
-		]) {
-			expect(await review(script, "tools/lint.mjs"), script).toEqual(unverified);
-		}
-	});
-	it("leaves a file of another name when the place of a script's file cannot be told", async () => {
-		expect(await review('cd "$DIR" && node lint.mjs', "tools/other.mjs", "src/cart.ts")).toEqual({
-			edits: [],
-		});
-	});
-});
-
-describe("a base package.json that cannot be read", () => {
-	const files = [{ path: "tools/lint.mjs", status: "modified" }];
-	const manifest = JSON.stringify({ scripts: { lint: "node tools/lint.mjs" } });
-
-	it("is unverified, where an absent one names nothing", async () => {
+	it("is unverified for a file that no script names too, since that was not shown", async () => {
 		expect(
-			await reviewOracles(files, async () => {
-				throw new Error("403");
-			}),
-		).toEqual({ unverified: "the base's tools/package.json could not be read" });
-		expect(await reviewOracles(files, async () => null)).toEqual({ edits: [] });
-		expect(
-			await reviewOracles(files, async (path) => (path === "package.json" ? manifest : null)),
-		).toEqual({
-			edits: [{ path: "tools/lint.mjs", change: "modified", kind: "check script" }],
-		});
-	});
-	it("is unverified for a package.json in a directory above the file", async () => {
-		expect(
-			await reviewOracles(files, async (path) => {
-				if (path === "tools/package.json") throw new Error("403");
-				return null;
-			}),
-		).toEqual({ unverified: "the base's tools/package.json could not be read" });
+			await reviewOracles(
+				[{ path: "src/cart.ts", status: "modified" }],
+				async () => null,
+				async () => {
+					throw new Error("500");
+				},
+			),
+		).toEqual(unverified);
 	});
 	it("takes a package.json that cannot be read, at the base or the branch, as changed", async () => {
 		expect(
-			await reviewOracles([{ path: "package.json", status: "modified" }], async (_path, side) => {
-				if (side === "head") throw new Error("403");
-				return JSON.stringify({ scripts: { test: "vitest" } });
-			}),
+			await reviewOracles(
+				[{ path: "package.json", status: "modified" }],
+				async (_path, side) => {
+					if (side === "head") throw new Error("403");
+					return JSON.stringify({ scripts: { test: "vitest" } });
+				},
+				async () => ({ paths: [], complete: true }),
+			),
 		).toEqual({ edits: [{ path: "package.json", change: "modified", kind: "package script" }] });
 	});
 });
@@ -401,20 +545,69 @@ describe("the review of a branch on GitHub", () => {
 	const app = { repositoryToken: async () => "ghs_x" } as unknown as GitHubApp;
 	const port = () => gitHubPullRequests(app, repository);
 
+	const sha = (character: string) => character.repeat(40);
+	/**
+	 * A repository whose branch is at `head()` (read at each request), that differs from the
+	 * default branch by `files`, whose base commit has a tree that holds `tree` (a number for the
+	 * answer's status when it fails), and where `contents` answers a read by its path and ref.
+	 */
+	const branch = (
+		files: object[],
+		options: {
+			head?: () => string;
+			tree?: string[] | number;
+			truncated?: boolean;
+			contents?: (path: string, ref: string) => Response;
+		} = {},
+	) => {
+		const { head = () => sha("a"), tree = [], truncated = false, contents } = options;
+		return github((route) => {
+			if (route.includes("/git/ref/heads/")) return Response.json({ object: { sha: head() } });
+			if (route.includes("/compare/")) {
+				return Response.json({ merge_base_commit: { sha: sha("e") }, files });
+			}
+			if (route.includes("/git/commits/")) {
+				return Response.json({ tree: { sha: sha("f") }, parents: [] });
+			}
+			if (route.includes("/git/trees/")) {
+				return typeof tree === "number"
+					? Response.json({ message: "no" }, { status: tree })
+					: Response.json({
+							truncated,
+							tree: tree.map((path) => ({
+								path,
+								mode: "100644",
+								type: "blob",
+								sha: sha("1"),
+								size: 10,
+							})),
+						});
+			}
+			const read = /\/contents\/(.+)\?ref=(.+)$/.exec(route);
+			if (read !== null && contents !== undefined) {
+				return contents(decodeURIComponent(read[1] ?? ""), decodeURIComponent(read[2] ?? ""));
+			}
+			return Response.json({ message: "Not Found" }, { status: 404 });
+		});
+	};
+	const scripts = (...commands: string[]) =>
+		new Response(
+			JSON.stringify({ scripts: Object.fromEntries(commands.map((c, index) => [`s${index}`, c])) }),
+		);
+
 	it("is unverified when the comparison is at GitHub's limit of files", async () => {
 		const files = Array.from({ length: 300 }, (_, index) => ({
 			filename: `src/f${index}.ts`,
 			status: "modified",
 		}));
-		const routes = github(() =>
-			Response.json({ merge_base_commit: { sha: "e".repeat(40) }, files }),
-		);
+		const routes = branch(files);
 		expect(await port().review?.("gateweave/c-1")).toEqual({
 			unverified: "the branch changes more files than GitHub's comparison lists",
 		});
-		// One request: the files come with the first page, and the other pages hold commits.
+		// The files come with the first page of the comparison, and the other pages hold commits.
 		expect(routes).toEqual([
-			"GET /repos/acme/site/compare/main...gateweave%2Fc-1?per_page=1&page=1",
+			"GET /repos/acme/site/git/ref/heads/gateweave/c-1",
+			`GET /repos/acme/site/compare/main...${sha("a")}?per_page=1&page=1`,
 		]);
 	});
 	it("is unverified when GitHub cannot be asked", async () => {
@@ -425,24 +618,87 @@ describe("the review of a branch on GitHub", () => {
 		});
 		error.mockRestore();
 	});
-	it("reads a package.json at the merge base and at the branch", async () => {
-		const routes = github((route) =>
-			route.includes("/compare/")
-				? Response.json({
-						merge_base_commit: { sha: "e".repeat(40) },
-						files: [{ filename: "package.json", status: "modified" }],
-					})
-				: new Response(
-						JSON.stringify({
-							scripts: { test: route.includes("ref=gateweave") ? "true" : "vitest" },
-						}),
-					),
-		);
+	it("is unverified when the branch is not on GitHub", async () => {
+		github(() => Response.json({ message: "Not Found" }, { status: 404 }));
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			unverified: "the branch is not on GitHub",
+		});
+	});
+	it("reads a package.json at the merge base and at the commit the comparison saw", async () => {
+		const routes = branch([{ filename: "package.json", status: "modified" }], {
+			contents: (_path, ref) => scripts(ref === sha("e") ? "vitest" : "true"),
+		});
 		expect(await port().review?.("gateweave/c-1")).toEqual({
 			edits: [{ path: "package.json", change: "modified", kind: "package script" }],
 		});
-		expect(routes).toContain(`GET /repos/acme/site/contents/package.json?ref=${"e".repeat(40)}`);
-		expect(routes).toContain("GET /repos/acme/site/contents/package.json?ref=gateweave%2Fc-1");
+		expect(routes).toContain(`GET /repos/acme/site/contents/package.json?ref=${sha("e")}`);
+		expect(routes).toContain(`GET /repos/acme/site/contents/package.json?ref=${sha("a")}`);
+	});
+	it("compares and reads at one commit when the branch moves meanwhile", async () => {
+		// The branch is at `a` when it is looked up, and `b` at every look after.
+		const heads = [sha("a")];
+		const routes = branch([{ filename: "package.json", status: "modified" }], {
+			head: () => heads.shift() ?? sha("b"),
+			// The base and the commit the comparison saw have the same scripts; the branch's name, or
+			// the commit it moved to, would give others.
+			contents: (_path, ref) => scripts(ref === sha("e") || ref === sha("a") ? "vitest" : "true"),
+		});
+		expect(await port().review?.("gateweave/c-1")).toEqual({ edits: [] });
+		expect(routes.some((route) => route.includes(sha("b")))).toBe(false);
+		expect(routes).toContain(`GET /repos/acme/site/compare/main...${sha("a")}?per_page=1&page=1`);
+		expect(routes).toContain(`GET /repos/acme/site/contents/package.json?ref=${sha("a")}`);
+	});
+	it("reads the base's tree once, from the merge base, for its package.json files", async () => {
+		const routes = branch([{ filename: "tools/lint.mjs", status: "modified" }], {
+			tree: ["package.json", "src/cart.ts", "apps/web/package.json", "docs/package.json.md"],
+			contents: (path) =>
+				path === "apps/web/package.json"
+					? scripts("cd ../../tools && node lint.mjs")
+					: scripts("tsc"),
+		});
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			edits: [{ path: "tools/lint.mjs", change: "modified", kind: "check script" }],
+		});
+		expect(routes).toEqual([
+			"GET /repos/acme/site/git/ref/heads/gateweave/c-1",
+			`GET /repos/acme/site/compare/main...${sha("a")}?per_page=1&page=1`,
+			`GET /repos/acme/site/git/commits/${sha("e")}`,
+			`GET /repos/acme/site/git/trees/${sha("f")}?recursive=1`,
+			`GET /repos/acme/site/contents/package.json?ref=${sha("e")}`,
+			`GET /repos/acme/site/contents/apps/web/package.json?ref=${sha("e")}`,
+		]);
+	});
+	it("is unverified when the base's tree is denied or cut short", async () => {
+		const files = [{ filename: "src/cart.ts", status: "modified" }];
+		branch(files, { tree: 403 });
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			unverified: "the base's file tree could not be read",
+		});
+		branch(files, { tree: ["package.json"], truncated: true });
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			unverified: "the base's file tree is too large to be listed in full",
+		});
+	});
+	it("is unverified when a package.json of the base is denied, and clean when it is not there", async () => {
+		const files = [{ filename: "tools/lint.mjs", status: "modified" }];
+		branch(files, {
+			tree: ["package.json"],
+			contents: () => Response.json({ message: "no" }, { status: 403 }),
+		});
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			unverified: "the base's package.json could not be read",
+		});
+		branch(files, { tree: ["package.json"] });
+		expect(await port().review?.("gateweave/c-1")).toEqual({ edits: [] });
+	});
+	it("flags a file that `sh -c 'cd tools && node lint.mjs'` names, from the base's package.json", async () => {
+		branch([{ filename: "tools/lint.mjs", status: "modified" }], {
+			tree: ["package.json"],
+			contents: () => scripts("sh -c 'cd tools && node lint.mjs'"),
+		});
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			edits: [{ path: "tools/lint.mjs", change: "modified", kind: "check script" }],
+		});
 	});
 
 	const pull = (draft: boolean) => ({
@@ -463,39 +719,6 @@ describe("the review of a branch on GitHub", () => {
 				? Response.json([pull(draft)])
 				: Response.json(pull(draft));
 	const input = { branch: "gateweave/c-1", title: "Fix", body: "b" };
-
-	it("is unverified when the base's package.json is denied, and clean when it is not there", async () => {
-		const answer = (status: number) => (route: string) =>
-			route.includes("/compare/")
-				? Response.json({
-						merge_base_commit: { sha: "e".repeat(40) },
-						files: [{ filename: "tools/lint.mjs", status: "modified" }],
-					})
-				: Response.json({ message: "no" }, { status });
-		const error = vi.spyOn(console, "error").mockImplementation(() => {});
-		github(answer(403));
-		expect(await port().review?.("gateweave/c-1")).toEqual({
-			unverified: "the base's tools/package.json could not be read",
-		});
-		github(answer(404));
-		expect(await port().review?.("gateweave/c-1")).toEqual({ edits: [] });
-		error.mockRestore();
-	});
-	it("reads `cd tools && node lint.mjs` from the base's package.json", async () => {
-		github((route) =>
-			route.includes("/compare/")
-				? Response.json({
-						merge_base_commit: { sha: "e".repeat(40) },
-						files: [{ filename: "tools/lint.mjs", status: "modified" }],
-					})
-				: route.includes("contents/package.json")
-					? new Response(JSON.stringify({ scripts: { check: "cd tools && node lint.mjs" } }))
-					: Response.json({ message: "Not Found" }, { status: 404 }),
-		);
-		expect(await port().review?.("gateweave/c-1")).toEqual({
-			edits: [{ path: "tools/lint.mjs", change: "modified", kind: "check script" }],
-		});
-	});
 
 	it("makes a pull request that is open and ready a draft when it edits a check", async () => {
 		const routes = github(open(false));
