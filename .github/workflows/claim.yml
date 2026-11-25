@@ -1,0 +1,44 @@
+name: Claims
+
+# `/claim` and `/release` on issues labelled `together`, and a label and comment on a pull request
+# that mentions no issue its author holds (it is never closed). The rules live in
+# scripts/claim.mjs and are tested in scripts/claim.test.mjs.
+#
+# pull_request_target gives the job a token that can write on pull requests from forks. It never
+# checks out pull request code: the checkout below is the default branch, and the script reads the
+# pull request only through the API. That is what keeps this trigger safe.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+# One run per issue or pull request at a time, so two claims cannot both pass the limit.
+concurrency:
+  group: claim-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  claim:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (!github.event.issue.pull_request &&
+        (contains(github.event.comment.body, '/claim') ||
+         contains(github.event.comment.body, '/release')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Tag: v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/claim.mjs
+      - run: node scripts/claim.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
