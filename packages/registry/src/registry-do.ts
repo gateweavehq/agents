@@ -72,6 +72,7 @@ import {
 	type ProviderKeyInput,
 	type ProviderModel,
 	type ProviderRefusal,
+	priceOf,
 	projectInput,
 	projectPatch,
 	providerKeyInput,
@@ -1971,6 +1972,14 @@ export class RegistryDO extends DurableObject {
 			return refused(
 				`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
 				"budget-limit",
+			);
+		}
+		// An unpriced model costs null and would never count toward the limit, so it cannot run
+		// where a limit applies.
+		if (limit !== null && priceOf("workers-ai", agent.model, Date.now()) === null) {
+			return refused(
+				`${agent.model} has no prices here, so its cost cannot count toward this server's daily Workers AI limit and ${agent.name} cannot answer. Choose a model with prices in the agent's settings.`,
+				"provider",
 			);
 		}
 		return null;
