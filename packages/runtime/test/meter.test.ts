@@ -212,6 +212,7 @@ describe("meterModelRequest", () => {
 	function conversation(turn = true) {
 		const ended: { token: string; step: number; request: MeteredRequest }[] = [];
 		const meter: EngineMeter = {
+			engineRequestPause: async () => null,
 			engineRequestStarted: async (token) => (turn && token === "turn" ? 3 : null),
 			engineRequestEnded: async (token, step, request) => {
 				ended.push({ token, step, request });

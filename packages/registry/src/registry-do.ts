@@ -31,6 +31,7 @@ import {
 	type GitLabConnection,
 	type GitLabConnectionInput,
 	gitlabConnectionInput,
+	registryId as id,
 	isKeyedProvider,
 	KEYED_PROVIDERS,
 	type KeyedProvider,
@@ -343,6 +344,7 @@ import {
 	sealedKeyOf,
 } from "./providers";
 import {
+	agentPause,
 	getAgent,
 	getAsset,
 	getAssetVersion,
@@ -355,6 +357,8 @@ import {
 	listRepositories,
 	listRunnableAgents,
 	listSetups,
+	PAUSED_AGENT,
+	pauseAgent,
 	readOverview,
 } from "./queries";
 import { dueScans, finishScan, nextScanAt, requestScans, retryScan } from "./queue";
@@ -499,7 +503,6 @@ import {
 	wikiUsage,
 } from "./wiki";
 
-const id = z.string().min(1).max(64);
 const ids = z.array(id).max(1000);
 // Keys exist only for the providers that have them; Workers AI has none to save, check or remove.
 const keyedProvider = z.enum(KEYED_PROVIDERS);
@@ -642,6 +645,23 @@ export class RegistryDO extends DurableObject {
 	/** The chat list's agents in one read: the live Gateweave agents with their provider and model. */
 	listRunnableAgents(): RunnableAgent[] {
 		return listRunnableAgents(this.#db);
+	}
+
+	pauseAgent(agentId: string, by: string) {
+		return this.#write(() => pauseAgent(this.#db, id.parse(agentId), id.parse(by)));
+	}
+
+	resumeAgent(agentId: string): boolean {
+		const agent = id.parse(agentId);
+		return this.#write(() => {
+			if (!agentPause(this.#db, agent)) return false;
+			this.#db.delete(schema.agentPauses).where(eq(schema.agentPauses.agentId, agent)).run();
+			return true;
+		});
+	}
+
+	agentPause(agentId: string) {
+		return agentPause(this.#db, id.parse(agentId));
 	}
 
 	getAgent(agentId: string): AgentDetail | null {
@@ -1584,6 +1604,7 @@ export class RegistryDO extends DurableObject {
 		// The limits decide again as the run begins: other turns may have begun while this one
 		// awaited.
 		return this.#write(() => {
+			if (agentPause(this.#db, agent.agentId)) return refused(PAUSED_AGENT);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
 			if (over) return refused(over.message);
 			const replayOf =
@@ -1660,6 +1681,7 @@ export class RegistryDO extends DurableObject {
 		const result = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry or another delivery about this issue may have taken the turn while we awaited.
 			if (!current()) return gone;
+			if (agentPause(this.#db, plan.agent.agentId)) return decline(refused(PAUSED_AGENT));
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
 			if (over) return decline(over);
 			const now = Date.now();
@@ -1742,6 +1764,10 @@ export class RegistryDO extends DurableObject {
 			if (!outsideTaskOf(this.#db, conversation)) {
 				return refused("This task has had its run already");
 			}
+			if (agentPause(this.#db, plan.agent.agentId)) {
+				settleOutsideTask(this.#db, conversation, { error: PAUSED_AGENT });
+				return refused(PAUSED_AGENT);
+			}
 			// And other turns may have taken the sandboxes, or the day's minutes.
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
 			if (over) {
@@ -1777,6 +1803,7 @@ export class RegistryDO extends DurableObject {
 				: teamTurnPlan(this.#db, parties.teamId);
 		if ("refused" in plan) return refused(plan.refused);
 		if (!plan.agent) return refused("This agent was removed, so the conversation cannot go on");
+		if (agentPause(this.#db, plan.agent.agentId)) return refused(PAUSED_AGENT);
 		return { agent: plan.agent, position: plan.position };
 	}
 

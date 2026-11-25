@@ -44,6 +44,7 @@ export const meteredRequest = z.object({
 
 /** Where the sandbox's requests for the model are recorded: the conversation of the turn. */
 export interface EngineMeter {
+	engineRequestPause(token: string): Promise<string | null>;
 	/** A request went out. The step of its span, or null when no such turn runs. */
 	engineRequestStarted(token: string): Promise<number | null>;
 	/** The request's answer ended, or it failed. */

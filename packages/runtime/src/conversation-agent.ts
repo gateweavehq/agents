@@ -123,6 +123,8 @@ import { createOutbox, queueExport, sendDue } from "./telemetry-export";
 import { connectTools, type OAuthProviders } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
+const PAUSE_STOP = "The agent was paused, so the run stopped before its next model request.";
+
 interface RuntimeEnv extends GatewaySettings, WorkersAiSettings, SandboxSettings {
 	TARGET_RULE?: string;
 	REGISTRY: DurableObjectNamespace<RegistryDO>;
@@ -269,6 +271,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 * with the steps of those still under way.
 	 */
 	#engineTurnState: {
+		agentId: string;
+		paused: boolean;
 		token: string;
 		tools: ToolSet | null;
 		signal: AbortSignal;
@@ -728,6 +732,15 @@ ${runPageNote(runs, turn.runId)}`
 		return serveEngineTools(turn.tools, request, turn.signal);
 	}
 
+	async engineRequestPause(token: string): Promise<string | null> {
+		const turn = this.#engineTurnFor(token);
+		if (!turn) return null;
+		if (!turn.paused && (await this.#parties().registry.agentPause(turn.agentId))) {
+			turn.paused = true;
+		}
+		return turn.paused ? PAUSE_STOP : null;
+	}
+
 	/**
 	 * A request of the engine's for the model left the sandbox (`SandboxOutbound`, `./meter.ts`):
 	 * its span starts. Returns its step, or null without the turn's token or once the turn ended.
@@ -926,6 +939,7 @@ ${runPageNote(runs, turn.runId)}`
 						.join("\n\n");
 					const maxSteps = sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS;
 					let reachedStepLimit = false;
+					let paused = false;
 					const result = streamText({
 						model: this.modelFor(agent, key, {
 							workspace: workspaceId,
@@ -943,7 +957,16 @@ ${runPageNote(runs, turn.runId)}`
 							ignoreIncompleteToolCalls: true,
 						}),
 						tools,
-						stopWhen: ({ steps }) => {
+						stopWhen: async ({ steps }) => {
+							try {
+								paused = Boolean(await registry.agentPause(agent.agentId));
+							} catch (error) {
+								console.error(
+									"Could not check whether the agent was paused",
+									failureForLogs(error),
+								);
+							}
+							if (paused) return true;
 							reachedStepLimit = steps.length >= maxSteps;
 							return reachedStepLimit;
 						},
@@ -952,12 +975,17 @@ ${runPageNote(runs, turn.runId)}`
 						onStepEnd: (step) => run.stepEnded(step),
 						onStepError: ({ stepNumber, error }) =>
 							run.stepFailed(stepNumber, describeFailure(agent, error)),
-						onEnd: ({ finishReason }) =>
-							finishReason === "error"
-								? end("failed", `${agent.name} could not finish its answer.`)
-								: reachedStepLimit
-									? end("step-limit", `The run reached its limit of ${maxSteps} model requests.`)
-									: end("succeeded"),
+						onEnd: ({ finishReason }) => {
+							if (paused) return end("stopped", PAUSE_STOP);
+							if (finishReason === "error")
+								return end("failed", `${agent.name} could not finish its answer.`);
+							if (reachedStepLimit)
+								return end(
+									"step-limit",
+									`The run reached its limit of ${maxSteps} model requests.`,
+								);
+							return end("succeeded");
+						},
 						onAbort: () => end("stopped"),
 						onError: ({ error }) => end("failed", describeFailure(agent, error)),
 					});
@@ -1123,13 +1151,16 @@ ${runPageNote(runs, turn.runId)}`
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
 				const requests = new Set<number>();
-				this.#engineTurnState = {
+				const state = {
+					agentId: agent.agentId,
+					paused: false,
 					token,
 					tools: offered ? tools : null,
 					signal: calls.signal,
 					run,
 					requests,
 				};
+				this.#engineTurnState = state;
 				const turn = engineTurn(engine, writer, run, agent);
 				const stop = () => {
 					calls.abort();
@@ -1182,7 +1213,10 @@ ${runPageNote(runs, turn.runId)}`
 					await toolbox.close();
 				}
 				const ended = turn.end();
-				if (signal?.aborted) {
+				if (state.paused) {
+					writer.write({ type: "error", errorText: PAUSE_STOP });
+					await end("stopped", PAUSE_STOP);
+				} else if (signal?.aborted) {
 					await end("stopped");
 				} else {
 					const outcome = await settle(ended, ENGINE_NAMES[engine], sandbox);

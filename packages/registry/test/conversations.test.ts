@@ -896,3 +896,28 @@ describe("turns with a repository", () => {
 		});
 	});
 });
+
+it("refuses a paused agent before resolving its provider, and resumes its turns", async () => {
+	const stub = registry();
+	const { id } = await withAgent(stub);
+	const conversation = (await stub.startConversation(id, ADA))?.id ?? "";
+	expect(await stub.resumeAgent(id)).toBe(false);
+	const first = await stub.pauseAgent(id, ADA);
+	expect(first).toMatchObject({ by: ADA, at: expect.any(Number), changed: true });
+	expect(await stub.pauseAgent(id, GRACE)).toEqual({ ...first, changed: false });
+	expect((await stub.getAgent(id))?.agent.paused).toEqual({ by: ADA, at: first?.at });
+	expect(await stub.beginTurn(conversation, "Hello")).toEqual({
+		status: "refused",
+		message: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+	});
+	expect(await stub.listRuns()).toEqual([]);
+	expect(await stub.resumeAgent(id)).toBe(true);
+	await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, ADA);
+	expect(await stub.beginTurn(conversation, "Again")).toHaveProperty("runId");
+	await stub.pauseAgent(id, GRACE);
+	await stub.removeAgent(id);
+	expect(await stub.agentPause(id)).toBeNull();
+	expect(await stub.pauseAgent(id, ADA)).toBeNull();
+	expect(await stub.resumeAgent(id)).toBe(false);
+	expect(await stub.pauseAgent("missing", ADA)).toBeNull();
+});

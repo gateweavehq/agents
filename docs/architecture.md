@@ -1634,6 +1634,13 @@ The disclosure and trailer cannot be turned off.
 
 ## Chat
 
+Workspace owners and admins can pause an agent with their session cookie. Resuming it requires
+a fresh Better Auth session. The registry refuses new chat, trigger and outside-task turns for a
+paused agent, including turns answered by a team lead. A refused team call records the reason in
+the caller's edge span. A running Gateweave loop checks the pause between model requests. For a
+sandbox CLI, the Worker checks before forwarding each model request and records a refusal in the
+trace. In either case the run stops with the pause reason.
+
 Members talk to agents run by Gateweave on the Chat page. Each conversation is a Durable Object
 of its own, `ConversationAgent` (`packages/runtime`), built on the Agents SDK's `AIChatAgent`: it
 keeps the messages in its SQLite, streams the reply over a WebSocket, and picks a stream back up

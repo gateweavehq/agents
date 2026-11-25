@@ -403,6 +403,7 @@ export class FakeSandbox
 			.CONVERSATIONS;
 		const stub = conversation.getByName(job.access.meter.conversation) as unknown as EngineMeter;
 		const meter: EngineMeter = {
+			engineRequestPause: (token) => stub.engineRequestPause(token),
 			engineRequestStarted: (token) => stub.engineRequestStarted(token),
 			engineRequestEnded: async (token, step, request) => {
 				if (lateMs) await new Promise((resolve) => setTimeout(resolve, lateMs));

@@ -413,7 +413,8 @@ export type SetupImportInput = z.input<typeof setupImportInput>;
 export const MAX_TEAM_MEMBERS = 50;
 export const MAX_TEAM_EDGES = 200;
 
-const memberId = z.string().min(1).max(64);
+export const registryId = z.string().min(1).max(64);
+const memberId = registryId;
 
 /** A team's name and description. */
 export const teamInput = projectInput;

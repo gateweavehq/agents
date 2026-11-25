@@ -43,6 +43,8 @@ export const AUDIT_ACTIONS = [
 	// Agents, teams and setups, which act in repositories and on other services.
 	"agent.created",
 	"agent.updated",
+	"agent.paused",
+	"agent.resumed",
 	"agent.removed",
 	"team.created",
 	"team.updated",

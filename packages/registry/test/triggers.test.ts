@@ -881,3 +881,31 @@ describe("scheduled triggers", () => {
 		expect(new Date(again?.nextRunAt ?? 0).getUTCDay()).toBe(5);
 	});
 });
+
+it("settles a paused agent's delivery and runs a new delivery after resume", async () => {
+	const stub = registry();
+	const agentId = await withAgent(stub);
+	const { trigger, secret } = await create(stub, {
+		name: "Issues",
+		prompt: "Review",
+		target: { kind: "agent", agentId },
+	});
+	const receipt = await deliver(stub, trigger.id, secret);
+	if (receipt.status !== "start") throw new Error(receipt.status);
+	await stub.pauseAgent(agentId, ADA);
+	expect(
+		await stub.beginTriggerTurn(receipt.conversationId, receipt.text, receipt.attemptId),
+	).toEqual({
+		status: "refused",
+		message: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+	});
+	expect((await stub.listTriggers())[0]?.deliveries).toMatchObject([
+		{
+			runId: null,
+			error: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+		},
+	]);
+	await stub.resumeAgent(agentId);
+	await stub.saveProviderKey({ provider: "anthropic", key: KEY }, ADA);
+	expect((await run(stub, trigger.id, secret)).turn).toHaveProperty("runId");
+});

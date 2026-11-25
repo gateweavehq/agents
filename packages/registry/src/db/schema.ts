@@ -152,6 +152,14 @@ export const agents = sqliteTable(
 	],
 );
 
+export const agentPauses = sqliteTable("agent_pauses", {
+	agentId: text("agent_id")
+		.primaryKey()
+		.references(() => agents.id, { onDelete: "cascade" }),
+	by: text("paused_by").notNull(),
+	at: integer("paused_at").notNull(),
+});
+
 export const assets = sqliteTable(
 	"assets",
 	{

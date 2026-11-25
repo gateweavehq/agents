@@ -28,7 +28,15 @@ import { Notice } from "#/components/workspace/notice";
 import { availableProviders } from "#/lib/available-providers";
 import { startChat } from "#/lib/chat";
 import { getProviderKeys } from "#/lib/providers";
-import { getAgent, getLibrary, moveAgentPin, removeAgent, updateAgent } from "#/lib/registry";
+import {
+	getAgent,
+	getLibrary,
+	moveAgentPin,
+	pauseAgent,
+	removeAgent,
+	resumeAgent,
+	updateAgent,
+} from "#/lib/registry";
 import { useDocumentTitle } from "#/lib/title";
 import { getTriggers } from "#/lib/triggers";
 
@@ -606,12 +614,31 @@ function AgentActions({ definition }: { definition: AgentDefinition }) {
 	const navigate = useNavigate();
 	const data = Route.useLoaderData();
 	const [open, setOpen] = useState<"edit" | "remove" | null>(null);
+	const [changingPause, setChangingPause] = useState(false);
 	if (!data) return null;
 	const { agent } = data;
 	const close = () => setOpen(null);
 
 	return (
 		<div className="flex shrink-0 flex-wrap gap-2">
+			<Button
+				variant="ghost"
+				size="sm"
+				disabled={changingPause}
+				onClick={async () => {
+					setChangingPause(true);
+					try {
+						await (agent.paused ? resumeAgent : pauseAgent)({ data: { slug, agentId: agent.id } });
+						await router.invalidate();
+					} catch (error) {
+						toast.error(error instanceof Error ? error.message : "Something went wrong");
+					} finally {
+						setChangingPause(false);
+					}
+				}}
+			>
+				{agent.paused ? "Resume" : "Pause"}
+			</Button>
 			<Button variant="ghost" size="sm" onClick={() => setOpen("edit")}>
 				<Pencil />
 				Edit

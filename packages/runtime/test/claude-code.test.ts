@@ -12,6 +12,7 @@ import {
 } from "../src/claude-code";
 import { ENGINE_TOOLS_URL, toolsRequest } from "../src/engine-tools";
 import { linesOf } from "../src/engines";
+import { sendModelRequest } from "../src/model-requests";
 import { anthropicRequest } from "../src/models";
 import { decideOutbound } from "../src/outbound";
 import { FakeMcpServer } from "./fake-mcp";
@@ -909,4 +910,44 @@ describe("Claude Code's output", () => {
 		for await (const line of linesOf(stream)) lines.push(line);
 		expect(lines).toEqual(['{"a":1}', '{"b":2}', '{"c":3}']);
 	});
+});
+
+it("records a paused sandbox's next model request and ends its run as stopped", async () => {
+	const { registry, stub, machine, agentId } = await conversation();
+	await machine.scriptEngine({ lines: [INIT], untilStopped: true });
+	const socket = await connect(stub);
+	const turn = ask(socket, "Review");
+	await vi.waitFor(async () => expect((await machine.seen()).engine).toHaveLength(1));
+	const [job] = (await machine.seen()).engine;
+	if (!job) throw new Error("Missing engine job");
+	await registry.pauseAgent(agentId, "admin");
+	const waits: Promise<unknown>[] = [];
+	const reason = "The agent was paused, so the run stopped before its next model request.";
+	try {
+		const request = new Request("https://api.anthropic.com/v1/messages", {
+			method: "POST",
+			body: JSON.stringify({
+				model: job.model,
+				max_tokens: 128,
+				messages: [{ role: "user", content: "Review" }],
+			}),
+		});
+		const response = await sendModelRequest(request, "anthropic", job, {
+			settings: {},
+			meter: stub,
+			waitUntil: (promise) => waits.push(promise),
+		});
+		expect(response.status).toBe(403);
+		expect((await response.text()).trim()).toBe(reason);
+		await Promise.all(waits);
+	} finally {
+		await machine.stopEngine();
+		await turn;
+		socket.close();
+	}
+	const [run] = await registry.listRuns();
+	expect(run).toMatchObject({ status: "stopped", error: reason });
+	expect(await stub.runTrace(run?.id ?? "")).toContainEqual(
+		expect.objectContaining({ kind: "model", status: "error", error: reason }),
+	);
 });
