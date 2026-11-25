@@ -37,6 +37,8 @@ const REMOTE_KEYS = [
 	"bearer_token_env_var",
 ];
 const COMMAND_KEYS = ["type", "command", "args", "env", "env_vars"];
+// `httpUrl` is Gemini's spelling; Codex does not read it, so in TOML it would only be copied.
+const REMOTE_TOML_KEYS = REMOTE_KEYS.filter((key) => key !== "httpUrl");
 
 /** Why a setup's MCP servers break the ready-made policy; empty when they follow it. */
 export function readyMadeMcpProblems(
@@ -50,9 +52,11 @@ export function readyMadeMcpProblems(
 		const read = readMcpConnection(asset.files);
 		if (!read.ok) continue;
 		const { connection } = read;
+		const [file] = asset.files;
+		const remoteKeys = file?.path.endsWith(".toml") ? REMOTE_TOML_KEYS : REMOTE_KEYS;
 		const stray = strayKey(
 			asset.files,
-			connection.transport === "stdio" ? COMMAND_KEYS : REMOTE_KEYS,
+			connection.transport === "stdio" ? COMMAND_KEYS : remoteKeys,
 		);
 		if (stray !== null) {
 			problems.push(`${asset.name}: the field "${stray}" is not allowlisted`);

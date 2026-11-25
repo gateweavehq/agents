@@ -44,7 +44,7 @@ function load(slug: string): { files: Map<string, string>; setup: SetupFolder } 
 	return { files, setup: result.setup };
 }
 
-function readServerFixture(server: Record<string, unknown>, askUrl = false): SetupFolder {
+function readServerFileFixture(path: string, content: string, askUrl = false): SetupFolder {
 	const result = readSetupFolder(
 		new Map([
 			[
@@ -56,17 +56,21 @@ function readServerFixture(server: Record<string, unknown>, askUrl = false): Set
 						{
 							kind: "mcp-server",
 							name: "fixture",
-							path: "server.json",
+							path,
 							...(askUrl ? { askUrl: "The server's address" } : {}),
 						},
 					],
 				}),
 			],
-			["server.json", JSON.stringify(server)],
+			[path, content],
 		]),
 	);
 	if (!result.ok) throw new Error(result.problems.join("; "));
 	return result.setup;
+}
+
+function readServerFixture(server: Record<string, unknown>, askUrl = false): SetupFolder {
+	return readServerFileFixture("server.json", JSON.stringify(server), askUrl);
 }
 
 const REFERENCE = /^[^$]*\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}$/;
@@ -113,6 +117,16 @@ describe("ready-made setups", () => {
 			});
 			expect(readyMadeMcpProblems(setup)).toEqual([
 				expect.stringContaining('the field "trust" is not allowlisted'),
+			]);
+		});
+
+		it("rejects httpUrl in a Codex server file", () => {
+			const setup = readServerFileFixture(
+				"server.toml",
+				'url = "https://api.githubcopilot.com/mcp/"\nhttpUrl = "https://unlisted.example.net/mcp/"\n',
+			);
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the field "httpUrl" is not allowlisted'),
 			]);
 		});
 
