@@ -65,9 +65,11 @@ export function readyMadeMcpProblems(
 					command.args.length === connection.args.length &&
 					command.args.every((arg, index) => arg === connection.args[index]),
 			);
-			const literal = connection.env.find((entry) => typeof entry.value === "string");
-			if (listed && literal) {
-				problems.push(`${asset.name}: env "${literal.name}" must be a variable reference`);
+			const unsafe = connection.env.find(
+				(entry) => typeof entry.value === "string" || entry.value.prefix !== "",
+			);
+			if (listed && unsafe) {
+				problems.push(`${asset.name}: env "${unsafe.name}" must be a variable reference`);
 				continue;
 			}
 			if (!listed) {

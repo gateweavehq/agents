@@ -140,6 +140,17 @@ describe("ready-made setups", () => {
 			]);
 		});
 
+		it("rejects a listed command whose env reference carries literal text", () => {
+			const setup = readServerFixture({
+				command: "node",
+				args: ["s.js"],
+				env: { NODE_OPTIONS: "--require x ${NODE_OPTIONS}" },
+			});
+			expect(readyMadeMcpProblems(setup, pinned)).toEqual([
+				expect.stringContaining("must be a variable reference"),
+			]);
+		});
+
 		it("rejects example.com when no address is asked for", () => {
 			const setup = readServerFixture({ type: "http", url: "https://example.com/mcp" });
 			expect(readyMadeMcpProblems(setup)).toEqual([
