@@ -232,9 +232,9 @@ describe("a model request from the sandbox", () => {
 		expect(await recorded()).toMatchObject([{ error: null, model: "claude-sonnet-5-5" }]);
 	});
 
-	it("forwards a valid request when the pause lookup fails", async () => {
+	it("refuses a valid request without forwarding it when the pause lookup fails", async () => {
 		const requests = fakeModel(() => anthropicStream("Answer"));
-		const { context, recorded } = meterOf();
+		const { context } = meterOf();
 		context.meter.engineRequestPause = async () => {
 			throw new Error("Registry unavailable");
 		};
@@ -244,10 +244,9 @@ describe("a model request from the sandbox", () => {
 			engine("claude-code", "anthropic", "claude-sonnet-5-5"),
 			context,
 		);
-		expect(response.status).toBe(200);
-		await response.text();
-		expect(requests).toHaveLength(1);
-		expect(await recorded()).toMatchObject([{ error: null }]);
+		expect(response.status).toBe(503);
+		expect(await response.text()).toContain("pause could not be checked");
+		expect(requests).toHaveLength(0);
 	});
 
 	it("counts tokens unmetered, as before", async () => {

@@ -916,7 +916,9 @@ it("refuses a paused agent before resolving its provider, and resumes its turns"
 	expect(await stub.beginTurn(conversation, "Again")).toHaveProperty("runId");
 	await stub.pauseAgent(id, GRACE);
 	await stub.removeAgent(id);
-	expect(await stub.agentPause(id)).toBeNull();
+	// A run under way reads the pause by id, so removing the agent does not hide it.
+	expect(await stub.agentPause(id)).toMatchObject({ by: GRACE });
+	expect(await stub.getAgent(id)).toBeNull();
 	expect(await stub.pauseAgent(id, ADA)).toBeNull();
 	expect(await stub.resumeAgent(id)).toBe(false);
 	expect(await stub.pauseAgent("missing", ADA)).toBeNull();

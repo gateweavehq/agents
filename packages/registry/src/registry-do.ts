@@ -345,6 +345,7 @@ import {
 } from "./providers";
 import {
 	agentPause,
+	agentPauseById,
 	getAgent,
 	getAsset,
 	getAssetVersion,
@@ -660,8 +661,9 @@ export class RegistryDO extends DurableObject {
 		});
 	}
 
+	/** The runtime's read: by id, so a removed agent's run under way still sees its pause. */
 	agentPause(agentId: string) {
-		return agentPause(this.#db, id.parse(agentId));
+		return agentPauseById(this.#db, id.parse(agentId));
 	}
 
 	getAgent(agentId: string): AgentDetail | null {

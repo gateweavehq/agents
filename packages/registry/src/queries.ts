@@ -265,6 +265,20 @@ export function listRunnableAgents(db: Db): RunnableAgent[] {
 export const PAUSED_AGENT =
 	"This agent is paused, so it takes no new turns. An owner or admin can resume it.";
 
+/**
+ * An agent's pause by its id alone. A run under way reads this one: an agent paused during a tool
+ * call and then removed must still read as paused.
+ */
+export function agentPauseById(db: Db, id: string) {
+	return (
+		db
+			.select({ by: agentPauses.by, at: agentPauses.at })
+			.from(agentPauses)
+			.where(eq(agentPauses.agentId, id))
+			.get() ?? null
+	);
+}
+
 export function agentPause(db: Db, id: string) {
 	return (
 		db

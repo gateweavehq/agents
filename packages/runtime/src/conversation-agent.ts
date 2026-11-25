@@ -939,7 +939,19 @@ ${runPageNote(runs, turn.runId)}`
 						.join("\n\n");
 					const maxSteps = sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS;
 					let reachedStepLimit = false;
-					let paused = false;
+					// The turn was planned unpaused, but a pause can land while its servers connect:
+					// read it once more before the first request, which `stopWhen` never sees.
+					const pause = { stopped: false };
+					try {
+						pause.stopped = Boolean(await registry.agentPause(agent.agentId));
+					} catch (error) {
+						console.error("Could not check whether the agent was paused", failureForLogs(error));
+					}
+					if (pause.stopped) {
+						writer.write({ type: "error", errorText: PAUSE_STOP });
+						await end("stopped", PAUSE_STOP);
+						return;
+					}
 					const result = streamText({
 						model: this.modelFor(agent, key, {
 							workspace: workspaceId,
@@ -959,14 +971,14 @@ ${runPageNote(runs, turn.runId)}`
 						tools,
 						stopWhen: async ({ steps }) => {
 							try {
-								paused = Boolean(await registry.agentPause(agent.agentId));
+								pause.stopped = Boolean(await registry.agentPause(agent.agentId));
 							} catch (error) {
 								console.error(
 									"Could not check whether the agent was paused",
 									failureForLogs(error),
 								);
 							}
-							if (paused) return true;
+							if (pause.stopped) return true;
 							reachedStepLimit = steps.length >= maxSteps;
 							return reachedStepLimit;
 						},
@@ -976,7 +988,7 @@ ${runPageNote(runs, turn.runId)}`
 						onStepError: ({ stepNumber, error }) =>
 							run.stepFailed(stepNumber, describeFailure(agent, error)),
 						onEnd: ({ finishReason }) => {
-							if (paused) return end("stopped", PAUSE_STOP);
+							if (pause.stopped) return end("stopped", PAUSE_STOP);
 							if (finishReason === "error")
 								return end("failed", `${agent.name} could not finish its answer.`);
 							if (reachedStepLimit)
@@ -1006,6 +1018,7 @@ ${runPageNote(runs, turn.runId)}`
 						},
 					});
 					for await (const chunk of ui) writer.write(chunk);
+					if (pause.stopped) writer.write({ type: "error", errorText: PAUSE_STOP });
 					// The capture itself waits for the first tool call, so a turn that never
 					// touched the sandbox has nothing to sum, and asking would start a container.
 					// A stopped turn sums nothing either: its git reads would hold up the finish.
