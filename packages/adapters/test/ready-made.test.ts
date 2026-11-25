@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
 	detect,
 	readSetupFolder,
+	readyMadeMcpProblems,
 	type SetupFolder,
 	wantsFile,
 	withAddresses,
@@ -43,12 +44,157 @@ function load(slug: string): { files: Map<string, string>; setup: SetupFolder } 
 	return { files, setup: result.setup };
 }
 
+function readServerFileFixture(path: string, content: string, askUrl = false): SetupFolder {
+	const result = readSetupFolder(
+		new Map([
+			[
+				"setup.json",
+				JSON.stringify({
+					name: "Fixture",
+					runtimes: ["claude-code"],
+					assets: [
+						{
+							kind: "mcp-server",
+							name: "fixture",
+							path,
+							...(askUrl ? { askUrl: "The server's address" } : {}),
+						},
+					],
+				}),
+			],
+			[path, content],
+		]),
+	);
+	if (!result.ok) throw new Error(result.problems.join("; "));
+	return result.setup;
+}
+
+function readServerFixture(server: Record<string, unknown>, askUrl = false): SetupFolder {
+	return readServerFileFixture("server.json", JSON.stringify(server), askUrl);
+}
+
 const REFERENCE = /^[^$]*\$\{(?:env:)?[A-Za-z_][A-Za-z0-9_]*\}$/;
 const CREDENTIAL = /gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-[A-Za-z0-9_-]{20,}/;
 
 describe("ready-made setups", () => {
 	it("has at least one folder", () => {
 		expect(slugs.length).toBeGreaterThan(0);
+	});
+
+	describe("MCP allowlist", () => {
+		it("accepts the GitHub host", () => {
+			const setup = readServerFixture({ type: "http", url: "https://api.githubcopilot.com/mcp/" });
+			expect(readyMadeMcpProblems(setup)).toEqual([]);
+		});
+
+		it("accepts example.com for a server whose address is asked for", () => {
+			const setup = readServerFixture({ type: "http", url: "https://example.com/mcp" }, true);
+			expect(readyMadeMcpProblems(setup)).toEqual([]);
+		});
+
+		it("rejects a fixed server over plain http", () => {
+			const setup = readServerFixture({ type: "http", url: "http://api.githubcopilot.com/mcp/" });
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining("the server address must use https"),
+			]);
+		});
+
+		it("rejects a remote server with an executable helper", () => {
+			const setup = readServerFixture({
+				type: "http",
+				url: "https://api.githubcopilot.com/mcp/",
+				headersHelper: "echo token",
+			});
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the field "headersHelper" is not allowlisted'),
+			]);
+		});
+
+		it("rejects Gemini trust on a listed host", () => {
+			const setup = readServerFixture({
+				httpUrl: "https://api.githubcopilot.com/mcp/",
+				trust: true,
+			});
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the field "trust" is not allowlisted'),
+			]);
+		});
+
+		it("rejects httpUrl in a Codex server file", () => {
+			const setup = readServerFileFixture(
+				"server.toml",
+				'url = "https://api.githubcopilot.com/mcp/"\nhttpUrl = "https://unlisted.example.net/mcp/"\n',
+			);
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the field "httpUrl" is not allowlisted'),
+			]);
+		});
+
+		const pinned = {
+			hosts: [],
+			askUrlExampleHosts: [],
+			commands: [{ command: "node", args: ["s.js"] }],
+		};
+
+		it("rejects a listed command with a cwd", () => {
+			const setup = readServerFixture({ command: "node", args: ["s.js"], cwd: "/tmp" });
+			expect(readyMadeMcpProblems(setup, pinned)).toEqual([
+				expect.stringContaining('the field "cwd" is not allowlisted'),
+			]);
+		});
+
+		it("rejects a listed command with a literal env value", () => {
+			const setup = readServerFixture({
+				command: "node",
+				args: ["s.js"],
+				env: { NODE_OPTIONS: "--require x" },
+			});
+			expect(readyMadeMcpProblems(setup, pinned)).toEqual([
+				expect.stringContaining("must be a variable reference"),
+			]);
+		});
+
+		it("rejects a listed command whose env reference carries literal text", () => {
+			const setup = readServerFixture({
+				command: "node",
+				args: ["s.js"],
+				env: { NODE_OPTIONS: "--require x ${NODE_OPTIONS}" },
+			});
+			expect(readyMadeMcpProblems(setup, pinned)).toEqual([
+				expect.stringContaining("must be a variable reference"),
+			]);
+		});
+
+		it("rejects example.com when no address is asked for", () => {
+			const setup = readServerFixture({ type: "http", url: "https://example.com/mcp" });
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the host "example.com" is not allowlisted'),
+			]);
+		});
+
+		it("rejects a fixture whose host is not on the allowlist", () => {
+			const setup = readServerFixture({ type: "http", url: "https://unlisted.example.net/mcp" });
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the host "unlisted.example.net" is not allowlisted'),
+			]);
+		});
+
+		it("rejects a command server that is not listed", () => {
+			const setup = readServerFixture({ command: "node", args: ["server.js"] });
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('the command server "node server.js" is not allowlisted'),
+			]);
+		});
+
+		it("accepts a command server pinned on the allowlist", () => {
+			const setup = readServerFixture({ command: "node", args: ["server.js"] });
+			const problems = readyMadeMcpProblems(setup, {
+				hosts: [],
+				askUrlExampleHosts: [],
+				commands: [{ command: "node", args: ["server.js"] }],
+			});
+			expect(problems).toEqual([]);
+		});
 	});
 
 	for (const slug of slugs) {
@@ -72,6 +218,10 @@ describe("ready-made setups", () => {
 			it("writes for its runtimes without problems", () => {
 				expect(written.problems).toEqual([]);
 				expect(written.files.length).toBeGreaterThan(0);
+			});
+
+			it("uses only allowlisted MCP servers", () => {
+				expect(readyMadeMcpProblems(setup)).toEqual([]);
 			});
 
 			it("writes only files the scanner downloads", () => {
