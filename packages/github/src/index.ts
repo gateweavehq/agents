@@ -41,11 +41,15 @@ export { repositoryPathProblem, WORKFLOWS_FOLDER } from "./paths";
 export { verifyWebhook, type WebhookPayload, webhookPayload } from "./webhooks";
 export {
 	branchCommit,
+	type ChangedFile,
 	type ChangesInput,
 	type ChangesOutcome,
+	COMPARED_FILES_LIMIT,
 	type CommitAuthor,
 	type CommitInput,
+	changedFiles,
 	commitChanges,
+	convertPullRequestToDraft,
 	createBranch,
 	createCommit,
 	type FileChange,
@@ -54,5 +58,7 @@ export {
 	openPullRequestFrom,
 	type PullRequest,
 	pullRequest,
+	readTextAt,
+	textAt,
 	updatePullRequest,
 } from "./writes";

@@ -1336,6 +1336,49 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     what follows into an attribute, and the line ends it whatever quote is open, while it is a
     comment, which shows nothing, where none is. The tool cannot tell which lines Markdown passes
     on as HTML, so it does not try. Nothing of a command's output goes into the body.
+  - **An agent's edits to its own checks make a draft** (`./oracles.ts`). After the push, with or
+    without checks set, the tool asks GitHub which files the branch changes against the default
+    branch (`review` of `PullRequestPort`). A test, a `package.json` whose check configuration
+    differs, a file under `.github/`, or lint, type or test configuration that is modified, deleted
+    or renamed away opens the pull request as a draft, and the tool's section lists the paths
+    (`editsSection`, or inside `checksSection`). For a modified `package.json`, every top-level key
+    counts as check configuration except these: `name`, `version`, `description`, `keywords`,
+    `author`, `contributors`, `license`, `repository`, `homepage`, `bugs`, `funding`, `private`,
+    `files`, `main`, `module`, `types`, `typings`, `exports`, `bin`, `sideEffects`,
+    `dependencies`, `devDependencies`, `peerDependencies`, `peerDependenciesMeta`,
+    `optionalDependencies`, `bundledDependencies`, `overrides`, `resolutions`, `engines`,
+    `packageManager`, `publishConfig` and `workspaces`. So a changed `scripts`, `jest`,
+    `eslintConfig`, `prettier`, `mocha`, `ava`, `nyc`, `c8`, `lint-staged` or any key not on that
+    list is flagged, and a changed dependency version is not. A `package.json` that cannot be
+    parsed, at the base or on the branch, makes the review unverified. Check scripts count too: a
+    file under the top-level `scripts/`, a `Makefile` or `makefile`, `GNUmakefile`, `justfile` or
+    `Justfile`, `Taskfile.yml` or `Taskfile.yaml`, or `noxfile.py`, and any file that a script of
+    a `package.json` at the base names. Snapshots, fixtures and Vite or Python test and lint
+    configuration count as well. Added files are never flagged. A comparison that cannot be read,
+    or that lists 300 files (GitHub's limit), is a draft too. The turn's abort signal is checked
+    right after the review, so a stopped turn creates, updates and converts nothing. A pull
+    request that is open already is converted to a draft (GraphQL `convertPullRequestToDraft`,
+    which REST cannot do) and its section is rewritten; a pull request that failed its checks
+    still stays as it is.
+  - **A script is named by its words, not by what a shell would do with it.** The tool reads
+    every `package.json` of the base commit (one recursive tree read at the merge base, and the
+    commit the comparison saw for the branch's side). A file that existed at the base and that
+    the branch modifies, deletes or renames is a check script when a word of any script names
+    it: the words are what is left of the script after whitespace, quotes and shell operators,
+    and a word names a file when the file's path ends with it at a path boundary (`lint.mjs`
+    names every `lint.mjs`, `tools/lint.mjs` every path ending in `tools/lint.mjs`, `./x.mjs`
+    counts as `x.mjs`). Directories are ignored: `cd`, `sh -c`, `--dir` and `--prefix` change
+    nothing, so `cd tools && node lint.mjs` names `lint.mjs`. A word with `$`, `*`, `?`, `{` or
+    `[` in it names nothing, and does not make the review unverified: a glob over source files
+    is not a check script. The cost is that a script naming a bare, common file (a root script
+    `node index.js`) flags every `index.js` the branch touches. That is accepted, since it fails
+    toward a draft and is rare. If the tree or any `package.json` in it cannot be read, or the
+    tree is cut short, or the base has more than 40 `package.json` files, the review is
+    unverified and the pull request is a draft. A file that is not there (404) counts as empty.
+    What it does not see: a script that is reached only through another script's imports, a file
+    that a script names through a variable, a glob or a brace, and a check that lives outside
+    the `scripts` of a `package.json` (a CI step, a Makefile's recipe, a tool's own
+    configuration), where only the file's own path, as listed above, is looked at.
   - A command gets 10 minutes, a call's checks 20 and a run's 40, counted where the tools are made
     for the turn. A command stopped at its limit is timed out, never passed. Checks a call has no
     time left for fail the round; when the run has none left before a round begins, the checks

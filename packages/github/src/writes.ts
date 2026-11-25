@@ -2,7 +2,7 @@
 // branch that points at it, and the pull request that proposes it. Files go into the new tree as
 // content, so a commit takes two requests however many files it changes.
 import { z } from "zod";
-import { GitHubError, request } from "./app";
+import { GitHubError, request, send } from "./app";
 import { gitBlobId, type RepositoryName, TREE_MODES, type TreeItem } from "./contents";
 import { encoder } from "./encoding";
 import { repositoryPathProblem, WORKFLOWS_FOLDER } from "./paths";
@@ -93,6 +93,10 @@ export interface PullRequest {
 	head: string;
 	/** The branch it is from, which a card names. */
 	headRef: string;
+	/** Whether it is a draft. Left out when the answer does not say. */
+	draft?: boolean;
+	/** GitHub's GraphQL id, which only an answer about the pull request carries. */
+	nodeId?: string;
 	/**
 	 * The change's size. Only an answer about one pull request counts it; the list endpoint
 	 * leaves these out, and a card draws without them then.
@@ -115,6 +119,8 @@ const pullSchema = z.object({
 	merged: z.boolean().optional(),
 	merged_at: z.string().nullable().optional(),
 	head: z.object({ sha: objectId, ref: z.string() }),
+	draft: z.boolean().optional(),
+	node_id: z.string().optional(),
 	// Only an answer about one pull request counts changes; the list leaves them out.
 	additions: z.number().int().nonnegative().optional(),
 	deletions: z.number().int().nonnegative().optional(),
@@ -151,6 +157,8 @@ function toPullRequest(found: z.infer<typeof pullSchema>): PullRequest {
 		state: found.state === "open" ? "open" : merged ? "merged" : "closed",
 		head: found.head.sha,
 		headRef: found.head.ref,
+		...(found.draft === undefined ? {} : { draft: found.draft }),
+		...(found.node_id === undefined ? {} : { nodeId: found.node_id }),
 		...counted,
 	};
 }
@@ -570,4 +578,138 @@ export async function updatePullRequest(
 			}),
 		),
 	);
+}
+
+/** A file a branch changes against the default branch, as GitHub's comparison lists it. */
+export interface ChangedFile {
+	path: string;
+	status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+	/** Where a renamed file was. */
+	previousPath?: string;
+}
+
+const changedFilesSchema = z.object({
+	merge_base_commit: z.object({ sha: objectId }),
+	files: z
+		.array(
+			z.object({
+				filename: z.string(),
+				status: z.enum([
+					"added",
+					"removed",
+					"modified",
+					"renamed",
+					"copied",
+					"changed",
+					"unchanged",
+				]),
+				previous_filename: z.string().optional(),
+			}),
+		)
+		.default([]),
+});
+
+/** The most files GitHub's comparison lists; a branch with this many may have more. */
+export const COMPARED_FILES_LIMIT = 300;
+
+/**
+ * What `branch` changes against `base`, file by file, and the commit where it left `base`. One
+ * request is enough: GitHub's pagination pages the comparison's commits, and the changed files
+ * come with the first page, up to 300 for the whole comparison. So `complete` is false for a
+ * branch that reaches the limit: the list may be missing some.
+ */
+export async function changedFiles(
+	token: string,
+	repository: RepositoryName,
+	base: string,
+	branch: string,
+): Promise<{ files: ChangedFile[]; mergeBase: string; complete: boolean }> {
+	const range = `${encodeURIComponent(base)}...${encodeURIComponent(branch)}`;
+	// per_page counts commits, which are not read, so the smallest page is the cheapest.
+	const compared = changedFilesSchema.parse(
+		await request(`${repositoryPath(repository)}/compare/${range}?per_page=1&page=1`, token),
+	);
+	const files: ChangedFile[] = compared.files.map((file) => ({
+		path: file.filename,
+		status: file.status,
+		...(file.previous_filename === undefined ? {} : { previousPath: file.previous_filename }),
+	}));
+	return {
+		files,
+		mergeBase: compared.merge_base_commit.sha,
+		complete: files.length < COMPARED_FILES_LIMIT,
+	};
+}
+
+/**
+ * A file's text at a commit: null only when the file is not there (a 404). A response that
+ * says nothing about whether it is there, such as a denied read (403) or a rate limit, throws,
+ * so a caller that must tell an absent file from an unreadable one can.
+ */
+export async function readTextAt(
+	token: string,
+	repository: RepositoryName,
+	path: string,
+	commit: string,
+): Promise<string | null> {
+	const encoded = path.split("/").map(encodeURIComponent).join("/");
+	try {
+		const response = await send(
+			`${repositoryPath(repository)}/contents/${encoded}?ref=${encodeURIComponent(commit)}`,
+			token,
+			{},
+			"application/vnd.github.raw+json",
+		);
+		return await response.text();
+	} catch (error) {
+		if (error instanceof GitHubError && error.status === 404) return null;
+		throw error;
+	}
+}
+
+/** A file's text at a commit, or null when it is not there or is too large to be read. */
+export async function textAt(
+	token: string,
+	repository: RepositoryName,
+	path: string,
+	commit: string,
+): Promise<string | null> {
+	try {
+		return await readTextAt(token, repository, path, commit);
+	} catch (error) {
+		if (error instanceof GitHubError && error.status === 403) return null;
+		throw error;
+	}
+}
+
+const convertSchema = z.object({
+	data: z
+		.object({ convertPullRequestToDraft: z.object({}).passthrough() })
+		.nullable()
+		.optional(),
+	errors: z.array(z.object({ message: z.string() })).optional(),
+});
+
+/**
+ * Makes an open pull request a draft again. Only GraphQL can: the REST API opens a pull request
+ * as a draft but cannot convert one. `nodeId` is the pull request's `nodeId`.
+ */
+export async function convertPullRequestToDraft(token: string, nodeId: string): Promise<void> {
+	const answer = convertSchema.parse(
+		await request("/graphql", token, {
+			method: "POST",
+			body: JSON.stringify({
+				query:
+					"mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { id isDraft } } }",
+				variables: { id: nodeId },
+			}),
+		}),
+	);
+	// GraphQL answers 200 with errors, so a pull request that was not converted is read here.
+	if (!answer.data?.convertPullRequestToDraft) {
+		throw new GitHubError(
+			422,
+			`GitHub could not make the pull request a draft: ${answer.errors?.[0]?.message ?? "no answer"}`,
+		);
+	}
 }

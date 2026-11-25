@@ -18,11 +18,17 @@
  * a token that writes pull requests and only reads the code. The sandbox never holds either.
  */
 import {
+	branchCommit,
+	changedFiles,
+	convertPullRequestToDraft,
 	type GitHubApp,
 	GitHubError,
 	openPullRequest,
 	openPullRequestFrom,
 	type PullRequest,
+	readCommit,
+	readTextAt,
+	readTreeEntries,
 	updatePullRequest,
 } from "@gateweave/agents-github";
 import {
@@ -42,13 +48,17 @@ import {
 	checksNotRunSection,
 	checksSection,
 	describeDraft,
+	describeEdits,
 	describeFailedRound,
 	describeOutcome,
+	editsSection,
 	NO_SANDBOX,
 	pullRequestBody,
+	reviewFlagged,
 	runChecks,
 } from "./checks";
 import { failureForLogs } from "./models";
+import { type OracleReview, reviewOracles } from "./oracles";
 import { SANDBOX_SERVER } from "./sandbox-tools";
 import { type SummarizedFailure, traced } from "./tools";
 import type { RunRecorder } from "./trace";
@@ -97,14 +107,21 @@ export interface PullRequestPort {
 		body: string;
 		/** Opens a new pull request as a draft. One that is open already stays as it is. */
 		draft?: boolean;
+		/** With `draft`, an open pull request that is ready for review is made a draft too. */
+		convert?: boolean;
 	}): Promise<PullRequest & { opened: boolean }>;
+	/**
+	 * Which files the pushed branch changes that decide whether its checks pass (`./oracles.ts`),
+	 * from GitHub's own comparison with the default branch. Left out, no review is made.
+	 */
+	review?(branch: string): Promise<OracleReview>;
 }
 
 /** Pull requests made on GitHub with the workspace's GitHub App. */
 export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository): PullRequestPort {
 	const name = { owner: repository.owner, name: repository.name };
 	return {
-		async propose({ branch, title, body, draft = false }) {
+		async propose({ branch, title, body, draft = false, convert = false }) {
 			// GitHub lists only Pull requests for these calls, but refuses to open one with "not all
 			// refs are readable" unless the token can also read the branches.
 			const token = await app.repositoryToken(repository.installationId, repository.externalId, {
@@ -114,6 +131,16 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 			const open = await openPullRequestFrom(token, name, branch);
 			if (open) {
 				const updated = await updatePullRequest(token, name, open.number, { title, body });
+				// REST cannot make a pull request a draft; GraphQL can. An answer that does not say
+				// whether it is one is converted too, as converting a draft is the lesser mistake.
+				if (draft && convert && updated.draft !== true) {
+					const nodeId = updated.nodeId ?? open.nodeId;
+					if (nodeId === undefined) {
+						throw new GitHubError(422, "GitHub did not say which pull request to make a draft");
+					}
+					await convertPullRequestToDraft(token, nodeId);
+					return { ...updated, draft: true, opened: false };
+				}
 				return { ...updated, opened: false };
 			}
 			const head = branch;
@@ -126,6 +153,45 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 				...(draft ? { draft: true } : {}),
 			});
 			return { ...made, opened: true };
+		},
+		async review(branch) {
+			try {
+				const token = await app.repositoryToken(repository.installationId, repository.externalId, {
+					contents: "read",
+				});
+				const base = repository.defaultBranch;
+				// The commit the branch is at now. The comparison and every read of the branch's
+				// files are made at it, so a branch that moves meanwhile cannot split them.
+				const head = await branchCommit(token, name, branch);
+				if (head === null) return { unverified: "the branch is not on GitHub" };
+				const compared = await changedFiles(token, name, base, head);
+				// A comparison at GitHub's limit may have left files out, and what it did not list
+				// was not looked at.
+				if (!compared.complete) {
+					return { unverified: "the branch changes more files than GitHub's comparison lists" };
+				}
+				// A 404 is a file that is not there; a denied or failed read throws, and the review
+				// says it could not tell rather than take the file for an empty one.
+				return await reviewOracles(
+					compared.files,
+					(path, side) =>
+						readTextAt(token, name, path, side === "base" ? compared.mergeBase : head),
+					async () => {
+						// One read of the base's whole tree, for the `package.json` files in it.
+						const { tree } = await readCommit(token, name, compared.mergeBase);
+						const found = await readTreeEntries(token, name, tree);
+						return {
+							paths: found.entries
+								.map((entry) => entry.path)
+								.filter((path) => path === "package.json" || path.endsWith("/package.json")),
+							complete: !found.truncated,
+						};
+					},
+				);
+			} catch (error) {
+				console.error("A branch's edits to its checks were not reviewed", failureForLogs(error));
+				return { unverified: "GitHub's comparison could not be read" };
+			}
 		},
 	};
 }
@@ -299,6 +365,8 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		// What the tool adds to the body and to its answer; nothing when no checks are set.
 		let section: string | null = null;
 		let about: Pick<PullRequestOutcome, "checks" | "draft" | "note"> = {};
+		// How the section is written once the push has shown what the branch edits.
+		let write: (review: OracleReview | null) => string | null = () => null;
 		if (commands.length === 0) {
 			pushed = await sandbox.push(branch, title, await author(), model);
 			// A retry's push is a no-op: the commit is there, so only the proposal is skipped.
@@ -316,7 +384,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 				await record(hit);
 				return hit;
 			}
-			section = checksNotRunSection(NO_SANDBOX);
+			write = (review) => checksNotRunSection(NO_SANDBOX, review);
 			about = { checks: "not run", draft: false };
 		} else {
 			const machine = checks.sandbox;
@@ -337,7 +405,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			pushed = checked.pushed;
 			const { status } = checked.round;
 			const draft = status !== "passed";
-			section = checksSection(checked.round, checked.head, draft);
+			write = (review) => checksSection(checked.round, checked.head, draft, review);
 			about = {
 				checks: status === "not-run" ? "not run" : status,
 				draft,
@@ -345,6 +413,20 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			};
 		}
 		if ("error" in pushed) throw new Error(pushed.error);
+		// After the push, so the branch is on GitHub to be compared. A branch that edits what its
+		// checks rely on is a draft, whether or not the repository has checks.
+		const review = (await github.review?.(branch)) ?? null;
+		// The review is many requests long: a turn stopped meanwhile creates, updates or converts nothing.
+		abortSignal?.throwIfAborted();
+		section = commands.length === 0 ? editsSection(review) : write(review);
+		if (reviewFlagged(review)) {
+			const edits = describeEdits(review);
+			about = {
+				...about,
+				draft: true,
+				...(edits === null ? {} : { note: [about.note, edits].filter(Boolean).join("\n\n") }),
+			};
+		}
 		// The model's own copy of the section goes whether checks are set or not: the heading is
 		// the tool's, and a reader takes what stands under it as the tool's word.
 		const written = pullRequestBody(body, section, agentName);
@@ -355,6 +437,9 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 				title,
 				body: written,
 				...(about.draft ? { draft: true } : {}),
+				// A pull request that was open already is made a draft for what it edited; one that
+				// failed its checks stays as it is.
+				...(reviewFlagged(review) ? { convert: true } : {}),
 			});
 		} catch (error) {
 			console.error("A pull request was not made", failureForLogs(error));
