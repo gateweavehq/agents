@@ -1336,6 +1336,14 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     what follows into an attribute, and the line ends it whatever quote is open, while it is a
     comment, which shows nothing, where none is. The tool cannot tell which lines Markdown passes
     on as HTML, so it does not try. Nothing of a command's output goes into the body.
+  - **An agent's edits to its own checks make a draft** (`./oracles.ts`). After the push, with or
+    without checks set, the tool asks GitHub which files the branch changes against the default
+    branch (`review` of `PullRequestPort`). A test, a `package.json` whose scripts differ, a file
+    under `.github/`, or lint, type or test configuration that is modified, deleted or renamed
+    away opens the pull request as a draft, and the tool's section lists the paths (`editsSection`,
+    or inside `checksSection`). Added files are never flagged. A comparison that cannot be read is
+    a draft too. As with failed checks, an open pull request stays as it is, but its section is
+    rewritten.
   - A command gets 10 minutes, a call's checks 20 and a run's 40, counted where the tools are made
     for the turn. A command stopped at its limit is timed out, never passed. Checks a call has no
     time left for fail the round; when the run has none left before a round begins, the checks

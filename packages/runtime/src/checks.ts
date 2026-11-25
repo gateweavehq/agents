@@ -14,6 +14,7 @@
  * before a repository's own CI, not in place of it.
  */
 import { CHECK_LIMITS, CHECKS_HEADING, SANDBOX_REPOSITORY_PATH } from "@gateweave/agents-model";
+import type { OracleEdit, OracleReview } from "./oracles";
 import { type CommandResult, SANDBOX_SERVER, type SandboxPort } from "./sandbox-tools";
 import type { RunRecorder } from "./trace";
 
@@ -290,7 +291,12 @@ function describeNotRun(round: CheckRound): string {
  * The section at the end of a pull request's body, in the tool's own words: each command, its
  * exit code and its duration, on the commit they ran on. `draft` adds why the pull request is one.
  */
-export function checksSection(round: CheckRound, head: string, draft: boolean): string {
+export function checksSection(
+	round: CheckRound,
+	head: string,
+	draft: boolean,
+	review: OracleReview | null = null,
+): string {
 	const lines = round.results.map((result) => `- ${code(result.command)}: ${line(result)}`);
 	const about =
 		round.status === "not-run"
@@ -305,8 +311,51 @@ export function checksSection(round: CheckRound, head: string, draft: boolean): 
 				? UNVERIFIED_LINE
 				: null,
 		draft ? draftLine(round) : null,
+		...oracleLines(review),
 		WRITTEN_BY,
 	]);
+}
+
+/** Whether a review is a reason for a draft: an edit to an oracle, or no way to tell. */
+export function reviewFlagged(review: OracleReview | null): boolean {
+	return review !== null && ("unverified" in review || review.edits.length > 0);
+}
+
+/**
+ * What the section says of the files that decide whether the checks pass (AGT-167): which were
+ * modified or deleted, from GitHub's list of what the branch changes, and not from anything the
+ * agent wrote. A branch that touched none says nothing.
+ */
+function oracleLines(review: OracleReview | null): string[] {
+	if (review === null) return [];
+	if ("unverified" in review) {
+		return [
+			`Gateweave could not tell whether this pull request edits the files its checks rely on (${review.unverified}), so it opens the pull request as a draft. One that was open already stays as it was.`,
+		];
+	}
+	if (review.edits.length === 0) return [];
+	return [
+		"This pull request modifies or deletes files that decide whether its own checks pass, so passing checks prove less. Gateweave opens it as a draft until a person has read these changes (one that was open already stays as it was):",
+		review.edits.map((edit) => `- ${code(edit.path)}: ${edit.change} (${edit.kind})`).join("\n"),
+	];
+}
+
+/** What the model is told when a pull request is a draft for what it edited. */
+export function describeEdits(review: OracleReview | null): string | null {
+	if (review === null || !reviewFlagged(review)) return null;
+	if ("unverified" in review) {
+		return `Gateweave could not tell whether the work edits the files its checks rely on (${review.unverified}), so the pull request is opened as a draft.`;
+	}
+	const listed = review.edits.map((edit: OracleEdit) => `${edit.path} (${edit.change})`);
+	return `The work modifies or deletes files that decide whether its checks pass: ${listed.join(", ")}. The pull request lists them and a new one is opened as a draft. Adding tests is not flagged; change these only when the task needs it, and say why in the description.`;
+}
+
+/**
+ * The section of a pull request whose repository has no checks, when the branch still edits what
+ * checks would rely on. Null when it does not: such a pull request has no section.
+ */
+export function editsSection(review: OracleReview | null): string | null {
+	return reviewFlagged(review) ? section([...oracleLines(review), WRITTEN_BY]) : null;
 }
 
 /**
@@ -321,8 +370,8 @@ const UNVERIFIED_LINE =
 	"A check exited with 0, but Gateweave could not make sure that the repository's files were still this commit's afterwards. That counts as a failed round.";
 
 /** The section of a pull request whose checks are set but had nowhere to run. */
-export function checksNotRunSection(reason: string): string {
-	return section([`Checks: not run (${reason}).`, WRITTEN_BY]);
+export function checksNotRunSection(reason: string, review: OracleReview | null = null): string {
+	return section([`Checks: not run (${reason}).`, ...oracleLines(review), WRITTEN_BY]);
 }
 
 /**

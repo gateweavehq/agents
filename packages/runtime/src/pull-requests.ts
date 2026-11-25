@@ -18,11 +18,13 @@
  * a token that writes pull requests and only reads the code. The sandbox never holds either.
  */
 import {
+	changedFiles,
 	type GitHubApp,
 	GitHubError,
 	openPullRequest,
 	openPullRequestFrom,
 	type PullRequest,
+	textAt,
 	updatePullRequest,
 } from "@gateweave/agents-github";
 import {
@@ -42,13 +44,17 @@ import {
 	checksNotRunSection,
 	checksSection,
 	describeDraft,
+	describeEdits,
 	describeFailedRound,
 	describeOutcome,
+	editsSection,
 	NO_SANDBOX,
 	pullRequestBody,
+	reviewFlagged,
 	runChecks,
 } from "./checks";
 import { failureForLogs } from "./models";
+import { type OracleReview, reviewOracles } from "./oracles";
 import { SANDBOX_SERVER } from "./sandbox-tools";
 import { type SummarizedFailure, traced } from "./tools";
 import type { RunRecorder } from "./trace";
@@ -98,6 +104,11 @@ export interface PullRequestPort {
 		/** Opens a new pull request as a draft. One that is open already stays as it is. */
 		draft?: boolean;
 	}): Promise<PullRequest & { opened: boolean }>;
+	/**
+	 * Which files the pushed branch changes that decide whether its checks pass (`./oracles.ts`),
+	 * from GitHub's own comparison with the default branch. Left out, no review is made.
+	 */
+	review?(branch: string): Promise<OracleReview>;
 }
 
 /** Pull requests made on GitHub with the workspace's GitHub App. */
@@ -126,6 +137,27 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 				...(draft ? { draft: true } : {}),
 			});
 			return { ...made, opened: true };
+		},
+		async review(branch) {
+			try {
+				const token = await app.repositoryToken(repository.installationId, repository.externalId, {
+					contents: "read",
+				});
+				const base = repository.defaultBranch;
+				const compared = await changedFiles(token, name, base, branch);
+				// A comparison at GitHub's limit may have left files out, and what it did not list
+				// was not looked at.
+				if (!compared.complete) {
+					return { unverified: "the branch changes more files than GitHub's comparison lists" };
+				}
+				const edits = await reviewOracles(compared.files, (path, side) =>
+					textAt(token, name, path, side === "base" ? compared.mergeBase : branch),
+				);
+				return { edits };
+			} catch (error) {
+				console.error("A branch's edits to its checks were not reviewed", failureForLogs(error));
+				return { unverified: "GitHub's comparison could not be read" };
+			}
 		},
 	};
 }
@@ -299,6 +331,8 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		// What the tool adds to the body and to its answer; nothing when no checks are set.
 		let section: string | null = null;
 		let about: Pick<PullRequestOutcome, "checks" | "draft" | "note"> = {};
+		// How the section is written once the push has shown what the branch edits.
+		let write: (review: OracleReview | null) => string | null = () => null;
 		if (commands.length === 0) {
 			pushed = await sandbox.push(branch, title, await author(), model);
 			// A retry's push is a no-op: the commit is there, so only the proposal is skipped.
@@ -316,7 +350,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 				await record(hit);
 				return hit;
 			}
-			section = checksNotRunSection(NO_SANDBOX);
+			write = (review) => checksNotRunSection(NO_SANDBOX, review);
 			about = { checks: "not run", draft: false };
 		} else {
 			const machine = checks.sandbox;
@@ -337,7 +371,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			pushed = checked.pushed;
 			const { status } = checked.round;
 			const draft = status !== "passed";
-			section = checksSection(checked.round, checked.head, draft);
+			write = (review) => checksSection(checked.round, checked.head, draft, review);
 			about = {
 				checks: status === "not-run" ? "not run" : status,
 				draft,
@@ -345,6 +379,18 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			};
 		}
 		if ("error" in pushed) throw new Error(pushed.error);
+		// After the push, so the branch is on GitHub to be compared. A branch that edits what its
+		// checks rely on is a draft, whether or not the repository has checks (AGT-167).
+		const review = (await github.review?.(branch)) ?? null;
+		section = commands.length === 0 ? editsSection(review) : write(review);
+		if (reviewFlagged(review)) {
+			const edits = describeEdits(review);
+			about = {
+				...about,
+				draft: true,
+				...(edits === null ? {} : { note: [about.note, edits].filter(Boolean).join("\n\n") }),
+			};
+		}
 		// The model's own copy of the section goes whether checks are set or not: the heading is
 		// the tool's, and a reader takes what stands under it as the tool's word.
 		const written = pullRequestBody(body, section, agentName);

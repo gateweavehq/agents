@@ -2,7 +2,7 @@
 // branch that points at it, and the pull request that proposes it. Files go into the new tree as
 // content, so a commit takes two requests however many files it changes.
 import { z } from "zod";
-import { GitHubError, request } from "./app";
+import { GitHubError, request, send } from "./app";
 import { gitBlobId, type RepositoryName, TREE_MODES, type TreeItem } from "./contents";
 import { encoder } from "./encoding";
 import { repositoryPathProblem, WORKFLOWS_FOLDER } from "./paths";
@@ -570,4 +570,92 @@ export async function updatePullRequest(
 			}),
 		),
 	);
+}
+
+/** A file a branch changes against the default branch, as GitHub's comparison lists it. */
+export interface ChangedFile {
+	path: string;
+	status: "added" | "removed" | "modified" | "renamed" | "copied" | "changed" | "unchanged";
+	/** Where a renamed file was. */
+	previousPath?: string;
+}
+
+const changedFilesSchema = z.object({
+	merge_base_commit: z.object({ sha: objectId }),
+	files: z
+		.array(
+			z.object({
+				filename: z.string(),
+				status: z.enum([
+					"added",
+					"removed",
+					"modified",
+					"renamed",
+					"copied",
+					"changed",
+					"unchanged",
+				]),
+				previous_filename: z.string().optional(),
+			}),
+		)
+		.default([]),
+});
+
+/** The most files GitHub's comparison lists; a branch with this many may have more. */
+export const COMPARED_FILES_LIMIT = 300;
+
+/**
+ * What `branch` changes against `base`, file by file, and the commit where it left `base`. GitHub
+ * lists at most 300 files, so `complete` is false for a branch that reaches the limit: the list
+ * may be missing some.
+ */
+export async function changedFiles(
+	token: string,
+	repository: RepositoryName,
+	base: string,
+	branch: string,
+): Promise<{ files: ChangedFile[]; mergeBase: string; complete: boolean }> {
+	const files: ChangedFile[] = [];
+	let mergeBase = "";
+	const range = `${encodeURIComponent(base)}...${encodeURIComponent(branch)}`;
+	for (let page = 1; page <= COMPARED_FILES_LIMIT / 100; page += 1) {
+		const compared = changedFilesSchema.parse(
+			await request(
+				`${repositoryPath(repository)}/compare/${range}?per_page=100&page=${page}`,
+				token,
+			),
+		);
+		mergeBase = compared.merge_base_commit.sha;
+		for (const file of compared.files) {
+			files.push({
+				path: file.filename,
+				status: file.status,
+				...(file.previous_filename === undefined ? {} : { previousPath: file.previous_filename }),
+			});
+		}
+		if (compared.files.length < 100) break;
+	}
+	return { files, mergeBase, complete: files.length < COMPARED_FILES_LIMIT };
+}
+
+/** A file's text at a commit, or null when it is not there or is too large to be read. */
+export async function textAt(
+	token: string,
+	repository: RepositoryName,
+	path: string,
+	commit: string,
+): Promise<string | null> {
+	const encoded = path.split("/").map(encodeURIComponent).join("/");
+	try {
+		const response = await send(
+			`${repositoryPath(repository)}/contents/${encoded}?ref=${encodeURIComponent(commit)}`,
+			token,
+			{},
+			"application/vnd.github.raw+json",
+		);
+		return await response.text();
+	} catch (error) {
+		if (error instanceof GitHubError && (error.status === 404 || error.status === 403)) return null;
+		throw error;
+	}
 }

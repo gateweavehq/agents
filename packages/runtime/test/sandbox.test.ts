@@ -106,6 +106,10 @@ function pullRequestGitHub(
 		if (request.headers.get("authorization") !== "Bearer ghs_pulls") {
 			return Response.json({ message: "Bad credentials" }, { status: 401 });
 		}
+		// What the branch changes against the default branch: nothing that edits a check.
+		if (url.pathname.includes("/compare/")) {
+			return Response.json({ merge_base_commit: { sha: "e".repeat(40) }, files: [] });
+		}
 		if (request.method === "GET") return Response.json([]);
 		return Response.json(
 			{
@@ -350,6 +354,14 @@ describe("a conversation with a sandbox", () => {
 			{ route: "GET /app", body: null },
 			{ route: "POST /app/installations/99/access_tokens", body: null },
 			{ route: "GET /users/gateweave-agents%5Bbot%5D", body: null },
+			{
+				route: "POST /app/installations/99/access_tokens",
+				body: { repository_ids: [7], permissions: { contents: "read" } },
+			},
+			{
+				route: `GET /repos/acme/site/compare/main...${branch.replace("/", "%2F")}?per_page=100&page=1`,
+				body: null,
+			},
 			{
 				route: "POST /app/installations/99/access_tokens",
 				body: {

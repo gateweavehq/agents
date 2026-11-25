@@ -4,6 +4,7 @@ import {
 	appJwt,
 	branchCommit,
 	branchHead,
+	changedFiles,
 	controlsInstallation,
 	createBranch,
 	createCommit,
@@ -16,6 +17,7 @@ import {
 	pullRequest,
 	readTexts,
 	readTree,
+	textAt,
 	updatePullRequest,
 	userInstallations,
 	verifyWebhook,
@@ -171,6 +173,35 @@ describe("repository writes", () => {
 		});
 		return calls;
 	}
+
+	it("lists the files a branch changes and reads a file at a commit", async () => {
+		const calls = github(
+			Response.json({
+				merge_base_commit: { sha: sha("e") },
+				files: [
+					{ filename: "test/a.test.ts", status: "removed" },
+					{ filename: "b.ts", status: "renamed", previous_filename: "a.ts" },
+				],
+			}),
+			new Response('{"scripts":{}}'),
+			Response.json({ message: "Not Found" }, { status: 404 }),
+		);
+		expect(await changedFiles("ghs_x", repository, "main", "gateweave/c-1")).toEqual({
+			files: [
+				{ path: "test/a.test.ts", status: "removed" },
+				{ path: "b.ts", status: "renamed", previousPath: "a.ts" },
+			],
+			mergeBase: sha("e"),
+			complete: true,
+		});
+		expect(await textAt("ghs_x", repository, "a b/package.json", sha("e"))).toBe('{"scripts":{}}');
+		expect(await textAt("ghs_x", repository, "gone.json", sha("e"))).toBeNull();
+		expect(calls.map((call) => call.route)).toEqual([
+			"GET /repos/acme/site/compare/main...gateweave%2Fc-1?per_page=100&page=1",
+			`GET /repos/acme/site/contents/a%20b/package.json?ref=${sha("e")}`,
+			`GET /repos/acme/site/contents/gone.json?ref=${sha("e")}`,
+		]);
+	});
 
 	it("commits files as content on top of the parent's tree, then nothing else", async () => {
 		const calls = github(
