@@ -392,6 +392,35 @@ it("clears pending reports when the destination is disconnected", async () => {
 	}
 });
 
+it("drops a refused report even when its answer's body cannot be cancelled", async () => {
+	const { stub, deliver } = await reportingWork();
+	const now = Date.now() + 5_000;
+	const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+	const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(
+		async () =>
+			new Response(
+				new ReadableStream({
+					cancel() {
+						throw new Error("The answer's stream could not be cancelled");
+					},
+				}),
+				{ status: 404 },
+			),
+	);
+	const alarm = () => runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+	try {
+		expect((await deliver("assignment", now)).status).toBe("start");
+		// The 404 decides it, not the cleanup: no retry is planned.
+		await vi.waitFor(async () => {
+			expect(fetcher).toHaveBeenCalledTimes(1);
+			expect(await alarm()).toBeNull();
+		});
+	} finally {
+		fetcher.mockRestore();
+		clock.mockRestore();
+	}
+});
+
 it.each([404, 503])("does not keep a Track report indefinitely after HTTP %i", async (status) => {
 	const { stub, deliver } = await reportingWork();
 	let now = Date.now() + 5_000;

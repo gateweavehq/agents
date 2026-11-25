@@ -2490,7 +2490,8 @@ export class RegistryDO extends DurableObject {
 			redirect: "manual",
 			signal: AbortSignal.timeout(5_000),
 		});
-		await response.body?.cancel();
+		// The status decides what happens next, even if the unread body cannot be cancelled.
+		await response.body?.cancel().catch(() => {});
 		return retryTrackReport(response);
 	}
 
@@ -3400,6 +3401,8 @@ export class RegistryDO extends DurableObject {
 		// A move owns the alarm while a workspace is frozen, importing or sealed.
 		if (moveStateNow(this.ctx.storage, now)) return;
 		const due = [
+			// A freeze that lapsed still blocks writes until the alarm ends it, and alarms can start late.
+			freezeEnds(this.ctx.storage),
 			nextScanAt(this.#db),
 			nextScheduleAt(this.#db),
 			nextDestroyAt(this.#db),
