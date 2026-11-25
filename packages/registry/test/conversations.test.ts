@@ -269,6 +269,27 @@ describe("turns with Workers AI", () => {
 		});
 	});
 
+	it("refuse a model with no prices only where a daily limit applies", async () => {
+		const UNPRICED = "@cf/example/unpriced-model";
+		const stub = registry();
+		const agent = await stub.createAgent({
+			name: "Ghost",
+			description: null,
+			provider: "workers-ai",
+			model: UNPRICED,
+			instructions: null,
+		});
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		// Its cost would be null and never count, so under a limit it cannot start.
+		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "20" }, async (instance) => {
+			const turn = await instance.beginTurn(id, "Hello");
+			expect(turn).toHaveProperty("status", "refused");
+			expect(JSON.stringify(turn)).toContain(UNPRICED);
+		});
+		// With no limit, it runs as before.
+		expect(await stub.beginTurn(id, "Hello")).toHaveProperty("runId");
+	});
+
 	// Cloudflare removes Kimi K2.6 on 2026-11-20. Until then it answers and the deployment pays, so
 	// a run on it must have a cost: the day's sum skips a run without one, and the limit with it.
 	it("count a run on a model Cloudflare is removing, until its day, toward the daily limit", async () => {
