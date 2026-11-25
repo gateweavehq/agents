@@ -3,8 +3,9 @@
 // A contributor writes `/claim` on an issue to take it before opening a pull request, and
 // `/release` to give it back. One open claim per account, or three after its first merged pull
 // request. A claim lapses after seven days without a pull request that mentions the issue. A
-// maintainer can claim for someone (`/claim @name`), release anyone's claim and is not held to the
-// limits. A pull request nobody claimed gets a comment and a label, and is never closed.
+// maintainer can claim for someone (`/claim @name`, which skips the limits and replaces the
+// holder) and release anyone's claim. A maintainer's own plain `/claim` is held to the limits like
+// anyone's. A claim has one holder; the sweep checks every assignee anyway. A pull request nobody claimed gets a comment and a label, and is never closed.
 //
 // No dependencies, GITHUB_TOKEN only, and it never reads pull request code: it runs from the
 // default branch and takes everything from the event's data and the API.
@@ -147,10 +148,13 @@ export function isUnclaimed({ author, isMaintainer, isBot, mentioned }) {
 }
 
 /**
- * From an issue's timeline: when the current claim was labelled, and whether a pull request by
- * `holder` that was not closed unmerged mentions it.
+ * From an issue's timeline: when the current claim was labelled, and whether a pull request by one
+ * of the `holders` mentions the issue and is open or merged. The pull request's date does not
+ * matter: opening it before the `/claim` (the path the unclaimed comment suggests) counts, and one
+ * closed unmerged never does.
  */
-export function readTimeline(timeline, holder) {
+export function readTimeline(timeline, holders) {
+	const who = [holders].flat();
 	let claimedAt = null;
 	for (const event of timeline) {
 		if (event.event === "labeled" && event.label?.name === CLAIMED) claimedAt = event.created_at;
@@ -159,8 +163,8 @@ export function readTimeline(timeline, holder) {
 	const hasPullRequest = timeline.some((event) => {
 		if (event.event !== "cross-referenced") return false;
 		const source = event.source?.issue;
-		if (!source?.pull_request || !source.user || !same(source.user.login, holder)) return false;
-		if (claimedAt && new Date(event.created_at) < new Date(claimedAt)) return false;
+		if (!source?.pull_request || !source.user) return false;
+		if (!who.some((login) => same(source.user.login, login))) return false;
 		return source.state === "open" || Boolean(source.pull_request.merged_at);
 	});
 	return { claimedAt, hasPullRequest };
@@ -211,6 +215,12 @@ export function client({
 		comments: (number) => pages(`${base}/issues/${number}/comments`),
 		openIssues: (label) => pages(`${base}/issues?state=open&labels=${encodeURIComponent(label)}`),
 		openPulls: () => pages(`${base}/pulls?state=open`),
+		// The issues endpoint is read-after-write consistent, unlike the search index, so a claim made
+		// a moment ago is counted. It lists pull requests too, which are no claims.
+		async openClaims(login) {
+			const path = `${base}/issues?state=open&labels=${CLAIMED}&assignee=${encodeURIComponent(login)}`;
+			return (await pages(path)).filter((item) => !item.pull_request).length;
+		},
 		comment: (number, body) => call("POST", `${base}/issues/${number}/comments`, { body }),
 		addLabel: (number, label) =>
 			call("POST", `${base}/issues/${number}/labels`, { labels: [label] }),
@@ -257,7 +267,7 @@ export async function handleComment(gh, event) {
 
 	const who = parsed.target ?? actor;
 	const [openClaims, mergedPullRequests] = await Promise.all([
-		gh.count(`is:issue is:open label:${CLAIMED} assignee:${who}`),
+		gh.openClaims(who),
 		gh.count(`is:pr is:merged author:${who}`),
 	]);
 	const verdict = decideClaim({
@@ -271,6 +281,9 @@ export async function handleComment(gh, event) {
 	if (verdict.ok) {
 		if (verdict.replaces.length) await gh.unassign(number, verdict.replaces);
 		await gh.assign(number, [verdict.who]);
+		// Adding a label the issue already has records no event, and the sweep dates a claim by its
+		// latest `labeled` event: an override would inherit the old claim's days. Label it afresh.
+		if (names(issue.labels).includes(CLAIMED)) await gh.removeLabel(number, CLAIMED);
 		await gh.addLabel(number, CLAIMED);
 	}
 	await gh.comment(number, verdict.message);
@@ -311,7 +324,7 @@ export async function sweep(gh, now = Date.now()) {
 		if (issue.pull_request) continue;
 		const holders = logins(issue.assignees);
 		const timeline = await gh.timeline(issue.number);
-		const { claimedAt, hasPullRequest } = readTimeline(timeline, holders[0] ?? "");
+		const { claimedAt, hasPullRequest } = readTimeline(timeline, holders);
 		if (!isLapsed({ claimedAt, hasPullRequest, now })) continue;
 		if (holders.length) await gh.unassign(issue.number, holders);
 		await gh.removeLabel(issue.number, CLAIMED);

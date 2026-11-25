@@ -18,9 +18,14 @@ permissions:
   issues: write
   pull-requests: write
 
-# One run per issue or pull request at a time, so two claims cannot both pass the limit.
+# One comment run per account at a time, and the open claims are counted from the issues endpoint,
+# which sees a claim made a moment ago, not from the search index. An account can only claim for
+# itself unless it is a maintainer, who is exempt from the limit, so one group per commenter covers
+# the limit. A single group for every comment would not do: a group holds one waiting run and
+# cancels the rest, so a burst would silently drop commands. If one account posts several commands
+# within seconds, the ones in between can still be dropped; it can repeat them.
 concurrency:
-  group: claim-${{ github.event.issue.number || github.event.pull_request.number }}
+  group: claim-${{ github.event_name == 'issue_comment' && github.event.comment.user.login || format('pr-{0}', github.event.pull_request.number) }}
   cancel-in-progress: false
 
 jobs:

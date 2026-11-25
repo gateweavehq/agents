@@ -4,6 +4,7 @@ import {
 	CLAIMED,
 	checkPull,
 	claimLimit,
+	client,
 	decideClaim,
 	decideRelease,
 	handleComment,
@@ -147,8 +148,22 @@ test("readTimeline takes the latest claim and counts only the holder's live pull
 	assert.equal(readTimeline([...base, abandoned], "ada").hasPullRequest, false);
 	const merged = pullEvent("ada", { state: "closed", pull_request: { merged_at: ago(1) } });
 	assert.equal(readTimeline([...base, merged], "ada").hasPullRequest, true);
-	// A pull request from before this claim belongs to an earlier one.
-	assert.equal(readTimeline([...base, pullEvent("ada", {}, ago(15))], "ada").hasPullRequest, false);
+	// Pull request first, claim second: an open or merged pull request counts whatever its date.
+	assert.equal(readTimeline([...base, pullEvent("ada", {}, ago(15))], "ada").hasPullRequest, true);
+	const oldMerged = pullEvent("ada", { state: "closed", pull_request: { merged_at: ago(14) } });
+	assert.equal(
+		readTimeline([...base, { ...oldMerged, created_at: ago(15) }], "ada").hasPullRequest,
+		true,
+	);
+	// One closed unmerged never counts, however old or new.
+	const oldAbandoned = { ...abandoned, created_at: ago(15) };
+	assert.equal(readTimeline([...base, oldAbandoned], "ada").hasPullRequest, false);
+	// Every holder is checked, not only the first.
+	assert.equal(readTimeline([...base, pullEvent("grace")], ["ada", "grace"]).hasPullRequest, true);
+	assert.equal(
+		readTimeline([...base, pullEvent("mallory")], ["ada", "grace"]).hasPullRequest,
+		false,
+	);
 });
 
 test("mentionedIssues finds issue numbers, not the pull request's own or a path", () => {
@@ -209,6 +224,7 @@ function fake({
 		openPulls: async () => Object.values(pulls),
 		isMaintainer: async (login) => maintainers.includes(login),
 		count: async (query) => counts[query] ?? 0,
+		openClaims: async (login) => counts[`claims:${login}`] ?? 0,
 		comment: record("comment"),
 		addLabel: record("addLabel"),
 		removeLabel: record("removeLabel"),
@@ -233,10 +249,84 @@ test("/claim assigns, labels and answers", async () => {
 	assert.deepEqual(gh.calls[0].slice(1), [5, ["ada"]]);
 });
 
+test("a maintainer's override labels the issue afresh, so the new claim starts its own seven days", async () => {
+	const held = issue({
+		labels: [{ name: TOGETHER }, { name: CLAIMED }],
+		assignees: [{ login: "grace" }],
+	});
+	const gh = fake({ issues: { 5: held }, maintainers: ["boss"] });
+	await handleComment(gh, commentEvent("/claim @ada", "boss"));
+	assert.deepEqual(
+		gh.calls.map((c) => c[0]),
+		["unassign", "assign", "removeLabel", "addLabel", "comment"],
+	);
+
+	// The timeline that produces, on day 6 of grace's claim, read by the sweep on day 8.
+	const timeline = [
+		{ event: "labeled", label: { name: CLAIMED }, created_at: ago(8) },
+		{ event: "unlabeled", label: { name: CLAIMED }, created_at: ago(2) },
+		{ event: "labeled", label: { name: CLAIMED }, created_at: ago(2) },
+	];
+	const taken = issue({
+		labels: [{ name: CLAIMED }],
+		assignees: [{ login: "ada" }],
+	});
+	const sweeper = fake({ issues: { 5: taken }, timelines: { 5: timeline } });
+	assert.deepEqual(await sweep(sweeper, NOW), []);
+	assert.deepEqual(sweeper.calls, []);
+});
+
+test("a first claim on an issue without the label does not remove it first", async () => {
+	const gh = fake({ issues: { 5: issue() } });
+	await handleComment(gh, commentEvent("/claim"));
+	assert.equal(
+		gh.calls.some((c) => c[0] === "removeLabel"),
+		false,
+	);
+});
+
+test("the open-claim count is read through the issues endpoint, not the search index", async () => {
+	const requests = [];
+	const gh = client({
+		token: "t",
+		repo: "o/r",
+		api: "https://api.example.test",
+		fetchImpl: async (url) => {
+			requests.push(String(url));
+			return {
+				ok: true,
+				status: 200,
+				json: async () => [{ number: 1 }, { number: 2, pull_request: {} }],
+			};
+		},
+	});
+	assert.equal(await gh.openClaims("Ada"), 1);
+	assert.match(requests[0], /\/repos\/o\/r\/issues\?state=open&labels=claimed&assignee=Ada/);
+	assert.equal(
+		requests.some((url) => url.includes("/search/")),
+		false,
+	);
+});
+
+test("a claim whose pull request came first is kept by the sweep", async () => {
+	const held = issue({ labels: [{ name: CLAIMED }], assignees: [{ login: "ada" }] });
+	const timeline = [
+		{
+			event: "cross-referenced",
+			created_at: ago(12),
+			source: { issue: { user: { login: "ada" }, state: "open", pull_request: {} } },
+		},
+		{ event: "labeled", label: { name: CLAIMED }, created_at: ago(9) },
+	];
+	const gh = fake({ issues: { 5: held }, timelines: { 5: timeline } });
+	assert.deepEqual(await sweep(gh, NOW), []);
+	assert.deepEqual(gh.calls, []);
+});
+
 test("/claim over the limit changes nothing and says why", async () => {
 	const gh = fake({
 		issues: { 5: issue() },
-		counts: { [`is:issue is:open label:${CLAIMED} assignee:ada`]: 1 },
+		counts: { "claims:ada": 1 },
 	});
 	await handleComment(gh, commentEvent("/claim"));
 	assert.deepEqual(
