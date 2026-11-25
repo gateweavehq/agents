@@ -295,6 +295,25 @@ describe("moving a registry", () => {
 			"The move was interrupted: the workspace is no longer frozen for it.",
 		);
 	});
+
+	// Cloudflare may start an alarm late. A call that plans the next alarm in that gap, with no
+	// other work due, must not take away the one that ends the lapsed freeze.
+	it("keeps the alarm that ends a lapsed freeze while nothing else is due", async () => {
+		const registry = env.REGISTRY.getByName(crypto.randomUUID());
+		await registry.createLibraryAsset({ kind: "instructions", name: "rules", text: "Be brief.\n" });
+		const token = crypto.randomUUID();
+		expect(await registry.moveOut(token, "eu")).toMatchObject({ frozen: true });
+		await runInDurableObject(registry, (_instance: RegistryDO, state) => {
+			const freeze = state.storage.kv.get<{ until: number }>("move.freeze");
+			if (!freeze) throw new Error("Not frozen");
+			state.storage.kv.put("move.freeze", { ...freeze, until: Date.now() - 1 });
+		});
+
+		expect(await registry.requestScans([])).toBe(0);
+		// Its alarm may already have run on its own; either way the freeze ends, and writes work.
+		await runDurableObjectAlarm(registry);
+		await registry.createLibraryAsset({ kind: "instructions", name: "after", text: "Fine.\n" });
+	});
 });
 
 type Registry = ReturnType<typeof env.REGISTRY.getByName>;

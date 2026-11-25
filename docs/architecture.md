@@ -2103,9 +2103,13 @@ workspace slug. An eligible refusal uses a fixed explanation without a link. Rep
 of the same delivery are deduplicated, and a retry that begins after a refusal gets a fresh ID.
 Only an authoritative finish produces a terminal report for a started run.
 
-After each write commits, the registry checks that the exact destination still exists, opens
-its event-writing key and makes a bounded HTTPS POST to `/api/events` with redirects disabled.
-Reports are best effort. Network failures have no effect on webhook admission or the run.
+The registry stores each pending report in `track_report_outbox` in the same write as its run
+or delivery update. After that write commits, it checks that the exact destination still exists,
+opens its event-writing key and sends a bounded HTTPS POST to `/api/events` with redirects disabled.
+Network errors and temporary HTTP errors are retried by the registry alarm for up to 24 hours.
+Each retry sends the original run ID, state and timestamp, so a late retry cannot replace a newer
+state in Track. Disconnecting deletes the destination's pending reports. Delivery runs in the
+background, so webhook admission and agent runs can complete while Track is unavailable.
 
 ## Memory
 
