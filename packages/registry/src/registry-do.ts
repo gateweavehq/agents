@@ -426,6 +426,14 @@ import {
 } from "./telemetry";
 import { beginConnection, newVerifier, takeConnection, trackVerifierPlace } from "./track-connect";
 import {
+	nextTrackReportAt,
+	type PendingTrackReport,
+	queueTrackReport,
+	retryTrackReport,
+	settleTrackReport,
+	takeDueTrackReports,
+} from "./track-report-outbox";
+import {
 	reportDestination,
 	type TrackRefusal,
 	type TrackReport,
@@ -513,6 +521,7 @@ const SCANS_PER_ALARM = 3;
 
 /** A deleted person's conversations destroyed per alarm. Each takes two requests. */
 const DESTROYS_PER_ALARM = 10;
+const TRACK_REPORTS_PER_ALARM = 4;
 
 /**
  * One instance per workspace, named by the workspace id. Holds the registry: projects,
@@ -1624,18 +1633,22 @@ export class RegistryDO extends DurableObject {
 			);
 		};
 		let reservation = delivery.trackReport;
-		let queued: TrackReport | undefined;
-		let report: TrackReport | undefined;
+		let queued: PendingTrackReport | undefined;
+		let report: PendingTrackReport | undefined;
 		const decline = (refusal: TurnRefusal) => {
 			settleDelivery(this.#db, delivery, { error: refusal.message });
 			if (reservation && !reservation.refused) {
-				report = trackRefusalReport(reservation, refusal.trackReason ?? "unavailable", Date.now());
+				const now = Date.now();
+				report = this.#queueTrackReport(
+					trackRefusalReport(reservation, refusal.trackReason ?? "unavailable", now),
+					now,
+				);
 			}
 			return refused(refusal.message);
 		};
 		const settle = (refusal: TurnRefusal) => {
 			const result = this.#write(() => (current() ? decline(refusal) : gone));
-			this.#publishTrackReport(report);
+			this.#publishTrackReports(report);
 			return result;
 		};
 		const plan = this.#planTurn(parties);
@@ -1653,7 +1666,7 @@ export class RegistryDO extends DurableObject {
 			// that can run reserves a new ID, so it never reopens that terminal report.
 			if (reservation?.refused) {
 				reservation = { ...reservation, key: crypto.randomUUID(), queuedAt: now, refused: false };
-				queued = trackQueuedReport(reservation);
+				queued = this.#queueTrackReport(trackQueuedReport(reservation), now);
 			}
 			const trackReport = reservation && {
 				target: reservation.target,
@@ -1675,12 +1688,15 @@ export class RegistryDO extends DurableObject {
 			);
 			settleDelivery(this.#db, { ...delivery, trackReport: reservation }, { runId });
 			if (trackReport) {
-				report = {
-					target: trackReport.target,
-					key: runId,
-					sentAt: trackReport.runningAt,
-					phase: { state: "running", startedAt: now },
-				};
+				report = this.#queueTrackReport(
+					{
+						target: trackReport.target,
+						key: runId,
+						sentAt: trackReport.runningAt,
+						phase: { state: "running", startedAt: now },
+					},
+					now,
+				);
 			}
 			return {
 				...prepared,
@@ -1689,8 +1705,7 @@ export class RegistryDO extends DurableObject {
 				triggerPrompt: triggerRow(this.#db, triggerId)?.prompt,
 			};
 		});
-		this.#publishTrackReport(queued);
-		this.#publishTrackReport(report);
+		this.#publishTrackReports(queued, report);
 		return result;
 	}
 
@@ -2018,19 +2033,26 @@ export class RegistryDO extends DurableObject {
 	finishRun(runId: string, finish: RunFinish): boolean {
 		const run = id.parse(runId);
 		const data = runFinish.parse(finish);
-		const closed = this.#write(() => finishRun(this.#db, run, data));
-		if (closed) {
-			const done = getRun(this.#db, run, this.#idleMinutes());
+		let report: PendingTrackReport | undefined;
+		const closed = this.#write(() => {
+			if (!finishRun(this.#db, run, data)) return false;
 			const reporting = this.#db
 				.select({ association: schema.runs.trackReport, startedAt: schema.runs.startedAt })
 				.from(schema.runs)
 				.where(eq(schema.runs.id, run))
 				.get();
 			if (reporting?.association) {
-				this.#publishTrackReport(
-					trackFinishReport(run, reporting.association, reporting.startedAt, data, Date.now()),
+				const now = Date.now();
+				report = this.#queueTrackReport(
+					trackFinishReport(run, reporting.association, reporting.startedAt, data, now),
+					now,
 				);
 			}
+			return true;
+		});
+		this.#publishTrackReports(report);
+		if (closed) {
+			const done = getRun(this.#db, run, this.#idleMinutes());
 			// Each registry is named for its workspace (`registryFor` in the app).
 			if (done) this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done));
 		}
@@ -2380,57 +2402,87 @@ export class RegistryDO extends DurableObject {
 		if (!(await verifyDelivery(secret, delivery.headers, delivery.body, Date.now()))) {
 			return { status: "unauthorized" };
 		}
-		let report: TrackReport | undefined;
+		let report: PendingTrackReport | undefined;
 		const receipt = this.#write((): TriggerReceipt => {
 			// The trigger as it is now: it, or its secret, may have changed while that was opened.
 			const current = triggerRow(this.#db, trigger.id);
 			if (!current || current.schedule !== null) return { status: "not_found" };
 			if (current.sealed !== trigger.sealed) return { status: "unauthorized" };
+			const now = Date.now();
 			const admitted = admitDelivery(
 				this.#db,
 				current,
 				{ id: delivery.headers.id, body: delivery.body },
-				Date.now(),
+				now,
 				this.standInTurns()
 					? undefined
 					: {
 							runsPage,
 							collect: (next) => {
-								report = next;
+								report = this.#queueTrackReport(next, now);
 							},
 						},
 			);
 			if (admitted.status !== "start") return admitted;
 			return { ...admitted, text: triggerMessage(current.prompt, delivery.body) };
 		});
-		this.#publishTrackReport(report);
+		this.#publishTrackReports(report);
 		return receipt;
 	}
 
-	#publishTrackReport(report: TrackReport | undefined): void {
-		if (!report || this.standInTurns()) return;
+	#queueTrackReport(report: TrackReport, now: number): PendingTrackReport | undefined {
+		if (!this.standInTurns()) return queueTrackReport(this.#db, report, now);
+	}
+
+	#publishTrackReports(...reports: (PendingTrackReport | undefined)[]): void {
+		const pending = reports.filter((report) => report !== undefined);
+		if (pending.length === 0) return;
 		this.ctx.waitUntil(
-			this.#sendTrackReport(report).catch(() => {
-				// The run and delivery have already been recorded.
+			this.#deliverTrackReports(pending).catch(() => {
+				console.error("registry: Track report delivery could not be scheduled");
 			}),
 		);
 	}
 
-	async #sendTrackReport(report: TrackReport): Promise<void> {
+	async #deliverTrackReports(pending: PendingTrackReport[]): Promise<void> {
+		// Schedule recovery before any network I/O. An evicted sender leaves the same report behind.
+		await this.#scheduleAlarm();
+		await Promise.all(
+			pending.map(async (entry) => {
+				const started = Date.now();
+				if (moveStateNow(this.ctx.storage, started)) return;
+				const retryAfter =
+					started >= entry.expiresAt
+						? null
+						: await this.#sendTrackReport(entry.report).catch(() => 0);
+				const finished = Date.now();
+				if (!moveStateNow(this.ctx.storage, finished)) {
+					this.#write(() => settleTrackReport(this.#db, entry, retryAfter, finished));
+				}
+			}),
+		);
+		await this.#scheduleAlarm();
+	}
+
+	async #sendTrackReport(report: TrackReport): Promise<number | null> {
+		if (this.standInTurns()) return null;
 		const { target } = report;
 		const destination = reportDestination(this.#db, target);
-		if (!destination) return;
+		if (!destination) return null;
 		const sealer = await this.#sealerOf();
-		if ("unavailable" in sealer) return;
+		if ("unavailable" in sealer) return 0;
 		const place = trackSourceKeyPlace(target.destinationId, target.origin);
 		let opened = await this.#open(sealer, place, destination.sealedKey);
 		const current = reportDestination(this.#db, target);
-		if (!current) return;
+		if (!current) return null;
 		// Another report may have renewed this destination while we opened its key.
 		if (current.sealedKey !== opened.sealed) {
 			opened = await this.#open(sealer, place, current.sealedKey);
 		}
-		if (reportDestination(this.#db, target)?.sealedKey !== opened.sealed) return;
+		if (moveStateNow(this.ctx.storage, Date.now())) return 0;
+		const latest = reportDestination(this.#db, target);
+		if (!latest) return null;
+		if (latest.sealedKey !== opened.sealed) return 0;
 		const response = await fetch(`${target.origin}/api/events`, {
 			method: "POST",
 			headers: { authorization: `Bearer ${opened.plaintext}`, "content-type": "application/json" },
@@ -2439,6 +2491,7 @@ export class RegistryDO extends DurableObject {
 			signal: AbortSignal.timeout(5_000),
 		});
 		await response.body?.cancel();
+		return retryTrackReport(response);
 	}
 
 	// Model provider keys, which owners and admins manage. Keys go in and never come out: the
@@ -3091,11 +3144,21 @@ export class RegistryDO extends DurableObject {
 		}
 		// A freeze that lapsed ends here, if a restart hasn't ended it.
 		thaw(this.ctx.storage);
+		const pending = this.#write(() =>
+			takeDueTrackReports(this.#db, Date.now(), TRACK_REPORTS_PER_ALARM),
+		);
+		await Promise.all([
+			this.#maintainRegistry(),
+			pending.length === 0 ? undefined : this.#deliverTrackReports(pending),
+		]);
+		await this.#scheduleAlarm();
+	}
+
+	async #maintainRegistry(): Promise<void> {
 		await this.#runSchedules();
 		const due = dueScans(this.#db, Date.now(), SCANS_PER_ALARM);
 		for (const request of due) await this.#scan(request);
 		await this.#destroyDueConversations();
-		await this.#scheduleAlarm();
 	}
 
 	/** One that fails waits for its turn again, and the others go on. */
@@ -3331,12 +3394,19 @@ export class RegistryDO extends DurableObject {
 			.get()?.id;
 	}
 
-	/** Sets the alarm for the next scan, scheduled run or conversation to destroy, whichever is first. */
+	/** Sets the alarm for the next scan, scheduled run, erasure or Track report. */
 	async #scheduleAlarm(): Promise<void> {
-		const due = [nextScanAt(this.#db), nextScheduleAt(this.#db), nextDestroyAt(this.#db)].filter(
-			(at) => at !== null,
-		);
-		if (due.length > 0) await this.ctx.storage.setAlarm(Math.max(Math.min(...due), Date.now()));
+		const now = Date.now();
+		// A move owns the alarm while a workspace is frozen, importing or sealed.
+		if (moveStateNow(this.ctx.storage, now)) return;
+		const due = [
+			nextScanAt(this.#db),
+			nextScheduleAt(this.#db),
+			nextDestroyAt(this.#db),
+			nextTrackReportAt(this.#db),
+		].filter((at) => at !== null);
+		if (due.length > 0) await this.ctx.storage.setAlarm(Math.max(Math.min(...due), now));
+		else await this.ctx.storage.deleteAlarm();
 	}
 
 	/**

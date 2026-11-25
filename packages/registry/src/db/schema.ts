@@ -41,7 +41,7 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
-import type { TrackReservation, TrackRunAssociation } from "../track-reports";
+import type { TrackReport, TrackReservation, TrackRunAssociation } from "../track-reports";
 
 /** One file of an asset version, by its path relative to the asset. */
 export interface FileEntry {
@@ -788,6 +788,25 @@ export const trackSourceDestinations = sqliteTable(
 			table.workspaceId,
 			table.teamId,
 		),
+	],
+);
+
+/** Undelivered run reports. Deleting a reporting destination also removes its pending reports. */
+export const trackReportOutbox = sqliteTable(
+	"track_report_outbox",
+	{
+		id: text("id").primaryKey(),
+		destinationId: text("destination_id")
+			.notNull()
+			.references(() => trackSourceDestinations.id, { onDelete: "cascade" }),
+		report: text("report", { mode: "json" }).$type<TrackReport>().notNull(),
+		attempts: integer("attempts").notNull(),
+		nextAttemptAt: integer("next_attempt_at").notNull(),
+		expiresAt: integer("expires_at").notNull(),
+	},
+	(table) => [
+		index("track_report_outbox_next_idx").on(table.nextAttemptAt),
+		index("track_report_outbox_destination_idx").on(table.destinationId),
 	],
 );
 
