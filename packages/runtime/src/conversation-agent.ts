@@ -71,6 +71,7 @@ import {
 	type ToolSet,
 	toUIMessageStream,
 	type UIMessage,
+	wrapLanguageModel,
 } from "ai";
 import type { ChangesPort } from "./changes";
 import { type ChatSession, sessionOpening } from "./chat-session";
@@ -952,12 +953,42 @@ ${runPageNote(runs, turn.runId)}`
 						await end("stopped", PAUSE_STOP);
 						return;
 					}
+					// The SDK retries a failed provider call inside a step, so the pause is read
+					// before every attempt. The error is not an `APICallError`, so it is not retried.
+					let pauseReported = false;
+					const readPause = async () => {
+						if (pause.stopped) return true;
+						try {
+							pause.stopped = Boolean(await registry.agentPause(agent.agentId));
+						} catch (error) {
+							console.error("Could not check whether the agent was paused", failureForLogs(error));
+						}
+						return pause.stopped;
+					};
+					const baseModel = this.modelFor(agent, key, {
+						workspace: workspaceId,
+						agent: agent.agentId,
+						conversation: conversationId,
+					});
 					const result = streamText({
-						model: this.modelFor(agent, key, {
-							workspace: workspaceId,
-							agent: agent.agentId,
-							conversation: conversationId,
-						}),
+						// A model given by id alone is resolved by the SDK, not by us: leave it be.
+						model:
+							typeof baseModel === "string"
+								? baseModel
+								: wrapLanguageModel({
+										model: baseModel,
+										middleware: {
+											specificationVersion: "v4",
+											wrapStream: async ({ doStream }) => {
+												if (await readPause()) throw new Error(PAUSE_STOP);
+												return doStream();
+											},
+											wrapGenerate: async ({ doGenerate }) => {
+												if (await readPause()) throw new Error(PAUSE_STOP);
+												return doGenerate();
+											},
+										},
+									}),
 						...(agent.provider === "anthropic"
 							? { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
 							: {}),
@@ -999,7 +1030,10 @@ ${runPageNote(runs, turn.runId)}`
 							return end("succeeded");
 						},
 						onAbort: () => end("stopped"),
-						onError: ({ error }) => end("failed", describeFailure(agent, error)),
+						onError: ({ error }) =>
+							pause.stopped
+								? end("stopped", PAUSE_STOP)
+								: end("failed", describeFailure(agent, error)),
 					});
 					// The finish is written here, not by `toUIMessageStream`, so the turn's changes
 					// can be summed into the reply first (AGT-139).
@@ -1010,6 +1044,10 @@ ${runPageNote(runs, turn.runId)}`
 						sendStart: false,
 						sendFinish: false,
 						onError: (error) => {
+							if (pause.stopped) {
+								pauseReported = true;
+								return PAUSE_STOP;
+							}
 							console.error("A turn failed", {
 								agent: agent.agentId,
 								...failureForLogs(error),
@@ -1018,7 +1056,8 @@ ${runPageNote(runs, turn.runId)}`
 						},
 					});
 					for await (const chunk of ui) writer.write(chunk);
-					if (pause.stopped) writer.write({ type: "error", errorText: PAUSE_STOP });
+					if (pause.stopped && !pauseReported)
+						writer.write({ type: "error", errorText: PAUSE_STOP });
 					// The capture itself waits for the first tool call, so a turn that never
 					// touched the sandbox has nothing to sum, and asking would start a container.
 					// A stopped turn sums nothing either: its git reads would hold up the finish.

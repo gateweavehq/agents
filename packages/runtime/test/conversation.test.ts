@@ -262,6 +262,31 @@ describe("data parts", () => {
 		});
 	});
 
+	it("does not retry a failed provider call once the agent is paused", async () => {
+		const { registry, stub, agentId, workspaceId } = await conversation();
+		// The first attempt fails with a retryable error, and the pause lands before the retry.
+		const requests = fakeModel(() => {
+			void env.REGISTRY.getByName(workspaceId).pauseAgent(agentId, "admin");
+			return new Response(
+				JSON.stringify({ type: "error", error: { type: "api_error", message: "Overloaded" } }),
+				{
+					status: 529,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		});
+		const socket = await connect(stub);
+
+		const turn = await ask(socket, "Hello");
+		socket.close();
+		expect(requests).toHaveLength(1);
+		expect(turn.error).toContain("The agent was paused");
+		expect((await registry.listRuns())[0]).toMatchObject({
+			status: "stopped",
+			error: "The agent was paused, so the run stopped before its next model request.",
+		});
+	});
+
 	it("ties its reply to its run, so the chat can sum it up and link to it", async () => {
 		const { stub } = await conversation();
 		fakeModel(() => anthropicStream("Done."));
