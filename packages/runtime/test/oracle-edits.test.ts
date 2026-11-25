@@ -57,9 +57,7 @@ function setup(
 			},
 			async review() {
 				if (unreadable) return { unverified: "GitHub's comparison could not be read" };
-				return {
-					edits: await reviewOracles(files, async (path, side) => texts[`${side}:${path}`] ?? null),
-				};
+				return reviewOracles(files, async (path, side) => texts[`${side}:${path}`] ?? null);
 			},
 		},
 		repository,
@@ -104,6 +102,12 @@ describe("which paths are oracles", () => {
 		["packages/a/test/__snapshots__/cart.test.ts.snap", "test"],
 		["src/cart.snap", "test"],
 		["apps/web/fixtures/cart.json", "test"],
+		["pytest.ini", "test"],
+		[".pytest.ini", "test"],
+		["conftest.py", "test"],
+		["services/api/pytest.ini", "test"],
+		["services/api/.pytest.ini", "test"],
+		["services/api/conftest.py", "test"],
 		["pyproject.toml", "lint or type config"],
 		["services/api/setup.cfg", "lint or type config"],
 	])("%s is a %s", (path, kind) => {
@@ -115,6 +119,8 @@ describe("which paths are oracles", () => {
 		"docs/testing.md",
 		"src/latest.ts",
 		"packages/a/scripts/x.ts",
+		"src/conftest.pyc",
+		"src/my-pytest.ini.md",
 	])("%s is not one", (path) => {
 		expect(oracleKind(path)).toBeNull();
 	});
@@ -219,6 +225,21 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 		expect(proposed[0]?.convert).toBeUndefined();
 		expect(proposed[0]?.body).not.toContain("modifies or deletes");
 	});
+	it.each([
+		["pytest.ini", "modified"],
+		[".pytest.ini", "modified"],
+		["conftest.py", "modified"],
+		["pytest.ini", "removed"],
+		[".pytest.ini", "removed"],
+		["conftest.py", "removed"],
+	])("opens a draft for a %s that is %s", async (path, status) => {
+		const { call, proposed } = setup([{ path, status }]);
+		expect((await call()).draft).toBe(true);
+		expect(proposed[0]?.draft).toBe(true);
+		expect(proposed[0]?.body).toContain(
+			`- \`${path}\`: ${status === "removed" ? "deleted" : "modified"} (test)`,
+		);
+	});
 	it("opens a draft when it cannot tell what the branch changes", async () => {
 		const { call, proposed } = setup([], {}, true);
 		expect((await call()).draft).toBe(true);
@@ -243,10 +264,12 @@ describe("the files a package.json script names", () => {
 			],
 			texts,
 		);
-		expect(edits).toEqual([
-			{ path: "apps/web/ci/check.sh", change: "deleted", kind: "check script" },
-			{ path: "tools/lint.mjs", change: "modified", kind: "check script" },
-		]);
+		expect(edits).toEqual({
+			edits: [
+				{ path: "apps/web/ci/check.sh", change: "deleted", kind: "check script" },
+				{ path: "tools/lint.mjs", change: "modified", kind: "check script" },
+			],
+		});
 	});
 	it("leaves a script no package.json runs, and a script that is added", async () => {
 		expect(
@@ -259,7 +282,106 @@ describe("the files a package.json script names", () => {
 				],
 				texts,
 			),
-		).toEqual([]);
+		).toEqual({ edits: [] });
+	});
+});
+
+describe("the directory a script runs its file in", () => {
+	/** The review of a branch that modifies `paths`, when the base's root package.json has `script`. */
+	const review = (script: string, ...paths: string[]) =>
+		reviewOracles(
+			paths.map((path) => ({ path, status: "modified" })),
+			async (path) =>
+				path === "package.json" ? JSON.stringify({ scripts: { check: script } }) : null,
+		);
+	const edit = (path: string) => ({
+		edits: [{ path, change: "modified", kind: "check script" }],
+	});
+	const unverified = expect.objectContaining({ unverified: expect.any(String) });
+
+	it("looks for the file where a cd has gone", async () => {
+		expect(await review("cd tools && node lint.mjs", "tools/lint.mjs")).toEqual(
+			edit("tools/lint.mjs"),
+		);
+		expect(await review("cd tools; node lint.mjs", "tools/lint.mjs")).toEqual(
+			edit("tools/lint.mjs"),
+		);
+		expect(await review('cd "tools/x" && node ../lint.mjs', "tools/lint.mjs")).toEqual(
+			edit("tools/lint.mjs"),
+		);
+		expect(await review("cd tools && cd .. && node lint.mjs", "lint.mjs")).toEqual(
+			edit("lint.mjs"),
+		);
+		expect(
+			await review("cd a && node x.mjs && cd ../b && node y.mjs", "b/y.mjs", "a/x.mjs"),
+		).toEqual({
+			edits: [
+				{ path: "a/x.mjs", change: "modified", kind: "check script" },
+				{ path: "b/y.mjs", change: "modified", kind: "check script" },
+			],
+		});
+	});
+	it("does not take the package's own file for the one in the directory it went to", async () => {
+		expect(await review("cd tools && node lint.mjs", "lint.mjs")).toEqual({ edits: [] });
+	});
+	it("is unverified when the directory a script runs in cannot be told", async () => {
+		for (const script of [
+			'cd "$DIR" && node lint.mjs',
+			"cd ~/x && node lint.mjs",
+			"cd /opt/x && node lint.mjs",
+			"cd - && node lint.mjs",
+			"(cd tools && node lint.mjs)",
+			"cd tools | node lint.mjs",
+			"pnpm --dir tools exec node lint.mjs",
+			"npm --prefix tools exec -- node lint.mjs",
+			"env -C tools node lint.mjs",
+			"node $TOOLS/lint.mjs",
+			"node tools/*.mjs",
+			"node tools/{lint,fmt}.mjs",
+			"node /abs/lint.mjs",
+		]) {
+			expect(await review(script, "tools/lint.mjs"), script).toEqual(unverified);
+		}
+	});
+	it("leaves a file of another name when the place of a script's file cannot be told", async () => {
+		expect(await review('cd "$DIR" && node lint.mjs', "tools/other.mjs", "src/cart.ts")).toEqual({
+			edits: [],
+		});
+	});
+});
+
+describe("a base package.json that cannot be read", () => {
+	const files = [{ path: "tools/lint.mjs", status: "modified" }];
+	const manifest = JSON.stringify({ scripts: { lint: "node tools/lint.mjs" } });
+
+	it("is unverified, where an absent one names nothing", async () => {
+		expect(
+			await reviewOracles(files, async () => {
+				throw new Error("403");
+			}),
+		).toEqual({ unverified: "the base's tools/package.json could not be read" });
+		expect(await reviewOracles(files, async () => null)).toEqual({ edits: [] });
+		expect(
+			await reviewOracles(files, async (path) => (path === "package.json" ? manifest : null)),
+		).toEqual({
+			edits: [{ path: "tools/lint.mjs", change: "modified", kind: "check script" }],
+		});
+	});
+	it("is unverified for a package.json in a directory above the file", async () => {
+		expect(
+			await reviewOracles(files, async (path) => {
+				if (path === "tools/package.json") throw new Error("403");
+				return null;
+			}),
+		).toEqual({ unverified: "the base's tools/package.json could not be read" });
+	});
+	it("takes a package.json that cannot be read, at the base or the branch, as changed", async () => {
+		expect(
+			await reviewOracles([{ path: "package.json", status: "modified" }], async (_path, side) => {
+				if (side === "head") throw new Error("403");
+				return JSON.stringify({ scripts: { test: "vitest" } });
+			}),
+		).toEqual({ edits: [{ path: "package.json", change: "modified", kind: "package script" }] });
 	});
 });
 
@@ -341,6 +463,39 @@ describe("the review of a branch on GitHub", () => {
 				? Response.json([pull(draft)])
 				: Response.json(pull(draft));
 	const input = { branch: "gateweave/c-1", title: "Fix", body: "b" };
+
+	it("is unverified when the base's package.json is denied, and clean when it is not there", async () => {
+		const answer = (status: number) => (route: string) =>
+			route.includes("/compare/")
+				? Response.json({
+						merge_base_commit: { sha: "e".repeat(40) },
+						files: [{ filename: "tools/lint.mjs", status: "modified" }],
+					})
+				: Response.json({ message: "no" }, { status });
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		github(answer(403));
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			unverified: "the base's tools/package.json could not be read",
+		});
+		github(answer(404));
+		expect(await port().review?.("gateweave/c-1")).toEqual({ edits: [] });
+		error.mockRestore();
+	});
+	it("reads `cd tools && node lint.mjs` from the base's package.json", async () => {
+		github((route) =>
+			route.includes("/compare/")
+				? Response.json({
+						merge_base_commit: { sha: "e".repeat(40) },
+						files: [{ filename: "tools/lint.mjs", status: "modified" }],
+					})
+				: route.includes("contents/package.json")
+					? new Response(JSON.stringify({ scripts: { check: "cd tools && node lint.mjs" } }))
+					: Response.json({ message: "Not Found" }, { status: 404 }),
+		);
+		expect(await port().review?.("gateweave/c-1")).toEqual({
+			edits: [{ path: "tools/lint.mjs", change: "modified", kind: "check script" }],
+		});
+	});
 
 	it("makes a pull request that is open and ready a draft when it edits a check", async () => {
 		const routes = github(open(false));

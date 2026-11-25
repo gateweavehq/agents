@@ -58,6 +58,7 @@ export {
 	openPullRequestFrom,
 	type PullRequest,
 	pullRequest,
+	readTextAt,
 	textAt,
 	updatePullRequest,
 } from "./writes";

@@ -25,7 +25,7 @@ import {
 	openPullRequest,
 	openPullRequestFrom,
 	type PullRequest,
-	textAt,
+	readTextAt,
 	updatePullRequest,
 } from "@gateweave/agents-github";
 import {
@@ -163,10 +163,11 @@ export function gitHubPullRequests(app: GitHubApp, repository: SandboxRepository
 				if (!compared.complete) {
 					return { unverified: "the branch changes more files than GitHub's comparison lists" };
 				}
-				const edits = await reviewOracles(compared.files, (path, side) =>
-					textAt(token, name, path, side === "base" ? compared.mergeBase : branch),
+				// A 404 is a file that is not there; a denied or failed read throws, and the review
+				// says it could not tell rather than take the file for an empty one.
+				return await reviewOracles(compared.files, (path, side) =>
+					readTextAt(token, name, path, side === "base" ? compared.mergeBase : branch),
 				);
-				return { edits };
 			} catch (error) {
 				console.error("A branch's edits to its checks were not reviewed", failureForLogs(error));
 				return { unverified: "GitHub's comparison could not be read" };

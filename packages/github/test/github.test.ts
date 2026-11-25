@@ -15,6 +15,7 @@ import {
 	openPullRequestFrom,
 	pkcePair,
 	pullRequest,
+	readTextAt,
 	readTexts,
 	readTree,
 	textAt,
@@ -173,6 +174,24 @@ describe("repository writes", () => {
 		});
 		return calls;
 	}
+
+	it("tells a file that is not there from one that cannot be read", async () => {
+		github(
+			Response.json({ message: "Not Found" }, { status: 404 }),
+			Response.json({ message: "Forbidden" }, { status: 403 }),
+			Response.json({ message: "Forbidden" }, { status: 403 }),
+			Response.json({ message: "Server Error" }, { status: 500 }),
+		);
+		expect(await readTextAt("ghs_x", repository, "gone.json", sha("e"))).toBeNull();
+		await expect(readTextAt("ghs_x", repository, "denied.json", sha("e"))).rejects.toMatchObject({
+			status: 403,
+		});
+		// `textAt` still takes a denied read, as a file too large to be read, for no text.
+		expect(await textAt("ghs_x", repository, "denied.json", sha("e"))).toBeNull();
+		await expect(textAt("ghs_x", repository, "broken.json", sha("e"))).rejects.toMatchObject({
+			status: 500,
+		});
+	});
 
 	it("lists the files a branch changes and reads a file at a commit", async () => {
 		const calls = github(

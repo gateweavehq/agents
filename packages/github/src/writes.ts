@@ -641,8 +641,12 @@ export async function changedFiles(
 	};
 }
 
-/** A file's text at a commit, or null when it is not there or is too large to be read. */
-export async function textAt(
+/**
+ * A file's text at a commit: null only when the file is not there (a 404). A response that
+ * says nothing about whether it is there, such as a denied read (403) or a rate limit, throws,
+ * so a caller that must tell an absent file from an unreadable one can.
+ */
+export async function readTextAt(
 	token: string,
 	repository: RepositoryName,
 	path: string,
@@ -658,7 +662,22 @@ export async function textAt(
 		);
 		return await response.text();
 	} catch (error) {
-		if (error instanceof GitHubError && (error.status === 404 || error.status === 403)) return null;
+		if (error instanceof GitHubError && error.status === 404) return null;
+		throw error;
+	}
+}
+
+/** A file's text at a commit, or null when it is not there or is too large to be read. */
+export async function textAt(
+	token: string,
+	repository: RepositoryName,
+	path: string,
+	commit: string,
+): Promise<string | null> {
+	try {
+		return await readTextAt(token, repository, path, commit);
+	} catch (error) {
+		if (error instanceof GitHubError && error.status === 403) return null;
 		throw error;
 	}
 }
