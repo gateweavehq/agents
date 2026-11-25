@@ -6,6 +6,8 @@ export type { ApplyPlan, ApplyPlanInput, ApplyProblem, RepositoryEntry } from ".
 export { MERGED_FILES, planApply } from "./apply";
 export { detect, wantsFile } from "./detect";
 export { parseFrontMatter } from "./frontmatter";
+export type { ReadyMadeMcpAllowlist } from "./ready-made-policy";
+export { READY_MADE_MCP_ALLOWLIST, readyMadeMcpProblems } from "./ready-made-policy";
 export type { AskedAddress, SetupFolder, SetupFolderResult } from "./setup-folder";
 export { groupSetupFolders, readSetupFolder, withAddresses } from "./setup-folder";
 export type { Detection, RepositoryTree, TreeFile } from "./types";
