@@ -15,7 +15,7 @@
 		"deploy": "pnpm --filter @gateweave/agents-web run deploy",
 		"wrangler": "pnpm --filter @gateweave/agents-web exec wrangler --cwd ../..",
 		"typecheck": "pnpm -r typecheck",
-		"test": "pnpm -r test && node --test scripts/update-copy.test.mjs",
+		"test": "pnpm -r test && node --test scripts/update-copy.test.mjs scripts/claim.test.mjs",
 		"test:e2e": "pnpm --filter @gateweave/agents-web test:e2e",
 		"test:smoke": "pnpm --filter @gateweave/agents-web test:smoke",
 		"check": "biome check && node scripts/check-one-agents.mjs",
