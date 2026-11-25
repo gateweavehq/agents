@@ -1,7 +1,8 @@
 /**
  * The files that decide whether an agent's own checks pass. An agent that can change a
- * test, a `package.json` script, the CI workflows or the lint configuration can make its checks
- * pass without making the work right, so a green check proves little when the diff touches one.
+ * test, a `package.json` script or other check configuration, the CI workflows or the lint
+ * configuration can make its checks pass without making the work right, so a green check proves
+ * little when the diff touches one.
  * `open_pull_request` looks for such edits in what it pushed: a pull request that has any is
  * opened as a draft, and the tool's section lists the paths. Adding a file is never an edit:
  * a new test only asks more of the work.
@@ -80,7 +81,7 @@ const CONFIG_NAME = [
 ];
 
 /** The files a task runner keeps its commands in, at any depth. */
-const BUILD_FILE = /(?:^|\/)(?:Makefile|justfile|Taskfile\.yml|noxfile\.py)$/;
+const BUILD_FILE = /(?:^|\/)(?:[Mm]akefile|GNUmakefile|[Jj]ustfile|Taskfile\.ya?ml|noxfile\.py)$/;
 
 /** The kind of oracle a path is, or null for a file that is not one. */
 export function oracleKind(path: string): OracleKind | null {
@@ -96,18 +97,67 @@ export function oracleKind(path: string): OracleKind | null {
 	return null;
 }
 
-/** The `scripts` of a package.json's text: null when it is not JSON or has none to compare. */
-function scriptsOf(text: string | null): string | null {
-	if (text === null) return null;
+/**
+ * The top-level keys of a `package.json` that say what the package is or what it depends on, and
+ * so do not change what its checks do. Every other key, `scripts` first, counts as check
+ * configuration: `jest`, `eslintConfig`, `prettier`, `mocha`, `lint-staged` and any key that is
+ * not here.
+ */
+const NON_CHECK_KEYS: ReadonlySet<string> = new Set([
+	"name",
+	"version",
+	"description",
+	"keywords",
+	"author",
+	"contributors",
+	"license",
+	"repository",
+	"homepage",
+	"bugs",
+	"funding",
+	"private",
+	"files",
+	"main",
+	"module",
+	"types",
+	"typings",
+	"exports",
+	"bin",
+	"sideEffects",
+	"dependencies",
+	"devDependencies",
+	"peerDependencies",
+	"peerDependenciesMeta",
+	"optionalDependencies",
+	"bundledDependencies",
+	"overrides",
+	"resolutions",
+	"engines",
+	"packageManager",
+	"publishConfig",
+	"workspaces",
+]);
+
+/** A value as JSON with every object's keys sorted, so a reordered key is not an edit. */
+function canonical(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+	if (typeof value === "object" && value !== null) {
+		const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+		return `{${entries.map(([key, inner]) => `${JSON.stringify(key)}:${canonical(inner)}`).join(",")}}`;
+	}
+	return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * The check configuration of a package.json's text, as a string two manifests can be compared
+ * by: every top-level key that is not in `NON_CHECK_KEYS`. Null when the text is not a JSON object.
+ */
+function checkConfigOf(text: string): string | null {
 	try {
 		const parsed: unknown = JSON.parse(text);
-		if (typeof parsed !== "object" || parsed === null) return null;
-		const scripts = (parsed as { scripts?: unknown }).scripts;
-		// Sorted, so a reordered script is not an edit but a changed one is.
-		return JSON.stringify(
-			scripts && typeof scripts === "object"
-				? Object.fromEntries(Object.entries(scripts).sort(([a], [b]) => a.localeCompare(b)))
-				: {},
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+		return canonical(
+			Object.fromEntries(Object.entries(parsed).filter(([key]) => !NON_CHECK_KEYS.has(key))),
 		);
 	} catch {
 		return null;
@@ -166,9 +216,11 @@ export interface BaseManifests {
 
 /**
  * What the oracles a list of changed files edits come to. A file that is added is never one. A
- * `package.json` counts when it is deleted, or when its scripts are not the base's: `text` reads
+ * `package.json` counts when it is deleted, or when any top-level key outside `NON_CHECK_KEYS`
+ * differs from the base's (`scripts`, `jest`, `eslintConfig` and any key not listed): `text` reads
  * it at the base or at the branch, and a file that cannot be read is taken as changed, since it
- * was not shown to be the same. A renamed file counts by where it was.
+ * was not shown to be the same. One that is read but is not a JSON object, on either side, makes
+ * the review unverified. A renamed file counts by where it was.
  *
  * Any other file that existed at the base counts as a check script when a word of a script of a
  * `package.json` at the base names it: the file's path ends with the word at a path boundary.
@@ -235,8 +287,16 @@ export async function reviewOracles(
 				text(path, "base").catch(() => null),
 				text(path, "head").catch(() => null),
 			]);
-			const scripts = scriptsOf(before);
-			if (scripts !== null && scripts === scriptsOf(after)) continue;
+			if (before !== null && after !== null) {
+				const config = [checkConfigOf(before), checkConfigOf(after)];
+				// A text that is not JSON cannot be compared, so the review cannot tell.
+				if (config[0] === null || config[1] === null) {
+					const side = config[0] === null ? "base" : "branch";
+					unverified ??= `${path} could not be parsed at the ${side}`;
+					continue;
+				}
+				if (config[0] === config[1]) continue;
+			}
 		}
 		edits.push({ path, change, kind });
 	}

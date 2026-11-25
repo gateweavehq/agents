@@ -30,6 +30,7 @@ function setup(
 	texts: Record<string, string> = {},
 	unreadable = false,
 	checks: string[] = [],
+	afterReview: () => void = () => {},
 ) {
 	const sandbox = new MemorySandbox();
 	const proposed: { body: string; draft?: boolean; convert?: boolean }[] = [];
@@ -57,7 +58,7 @@ function setup(
 			},
 			async review() {
 				if (unreadable) return { unverified: "GitHub's comparison could not be read" };
-				return reviewOracles(
+				const review = await reviewOracles(
 					files,
 					async (path, side) => texts[`${side}:${path}`] ?? null,
 					async () => ({
@@ -67,6 +68,8 @@ function setup(
 						complete: true,
 					}),
 				);
+				afterReview();
+				return review;
 			},
 		},
 		repository,
@@ -88,7 +91,15 @@ function setup(
 	) => Promise<PullRequestOutcome>;
 	return {
 		proposed,
-		call: () => execute({ title: "Fix", body: "Done." }, { toolCallId: "c", messages: [] }),
+		call: (abortSignal?: AbortSignal) =>
+			execute({ title: "Fix", body: "Done." }, {
+				toolCallId: "c",
+				messages: [],
+				...(abortSignal ? { abortSignal } : {}),
+			} as {
+				toolCallId: string;
+				messages: [];
+			}),
 	};
 }
 
@@ -124,6 +135,14 @@ describe("which paths are oracles", () => {
 		["Taskfile.yml", "check script"],
 		["apps/web/Taskfile.yml", "check script"],
 		["noxfile.py", "check script"],
+		["makefile", "check script"],
+		["services/api/makefile", "check script"],
+		["GNUmakefile", "check script"],
+		["services/api/GNUmakefile", "check script"],
+		["Justfile", "check script"],
+		["tools/Justfile", "check script"],
+		["Taskfile.yaml", "check script"],
+		["apps/web/Taskfile.yaml", "check script"],
 		["services/api/noxfile.py", "check script"],
 		["pyproject.toml", "lint or type config"],
 		["services/api/setup.cfg", "lint or type config"],
@@ -140,7 +159,7 @@ describe("which paths are oracles", () => {
 		"src/my-pytest.ini.md",
 		"docs/Makefile.md",
 		"src/justfile.ts",
-		"src/Taskfile.yaml",
+		"src/Taskfile.yaml.ts",
 		"src/mynoxfile.py",
 	])("%s is not one", (path) => {
 		expect(oracleKind(path)).toBeNull();
@@ -208,6 +227,59 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 		expect(outcome.draft).toBeUndefined();
 		expect(other.proposed[0]?.draft).toBeUndefined();
 	});
+	it.each([
+		[
+			"a jest key changed",
+			{ jest: { testPathIgnorePatterns: [] } },
+			{ jest: { testPathIgnorePatterns: ["cart"] } },
+		],
+		[
+			"eslintConfig changed",
+			{ eslintConfig: { rules: { "no-undef": "error" } } },
+			{ eslintConfig: { rules: { "no-undef": "off" } } },
+		],
+		["an unknown key added", {}, { checkMagic: { skip: true } }],
+		["a prettier key removed", { prettier: { semi: false } }, {}],
+	])("flags a package.json when %s", async (_name, before, after) => {
+		const { call, proposed } = setup([{ path: "package.json", status: "modified" }], {
+			"base:package.json": JSON.stringify({ name: "x", scripts: { test: "jest" }, ...before }),
+			"head:package.json": JSON.stringify({ name: "x", scripts: { test: "jest" }, ...after }),
+		});
+		expect((await call()).draft).toBe(true);
+		expect(proposed[0]?.body).toContain("- `package.json`: modified (package script)");
+	});
+	it("does not flag a package.json whose dependency version, other listed keys or key order changed", async () => {
+		const { call, proposed } = setup([{ path: "package.json", status: "modified" }], {
+			"base:package.json": JSON.stringify({
+				name: "x",
+				version: "1.0.0",
+				dependencies: { zod: "1.0.0" },
+				jest: { a: 1, b: 2 },
+			}),
+			"head:package.json": JSON.stringify({
+				jest: { b: 2, a: 1 },
+				dependencies: { zod: "1.1.0" },
+				version: "1.0.1",
+				name: "x",
+				engines: { node: ">=22" },
+			}),
+		});
+		const outcome = await call();
+		expect(outcome.draft).toBeUndefined();
+		expect(proposed[0]?.draft).toBeUndefined();
+	});
+	it("does not create, update or convert a pull request once the turn is stopped during the review", async () => {
+		const stopped = new AbortController();
+		const { call, proposed } = setup(
+			[{ path: "test/cart.test.ts", status: "modified" }],
+			{},
+			false,
+			[],
+			() => stopped.abort(new Error("stopped")),
+		);
+		await expect(call(stopped.signal)).rejects.toThrow("stopped");
+		expect(proposed).toEqual([]);
+	});
 	it("does not flag added tests, an added workflow or ordinary changes", async () => {
 		const { call, proposed } = setup([
 			{ path: "test/new.test.ts", status: "added" },
@@ -266,6 +338,10 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 		["justfile", "modified"],
 		["Taskfile.yml", "modified"],
 		["noxfile.py", "modified"],
+		["makefile", "modified"],
+		["GNUmakefile", "modified"],
+		["Justfile", "modified"],
+		["Taskfile.yaml", "modified"],
 		["Makefile", "removed"],
 		["justfile", "removed"],
 		["Taskfile.yml", "removed"],
@@ -515,6 +591,21 @@ describe("a base tree and its package.json files that cannot be read", () => {
 			),
 		).toEqual(unverified);
 	});
+	it.each([
+		["base", "{ not json", JSON.stringify({ scripts: {} })],
+		["branch", JSON.stringify({ scripts: {} }), "[1]"],
+	])(
+		"is unverified when a modified package.json cannot be parsed at the %s",
+		async (side, before, after) => {
+			expect(
+				await reviewOracles(
+					[{ path: "apps/web/package.json", status: "modified" }],
+					async (_path, from) => (from === "base" ? before : after),
+					async () => ({ paths: [], complete: true }),
+				),
+			).toEqual({ unverified: `apps/web/package.json could not be parsed at the ${side}` });
+		},
+	);
 	it("takes a package.json that cannot be read, at the base or the branch, as changed", async () => {
 		expect(
 			await reviewOracles(

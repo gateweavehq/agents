@@ -1338,16 +1338,28 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
     on as HTML, so it does not try. Nothing of a command's output goes into the body.
   - **An agent's edits to its own checks make a draft** (`./oracles.ts`). After the push, with or
     without checks set, the tool asks GitHub which files the branch changes against the default
-    branch (`review` of `PullRequestPort`). A test, a `package.json` whose scripts differ, a file
-    under `.github/`, or lint, type or test configuration that is modified, deleted or renamed
-    away opens the pull request as a draft, and the tool's section lists the paths (`editsSection`,
-    or inside `checksSection`). Check scripts count too: a file under the top-level `scripts/`, a
-    `Makefile`, `justfile`, `Taskfile.yml` or `noxfile.py`, and any file that a script of a
-    `package.json` at the base names. Snapshots, fixtures and Vite or Python test and lint
+    branch (`review` of `PullRequestPort`). A test, a `package.json` whose check configuration
+    differs, a file under `.github/`, or lint, type or test configuration that is modified, deleted
+    or renamed away opens the pull request as a draft, and the tool's section lists the paths
+    (`editsSection`, or inside `checksSection`). For a modified `package.json`, every top-level key
+    counts as check configuration except these: `name`, `version`, `description`, `keywords`,
+    `author`, `contributors`, `license`, `repository`, `homepage`, `bugs`, `funding`, `private`,
+    `files`, `main`, `module`, `types`, `typings`, `exports`, `bin`, `sideEffects`,
+    `dependencies`, `devDependencies`, `peerDependencies`, `peerDependenciesMeta`,
+    `optionalDependencies`, `bundledDependencies`, `overrides`, `resolutions`, `engines`,
+    `packageManager`, `publishConfig` and `workspaces`. So a changed `scripts`, `jest`,
+    `eslintConfig`, `prettier`, `mocha`, `ava`, `nyc`, `c8`, `lint-staged` or any key not on that
+    list is flagged, and a changed dependency version is not. A `package.json` that cannot be
+    parsed, at the base or on the branch, makes the review unverified. Check scripts count too: a
+    file under the top-level `scripts/`, a `Makefile` or `makefile`, `GNUmakefile`, `justfile` or
+    `Justfile`, `Taskfile.yml` or `Taskfile.yaml`, or `noxfile.py`, and any file that a script of
+    a `package.json` at the base names. Snapshots, fixtures and Vite or Python test and lint
     configuration count as well. Added files are never flagged. A comparison that cannot be read,
-    or that lists 300 files (GitHub's limit), is a draft too. A pull request that is open already
-    is converted to a draft (GraphQL `convertPullRequestToDraft`, which REST cannot do) and its
-    section is rewritten; a pull request that failed its checks still stays as it is.
+    or that lists 300 files (GitHub's limit), is a draft too. The turn's abort signal is checked
+    right after the review, so a stopped turn creates, updates and converts nothing. A pull
+    request that is open already is converted to a draft (GraphQL `convertPullRequestToDraft`,
+    which REST cannot do) and its section is rewritten; a pull request that failed its checks
+    still stays as it is.
   - **A script is named by its words, not by what a shell would do with it.** The tool reads
     every `package.json` of the base commit (one recursive tree read at the merge base, and the
     commit the comparison saw for the branch's side). A file that existed at the base and that

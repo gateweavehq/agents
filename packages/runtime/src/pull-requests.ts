@@ -416,6 +416,8 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		// After the push, so the branch is on GitHub to be compared. A branch that edits what its
 		// checks rely on is a draft, whether or not the repository has checks.
 		const review = (await github.review?.(branch)) ?? null;
+		// The review is many requests long: a turn stopped meanwhile creates, updates or converts nothing.
+		abortSignal?.throwIfAborted();
 		section = commands.length === 0 ? editsSection(review) : write(review);
 		if (reviewFlagged(review)) {
 			const edits = describeEdits(review);
