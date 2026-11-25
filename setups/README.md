@@ -54,6 +54,9 @@ adding it. For each folder:
 - It has no dotfiles.
 - `detect` finds each asset again in what it writes, for each runtime.
 - The MCP configuration it writes holds no literal token.
+- Every MCP server passes the allowlist in `packages/adapters/src/ready-made-policy.ts`: a fixed
+  network server uses a listed host, an `askUrl` example may use `example.com` or a host under
+  it, and a command server uses a listed command with exactly its arguments.
 - Every address it asks for (`askUrl`) can be given, as its example is.
 
 `apps/web/src/server/ready-made.test.ts` checks that the app can load every folder.
@@ -64,5 +67,7 @@ adding it. For each folder:
 2. Add `setups/<slug>/` as above. Write the text yourself, copy nothing you may not relicense
    under AGPL-3.0, and include no secrets.
 3. Run `pnpm verify`.
-4. Open a pull request (see [CONTRIBUTING.md](../CONTRIBUTING.md)) that says who the setup is for
-   and why each asset is in it.
+4. Open a pull request (see [CONTRIBUTING.md](../CONTRIBUTING.md)) that says who the setup is for,
+   why each asset is in it, and where each asset came from (including "written for this setup").
+   A maintainer reads every instruction file before merge: a setup with instructions replaces a
+   repository's `AGENTS.md` for the agents that use it, so its words are part of the review.
