@@ -264,9 +264,10 @@ describe("data parts", () => {
 
 	it("does not retry a failed provider call once the agent is paused", async () => {
 		const { registry, stub, agentId, workspaceId } = await conversation();
-		// The first attempt fails with a retryable error, and the pause lands before the retry.
-		const requests = fakeModel(() => {
-			void env.REGISTRY.getByName(workspaceId).pauseAgent(agentId, "admin");
+		// The first attempt fails with a retryable error, and the pause lands before the retry:
+		// it is awaited, so the retry cannot start before the pause is committed.
+		const requests = fakeModel(async () => {
+			await env.REGISTRY.getByName(workspaceId).pauseAgent(agentId, "admin");
 			return new Response(
 				JSON.stringify({ type: "error", error: { type: "api_error", message: "Overloaded" } }),
 				{
