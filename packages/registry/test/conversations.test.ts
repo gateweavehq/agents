@@ -6,6 +6,7 @@ import {
 	SANDBOX_BUDGET_SPENT,
 	SANDBOX_DAY_USED,
 	SANDBOX_IDLE_MINUTES,
+	SANDBOX_MONTH_USED,
 	SANDBOX_SECOND_PRICE,
 } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
@@ -738,6 +739,126 @@ describe("sandbox time", () => {
 			},
 			{ limits: { SANDBOX_DAILY_MINUTES: String(used + 1) } },
 		);
+	});
+
+	it("lets a running sandbox turn finish and refuses new turns at the monthly cap until reset", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const start = Date.UTC(2026, 11, 15, 10);
+		const cap = 10 + IDLE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					expect(instance.sandboxSecondsThisMonth()).toBe(0);
+					const run = await turn(instance, first);
+					const atCap = start + 10 * MINUTE;
+					clock.mockReturnValue(atCap);
+					expect(instance.sandboxSecondsThisMonth()).toBe(cap * 60);
+					expect(instance.getRun(run)).toMatchObject({ status: "running" });
+					expect(instance.finishRun(run, { ...done, endedAt: atCap })).toBe(true);
+					expect(instance.getRun(run)).toMatchObject({ status: "succeeded", endedAt: atCap });
+
+					const refusal = {
+						status: "refused",
+						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
+					};
+					expect(await instance.beginTurn(second, "Build it")).toEqual(refusal);
+					clock.mockReturnValue(Date.UTC(2026, 11, 16));
+					expect(instance.sandboxSecondsToday()).toBe(0);
+					expect(await instance.beginTurn(second, "Build it")).toEqual(refusal);
+
+					clock.mockReturnValue(Date.UTC(2027, 0, 1));
+					expect(instance.sandboxSecondsThisMonth()).toBe(0);
+					expect(await instance.beginTurn(second, "Build it")).toMatchObject({ sandbox: true });
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("names the month's reset when the day's and the month's minutes are both used up", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const start = Date.UTC(2026, 11, 15, 10);
+		const cap = 10 + IDLE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, first);
+					const atCap = start + 10 * MINUTE;
+					clock.mockReturnValue(atCap);
+					instance.finishRun(run, { ...done, endedAt: atCap });
+					expect(await instance.beginTurn(second, "Build it")).toEqual({
+						status: "refused",
+						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
+					});
+				},
+				{ limits: { SANDBOX_DAILY_MINUTES: String(cap), SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("alerts once at each monthly minutes threshold and starts over in the next UTC month", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const december = Date.UTC(2026, 11, 15, 10);
+		const january = Date.UTC(2027, 0, 15, 10);
+		const cap = 20;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(december);
+		const firstMonth = { cap, month: "2026-12", resetsOn: "2027-01-01" };
+		const secondMonth = { cap, month: "2027-01", resetsOn: "2027-02-01" };
+		const warning = { ...firstMonth, share: 80, minutes: 16 };
+		const reached = { ...firstMonth, share: 100, minutes: 20 };
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const heard = () => (instance as unknown as TestRegistry).minutesPassed();
+					const finish = (id: string, at: number) => {
+						clock.mockReturnValue(at);
+						expect(instance.finishRun(id, { ...done, endedAt: at })).toBe(true);
+					};
+					finish(await turn(instance, conversation), december + (15 - IDLE) * MINUTE);
+					expect(heard()).toEqual([]);
+
+					const atWarning = december + (16 - IDLE) * MINUTE;
+					clock.mockReturnValue(atWarning);
+					finish(await turn(instance, conversation), atWarning);
+					expect(heard()).toEqual([warning]);
+
+					// Two turns begin below the cap. The second closes after the first reaches it.
+					const atCap = december + (cap - IDLE) * MINUTE;
+					const third = await turn(instance, conversation);
+					const fourth = await turn(instance, conversation);
+					finish(third, atCap);
+					expect(heard()).toEqual([warning, reached]);
+					finish(fourth, atCap + MINUTE);
+					expect(heard()).toEqual([warning, reached]);
+
+					clock.mockReturnValue(january);
+					finish(await turn(instance, conversation), january + (cap - IDLE) * MINUTE);
+					await vi.waitFor(() =>
+						expect(heard()).toEqual([
+							warning,
+							reached,
+							{ ...secondMonth, share: 80, minutes: cap },
+							{ ...secondMonth, share: 100, minutes: cap },
+						]),
+					);
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
 	});
 
 	it("are refused once the server has spent the month's budget, which its operator hears of", async () => {

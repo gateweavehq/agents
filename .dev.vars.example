@@ -73,9 +73,11 @@ BETTER_AUTH_SECRET=
 
 # Optional, for sandboxes (the SANDBOX binding; see the README): the ids of the workspaces that
 # may use them, separated by commas (every workspace when unset); each workspace's minutes per UTC
-# day; the server's US dollars per UTC month; and who hears at 80% and 100% of that budget.
+# day and per UTC month; the server's US dollars per UTC month; and who hears at 80% and 100% of
+# that budget.
 # SANDBOX_WORKSPACES=
 # SANDBOX_DAILY_MINUTES=
+# SANDBOX_MONTHLY_MINUTES=
 # Minutes without a request after which a sandbox stops (5 when unset).
 # SANDBOX_IDLE_MINUTES=
 # SANDBOX_MONTHLY_BUDGET=

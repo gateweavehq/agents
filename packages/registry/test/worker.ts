@@ -1,6 +1,7 @@
 import type {
 	MemoryAgentEvent,
 	SandboxBudgetPassed,
+	SandboxMinutesPassed,
 	TriggerTurnOutcome,
 } from "@gateweave/agents-model";
 import { RegistryDO as Registry } from "../src";
@@ -15,6 +16,7 @@ export interface StartedTurn {
 
 const STARTED_KEY = "test:started-turns";
 const BUDGET_KEY = "test:budget-passed";
+const MINUTES_KEY = "test:minutes-passed";
 const USAGE_KEY = "test:usage";
 const DESTROYED_KEY = "test:destroyed";
 const REFUSED_KEY = "test:refused";
@@ -80,6 +82,10 @@ export class RegistryDO extends Registry {
 		this.ctx.storage.kv.put(BUDGET_KEY, [...heard, passed]);
 	}
 
+	protected override async sandboxMinutesPassed(passed: SandboxMinutesPassed): Promise<void> {
+		this.ctx.storage.kv.put(MINUTES_KEY, [...this.minutesPassed(), passed]);
+	}
+
 	protected override recordUsage(point: AnalyticsEngineDataPoint): void {
 		const written = this.ctx.storage.kv.get<AnalyticsEngineDataPoint[]>(USAGE_KEY) ?? [];
 		this.ctx.storage.kv.put(USAGE_KEY, [...written, point]);
@@ -104,6 +110,11 @@ export class RegistryDO extends Registry {
 	/** The shares of the sandbox budget this registry told of, as the app emails them. */
 	budgetPassed(): SandboxBudgetPassed[] {
 		return this.ctx.storage.kv.get<SandboxBudgetPassed[]>(BUDGET_KEY) ?? [];
+	}
+
+	/** The shares of monthly sandbox minutes this registry told the workspace's owners about. */
+	minutesPassed(): SandboxMinutesPassed[] {
+		return this.ctx.storage.kv.get<SandboxMinutesPassed[]>(MINUTES_KEY) ?? [];
 	}
 }
 

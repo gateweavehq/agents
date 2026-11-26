@@ -17,6 +17,8 @@ export interface SandboxSettings {
 	SANDBOX_WORKSPACES?: string;
 	/** Minutes of sandbox time each workspace may use in a day (UTC); no limit when unset or empty. */
 	SANDBOX_DAILY_MINUTES?: string;
+	/** Minutes of sandbox time each workspace may use in a month (UTC). No limit when unset or empty. */
+	SANDBOX_MONTHLY_MINUTES?: string;
 	/**
 	 * Minutes without a request after which a sandbox stops, and its files go with it; the default
 	 * when unset. A mistyped value keeps the default: a sandbox that stops at once would lose
@@ -129,6 +131,8 @@ export function sandboxOfferTo(settings: SandboxSettings, workspaceId: string): 
 export interface SandboxLimits {
 	/** Minutes each workspace may use in a day (UTC). */
 	dailyMinutes: number | null;
+	/** Minutes each workspace may use in a month (UTC). */
+	monthlyMinutes: number | null;
 	/** US dollars the deployment may spend in a month (UTC). */
 	monthlyBudget: number | null;
 }
@@ -137,6 +141,7 @@ export interface SandboxLimits {
 export function sandboxLimits(settings: SandboxSettings): SandboxLimits {
 	return {
 		dailyMinutes: limit(settings.SANDBOX_DAILY_MINUTES),
+		monthlyMinutes: limit(settings.SANDBOX_MONTHLY_MINUTES),
 		monthlyBudget: limit(settings.SANDBOX_MONTHLY_BUDGET),
 	};
 }
@@ -149,7 +154,7 @@ function limit(setting: unknown): number | null {
 	return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-/** Shares of the monthly budget, in percent, at which whoever runs the deployment hears of it. */
+/** Shares of a monthly sandbox limit, in percent, at which its recipients hear of it. */
 export const SANDBOX_BUDGET_ALERTS = [80, 100] as const;
 
 export type SandboxBudgetShare = (typeof SANDBOX_BUDGET_ALERTS)[number];
@@ -164,8 +169,21 @@ export interface SandboxBudgetPassed {
 	month: string;
 }
 
+/** A share of the month's sandbox minutes that a workspace has just used. */
+export interface SandboxMinutesPassed {
+	share: SandboxBudgetShare;
+	minutes: number;
+	cap: number;
+	month: string;
+	/** The first day of the next UTC month, as `YYYY-MM-DD`. */
+	resetsOn: string;
+}
+
 /** Why an agent with a sandbox cannot answer once its workspace has used the day's minutes. */
 export const SANDBOX_DAY_USED = "This workspace has used its sandbox time for today";
+
+/** Why an agent with a sandbox cannot answer once its workspace has used the month's minutes. */
+export const SANDBOX_MONTH_USED = "This workspace has used its sandbox time for this month";
 
 /** Why an agent with a sandbox cannot answer once the deployment has spent the month's budget. */
 export const SANDBOX_BUDGET_SPENT = "This server has spent its sandbox budget for the month";

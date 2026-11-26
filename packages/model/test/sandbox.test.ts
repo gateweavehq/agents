@@ -34,23 +34,39 @@ describe("sandbox settings", () => {
 	});
 
 	it("reads the limits as numbers, and a mistyped one as allowing nothing", () => {
-		expect(sandboxLimits({})).toEqual({ dailyMinutes: null, monthlyBudget: null });
+		expect(sandboxLimits({})).toEqual({
+			dailyMinutes: null,
+			monthlyMinutes: null,
+			monthlyBudget: null,
+		});
 		expect(
 			sandboxLimits({ SANDBOX_DAILY_MINUTES: " 120 ", SANDBOX_MONTHLY_BUDGET: "100" }),
 		).toEqual({
 			dailyMinutes: 120,
+			monthlyMinutes: null,
 			monthlyBudget: 100,
 		});
 		expect(sandboxLimits({ SANDBOX_DAILY_MINUTES: "", SANDBOX_MONTHLY_BUDGET: "0" })).toEqual({
 			dailyMinutes: null,
+			monthlyMinutes: null,
 			monthlyBudget: 0,
 		});
 		expect(sandboxLimits({ SANDBOX_DAILY_MINUTES: "2h", SANDBOX_MONTHLY_BUDGET: "-5" })).toEqual({
 			dailyMinutes: 0,
+			monthlyMinutes: null,
 			monthlyBudget: 0,
 		});
 		// Wrangler hands a number in `vars` over as one.
 		expect(sandboxLimits({ SANDBOX_DAILY_MINUTES: 90 as unknown as string }).dailyMinutes).toBe(90);
+	});
+
+	it("reads the monthly minutes limit from either a string or a number", () => {
+		expect(sandboxLimits({ SANDBOX_MONTHLY_MINUTES: "" }).monthlyMinutes).toBeNull();
+		expect(sandboxLimits({ SANDBOX_MONTHLY_MINUTES: "300" }).monthlyMinutes).toBe(300);
+		expect(
+			sandboxLimits({ SANDBOX_MONTHLY_MINUTES: 300 as unknown as string }).monthlyMinutes,
+		).toBe(300);
+		expect(sandboxLimits({ SANDBOX_MONTHLY_MINUTES: "abc" }).monthlyMinutes).toBe(0);
 	});
 
 	it("reads the idle minutes as a number, and a mistyped one as the default", () => {

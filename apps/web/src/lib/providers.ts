@@ -35,10 +35,13 @@ async function memberOf(slug: string, admin: boolean) {
 	return { member, registry: registryFor(member.membership), audit: auditFor(member) };
 }
 
-/** The workspace's sandbox time today (UTC), in minutes, and the server's daily limit if any. */
+/** The workspace's sandbox time and limits for the day and month (UTC). */
 export interface SandboxTime {
 	minutes: number;
 	limit: number | null;
+	monthMinutes: number;
+	monthLimit: number | null;
+	monthResetsOn: string;
 }
 
 /** What the workspace spent on Workers AI today (UTC), in US dollars, and the server's daily limit. */
@@ -52,7 +55,7 @@ export interface WorkersAiSpend {
  * `secretsState`: the server has no key to seal with, or lost the one that sealed what the
  * workspace holds), whether it offers
  * Workers AI, which has no key: the deployment pays for it, and whether it runs sandboxes for the
- * workspace, which the deployment pays for too, with how much of them the workspace used today.
+ * workspace, which the deployment pays for too, with the workspace's usage today and this month.
  */
 export const getProviderKeys = createServerFn({ method: "GET" })
 	.validator(z.string().min(1))
@@ -78,16 +81,19 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 			const found = await memberOf(slug, false);
 			if (!found) return null;
 			const { env } = await import("cloudflare:workers");
+			const { sandboxMonthResetsOn, utcMonth } = await import("@gateweave/agents-registry");
 			const { workersAiOffer } = await import("#/server/workers-ai");
 			const { workspaceId } = found.member.membership;
 			const sandbox = sandboxOfferTo(env, workspaceId);
 			const offer = workersAiOffer(workspaceId);
-			const [problem, keys, seconds, dollars] = await Promise.all([
+			const [problem, keys, seconds, monthSeconds, dollars] = await Promise.all([
 				found.registry.secretsState(),
 				found.registry.listProviderKeys(),
 				sandbox === "offered" ? found.registry.sandboxSecondsToday() : null,
+				sandbox === "offered" ? found.registry.sandboxSecondsThisMonth() : null,
 				offer === "offered" ? found.registry.workersAiSpentToday() : null,
 			]);
+			const { dailyMinutes, monthlyMinutes } = sandboxLimits(env);
 			return {
 				configured: problem === null,
 				problem,
@@ -101,9 +107,15 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 				}),
 				sandbox,
 				sandboxTime:
-					seconds === null
+					seconds === null || monthSeconds === null
 						? null
-						: { minutes: Math.ceil(seconds / 60), limit: sandboxLimits(env).dailyMinutes },
+						: {
+								minutes: Math.ceil(seconds / 60),
+								limit: dailyMinutes,
+								monthMinutes: monthSeconds / 60,
+								monthLimit: monthlyMinutes,
+								monthResetsOn: sandboxMonthResetsOn(utcMonth(Date.now())),
+							},
 			};
 		},
 	);

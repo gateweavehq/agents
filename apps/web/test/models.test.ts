@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
 import { FakeModels } from "./fake-models";
@@ -81,6 +81,79 @@ it("says when a key stops working, in its own words", async () => {
 	const html = await page("/foundry/settings/models", linus.cookie);
 	expect(html).toContain("OpenAI refused the key");
 	expect(html).not.toContain("revoked-long-ago");
+});
+
+it("shows the monthly sandbox limit and emails only this workspace's owners", async () => {
+	const cap = "0.001";
+	const server = await startAgents(origin, {
+		withSandbox: true,
+		settings: { SANDBOX_MONTHLY_MINUTES: cap },
+	});
+	try {
+		const owner = await signUp(server, origin, "sandbox-owner");
+		const coOwner = await signUp(server, origin, "sandbox-co-owner");
+		const admin = await signUp(server, origin, "sandbox-admin");
+		const workspaceId = await createWorkspace(server, origin, owner.headers, "sandbox-studio");
+		await createWorkspace(server, origin, admin.headers, "another-studio");
+		for (const [person, role] of [
+			[coOwner, "admin,owner"],
+			[admin, "admin"],
+		] as const) {
+			await server.db
+				.prepare(
+					"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
+				)
+				.bind(crypto.randomUUID(), workspaceId, person.userId, role, Date.now())
+				.run();
+		}
+		const registry = await server.registry(workspaceId);
+		await registry.saveProviderKey({ provider: "openai", key: KEY }, "Owner");
+		const agent = await registry.createAgent({
+			name: "Builder",
+			description: null,
+			instructions: null,
+			provider: "openai",
+			model: "gpt-a",
+			sandbox: true,
+		});
+		const conversation = await registry.startConversation(agent.id, owner.userId);
+		const turn = await registry.beginTurn(conversation?.id ?? "", "Build it");
+		if ("status" in turn) throw new Error(turn.message);
+		expect(
+			await registry.finishRun(turn.runId, {
+				status: "succeeded",
+				error: null,
+				steps: 1,
+				inputTokens: 0,
+				outputTokens: 0,
+				cachedInputTokens: 0,
+				cost: 0,
+				endedAt: Date.now(),
+			}),
+		).toBe(true);
+
+		const recipients = ["sandbox-co-owner@example.com", "sandbox-owner@example.com"];
+		await vi.waitFor(async () => {
+			const notices = (await server.emails()).filter(({ subject }) =>
+				subject.startsWith("sandbox-studio on agents.test used "),
+			);
+			expect(notices).toHaveLength(4);
+			for (const [index, share] of [80, 100].entries()) {
+				const batch = notices.slice(index * 2, index * 2 + 2);
+				expect(batch.map(({ to }) => to).sort()).toEqual(recipients);
+				expect(batch.every(({ subject }) => subject.includes(`used ${share}%`))).toBe(true);
+			}
+		});
+		const response = await server.fetch(`${origin}/sandbox-studio/settings/models`, {
+			headers: { cookie: owner.headers.cookie },
+		});
+		expect(response.status).toBe(200);
+		expect(await response.text()).toMatch(
+			/of 0\.001 used this month \(UTC\), resets on \d{4}-\d{2}-01\. New turns that need a sandbox wait until the reset\./,
+		);
+	} finally {
+		await server.dispose();
+	}
 });
 
 it("keeps model keys on a server without a SECRETS_KEY, as a first deploy is", async () => {
