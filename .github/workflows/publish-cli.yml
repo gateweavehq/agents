@@ -4,6 +4,11 @@ name: Publish CLI
 # workflow's OIDC token (trusted publishing), so no npm token is stored anywhere, and the package
 # gets provenance. Only admins can create those tags (a tag ruleset), and the tag must point at a
 # commit on main whose packages/cli/package.json has that version.
+#
+# npm's trusted publishing matches this repository and this file's name, not the branch, so a
+# copy edited on a branch could publish too. The publish job therefore runs in the `npm`
+# environment, which accepts only `cli-v*` tags, and the package's trusted publisher on
+# npmjs.com should name that environment.
 on:
   push:
     tags: ["cli-v*"]
@@ -17,6 +22,7 @@ jobs:
     if: github.repository == 'gateweavehq/agents'
     runs-on: ubuntu-latest
     concurrency: publish-cli
+    environment: npm
     steps:
       - uses: actions/checkout@v7
         with:
