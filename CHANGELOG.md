@@ -13,8 +13,8 @@ notes. Publishing a release deploys it to Gateweave Cloud.
 ### Internal
 
 - Each run's usage point in Analytics Engine now also counts the run's calls that would be
-  refused if `TARGET_RULE` were `enforce`: in total, and by target kind (email, URL, IP). It
-  holds numbers only. The destinations stay in the workspace, on the run page. These counts
+  refused if `TARGET_RULE` were `enforce`: in total, and by target kind (email, URL, IP). The
+  counts are numbers only. The destinations stay in the workspace, on the run page. These counts
   decide when refusing becomes the default.
   ([#333](https://github.com/gateweavehq/agents/pull/333))
 
