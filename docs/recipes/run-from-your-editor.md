@@ -14,13 +14,14 @@ was a stand-in that answered `run_agent` and `get_run` with fixed data, so no ru
 - Your client is connected to Agents with the `agents:run` scope, granted beside `agents`. A token without it is
   not offered `run_agent` or `get_run` at all. [MCP reference](../mcp.md#how-to-connect) says how to connect and
   which scopes to approve.
-- The agent exists and can run, and has **Tasks from MCP clients** turned on (step 1).
+- The agent exists and can run, and has **Tasks from MCP clients** turned on (step 1). The example task in
+  step 5 reads `acme/billing-api`, so the example agent needs read access to that repository.
 
 ## 1. Turn on "Tasks from MCP clients"
 
 Starting a task needs the agent's **Tasks from MCP clients** setting to be on, and it is off until someone turns
-it on. The agent's owner or a workspace admin (an owner or admin of the workspace) can: open the agent under
-**Agents**, choose **Edit**, tick **Tasks from MCP clients** and save.
+it on. An owner or admin of the workspace can: open the agent under **Agents**, choose **Edit**, tick
+**Tasks from MCP clients** and save.
 
 An agent without it refuses the task, saying that its owner can turn the setting on.
 
@@ -32,13 +33,16 @@ The client calls `run_agent` with four inputs, all required:
 - `agent`: the agent's id or its exact name, as its page shows it.
 - `task`: what the agent should do, in full. It sees this text and nothing else of your conversation.
 - `requestId`: an id of the client's own for this task, up to 64 letters, digits, `_` and `-`. Sending the same
-  id again on a retry returns the same run instead of starting a second. The id, not the task's text, is what
-  identifies the task, so send a new id for a new task.
+  id only to retry the same task. A retry of a task that already started returns that run (`duplicate`) instead
+  of starting a second, when it comes from the same person through the same OAuth client, for the same agent in
+  the same workspace. A retry of a task that did not start gets no such promise: it may be told the task is
+  still starting, get the earlier refusal, or start the task afresh. The id is not compared with the task's
+  text, so send a new id for a different task.
 
 The answer has a `status`. `started` and `duplicate` come with a `runId`, and `started` also with a
-`conversationId`. `limited` means the agent is over its runs per minute or per day, and `retryAfter` says how
-many seconds to wait. `starting` means the same task is still being started, and `retryAfter` again says when to
-ask. A `refused` answer has a `message` saying why.
+`conversationId`. `limited` means the agent has reached its limit of outside tasks for the minute or the day,
+counting the tasks it accepted whether or not their run has begun, and `retryAfter` says how many seconds to
+wait. `starting` means the same task is still being started, and `retryAfter` again says when to ask. A `refused` answer has a `message` saying why.
 
 ## 3. Follow the run
 
@@ -50,15 +54,17 @@ You can read your own runs. An owner or admin of the workspace reads every membe
 
 ## 4. Open the run
 
-`link` is the run's address on the Runs page, as a path such as `/acme/runs/run_7Kq2xV`. Add it to the address
-you use for Agents, such as `https://agents.gateweave.com/acme/runs/run_7Kq2xV`, to open the run with its steps
-and transcript.
+`link` is the run's address on the Runs page, as a path such as `/acme/runs/3f9c2b7e-5d41-4a8e-9b06-1c7e2a4d8f53`.
+Add it to the address you use for Agents, such as
+`https://agents.gateweave.com/acme/runs/3f9c2b7e-5d41-4a8e-9b06-1c7e2a4d8f53`, to open the run and its trace.
+To read the task's conversation, choose **Open the conversation** at the top of that page. The person who gave
+the task sees it there; an owner or admin who opens someone else's run does not.
 
 ## 5. Ask for the task
 
 Paste this into your client. Replace the workspace, the agent, the task, the request id and the address of Agents
 with your own. A request id names one task: reuse it only to retry that same task, and give a different task a
-new id, because a new task under an old id gets the earlier run back (or its refusal), not a new run.
+new id, because the id is not compared with the task's text.
 
 ```text
 Use the Gateweave Agents MCP server to give a task to an agent.
@@ -76,7 +82,7 @@ Use the Gateweave Agents MCP server to give a task to an agent.
 
 | Call        | What comes back                                                                                             |
 | ----------- | ----------------------------------------------------------------------------------------------------------- |
-| `run_agent` | `status: "started"`, a `runId` such as `run_7Kq2xV` and a `conversationId`                                  |
+| `run_agent` | `status: "started"`, a `runId` such as `3f9c2b7e-5d41-4a8e-9b06-1c7e2a4d8f53` and a `conversationId`        |
 | `get_run`   | First `state: "running"` with `answer: null` and `endedAt: null`, then `state: "succeeded"` with the answer |
 
 The last `get_run` also gives `steps`, `inputTokens`, `outputTokens`, `cost` (in millionths of a dollar, and
