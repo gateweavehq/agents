@@ -115,11 +115,12 @@ Docker is not needed: sandboxes are off until you turn them on.
    names, change all three together, in one pass, before this step; if you change any of them,
    change all three. The Worker's name is also the first part of its address.
 
-   If an earlier Agents of yours already has these names, the deploy updates it: it replaces that
-   Worker's code, keeps its secrets, applies these migrations to that database and updates the
-   Workflow. A different Worker under the name makes the deploy fail, because it has no
-   `BETTER_AUTH_SECRET`, and by then the deploy has made the database. To keep a new Agents apart
-   from anything in the account, choose names nothing uses.
+   If the account already has a Worker under the Worker's name, the deploy does not make a new one,
+   and what happens depends on that Worker's secrets. If it has a `BETTER_AUTH_SECRET`, as an
+   earlier Agents of yours does, the deploy overwrites it: it replaces the Worker's code, keeps its
+   secrets, applies these migrations to a database of that name and updates the Workflow. If it has
+   none, the deploy fails, and by then it has made the database. Either way, choose names nothing
+   uses, unless you mean to update an Agents you already run.
 
    <details>
    <summary>Expected output</summary>
@@ -232,10 +233,11 @@ Docker is not needed: sandboxes are off until you turn them on.
 
    </details>
 
-8. Give the server the token. If `pnpm wrangler secret list` already shows `WORKERS_AI_TOKEN`,
-   because an earlier Agents of yours has these names, skip this step: a new token from another
-   account than the account id in step 9 makes every Workers AI answer fail. Otherwise Wrangler
-   asks for the value; paste the token, which shows nothing as you paste, and press Enter.
+8. Give the server the token. Skip this step only if this server is an earlier Agents of yours
+   whose token is known to work for its account, for example because its chats already answer. A
+   `WORKERS_AI_TOKEN` that `pnpm wrangler secret list` shows may have expired or may not reach the
+   account. Otherwise Wrangler asks for the value; paste the token, which shows nothing as you
+   paste, and press Enter.
 
    ```sh
    pnpm wrangler secret put WORKERS_AI_TOKEN
@@ -261,11 +263,10 @@ Docker is not needed: sandboxes are off until you turn them on.
 
    </details>
 
-9. Tell it whose account pays: paste the account id from step 7. If the list already shows
-   `CLOUDFLARE_ACCOUNT_ID`, skip this step: an id that does not match the token's account makes
-   every Workers AI answer fail. Agents needs it as well as the
-   token, unless `AI_GATEWAY_URL` names the account. It is not confidential, but a secret keeps
-   `wrangler.jsonc` as it is.
+9. Tell it whose account pays: paste the account id from step 7. Agents needs it as well as the
+   token, unless `AI_GATEWAY_URL` names the account; an id set here wins over that address. Skip
+   this step only if the `CLOUDFLARE_ACCOUNT_ID` the server already has is the account you intend
+   and the token reaches it. It is not confidential, but a secret keeps `wrangler.jsonc` as it is.
 
    ```sh
    pnpm wrangler secret put CLOUDFLARE_ACCOUNT_ID
@@ -288,10 +289,13 @@ Docker is not needed: sandboxes are off until you turn them on.
     <details>
     <summary>Expected output</summary>
 
-    The page is `/acme/settings/models`. A section headed **Workers AI** says "This server offers Workers AI models to this workspace.
-    They need no key: whoever runs the server pays for their runs." Below it, a line ending "models
-    that can use tools", with a count in front, opens a list when you choose it. If a red message shows there
-    instead, the token or the account id is wrong: put the secret again.
+    The page is `/acme/settings/models`. A section headed **Workers AI** says "This server offers
+    Workers AI models to this workspace. They need no key: whoever runs the server pays for their
+    runs." Below it, a line ending "models that can use tools", with a count in front, opens a list
+    when you choose it. If a red message shows there instead, act on what it says: Cloudflare may
+    be slow, limiting requests or answering with an error, and trying again a little later may be enough. If
+    it says Workers AI refused this server's token, check the token and the account id, and put the
+    secret again.
 
     </details>
 
@@ -303,7 +307,7 @@ Docker is not needed: sandboxes are off until you turn them on.
     Choose the model this page names rather than one you remember: Cloudflare removed sixteen
     Workers AI text models on 20 November 2026, and an agent set to one of them fails with a message
     that says so. [When Cloudflare removes a Workers AI
-    model](self-hosting.md#when-cloudflare-removes-a-workers-ai-model) has the rest.
+model](self-hosting.md#when-cloudflare-removes-a-workers-ai-model) has the rest.
 
     <details>
     <summary>Expected output</summary>
