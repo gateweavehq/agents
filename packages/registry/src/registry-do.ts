@@ -2065,12 +2065,7 @@ export class RegistryDO extends DurableObject {
 			);
 		}
 		const { dailyMinutes, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
-		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
-			return refused(
-				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
-				"budget-limit",
-			);
-		}
+		// The month first: when both are used up, the refusal that names the later reset is the true one.
 		if (monthlyMinutes !== null) {
 			const now = Date.now();
 			const month = utcMonth(now);
@@ -2080,6 +2075,12 @@ export class RegistryDO extends DurableObject {
 					"budget-limit",
 				);
 			}
+		}
+		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
+			return refused(
+				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
+				"budget-limit",
+			);
 		}
 		return null;
 	}

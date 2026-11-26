@@ -780,6 +780,32 @@ describe("sandbox time", () => {
 		}
 	});
 
+	it("names the month's reset when the day's and the month's minutes are both used up", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const start = Date.UTC(2026, 11, 15, 10);
+		const cap = 10 + IDLE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, first);
+					const atCap = start + 10 * MINUTE;
+					clock.mockReturnValue(atCap);
+					instance.finishRun(run, { ...done, endedAt: atCap });
+					expect(await instance.beginTurn(second, "Build it")).toEqual({
+						status: "refused",
+						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
+					});
+				},
+				{ limits: { SANDBOX_DAILY_MINUTES: String(cap), SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
 	it("alerts once at each monthly minutes threshold and starts over in the next UTC month", async () => {
 		const stub = registry();
 		const [conversation = ""] = await builderConversations(stub, 1);
