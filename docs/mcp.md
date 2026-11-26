@@ -61,6 +61,13 @@ Use your own address from the table above on a self-hosted copy. The client find
 authorization server from the `401` that `/mcp` answers without a token, and asks for the scopes
 it wants.
 
+## Recipes
+
+Two tasks, each with the steps, a prompt to paste and what you should see:
+
+- [Find where something is handled, from a repository's wiki](recipes/ask-the-wiki.md)
+- [Give an agent a task from your editor and follow its run](recipes/run-from-your-editor.md)
+
 ## Tools
 
 The table is generated from the server's own `tools/list`, under both values of whether the token
