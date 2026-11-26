@@ -119,8 +119,9 @@ Docker is not needed: sandboxes are off until you turn them on.
    and what happens depends on that Worker's secrets. If it has a `BETTER_AUTH_SECRET`, as an
    earlier Agents of yours does, the deploy overwrites it: it replaces the Worker's code, keeps its
    secrets, applies these migrations to a database of that name and updates the Workflow. If it has
-   none, the deploy fails, and by then it has made the database. Either way, choose names nothing
-   uses, unless you mean to update an Agents you already run.
+   none, the deploy fails, but by then it has made the database, or applied these migrations to a
+   database of that name that was already there. Either way, choose names nothing uses, unless you
+   mean to update an Agents you already run.
 
    <details>
    <summary>Expected output</summary>
