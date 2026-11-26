@@ -397,3 +397,21 @@ describe("a team's runs", () => {
 		expect(await stub.activeRuns("missing", ADA)).toBeNull();
 	});
 });
+
+it("refuses turns of a paused lead and calls to a paused member", async () => {
+	const { stub, planner, coder, builders } = await workspace();
+	const conversation = (await stub.startTeamConversation(builders, ADA))?.id ?? "";
+	const refusal = {
+		status: "refused",
+		message: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+	};
+	await stub.pauseAgent(planner, ADA);
+	expect(await stub.beginTurn(conversation, "Hello")).toEqual(refusal);
+	await stub.resumeAgent(planner);
+	const turn = await begin(stub, conversation, "Delegate");
+	await stub.pauseAgent(coder, ADA);
+	expect(
+		await stub.beginTurn("nested-coder", "Code", via(turn.runId, "delegate", builders, coder)),
+	).toEqual(refusal);
+	expect(await stub.listNestedRuns(turn.runId)).toEqual([]);
+});

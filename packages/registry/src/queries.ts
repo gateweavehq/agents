@@ -41,6 +41,7 @@ import {
 	agentAssets,
 	agentDefinitions,
 	agentMcpServers,
+	agentPauses,
 	agents,
 	assets,
 	assetVersions,
@@ -261,10 +262,55 @@ export function listRunnableAgents(db: Db): RunnableAgent[] {
 		.all();
 }
 
+export const PAUSED_AGENT =
+	"This agent is paused, so it takes no new turns. An owner or admin can resume it.";
+
+/**
+ * An agent's pause by its id alone. A run under way reads this one: an agent paused during a tool
+ * call and then removed must still read as paused.
+ */
+export function agentPauseById(db: Db, id: string) {
+	return (
+		db
+			.select({ by: agentPauses.by, at: agentPauses.at })
+			.from(agentPauses)
+			.where(eq(agentPauses.agentId, id))
+			.get() ?? null
+	);
+}
+
+export function agentPause(db: Db, id: string) {
+	return (
+		db
+			.select({ by: agentPauses.by, at: agentPauses.at })
+			.from(agentPauses)
+			.innerJoin(agents, eq(agents.id, agentPauses.agentId))
+			.leftJoin(repositories, eq(repositories.id, agents.repositoryId))
+			.where(and(eq(agentPauses.agentId, id), liveIn(agents)))
+			.get() ?? null
+	);
+}
+
+export function pauseAgent(db: Db, id: string, by: string) {
+	const live = db
+		.select({ name: agents.name, pause: { by: agentPauses.by, at: agentPauses.at } })
+		.from(agents)
+		.leftJoin(repositories, eq(agents.repositoryId, repositories.id))
+		.leftJoin(agentPauses, eq(agents.id, agentPauses.agentId))
+		.where(and(eq(agents.id, id), liveIn(agents)))
+		.get();
+	if (!live) return null;
+	if (live.pause) return { ...live.pause, name: live.name, changed: false };
+	const at = Date.now();
+	db.insert(agentPauses).values({ agentId: id, by, at }).run();
+	return { by, at, name: live.name, changed: true };
+}
+
 /** A live agent with its repository, what it reads and, if Gateweave runs it, its definition. */
 export function getAgent(db: Db, id: string): AgentDetail | null {
 	const agent = agentsWhere(db, and(eq(agents.id, id), liveIn(agents)))[0];
 	if (!agent) return null;
+	agent.paused = agentPause(db, id);
 	const repository = agent.repositoryId
 		? (db
 				.select({ id: repositories.id, owner: repositories.owner, name: repositories.name })

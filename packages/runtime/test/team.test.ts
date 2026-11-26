@@ -355,3 +355,54 @@ describe("a conversation with a team", () => {
 		socket.close();
 	});
 });
+
+it("records a paused callee's refusal in the caller's edge span", async () => {
+	const { workspaceId, registry, stub, graph } = await builders();
+	const coder = graph.edges[0]?.to ?? "";
+	await registry.pauseAgent(coder, "admin");
+	const requests = teamModel({
+		Planner: [
+			() => anthropicToolCall("delegate__Coder", { task: "Write the form" }),
+			() => anthropicStream("Coder is paused."),
+		],
+	});
+	const socket = await connect(stub);
+	await ask(socket, "Build");
+	socket.close();
+	expect(JSON.stringify(requests.at(-1)?.body.messages)).toContain(
+		"This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+	);
+	const { root, nested } = await runs(registry);
+	expect(nested).toEqual([]);
+	expect(await traceOf(workspaceId, root)).toContainEqual(
+		expect.objectContaining({
+			kind: "edge",
+			status: "error",
+			childRunId: null,
+			error: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+		}),
+	);
+});
+
+it("stops a paused lead before its second model request", async () => {
+	const { workspaceId, registry, stub, graph } = await builders();
+	const requests = teamModel({
+		Planner: [
+			async () => {
+				await env.REGISTRY.getByName(workspaceId).pauseAgent(graph.lead, "admin");
+				return anthropicToolCall("delegate__Coder", { task: "Write the form" });
+			},
+			() => anthropicStream("Extra step."),
+		],
+		Coder: [() => anthropicStream("Done.")],
+	});
+	const socket = await connect(stub);
+	await ask(socket, "Build");
+	socket.close();
+	expect(requests.filter((request) => whose(request) === "Planner")).toHaveLength(1);
+	expect((await runs(registry)).root).toMatchObject({
+		status: "stopped",
+		error: "The agent was paused, so the run stopped before its next model request.",
+		steps: 1,
+	});
+});

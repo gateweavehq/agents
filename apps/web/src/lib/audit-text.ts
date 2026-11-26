@@ -173,6 +173,10 @@ export function auditSentence(event: AuditEvent, people: People): string {
 		}
 		case "agent.created":
 			return `created the agent ${label}`;
+		case "agent.paused":
+			return `paused the agent ${label}`;
+		case "agent.resumed":
+			return `resumed the agent ${label}`;
 		case "agent.updated": {
 			// A pin moved by itself names its asset, where it went, and where from when the entry says.
 			const asset = text(detail.asset);

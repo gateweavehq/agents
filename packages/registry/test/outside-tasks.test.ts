@@ -80,3 +80,18 @@ describe("outside tasks (AGT-155)", () => {
 		expect(await stub.admitOutsideTask(task(first?.id ?? "", "r2")).status).toBe("start");
 	});
 });
+
+it("settles an outside task with its agent's pause reason", async () => {
+	const stub = registry();
+	const agent = await stub.createAgent(reviewer({ outsideTasks: true }));
+	const admitted = await stub.admitOutsideTask(task(agent.id, "r1"));
+	if (admitted.status !== "start") throw new Error(admitted.status);
+	await stub.pauseAgent(agent.id, "admin");
+	const refusal = {
+		status: "refused",
+		message: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+	};
+	expect(await stub.beginOutsideTurn(admitted.conversationId, "Review")).toEqual(refusal);
+	expect(await stub.admitOutsideTask(task(agent.id, "r1"))).toEqual(refusal);
+	expect(await stub.listRuns()).toEqual([]);
+});

@@ -344,6 +344,13 @@
       "when": 1795569388407,
       "tag": "0048_track_report_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1795647511300,
+      "tag": "0049_agent_pauses",
+      "breakpoints": true
     }
   ]
 }

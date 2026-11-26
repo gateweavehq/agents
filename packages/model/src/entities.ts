@@ -83,6 +83,7 @@ export interface GitLabConnection {
 }
 
 export interface Agent {
+	paused?: { by: string; at: number } | null;
 	id: string;
 	/** Null for an agent defined in the app rather than found in a repository. */
 	repositoryId: string | null;

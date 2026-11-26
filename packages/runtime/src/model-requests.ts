@@ -10,6 +10,7 @@ import type { RunningEngine } from "./engines";
 import { type EngineMeter, meterModelRequest, recordRefusal } from "./meter";
 import {
 	anthropicRequest,
+	failureForLogs,
 	type GatewaySettings,
 	googleRequest,
 	openaiRequest,
@@ -59,6 +60,15 @@ export async function sendModelRequest(
 	const outgoing = await outgoingRequest(request, provider, running, settings, url);
 	if ("refused" in outgoing) return refuse(outgoing.refused, outgoing.status);
 	if (outgoing instanceof Response) return outgoing;
+	// A failed read fails closed: the engine retries, and the next read decides.
+	let pause: string | null;
+	try {
+		pause = await meter.engineRequestPause(turn.token);
+	} catch (error) {
+		console.error("Could not check whether the engine turn was paused", failureForLogs(error));
+		return refuse("The agent's pause could not be checked. Try the request again.", 503);
+	}
+	if (pause !== null) return refuse(pause, 403);
 	if (!isMeteredRequest(url)) return fetch(outgoing);
 	return meterModelRequest(meter, turn.token, running.provider, () => fetch(outgoing), waitUntil);
 }

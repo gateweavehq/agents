@@ -71,6 +71,7 @@ import {
 	type ToolSet,
 	toUIMessageStream,
 	type UIMessage,
+	wrapLanguageModel,
 } from "ai";
 import type { ChangesPort } from "./changes";
 import { type ChatSession, sessionOpening } from "./chat-session";
@@ -122,6 +123,8 @@ import { type ParentTargets, startTargetRule } from "./target-rule";
 import { createOutbox, queueExport, sendDue } from "./telemetry-export";
 import { connectTools, type OAuthProviders } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
+
+const PAUSE_STOP = "The agent was paused, so the run stopped before its next model request.";
 
 interface RuntimeEnv extends GatewaySettings, WorkersAiSettings, SandboxSettings {
 	TARGET_RULE?: string;
@@ -269,6 +272,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 * with the steps of those still under way.
 	 */
 	#engineTurnState: {
+		agentId: string;
+		paused: boolean;
 		token: string;
 		tools: ToolSet | null;
 		signal: AbortSignal;
@@ -728,6 +733,15 @@ ${runPageNote(runs, turn.runId)}`
 		return serveEngineTools(turn.tools, request, turn.signal);
 	}
 
+	async engineRequestPause(token: string): Promise<string | null> {
+		const turn = this.#engineTurnFor(token);
+		if (!turn) return null;
+		if (!turn.paused && (await this.#parties().registry.agentPause(turn.agentId))) {
+			turn.paused = true;
+		}
+		return turn.paused ? PAUSE_STOP : null;
+	}
+
 	/**
 	 * A request of the engine's for the model left the sandbox (`SandboxOutbound`, `./meter.ts`):
 	 * its span starts. Returns its step, or null without the turn's token or once the turn ended.
@@ -926,12 +940,55 @@ ${runPageNote(runs, turn.runId)}`
 						.join("\n\n");
 					const maxSteps = sandbox ? MAX_SANDBOX_STEPS : MAX_STEPS;
 					let reachedStepLimit = false;
+					// The turn was planned unpaused, but a pause can land while its servers connect:
+					// read it once more before the first request, which `stopWhen` never sees.
+					const pause = { stopped: false };
+					try {
+						pause.stopped = Boolean(await registry.agentPause(agent.agentId));
+					} catch (error) {
+						console.error("Could not check whether the agent was paused", failureForLogs(error));
+					}
+					if (pause.stopped) {
+						writer.write({ type: "error", errorText: PAUSE_STOP });
+						await end("stopped", PAUSE_STOP);
+						return;
+					}
+					// The SDK retries a failed provider call inside a step, so the pause is read
+					// before every attempt. The error is not an `APICallError`, so it is not retried.
+					let pauseReported = false;
+					const readPause = async () => {
+						if (pause.stopped) return true;
+						try {
+							pause.stopped = Boolean(await registry.agentPause(agent.agentId));
+						} catch (error) {
+							console.error("Could not check whether the agent was paused", failureForLogs(error));
+						}
+						return pause.stopped;
+					};
+					const baseModel = this.modelFor(agent, key, {
+						workspace: workspaceId,
+						agent: agent.agentId,
+						conversation: conversationId,
+					});
 					const result = streamText({
-						model: this.modelFor(agent, key, {
-							workspace: workspaceId,
-							agent: agent.agentId,
-							conversation: conversationId,
-						}),
+						// A model given by id alone is resolved by the SDK, not by us: leave it be.
+						model:
+							typeof baseModel === "string"
+								? baseModel
+								: wrapLanguageModel({
+										model: baseModel,
+										middleware: {
+											specificationVersion: "v4",
+											wrapStream: async ({ doStream }) => {
+												if (await readPause()) throw new Error(PAUSE_STOP);
+												return doStream();
+											},
+											wrapGenerate: async ({ doGenerate }) => {
+												if (await readPause()) throw new Error(PAUSE_STOP);
+												return doGenerate();
+											},
+										},
+									}),
 						...(agent.provider === "anthropic"
 							? { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } }
 							: {}),
@@ -943,7 +1000,16 @@ ${runPageNote(runs, turn.runId)}`
 							ignoreIncompleteToolCalls: true,
 						}),
 						tools,
-						stopWhen: ({ steps }) => {
+						stopWhen: async ({ steps }) => {
+							try {
+								pause.stopped = Boolean(await registry.agentPause(agent.agentId));
+							} catch (error) {
+								console.error(
+									"Could not check whether the agent was paused",
+									failureForLogs(error),
+								);
+							}
+							if (pause.stopped) return true;
 							reachedStepLimit = steps.length >= maxSteps;
 							return reachedStepLimit;
 						},
@@ -952,14 +1018,22 @@ ${runPageNote(runs, turn.runId)}`
 						onStepEnd: (step) => run.stepEnded(step),
 						onStepError: ({ stepNumber, error }) =>
 							run.stepFailed(stepNumber, describeFailure(agent, error)),
-						onEnd: ({ finishReason }) =>
-							finishReason === "error"
-								? end("failed", `${agent.name} could not finish its answer.`)
-								: reachedStepLimit
-									? end("step-limit", `The run reached its limit of ${maxSteps} model requests.`)
-									: end("succeeded"),
+						onEnd: ({ finishReason }) => {
+							if (pause.stopped) return end("stopped", PAUSE_STOP);
+							if (finishReason === "error")
+								return end("failed", `${agent.name} could not finish its answer.`);
+							if (reachedStepLimit)
+								return end(
+									"step-limit",
+									`The run reached its limit of ${maxSteps} model requests.`,
+								);
+							return end("succeeded");
+						},
 						onAbort: () => end("stopped"),
-						onError: ({ error }) => end("failed", describeFailure(agent, error)),
+						onError: ({ error }) =>
+							pause.stopped
+								? end("stopped", PAUSE_STOP)
+								: end("failed", describeFailure(agent, error)),
 					});
 					// The finish is written here, not by `toUIMessageStream`, so the turn's changes
 					// can be summed into the reply first (AGT-139).
@@ -970,6 +1044,10 @@ ${runPageNote(runs, turn.runId)}`
 						sendStart: false,
 						sendFinish: false,
 						onError: (error) => {
+							if (pause.stopped) {
+								pauseReported = true;
+								return PAUSE_STOP;
+							}
 							console.error("A turn failed", {
 								agent: agent.agentId,
 								...failureForLogs(error),
@@ -978,6 +1056,8 @@ ${runPageNote(runs, turn.runId)}`
 						},
 					});
 					for await (const chunk of ui) writer.write(chunk);
+					if (pause.stopped && !pauseReported)
+						writer.write({ type: "error", errorText: PAUSE_STOP });
 					// The capture itself waits for the first tool call, so a turn that never
 					// touched the sandbox has nothing to sum, and asking would start a container.
 					// A stopped turn sums nothing either: its git reads would hold up the finish.
@@ -1123,13 +1203,16 @@ ${runPageNote(runs, turn.runId)}`
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
 				const requests = new Set<number>();
-				this.#engineTurnState = {
+				const state = {
+					agentId: agent.agentId,
+					paused: false,
 					token,
 					tools: offered ? tools : null,
 					signal: calls.signal,
 					run,
 					requests,
 				};
+				this.#engineTurnState = state;
 				const turn = engineTurn(engine, writer, run, agent);
 				const stop = () => {
 					calls.abort();
@@ -1182,7 +1265,10 @@ ${runPageNote(runs, turn.runId)}`
 					await toolbox.close();
 				}
 				const ended = turn.end();
-				if (signal?.aborted) {
+				if (state.paused) {
+					writer.write({ type: "error", errorText: PAUSE_STOP });
+					await end("stopped", PAUSE_STOP);
+				} else if (signal?.aborted) {
 					await end("stopped");
 				} else {
 					const outcome = await settle(ended, ENGINE_NAMES[engine], sandbox);

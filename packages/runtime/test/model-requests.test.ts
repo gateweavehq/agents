@@ -39,6 +39,7 @@ function meterOf() {
 	const waits: Promise<unknown>[] = [];
 	let steps = 0;
 	const meter: EngineMeter = {
+		engineRequestPause: async () => null,
 		engineRequestStarted: async () => steps++,
 		engineRequestEnded: async (_token, _step, request) => {
 			ended.push(request);
@@ -231,6 +232,23 @@ describe("a model request from the sandbox", () => {
 		expect(await recorded()).toMatchObject([{ error: null, model: "claude-sonnet-5-5" }]);
 	});
 
+	it("refuses a valid request without forwarding it when the pause lookup fails", async () => {
+		const requests = fakeModel(() => anthropicStream("Answer"));
+		const { context } = meterOf();
+		context.meter.engineRequestPause = async () => {
+			throw new Error("Registry unavailable");
+		};
+		const response = await sendModelRequest(
+			post(MESSAGES, claudeCodeRequest(), CLAUDE_CODE_HEADERS),
+			"anthropic",
+			engine("claude-code", "anthropic", "claude-sonnet-5-5"),
+			context,
+		);
+		expect(response.status).toBe(503);
+		expect(await response.text()).toContain("pause could not be checked");
+		expect(requests).toHaveLength(0);
+	});
+
 	it("counts tokens unmetered, as before", async () => {
 		const requests = fakeModel(() => Response.json({ input_tokens: 10 }));
 		const { context, recorded } = meterOf();
@@ -397,9 +415,12 @@ describe("a model request the sandbox may not make", () => {
 		provider: "anthropic" | "openai" | "google",
 		running: RunningEngine,
 		words: RegExp,
+		pause?: string,
 	) {
 		const requests = fakeModel(() => anthropicStream("Should not be asked."));
 		const { context, recorded } = meterOf();
+		if (pause)
+			context.meter.engineRequestPause = async (token) => (token === "turn-token" ? pause : null);
 		const response = await sendModelRequest(request, provider, running, context);
 		expect(response.status).toBe(403);
 		expect(await response.text()).toMatch(words);
@@ -412,6 +433,16 @@ describe("a model request the sandbox may not make", () => {
 
 	const claudeCode = engine("claude-code", "anthropic", "claude-sonnet-5-5");
 	const codex = engine("codex", "openai", "gpt-5.5");
+
+	it("refuses a paused engine before forwarding and records the reason", async () => {
+		await refused(
+			post(MESSAGES, claudeCodeRequest(), CLAUDE_CODE_HEADERS),
+			"anthropic",
+			claudeCode,
+			/paused before the request/,
+			"The turn was paused before the request.",
+		);
+	});
 
 	it("names no MCP server for Anthropic to call", async () => {
 		const body = claudeCodeRequest({

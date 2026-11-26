@@ -31,6 +31,9 @@ describe("audit events in words", () => {
 
 	it("says what was done to what", () => {
 		const say = (fields: Parameters<typeof event>[0]) => auditSentence(event(fields), people);
+		const target = { type: "agent", id: "a-2", label: "Coder" } as const;
+		expect(say({ action: "agent.paused", target })).toBe("paused the agent Coder");
+		expect(say({ action: "agent.resumed", target })).toBe("resumed the agent Coder");
 		expect(
 			say({
 				action: "invitation.created",

@@ -80,8 +80,8 @@ export async function connectAgent(
 	agents: Agents,
 	origin: string,
 	cookie: string,
+	provider = new MemoryProvider(),
 ): Promise<Client> {
-	const provider = new MemoryProvider();
 	const transport = () =>
 		new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
 			authProvider: provider,

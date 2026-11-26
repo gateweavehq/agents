@@ -75,6 +75,8 @@ async function managedOf(slug: string) {
 	return {
 		registry: registryFor(member.membership),
 		audit: auditFor(member),
+		userId: member.user.id,
+		sessionCreatedAt: member.sessionCreatedAt,
 		workspaceId: member.membership.workspaceId,
 	};
 }
@@ -268,6 +270,36 @@ export const moveAgentPin = createServerFn({ method: "POST" })
 			});
 		}
 		return moved.agent;
+	});
+
+const agentAction = z.object({ slug: z.string().min(1), agentId: id });
+
+export const pauseAgent = createServerFn({ method: "POST" })
+	.validator(agentAction)
+	.handler(async ({ data }) => {
+		const { registry, audit, userId } = await managedOf(data.slug);
+		const pause = await registry.pauseAgent(data.agentId, userId);
+		if (!pause) throw new Error("Agent not found");
+		if (pause.changed)
+			await audit({
+				action: "agent.paused",
+				target: { type: "agent", id: data.agentId, label: pause.name },
+			});
+	});
+
+export const resumeAgent = createServerFn({ method: "POST" })
+	.validator(agentAction)
+	.handler(async ({ data }) => {
+		const { registry, audit, sessionCreatedAt } = await managedOf(data.slug);
+		const { requireFreshSession } = await import("#/server/access");
+		await requireFreshSession(sessionCreatedAt);
+		const before = await registry.getAgent(data.agentId);
+		if (!before) throw new Error("Agent not found");
+		if (await registry.resumeAgent(data.agentId))
+			await audit({
+				action: "agent.resumed",
+				target: { type: "agent", id: data.agentId, label: before.agent.name },
+			});
 	});
 
 export const removeAgent = createServerFn({ method: "POST" })

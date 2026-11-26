@@ -10,6 +10,7 @@
 import { type AgentSnapshot, TEAM_TURN_LIMITS, type TurnVia } from "@gateweave/agents-model";
 import { conversationParties } from "./conversations";
 import { agentSnapshot } from "./definitions";
+import { agentPause, PAUSED_AGENT } from "./queries";
 import { callingRun, nestedRuns, type RunParent } from "./runs";
 import type { Db } from "./state";
 import { followEdge, type TeamPosition, teamLead } from "./teams";
@@ -77,6 +78,7 @@ export function nestedTurnPlan(db: Db, via: TurnVia): NestedTurnPlan | TurnRefus
 	if (!position) return { refused: "That edge is no longer in the team" };
 	const agent = agentSnapshot(db, position.agentId);
 	if (!agent) return { refused: "The agent that edge goes to was removed" };
+	if (agentPause(db, position.agentId)) return { refused: PAUSED_AGENT };
 	const conversation = conversationParties(db, caller.conversationId);
 	if (!conversation) return { refused: "The conversation this turn is part of was deleted" };
 	return {
