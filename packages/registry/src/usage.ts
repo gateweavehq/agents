@@ -5,7 +5,7 @@
  * record each workspace reads; these points are a copy for the deployment, sampled as Analytics
  * Engine samples, and kept for its retention. docs/self-hosting.md has the queries.
  */
-import { sandboxCost, type TotaledRun } from "@gateweave/agents-model";
+import { sandboxCost, type TotaledRun, type WouldRefuseCounts } from "@gateweave/agents-model";
 
 export interface UsageSettings {
 	/** The Analytics Engine dataset usage events go to. */
@@ -36,6 +36,10 @@ export const USAGE_DOUBLES = [
 	"seconds",
 	"sandboxSeconds",
 	"sandboxCost",
+	"wouldRefuse",
+	"wouldRefuseEmail",
+	"wouldRefuseUrl",
+	"wouldRefuseIp",
 ] as const;
 
 /**
@@ -43,7 +47,11 @@ export const USAGE_DOUBLES = [
  * Sandbox time counts as the run's figure does when it closes: with the idle minutes after it,
  * which a turn of the same conversation soon after takes back, so summed it is an upper bound.
  */
-export function usagePoint(workspace: string, run: TotaledRun): AnalyticsEngineDataPoint {
+export function usagePoint(
+	workspace: string,
+	run: TotaledRun,
+	counts?: WouldRefuseCounts,
+): AnalyticsEngineDataPoint {
 	const blobs: Record<(typeof USAGE_BLOBS)[number], string> = {
 		run: run.id,
 		agent: run.agentId,
@@ -64,6 +72,10 @@ export function usagePoint(workspace: string, run: TotaledRun): AnalyticsEngineD
 		steps: run.steps,
 		seconds: Math.max(0, (run.endedAt ?? run.startedAt) - run.startedAt) / 1000,
 		sandboxSeconds,
+		wouldRefuse: counts?.total ?? 0,
+		wouldRefuseEmail: counts?.email ?? 0,
+		wouldRefuseUrl: counts?.url ?? 0,
+		wouldRefuseIp: counts?.ip ?? 0,
 		sandboxCost: sandboxCost(sandboxSeconds) / 1_000_000,
 	};
 	return {

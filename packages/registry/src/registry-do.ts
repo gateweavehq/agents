@@ -173,11 +173,13 @@ import {
 	WORKERS_AI_DAY_USED,
 	WORKERS_AI_NOT_INVITED,
 	type WorkersAiSettings,
+	type WouldRefuseCounts,
 	type WrittenAssetInput,
 	wikiStartInput,
 	workersAiDailyLimit,
 	workersAiOffered,
 	workersAiOfferTo,
+	wouldRefuseCounts,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
 import { and, eq, isNull } from "drizzle-orm";
@@ -2068,9 +2070,10 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/** Closes a run the runtime began with `beginTurn`. False when it was closed already. */
-	finishRun(runId: string, finish: RunFinish): boolean {
+	finishRun(runId: string, finish: RunFinish & { wouldRefuse?: WouldRefuseCounts }): boolean {
 		const run = id.parse(runId);
 		const data = runFinish.parse(finish);
+		const counts = wouldRefuseCounts.optional().parse(finish.wouldRefuse);
 		let report: PendingTrackReport | undefined;
 		const closed = this.#write(() => {
 			if (!finishRun(this.#db, run, data)) return false;
@@ -2092,7 +2095,8 @@ export class RegistryDO extends DurableObject {
 		if (closed) {
 			const done = getRun(this.#db, run, this.#idleMinutes());
 			// Each registry is named for its workspace (`registryFor` in the app).
-			if (done) this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done));
+			if (done)
+				this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done, counts));
 		}
 		const { monthlyBudget } = sandboxLimits(this.env as SandboxSettings);
 		if (closed && monthlyBudget !== null && runHadSandbox(this.#db, run)) {
