@@ -15,7 +15,8 @@ sandboxes. The rest is in [self-hosting.md](self-hosting.md).
   cent. [first-pull-request.md](first-pull-request.md#what-cloudflares-plans-say) lists what else
   the plans change.
 - [Git](https://git-scm.com/downloads).
-- [Node.js](https://nodejs.org) 24 (22 and later work) and [pnpm](https://pnpm.io/installation) 12.
+- [Node.js](https://nodejs.org) 24, the version in `.node-version`, and
+  [pnpm](https://pnpm.io/installation) 12.
 - A browser, for signing in to Cloudflare and for Agents itself.
 
 Docker is not needed: sandboxes are off until you turn them on.
@@ -85,6 +86,10 @@ Docker is not needed: sandboxes are off until you turn them on.
    </details>
 
 4. Deploy.
+
+   If your Cloudflare login can reach more than one account, the deploy cannot ask which to use.
+   Run `pnpm wrangler whoami` to see them with their ids, then `export CLOUDFLARE_ACCOUNT_ID=<id>`
+   for the one to deploy to.
 
    ```sh
    pnpm run deploy
@@ -159,8 +164,8 @@ Docker is not needed: sandboxes are off until you turn them on.
 
    </details>
 
-5. Open the address from the last step in your browser. It opens the page **Sign in to Gateweave
-   Agents**. Choose **Create an account** under the form, enter a name, an email address and a
+5. Open the address from the last step in your browser. It sends you on to `/login`, the page
+   **Sign in to Gateweave Agents**. Choose **Create an account** under the form, enter a name, an email address and a
    password of at least 8 characters, then choose **Create account**. Agents sends no email and asks
    for no confirmation, so any address will do.
 
@@ -171,8 +176,8 @@ Docker is not needed: sandboxes are off until you turn them on.
    <details>
    <summary>Expected output</summary>
 
-   You are signed in at once, and the page that opens is titled **Workspaces**, with "Signed in as"
-   and your address under it and "You are not in any workspace yet." below.
+   You are signed in at once, and the page you land on is `/`, titled **Workspaces**, with "Signed in
+   as" and your address under it and "You are not in any workspace yet." below.
 
    </details>
 
@@ -252,12 +257,13 @@ Docker is not needed: sandboxes are off until you turn them on.
 
    </details>
 
-10. In the workspace, choose **Settings** in the sidebar, then **Models**.
+10. In the workspace, choose **Settings** in the sidebar. It opens `/acme/settings/members`, the
+    Members page; choose **Models** in the list beside it.
 
     <details>
     <summary>Expected output</summary>
 
-    A section headed **Workers AI** says "This server offers Workers AI models to this workspace.
+    The page is `/acme/settings/models`. A section headed **Workers AI** says "This server offers Workers AI models to this workspace.
     They need no key: whoever runs the server pays for their runs." Below it, a line ending "models
     that can use tools", with a count in front, opens a list when you choose it. If a red message shows there
     instead, the token or the account id is wrong: put the secret again.
@@ -277,7 +283,8 @@ Docker is not needed: sandboxes are off until you turn them on.
     <details>
     <summary>Expected output</summary>
 
-    A message says "Helper was created" and the agent's own page opens.
+    A message says "Helper was created" and the agent's own page opens, at `/acme/agents/` followed by
+    the agent's id.
 
     </details>
 
@@ -287,7 +294,7 @@ Docker is not needed: sandboxes are off until you turn them on.
     <details>
     <summary>Expected output</summary>
 
-    A conversation opens with "Write to Helper below." in the middle and a box labelled "Message
+    A conversation opens at `/acme/chat/` followed by its id, with "Write to Helper below." in the middle and a box labelled "Message
     Helper" at the foot.
 
     </details>
