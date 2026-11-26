@@ -1,8 +1,11 @@
 # Quickstart
 
-About N minutes from a fresh clone gets you Agents on your own Cloudflare account, at a workers.dev
-address, deployed from the command line, with you signed in as its first account and a workspace
-that holds an agent that answers your first message through Workers AI.
+A fresh clone gets you Agents on your own Cloudflare account, at a workers.dev address, deployed
+from the command line, with you signed in as its first account and a workspace that holds an agent
+that answers your first message through Workers AI. Following this page on 26 November 2026 took
+about 3 minutes up to your first workspace, starting from an empty package cache, not counting
+installing the tools below or signing in to Cloudflare. The steps after that, from the Workers AI
+token to the first answer, weren't timed.
 
 This is the shortest path: no custom domain, no sign-in provider, no email, no GitHub App and no
 sandboxes. The rest is in [self-hosting.md](self-hosting.md).
@@ -50,20 +53,24 @@ Docker is not needed: sandboxes are off until you turn them on.
 
    ```text
    Scope: all 8 workspace projects
+   ✓ Lockfile passes supply-chain policies (verified 7d ago)
+   Lockfile is up to date, resolution step is skipped
+   ...
    Packages: +524
    ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
    Progress: resolved 524, reused 0, downloaded 524, added 524, done
-
+   ...
    devDependencies:
    + @biomejs/biome 2.6.8
    + typescript 7.0.2
 
-   Done in 38s using pnpm v12.4.2
+   Done in 23s using pnpm v12.4.2
    ```
 
-   This is a machine whose package store is empty. The counts differ a little from release to
-   release, and a machine that has installed these packages before reuses them, so it finishes
-   sooner.
+   This is a machine whose package store is empty. The counts and the time vary: they change from
+   release to release and with your connection, and a machine that has installed these packages
+   before reuses them and finishes sooner. Lines about downloads and from the packages' own
+   postinstall scripts may appear among them.
 
    </details>
 
@@ -102,29 +109,35 @@ Docker is not needed: sandboxes are off until you turn them on.
    Wrangler asks whether to continue with the migrations, because the database may not serve
    requests while they run, answer yes.
 
-   The Worker and the database are both called `gateweave-agents`, from `name` and `database_name`
-   at the top of `wrangler.jsonc`; the ones under `env` are Gateweave's own deployments. To use
-   other names, change those two before this step. The Worker's name is also the first part of its
-   address. The wiki Workflow's name, `gateweave-agents-wiki`, is unique in an account, so change it
-   too if your account already has a Workflow with that name.
+   Three names are in `wrangler.jsonc`: the Worker's `name` and the `database_name`, both
+   `gateweave-agents`, and the `name` of the entry in the top-level `workflows` array,
+   `gateweave-agents-wiki`. The ones under `env` are Gateweave's own deployments. To use other
+   names, change all three together, in one pass, before this step; if you change any of them,
+   change all three. The Worker's name is also the first part of its address.
 
-   If the account already has a Worker, a database or a Workflow under one of these names, the
-   deploy does not make a new one: it replaces that Worker's code, keeps its secrets, applies these
-   migrations to a database of that name, and updates the Workflow. To keep a new Agents apart from
-   what is there, choose other names for all three before this step.
+   If an earlier Agents of yours already has these names, the deploy updates it: it replaces that
+   Worker's code, keeps its secrets, applies these migrations to that database and updates the
+   Workflow. A different Worker under the name makes the deploy fail, because it has no
+   `BETTER_AUTH_SECRET`, and by then the deploy has made the database. To keep a new Agents apart
+   from anything in the account, choose names nothing uses.
 
    <details>
    <summary>Expected output</summary>
 
    ```text
    (!) Your Vite config uses features that are unsupported by `configLoader: 'native'` ...
+   (!) Your Vite config uses features that are unsupported by `configLoader: 'native'` ...
+   (!) Your Vite config uses features that are unsupported by `configLoader: 'native'` ...
    vite v8.3.8 building client environment for production...
    ✓ built in 14s
    vite v8.3.8 building ssr environment for production...
    WARNING Missing required secrets: BETTER_AUTH_SECRET. Add them to .dev.vars, .env, or set as environment variables.
    ✓ built in 12s
-    ⛅️ wrangler 4.162.0
+    ⛅️ wrangler 4.162.0 (update available ...)
+   Using redirected Wrangler configuration.
    ...
+   Attaching additional modules:
+   ... a table of about 1,200 lines ...
    Total Upload: 11383.43 KiB / gzip: 2641.51 KiB
    The following bindings need to be provisioned:
    Binding        Resource
@@ -133,6 +146,7 @@ Docker is not needed: sandboxes are off until you turn them on.
    Provisioning DB (D1 Database)...
    Resource name found in config: gateweave-agents
    🌀 Creating new D1 Database "gateweave-agents"...
+   ✨ DB provisioned 🎉
    🎉 Resources provisioned, continuing with deployment...
    Durable Object exports reconciliation:
      Created: ConversationAgent, RateLimiter, RegistryDO, RunnerSandbox, SandboxMeterDO
@@ -161,8 +175,10 @@ Docker is not needed: sandboxes are off until you turn them on.
    │ 0013_workspace_deletion.sql  │ ✅     │
    ```
 
-   The Vite warning and the `WARNING Missing required secrets` line can be ignored: the second
-   comes from the build, which runs before the deploy makes the secret. The address on the line
+   The Vite warning, which appears three times, and the `WARNING Missing required secrets` line,
+   which appears once, can be ignored: the second comes from the build, which runs before the deploy
+   makes the secret. The table after `Using redirected Wrangler configuration`, one line for each
+   file the Worker carries, is very long, about 1,200 lines; that is normal. The address on the line
    after `Deployed` is yours. The migration table lists every migration with a tick; the last one
    is shown above. The numbers are from one run and differ from yours. The deploy takes about
    a minute and a half on a warm package cache.
@@ -187,7 +203,7 @@ Docker is not needed: sandboxes are off until you turn them on.
    </details>
 
 6. Under **New workspace**, enter `Acme` as the **Name** and choose **Create workspace**. The **URL**
-   below it fills in as `acme`.
+   field shows `acme` greyed out as an example, and fills in `acme` from the name as you type it.
 
    <details>
    <summary>Expected output</summary>
@@ -216,8 +232,10 @@ Docker is not needed: sandboxes are off until you turn them on.
 
    </details>
 
-8. Give the server the token. Wrangler asks for the value; paste the token, which shows nothing as
-   you paste, and press Enter.
+8. Give the server the token. If `pnpm wrangler secret list` already shows `WORKERS_AI_TOKEN`,
+   because an earlier Agents of yours has these names, skip this step: a new token from another
+   account than the account id in step 9 makes every Workers AI answer fail. Otherwise Wrangler
+   asks for the value; paste the token, which shows nothing as you paste, and press Enter.
 
    ```sh
    pnpm wrangler secret put WORKERS_AI_TOKEN
@@ -243,7 +261,9 @@ Docker is not needed: sandboxes are off until you turn them on.
 
    </details>
 
-9. Tell it whose account pays: paste the account id from step 7. Agents needs it as well as the
+9. Tell it whose account pays: paste the account id from step 7. If the list already shows
+   `CLOUDFLARE_ACCOUNT_ID`, skip this step: an id that does not match the token's account makes
+   every Workers AI answer fail. Agents needs it as well as the
    token, unless `AI_GATEWAY_URL` names the account. It is not confidential, but a secret keeps
    `wrangler.jsonc` as it is.
 
