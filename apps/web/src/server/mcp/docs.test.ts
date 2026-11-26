@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { createMcpHandler } from "@modelcontextprotocol/server";
+import type { Client } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
-import { type AgentsAccess, createAgentsServer } from "./tools";
+import { connect } from "./test-client";
+import type { AgentsAccess } from "./tools";
 
 const PAGE = resolve(import.meta.dirname, "../../../../../docs/mcp.md");
 const START = "<!-- mcp-tools:start -->";
@@ -36,13 +36,7 @@ const NO_ACCESS: AgentsAccess = {
 type Listed = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 
 async function toolsOffered(canRun: boolean): Promise<Listed[]> {
-	const handler = createMcpHandler(() => createAgentsServer(NO_ACCESS, canRun));
-	const client = new Client({ name: "docs-test", version: "1.0.0" });
-	await client.connect(
-		new StreamableHTTPClientTransport(new URL("https://agents.example.com/mcp"), {
-			fetch: (url, init) => handler.fetch(new Request(url, init)),
-		}),
-	);
+	const client = await connect(NO_ACCESS, canRun);
 	const { tools } = await client.listTools();
 	await client.close();
 	return tools;

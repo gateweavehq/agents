@@ -28,10 +28,10 @@ sends the person to authorize with PKCE, and they approve it on the consent scre
 the app, says where the grant will go, and is never skipped. Session cookies are never accepted
 at `/mcp`.
 
-| Scope        | What it lets the client do                                                                                                                                                                               |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agents`     | Read: see the names of the workspaces the person belongs to and read their repositories' wikis, which may describe private code. It cannot change anything.                                              |
-| `agents:run` | Run: give the person's agents tasks and read their runs, only for agents whose owner allowed tasks from outside. Those tasks spend the workspace's budget. Granted beside `agents`, never instead of it. |
+| Scope        | What it lets the client do                                                                                                                                                                                                                                                                                                                            |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agents`     | Read: see the names of the workspaces the person belongs to and read their repositories' wikis, which may describe private code. It cannot change anything.                                                                                                                                                                                           |
+| `agents:run` | Run: give the person's agents tasks and read their runs. Starting a task works only for an agent whose owner allowed tasks from outside, and those tasks spend the workspace's budget. Reading a run needs only workspace membership: a member reads their own runs, an owner or admin reads every one. Granted beside `agents`, never instead of it. |
 
 A token without `agents:run` is not offered `run_agent` or `get_run` at all.
 
