@@ -1066,7 +1066,7 @@ to, through Better Auth's MCP plugin (the `jwt()` and `mcp()` plugins in
 The tools are in `apps/web/src/server/mcp/tools.ts`, and [docs/mcp.md](mcp.md) lists them in a table
 that a test (`apps/web/src/server/mcp/docs.test.ts`) renders from the server's own `tools/list` and
 fails on when it differs. A token with the `agents` scope gets the five tools that read; one that
-also has `agents:run` (`MCP_RUN_SCOPE`, AGT-155) gets two more, which give an agent a task and read
+also has `agents:run` (`MCP_RUN_SCOPE`) gets two more, which give an agent a task and read
 its run. Without that scope `createAgentsServer` does not register them, so a read-only token
 cannot even see `run_agent`. The tools that read:
 
