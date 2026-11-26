@@ -1063,7 +1063,12 @@ to, through Better Auth's MCP plugin (the `jwt()` and `mcp()` plugins in
    never accepted there, so a web page cannot make a signed-in browser call it, and no Origin
    check is needed. There are no agent members here, so the only credential is an OAuth token.
 
-The tools, in `apps/web/src/server/mcp/tools.ts`, only read:
+The tools are in `apps/web/src/server/mcp/tools.ts`, and [docs/mcp.md](mcp.md) lists them in a table
+that a test (`apps/web/src/server/mcp/docs.test.ts`) renders from the server's own `tools/list` and
+fails on when it differs. A token with the `agents` scope gets the five tools that read; one that
+also has `agents:run` (`MCP_RUN_SCOPE`) gets two more, which give an agent a task and read
+its run. Without that scope `createAgentsServer` does not register them, so a read-only token
+cannot even see `run_agent`. The tools that read:
 
 - `list_workspaces` returns the name and slug of every workspace the person belongs to, read
   from D1.
@@ -1086,6 +1091,11 @@ The tools, in `apps/web/src/server/mcp/tools.ts`, only read:
   how few pages have it, with English endings such as plurals taken off.
 - `list_wiki_repos` lists the repositories with a wiki in the person's workspaces, as Devin's
   server lists its own, with each wiki's pages and commit.
+- `run_agent` and `get_run`, with `agents:run`, are the two that act. `run_agent` gives an agent of
+  one of the person's workspaces a task and starts its run, the way a trigger would; the agent must
+  have allowed tasks from outside ("Tasks from MCP clients" on its page), and the run spends the
+  workspace's budget. `get_run` reads a run's state, answer, steps, tokens and its link on the Runs
+  page; a run another member started is an owner's or admin's to read.
 
 Tools reach Agents only through the `AgentsAccess` object `createAgentsServer` is given, which
 offers what the signed-in person may see. A tool that reads a workspace resolves it to the

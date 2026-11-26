@@ -1,24 +1,6 @@
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import { createMcpHandler } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
-import {
-	type AgentsAccess,
-	createAgentsServer,
-	type WikiMatch,
-	type WikiRepo,
-	wikiAnswerText,
-} from "./tools";
-
-async function connect(access: AgentsAccess, canRun = false) {
-	const handler = createMcpHandler(() => createAgentsServer(access, canRun));
-	const client = new Client({ name: "test", version: "1.0.0" });
-	await client.connect(
-		new StreamableHTTPClientTransport(new URL("https://agents.example.com/mcp"), {
-			fetch: (url, init) => handler.fetch(new Request(url, init)),
-		}),
-	);
-	return client;
-}
+import { connect } from "./test-client";
+import { type AgentsAccess, type WikiMatch, type WikiRepo, wikiAnswerText } from "./tools";
 
 it("offers list_workspaces, which returns what access gives it and nothing more", async () => {
 	const client = await connect({
