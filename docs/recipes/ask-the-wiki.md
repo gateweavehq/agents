@@ -31,9 +31,12 @@ worth reading. Your client's model reads them and answers.
 
 ## 3. Read the pages it cites
 
-If a page is cut off or a neighbouring page looks relevant, the client calls `read_wiki_contents` with the same
-`repoName` and a `page` number such as `3.1`. Without `page` it reads every page. `read_wiki_structure` lists
-the pages and their numbers.
+If a page is cut off or a neighbouring page looks relevant, the client calls `read_wiki_contents` with
+`repoName` and a `page` number such as `3.1`. `repoName` is one string, the one repository the page belongs to,
+even when the question named several: each page in a multi-repository answer is labelled `Repository:
+owner/name`. Without `page` it reads every page of that repository. A cut page and the pages named as worth
+reading come with their numbers; `read_wiki_structure` lists every page of a repository with its number.
+The pages `ask_wiki_question` shows are headed by their title only, so a page's number comes from those lists.
 
 ## 4. Ask for the answer
 
@@ -46,26 +49,28 @@ when one fails.
 1. Call list_wiki_repos and check that acme/billing-api has a wiki.
 2. Call ask_wiki_question with repoName "acme/billing-api" and that question.
 3. If an answer rests on a page you were only shown in part, or on a page the tool listed as worth reading, call
-   read_wiki_contents for that page.
+   read_wiki_contents for that page with its repository and its number. The tool gives the number for those
+   pages; if it does not, call read_wiki_structure to find it.
 
-Answer from the wiki pages only. Name each wiki page you used by its number and title, and the source files
-and line ranges it lists. If the pages do not say, tell me that instead of guessing.
+Answer from the wiki pages only. Name each wiki page you used by its title, and the source files and line
+ranges it lists. If the pages do not say, tell me that instead of guessing.
 ```
 
 ## What you should see
 
 The client's calls, in order:
 
-| Call                 | What comes back                                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `list_wiki_repos`    | `acme/billing-api (workspace acme, private): 4 pages, at commit 9f3c1a2, written 2026-11-20`           |
-| `ask_wiki_question`  | The pages `3.1 Retries of failed webhooks` and `3 Webhooks`, each with its source files, in that order |
-| `read_wiki_contents` | Only when asked for: the page `3.1`, with `src/webhooks/retry.ts` as its source                        |
+| Call                 | What comes back                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `list_wiki_repos`    | `acme/billing-api (workspace acme, private): 4 pages, at commit 9f3c1a2, written 2026-11-20`            |
+| `ask_wiki_question`  | The pages headed `Retries of failed webhooks` and `Webhooks`, each with its source files, in that order |
+| `read_wiki_contents` | Only when asked for: the page `3.1`, with `src/webhooks/retry.ts` as its source                         |
 
 The answer says that a webhook's signature is checked in `verifySignature` before `handleEvent` marks an
-invoice paid, and that a failed one is retried five times and then parked. It names pages 3 and 3.1 and
-`src/webhooks/verify.ts`, `src/webhooks/handle.ts` and `src/webhooks/retry.ts`. Your repository's answer
-will follow its own wiki. The `Invoices` page, which has none of the question's words, is left out.
+invoice paid, and that a failed one is retried five times and then parked. It names the pages `Webhooks` and
+`Retries of failed webhooks` and the files `src/webhooks/verify.ts`, `src/webhooks/handle.ts` and
+`src/webhooks/retry.ts`. Your repository's answer will follow its own wiki. The `Invoices` page, which has none
+of the question's words, is left out.
 
 If the repository has no wiki yet, or is in a workspace you do not belong to, the call fails with a message
 instead: a repository you cannot see is reported as not found.

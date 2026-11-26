@@ -32,7 +32,8 @@ The client calls `run_agent` with four inputs, all required:
 - `agent`: the agent's id or its exact name, as its page shows it.
 - `task`: what the agent should do, in full. It sees this text and nothing else of your conversation.
 - `requestId`: an id of the client's own for this task, up to 64 letters, digits, `_` and `-`. Sending the same
-  id again on a retry returns the same run instead of starting a second.
+  id again on a retry returns the same run instead of starting a second. The id, not the task's text, is what
+  identifies the task, so send a new id for a new task.
 
 The answer has a `status`. `started` and `duplicate` come with a `runId`, and `started` also with a
 `conversationId`. `limited` means the agent is over its runs per minute or per day, and `retryAfter` says how
@@ -55,7 +56,9 @@ and transcript.
 
 ## 5. Ask for the task
 
-Paste this into your client. Replace the workspace, the agent and the task with your own.
+Paste this into your client. Replace the workspace, the agent, the task, the request id and the address of Agents
+with your own. A request id names one task: reuse it only to retry that same task, and give a different task a
+new id, because a new task under an old id gets the earlier run back (or its refusal), not a new run.
 
 ```text
 Use the Gateweave Agents MCP server to give a task to an agent.
@@ -66,7 +69,7 @@ Use the Gateweave Agents MCP server to give a task to an agent.
    seconds and call run_agent again with the same requestId.
 3. Call get_run with the workspace and the runId every 10 seconds until the state is no longer "running".
 4. Tell me the final state, the agent's answer, the steps and tokens used, and the run's link, written as a full
-   address on https://agents.gateweave.com.
+   address on https://agents.gateweave.com (use your own address if you run Agents yourself).
 ```
 
 ## What you should see
