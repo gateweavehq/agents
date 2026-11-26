@@ -8,6 +8,118 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.35.0] - 2026-11-26
+
+Owners and admins can pause an agent, and an agent's runs on Gateweave Track issues can report
+their state on the issue. Deleting a workspace or a conversation no longer leaves data behind
+when a step fails: it is tried again until everything is gone. Tool calls with a destination
+that came only from outside content are still only logged and counted on the run page; refusing
+them by default, which 0.34.0 announced for this release, moves to a later one. This release has
+one D1 migration, which `pnpm run deploy` applies, and four in the workspace registry, which add
+tables and nullable columns.
+
+### Added
+
+- **Owners and admins can pause an agent.** The agent's page has Pause and Resume buttons, and
+  the audit log records both. ([#331](https://github.com/gateweavehq/agents/pull/331))
+  - A paused agent takes no new turn: a chat message, a trigger's delivery, an outside task or
+    another agent's call is refused with a message that says it is paused.
+  - A turn under way stops before its next model request, in Gateweave's own loop and in Claude
+    Code, Codex or OpenCode in a sandbox.
+  - Pausing needs no recent sign-in; resuming does. Keys and `/mcp` can do neither.
+- **An agent's runs on Track issues can report back to Track.** An owner or admin connects a
+  Track workspace and team under Track run reporting on the Agents page, and approves it in
+  Track.
+  ([#320](https://github.com/gateweavehq/agents/pull/320), [#321](https://github.com/gateweavehq/agents/pull/321), [#322](https://github.com/gateweavehq/agents/pull/322))
+  - When a signed delivery from Track for an issue of that team starts a run, the run reports to
+    the issue as queued, running, then passed, failed or cancelled, with a link to its run page.
+    A run that cannot start says why, such as a usage limit.
+  - A report Track does not take, through an outage, a rate limit or a server error, is tried
+    again for up to 24 hours. Each try sends the state it was made with, so a late one never
+    replaces a newer state. Disconnecting a destination drops its waiting reports.
+  - The source's key is sealed in the workspace's registry, and admins see only which
+    workspace and team it reports to.
+- **An agent that edits its own checks opens a draft.** After the push, `open_pull_request` asks
+  GitHub which files the branch changes. A modified, deleted or renamed test, a `package.json`
+  whose scripts or other check settings differ, a file under `.github/`, a check script, or lint,
+  type or test configuration makes the pull request a draft, and its "Checks run by Gateweave"
+  section lists the paths. ([#323](https://github.com/gateweavehq/agents/pull/323))
+  - Added files are never flagged, and neither is a changed dependency version.
+  - When GitHub's comparison cannot be read, the pull request is a draft too.
+  - An open pull request the agent updates is made a draft as well. This works with or without
+    checks set on the repository.
+
+### Changed
+
+- **A sandbox stops 5 minutes after its conversation's last turn**, where it stopped after 15.
+  Your account pays for those minutes, and on a short run they cost more than the work did. A
+  follow-up turn within them still reuses the checkout and installed packages. The sandbox
+  limits and each run's sandbox time count the same minutes, and `SANDBOX_IDLE_MINUTES` sets
+  another number. ([#318](https://github.com/gateweavehq/agents/pull/318))
+- **Track triage on Workers AI starts from DeepSeek V4.1 Flash**
+  (`@cf/deepseek-ai/deepseek-v4.1-flash-1017`), where it started from Llama 4 Scout. In a check
+  of seven Workers AI models it finished every run with valid tool arguments. The guide names
+  Gemma 4 as the choice that costs about a fifth as much and is slower. An agent set up before
+  keeps its model. ([#312](https://github.com/gateweavehq/agents/pull/312))
+
+### Fixed
+
+- **Deleting a workspace finishes even when a step fails.** Its objects were deleted in a hook
+  that only logged a failure, so a conversation or registry that failed to go stayed, and nothing
+  tried again.
+  ([#319](https://github.com/gateweavehq/agents/pull/319), [#313](https://github.com/gateweavehq/agents/pull/313))
+  - The deletion is noted in D1 together with the workspace's row, and the note stays until all
+    of its data is gone. The daily run finishes two such deletions a run.
+  - A conversation that fails keeps its registry, which is what lists it.
+  - A moved workspace's old copy that refuses to be erased is tried again, not dropped.
+- **Deleting a conversation erases what its sandbox kept**: the repository it cloned, what it
+  pushed, and the Claude Code and OpenCode sessions. They stayed behind before. If the erase
+  fails, the deletion fails too, and is tried again a minute later, then twice as long each
+  time, up to a day.
+  ([#313](https://github.com/gateweavehq/agents/pull/313), [#317](https://github.com/gateweavehq/agents/pull/317))
+- **Two edits to one file in one step both stay.** A step's tool calls run at once, and a second
+  `edit_file` on the same file overwrote the first, though both answered that they had replaced
+  it. `write_file`, `edit_file` and `delete_file` on one path now run one after another.
+  ([#315](https://github.com/gateweavehq/agents/pull/315))
+- **`find_files` leaves out `.git` and git-ignored files**, as its description says, even with a
+  glob such as `*`. `search` leaves out `.git` when it is given no glob.
+  ([#316](https://github.com/gateweavehq/agents/pull/316))
+- **A retried `open_pull_request` answers what the first call proposed.** In the same run, for
+  the same branch, commit, title and body, it no longer runs the repository's checks again, or
+  opens a second pull request when the first was merged or closed meanwhile.
+  ([#314](https://github.com/gateweavehq/agents/pull/314))
+- **A Workers AI model without prices no longer escapes `WORKERS_AI_DAILY_DOLLARS`.** Its runs
+  counted nothing toward the limit. Where the limit is set, a turn on such a model is refused
+  before it starts, and the refusal names the model; without the limit, it runs as before.
+  ([#324](https://github.com/gateweavehq/agents/pull/324))
+
+### Internal
+
+- The tests of ready-made setups hold their MCP servers to an allowlist: HTTPS at
+  `api.githubcopilot.com` only, reviewed commands, and a closed set of keys per server file.
+  `setups/README.md` says what a maintainer reviews before merging a setup.
+  ([#329](https://github.com/gateweavehq/agents/pull/329))
+- Contributors claim an issue labelled `together` with `/claim` before opening a pull request,
+  and a claim with no pull request lapses after 7 days.
+  ([#325](https://github.com/gateweavehq/agents/pull/325))
+
+### If you run your own
+
+- **Update.** `pnpm run deploy` applies the D1 migration (`0013_workspace_deletion`, a new table)
+  before the new code goes live. The four registry migrations (`0046` to `0049`: three new tables
+  and three nullable columns) are in each workspace's registry and run by themselves when the
+  workspace is next used; there is no step for you.
+- **Data left by earlier deletions.** From the first daily run after the update, a workspace
+  that is gone but still has a location row is taken as deleted, and its objects are deleted.
+- **`TARGET_RULE` still defaults to `log`.** A call with a destination the agent learned only
+  from outside content runs, and the run page counts it. Refusing such calls by default moves to
+  a later release; to refuse them now, set `enforce`, as "Tool destinations" in
+  `docs/self-hosting.md` says.
+- **`SANDBOX_IDLE_MINUTES`** is optional: unset or mistyped it is 5, and it takes a number above
+  0 and up to 300. Set `15` to keep the old behaviour.
+- **Track run reporting** needs a Track that takes run reports, 0.47.0 or later. A report links
+  to the run's page only when `BETTER_AUTH_URL` is set.
+
 ## [0.34.0] - 2026-11-20
 
 Once a run has read outside content, the destinations of its tool calls are checked, and the run
