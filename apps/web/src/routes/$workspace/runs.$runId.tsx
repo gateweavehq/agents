@@ -1,4 +1,5 @@
 import {
+	countWouldRefuse,
 	MODEL_PROVIDER_NAMES,
 	type RunSpan,
 	sandboxCost,
@@ -347,13 +348,7 @@ function Trace({
 			<p className="text-sm text-muted-foreground">The run ended before it called the model.</p>
 		);
 	}
-	const flagged = trace.filter(
-		(span) =>
-			span.status === "would_refuse" ||
-			((span.kind === "tool" || span.kind === "edge") &&
-				span.status !== "refused" &&
-				span.target?.decision === "would_refuse"),
-	).length;
+	const flagged = countWouldRefuse(trace).total;
 	const refused = trace.filter((span) => span.status === "refused").length;
 	return (
 		<>

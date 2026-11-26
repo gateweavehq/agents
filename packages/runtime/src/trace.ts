@@ -9,6 +9,7 @@
 import {
 	type AgentSnapshot,
 	type ConnectSpan,
+	countWouldRefuse,
 	type EdgeSpan,
 	type ModelSpan,
 	type RequestTokens,
@@ -18,6 +19,7 @@ import {
 	requestCost,
 	type TeamEdgeKind,
 	type ToolSpan,
+	type WouldRefuseCounts,
 } from "@gateweave/agents-model";
 import type { StepResult, ToolSet } from "ai";
 import type { MeteredRequest } from "./meter";
@@ -366,6 +368,8 @@ export function recordPastRun(
 	}
 }
 
+type ClosedRun = Required<RunFinish> & { wouldRefuse: WouldRefuseCounts };
+
 /** Closes a run and its open spans, and sums it up for the registry. */
 function closeRun(
 	sql: Sql,
@@ -373,18 +377,20 @@ function closeRun(
 	status: Exclude<RunStatus, "running">,
 	error: string | null,
 	endedAt: number,
-): Required<RunFinish> {
+): ClosedRun {
 	sql`UPDATE trace_spans SET status = 'error', ended_at = ${endedAt}
 		WHERE run_id = ${runId} AND status = 'running'`;
 	sql`UPDATE trace_runs SET status = ${status}, ended_at = ${endedAt} WHERE id = ${runId}`;
+	const trace = readTrace(sql, runId);
 	// Only model requests use tokens and cost money.
-	const spans = readTrace(sql, runId).filter((span) => span.kind === "model");
+	const spans = trace.filter((span) => span.kind === "model");
 	const sum = (pick: (span: ModelSpan) => number) =>
 		spans.reduce((total, span) => total + pick(span), 0);
 	return {
 		status,
 		error,
 		steps: spans.length,
+		wouldRefuse: countWouldRefuse(trace),
 		inputTokens: sum((span) => span.inputTokens),
 		outputTokens: sum((span) => span.outputTokens),
 		cachedInputTokens: sum((span) => span.cachedInputTokens),
@@ -398,7 +404,7 @@ function closeRun(
  * Closes the runs a restart cut short, as interrupted, at the last moment the trace saw them
  * move. Returns each one's summary for the registry.
  */
-export function closeInterruptedRuns(sql: Sql): { runId: string; finish: Required<RunFinish> }[] {
+export function closeInterruptedRuns(sql: Sql): { runId: string; finish: ClosedRun }[] {
 	const open = sql<{ id: string; started_at: number }>`
 		SELECT id, started_at FROM trace_runs WHERE status = 'running'`;
 	return open.map(({ id, started_at }) => {

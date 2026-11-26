@@ -1,6 +1,7 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
-import { USAGE_BLOBS, USAGE_DOUBLES, usagePoint, writeUsage } from "../src";
+import { type RegistryDO, USAGE_BLOBS, USAGE_DOUBLES, usagePoint, writeUsage } from "../src";
 
 const workspaceName = () => crypto.randomUUID();
 
@@ -31,61 +32,99 @@ function named(point: AnalyticsEngineDataPoint | undefined) {
 }
 
 describe("usage events", () => {
-	it("are written once for each run that closes, indexed by workspace", async () => {
-		const workspace = workspaceName();
-		const { stub, agent, runId } = await turn(workspace);
-		expect(await stub.usageWritten()).toEqual([]);
+	it.each([
+		{ label: "without counts", extra: {}, counts: [0, 0, 0, 0] },
+		{
+			label: "with counts",
+			extra: { wouldRefuse: { total: 5, email: 2, url: 2, ip: 1 } },
+			counts: [5, 2, 2, 1],
+		},
+	])(
+		"are written once for each run that closes, indexed by workspace ($label)",
+		async ({ extra, counts }) => {
+			const workspace = workspaceName();
+			const { stub, agent, runId } = await turn(workspace);
+			expect(await stub.usageWritten()).toEqual([]);
 
-		const run = await stub.getRun(runId);
-		const endedAt = (run?.startedAt ?? 0) + 2_500;
-		await stub.finishRun(runId, {
-			status: "succeeded",
-			error: null,
-			steps: 2,
-			inputTokens: 1_200,
-			outputTokens: 300,
-			cachedInputTokens: 1_000,
-			cost: 5_200,
-			endedAt,
-		});
-		// A late report closes nothing, and writes nothing.
-		await stub.finishRun(runId, {
-			status: "failed",
-			error: "Late",
-			steps: 9,
-			inputTokens: 9,
-			outputTokens: 9,
-			cachedInputTokens: 0,
-			cost: 9,
-			endedAt,
-		});
-
-		const written = await stub.usageWritten();
-		expect(written).toHaveLength(1);
-		expect(named(written[0])).toEqual({
-			indexes: [workspace],
-			blobs: {
-				run: runId,
-				agent: agent.id,
-				agentName: "Reviewer",
-				provider: "anthropic",
-				model: "claude-sonnet-5-5",
+			const run = await stub.getRun(runId);
+			const endedAt = (run?.startedAt ?? 0) + 2_500;
+			await stub.finishRun(runId, {
+				...extra,
 				status: "succeeded",
-				trigger: "",
-				rootRun: "",
-			},
-			doubles: {
+				error: null,
+				steps: 2,
 				inputTokens: 1_200,
 				outputTokens: 300,
 				cachedInputTokens: 1_000,
-				cost: 0.0052,
-				priced: 1,
-				steps: 2,
-				seconds: 2.5,
-				sandboxSeconds: 0,
-				sandboxCost: 0,
-			},
+				cost: 5_200,
+				endedAt,
+			});
+			// A late report closes nothing, and writes nothing.
+			await stub.finishRun(runId, {
+				status: "failed",
+				error: "Late",
+				steps: 9,
+				inputTokens: 9,
+				outputTokens: 9,
+				cachedInputTokens: 0,
+				cost: 9,
+				endedAt,
+			});
+
+			const written = await stub.usageWritten();
+			expect(written).toHaveLength(1);
+			expect(named(written[0])).toEqual({
+				indexes: [workspace],
+				blobs: {
+					run: runId,
+					agent: agent.id,
+					agentName: "Reviewer",
+					provider: "anthropic",
+					model: "claude-sonnet-5-5",
+					status: "succeeded",
+					trigger: "",
+					rootRun: "",
+				},
+				doubles: {
+					inputTokens: 1_200,
+					outputTokens: 300,
+					cachedInputTokens: 1_000,
+					cost: 0.0052,
+					priced: 1,
+					steps: 2,
+					seconds: 2.5,
+					sandboxSeconds: 0,
+					sandboxCost: 0,
+					wouldRefuse: counts[0],
+					wouldRefuseEmail: counts[1],
+					wouldRefuseUrl: counts[2],
+					wouldRefuseIp: counts[3],
+				},
+			});
+		},
+	);
+
+	it("reject invalid counts before closing the run", async () => {
+		const { stub, runId } = await turn();
+		await runInDurableObject(stub, (instance: RegistryDO) => {
+			for (const email of [-1, 1_000_001]) {
+				expect(() =>
+					instance.finishRun(runId, {
+						status: "succeeded",
+						error: null,
+						steps: 1,
+						inputTokens: 0,
+						outputTokens: 0,
+						cachedInputTokens: 0,
+						cost: 0,
+						endedAt: Date.now(),
+						wouldRefuse: { total: 0, email, url: 0, ip: 0 },
+					}),
+				).toThrow();
+			}
 		});
+		expect((await stub.getRun(runId))?.status).toBe("running");
+		expect(await stub.usageWritten()).toEqual([]);
 	});
 
 	it("say when a run has no price, rather than counting it as free", async () => {
@@ -153,6 +192,12 @@ describe("usage events", () => {
 			"seconds",
 			"sandboxSeconds",
 			"sandboxCost",
+		]);
+		expect(USAGE_DOUBLES.slice(9, 13)).toEqual([
+			"wouldRefuse",
+			"wouldRefuseEmail",
+			"wouldRefuseUrl",
+			"wouldRefuseIp",
 		]);
 		// Analytics Engine takes at most 20 of each.
 		expect(USAGE_BLOBS.length).toBeLessThanOrEqual(20);

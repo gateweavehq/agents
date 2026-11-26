@@ -880,6 +880,15 @@ export type EnvSecretInput = z.input<typeof envSecretInput>;
 
 const tokenCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 
+const decisionCount = z.number().int().min(0).max(1_000_000);
+export const wouldRefuseCounts = z.object({
+	total: decisionCount,
+	email: decisionCount,
+	url: decisionCount,
+	ip: decisionCount,
+});
+export type WouldRefuseCounts = z.infer<typeof wouldRefuseCounts>;
+
 /** How a run ended, as the runtime reports it to the registry. */
 export const runFinish = z.object({
 	status: z.enum(RUN_STATUSES).exclude(["running"]),

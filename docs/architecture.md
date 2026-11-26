@@ -1823,10 +1823,11 @@ conversation's Durable Object keeps its trace (`packages/runtime/src/trace.ts`).
   outcome is recorded against the settings it used, and exporting never fails a run.
 - **The deployment gets a copy.** When a deployment binds a Workers Analytics Engine dataset as
   `USAGE`, `finishRun` writes one event for each run it closes (`packages/registry/src/usage.ts`),
-  indexed by workspace, with the run's agent, model, tokens, cost and sandbox time. Writing it
-  never fails the run, and without the binding nothing is written. It lets whoever runs the
-  server see usage across workspaces, for charts and billing, without asking each registry;
-  docs/self-hosting.md has the fields and a query.
+  indexed by workspace, with the run's agent, model, tokens, cost, sandbox time and how many of its
+  calls the target rule would have refused (counts only, never the destination). Writing it never
+  fails the run, and without the binding nothing is written. It lets whoever runs the server see
+  usage across workspaces, for charts and billing, without asking each registry; docs/self-hosting.md
+  has the fields and a query.
 
 ## Teams
 
