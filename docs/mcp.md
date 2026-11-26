@@ -17,8 +17,9 @@ servers.
 | Gateweave Cloud    | `https://agents.gateweave.com/mcp`                                         |
 | A self-hosted copy | `/mcp` on the address people use, such as `https://agents.example.com/mcp` |
 
-On a self-hosted copy, `/mcp` exists only when `BETTER_AUTH_URL` is set to that address, because a
-token must name one canonical URL. Without it `/mcp` answers `404`. See
+On a self-hosted copy, `/mcp` exists only when `BETTER_AUTH_URL` is set to the address people use,
+without the `/mcp` path (such as `https://agents.example.com`), because a token must name one
+canonical URL. Without it `/mcp` answers `404`. See
 [self-hosting](self-hosting.md).
 
 ### Sign-in and scopes
