@@ -4,6 +4,7 @@ import {
 	passwordResetEmail,
 	passwordTriesSpentEmail,
 	sandboxBudgetEmail,
+	sandboxMinutesEmail,
 	verificationEmail,
 } from "./templates";
 
@@ -99,5 +100,36 @@ describe("sandboxBudgetEmail", () => {
 		);
 		expect(stopped.text).toContain("cannot answer until the month ends (UTC)");
 		expect(stopped.text).toContain("SANDBOX_MONTHLY_BUDGET");
+	});
+});
+
+describe("sandboxMinutesEmail", () => {
+	const passed = {
+		cap: 300,
+		month: "2026-12",
+		resetsOn: "2027-01-01",
+		server: "agents.example.com",
+		workspace: "Acme",
+	};
+
+	it("warns workspace owners at 80% and gives the reset date", () => {
+		const warning = sandboxMinutesEmail({ ...passed, share: 80, minutes: 240 });
+		expect(warning.subject).toBe(
+			"Acme on agents.example.com used 80% of its sandbox minutes for 2026-12",
+		);
+		expect(warning.text).toContain("240 of 300 sandbox minutes");
+		expect(warning.text).toContain("resets on 2027-01-01 (UTC)");
+		expect(warning.text).toContain("because you own the workspace");
+	});
+
+	it("explains which turns are refused at 100% and when they can start again", () => {
+		const capped = sandboxMinutesEmail({ ...passed, share: 100, minutes: 302 });
+		expect(capped.subject).toBe(
+			"Acme on agents.example.com used 100% of its sandbox minutes for 2026-12",
+		);
+		expect(capped.text).toContain("are refused until 2027-01-01 (UTC)");
+		expect(capped.text).toContain("Any running turn can finish.");
+		expect(capped.text).toContain("SANDBOX_MONTHLY_MINUTES");
+		expect(capped.html).toContain("2027-01-01");
 	});
 });

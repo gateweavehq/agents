@@ -8,19 +8,20 @@ import {
 	type ProviderRefusal,
 	pricedModels,
 	type SandboxBudgetPassed,
+	type SandboxMinutesPassed,
 	type TriggerTurnOutcome,
 } from "@gateweave/agents-model";
 import { objectsIn, RegistryDO as Registry } from "@gateweave/agents-registry";
 import { conversationName, destroyConversationObject } from "@gateweave/agents-runtime";
 import { getAgentByName } from "agents";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { recordAudit } from "./audit";
 import { db } from "./auth";
 import { schema } from "./db";
 import { fillSandbox } from "./demo/fill";
 import { assertDemo, demoEnabled, OFF_IN_DEMO } from "./demo/mode";
 import { mailer } from "./email";
-import { sandboxBudgetEmail } from "./email/templates";
+import { sandboxBudgetEmail, sandboxMinutesEmail } from "./email/templates";
 import { runsPage } from "./runs-page";
 
 /** What the public demo answers in place of something it has off. */
@@ -31,9 +32,8 @@ function offInDemo() {
 /**
  * The workspace's registry as this Worker runs it: the registry package's, which begins a
  * scheduled trigger's run in the runtime's conversation as the trigger gateway does for a webhook
- * (`./triggers.ts`), emails whoever runs the server about its sandbox budget, and writes what an
- * agent remembered or forgot to the audit log. The registry package can reach none of them on its
- * own.
+ * (`./triggers.ts`), emails about sandbox limits, and writes what an agent remembered or forgot
+ * to the audit log. The registry package can reach none of them on its own.
  *
  * On the public demo (`AGENTS_DEMO`), its turns answer with the scripted model and reach nothing
  * outside, and it refuses whatever would: keys, secrets, MCP servers, triggers, telemetry,
@@ -181,6 +181,35 @@ export class RegistryDO extends Registry {
 			to,
 			...sandboxBudgetEmail({ ...passed, server: hostOf(this.env.BETTER_AUTH_URL) }),
 		});
+	}
+
+	protected override async sandboxMinutesPassed(passed: SandboxMinutesPassed): Promise<void> {
+		const workspaceId = this.ctx.id.name;
+		if (!workspaceId) return;
+		await super.sandboxMinutesPassed(passed);
+		const sender = mailer;
+		if (!sender) return;
+		const { member, organization, user } = schema;
+		const owners = await db
+			.selectDistinct({ email: user.email, workspace: organization.name })
+			.from(member)
+			.innerJoin(user, eq(user.id, member.userId))
+			.innerJoin(organization, eq(organization.id, member.organizationId))
+			.where(
+				and(
+					eq(member.organizationId, workspaceId),
+					sql`instr(',' || ${member.role} || ',', ',owner,') > 0`,
+				),
+			);
+		const server = hostOf(this.env.BETTER_AUTH_URL);
+		const deliveries = await Promise.allSettled(
+			owners.map(({ email, workspace }) =>
+				sender.send({ to: email, ...sandboxMinutesEmail({ ...passed, workspace, server }) }),
+			),
+		);
+		if (deliveries.some(({ status }) => status === "rejected")) {
+			throw new Error("A workspace's sandbox minutes alert could not be sent");
+		}
 	}
 
 	/**

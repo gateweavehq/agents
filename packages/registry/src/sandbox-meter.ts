@@ -24,6 +24,11 @@ export function utcMonth(now: number): UtcMonth {
 	};
 }
 
+/** The first day of the next UTC month, as `YYYY-MM-DD`. */
+export function sandboxMonthResetsOn(month: UtcMonth): string {
+	return new Date(month.end).toISOString().slice(0, 10);
+}
+
 /** The UTC day a moment falls in, from midnight to midnight. */
 export function utcDay(now: number): { start: number; end: number } {
 	const date = new Date(now);

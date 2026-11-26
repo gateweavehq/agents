@@ -49,7 +49,7 @@ export type {
 	SampleRun,
 	SampleWiki,
 } from "./sample";
-export { METER_NAME, SandboxMeterDO } from "./sandbox-meter";
+export { METER_NAME, SandboxMeterDO, sandboxMonthResetsOn, utcMonth } from "./sandbox-meter";
 export type { SourceFile } from "./scanner";
 export { MAX_KEPT_FILE_BYTES, type ScanOutcome } from "./scans";
 export type { SealedCounts } from "./sealed";

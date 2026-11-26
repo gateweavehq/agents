@@ -1,3 +1,4 @@
+import type { SandboxMinutesPassed } from "@gateweave/agents-model";
 import type { Email } from "./mailer";
 
 /** An email before it is addressed. */
@@ -131,6 +132,32 @@ export function sandboxBudgetEmail({
 			url: "https://dash.cloudflare.com/?to=/:account/workers/containers",
 		},
 		footer: "You get this email because this address is the server's SANDBOX_ALERT_EMAIL.",
+	});
+}
+
+/** To workspace owners when they reach a share of their monthly sandbox minutes. */
+export function sandboxMinutesEmail({
+	share,
+	minutes,
+	cap,
+	month,
+	resetsOn,
+	workspace,
+	server,
+}: SandboxMinutesPassed & { workspace: string; server: string }): Message {
+	const space = clip(workspace, 60);
+	const used = `${Number(minutes.toFixed(2))} of ${cap} sandbox minutes`;
+	return compose({
+		subject: `${space} on ${server} used ${share}% of its sandbox minutes for ${month}`,
+		heading: share === 100 ? "Monthly sandbox limit reached" : `${share}% of sandbox minutes used`,
+		body: [
+			`${space} on ${server} has used ${share}% of its monthly allowance (${used}).`,
+			share === 100
+				? `New turns that need a sandbox in this workspace are refused until ${resetsOn} (UTC). Any running turn can finish.`
+				: `The monthly allowance resets on ${resetsOn} (UTC).`,
+			"Whoever runs this server can raise SANDBOX_MONTHLY_MINUTES to give the workspace more time.",
+		],
+		footer: "You get this email because you own the workspace.",
 	});
 }
 

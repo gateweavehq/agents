@@ -220,6 +220,9 @@ function Sandboxes({
 	invitation: string | null;
 }) {
 	const limit = time?.limit ?? null;
+	const monthLimit = time?.monthLimit ?? null;
+	const monthCapped = time !== null && monthLimit !== null && time.monthMinutes >= monthLimit;
+	const monthUsed = time && minutes(Number(time.monthMinutes.toFixed(2)));
 	return (
 		<section aria-labelledby="sandboxes-heading" className="space-y-3">
 			<div className="space-y-1">
@@ -228,7 +231,7 @@ function Sandboxes({
 				</h2>
 				<p className="text-sm text-muted-foreground">
 					{offer === "offered"
-						? `Agents with a sandbox run commands and edit files on a Linux machine of their own. Whoever runs this server pays for the machines, so the workspace has at most ${MAX_WORKSPACE_SANDBOXES} at once${limit === null ? "" : `, for ${limit} minutes a day`}. A sandbox counts from a turn until ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last.`
+						? `Agents with a sandbox run commands and edit files on a Linux machine of their own. Whoever runs this server pays for the machines, so the workspace has at most ${MAX_WORKSPACE_SANDBOXES} at once${limit === null ? "" : `, with up to ${minutes(limit)} a day`}${monthLimit === null ? "" : `, with up to ${minutes(monthLimit)} a month`}. A sandbox counts from a turn until ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last.`
 						: offer === "by-invitation"
 							? "This server runs sandboxes only for the workspaces it invites. Whoever runs it can invite this one."
 							: "This server does not run sandboxes. Whoever runs it can turn them on; see the README in the repository."}
@@ -236,11 +239,18 @@ function Sandboxes({
 				{offer === "by-invitation" && <AskForInvitation href={invitation} />}
 			</div>
 			{time && (
-				<p className="rounded-lg border p-3 text-sm">
-					{limit === null
-						? `${minutes(time.minutes)} of sandbox time today (UTC).`
-						: `${minutes(time.minutes)} of ${limit} used today (UTC).${time.minutes >= limit ? " Agents with a sandbox answer again tomorrow." : ""}`}
-				</p>
+				<div className="space-y-1 rounded-lg border p-3 text-sm">
+					<p>
+						{limit === null
+							? `${minutes(time.minutes)} of sandbox time today (UTC).`
+							: `${minutes(time.minutes)} of ${limit} used today (UTC).${time.minutes >= limit && !monthCapped ? " Agents with a sandbox answer again tomorrow." : ""}`}
+					</p>
+					<p>
+						{monthLimit === null
+							? `${monthUsed} this month (UTC).`
+							: `${monthUsed} of ${monthLimit} used this month (UTC), resets on ${time.monthResetsOn}.${monthCapped ? " New turns that need a sandbox wait until the reset." : ""}`}
+					</p>
+				</div>
 			)}
 		</section>
 	);

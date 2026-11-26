@@ -88,6 +88,8 @@ declare namespace Cloudflare {
 		SANDBOX_WORKSPACES?: string;
 		/** Minutes of sandbox time each workspace may use in a day (UTC). No limit when unset. */
 		SANDBOX_DAILY_MINUTES?: string;
+		/** Minutes of sandbox time each workspace may use in a month (UTC). No limit when unset or empty. */
+		SANDBOX_MONTHLY_MINUTES?: string;
 		/**
 		 * US dollars the deployment may spend on sandboxes in a month (UTC), priced at the most their
 		 * machine costs (SANDBOX_SECOND_PRICE in packages/model). No limit when unset.

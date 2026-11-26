@@ -1239,8 +1239,8 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   minutes after its last such run ended. An ask over a team's edge has no tools, so it needs no
   sandbox, unless the agent's engine runs only in one, as every engine but Gateweave's loop does.
   A turn awaits as it is prepared (the key, the environment set, the meter), and others may begin
-  meanwhile, so this limit and the daily one below decide again in the write that begins the run
-  (`#sandboxLimitRefusal`), with the same refusal (AGT-63).
+  meanwhile, so the slot limit and both workspace time limits are checked again in the write that
+  begins the run (`#sandboxLimitRefusal`), with the same refusal.
 - **Sandbox time and its limits** (AGT-45). The runs say how much sandbox time a workspace uses
   (`sandboxSeconds` in `packages/registry/src/runs.ts`):
   - Each conversation's sandbox counts from a run with it until `SANDBOX_IDLE_MINUTES` (5 by
@@ -1248,20 +1248,25 @@ until their operator opts in. Cloud offers them only to the workspaces it invite
   - Runs that overlap that way are merged.
   - The idle minutes count as soon as a run ends, since the sandbox runs them anyway.
 
-  Then two limits apply, both off unless the server sets them:
+  Three limits apply, each off unless the server sets it:
   - **Daily.** `SANDBOX_DAILY_MINUTES` refuses a turn that needs a sandbox once the workspace has
     used that much of the UTC day.
-  - **Monthly.** `SANDBOX_MONTHLY_BUDGET` covers the whole deployment. Before such a turn, and
-    after it ends, the registry reports the workspace's figure for the month to `SandboxMeterDO`
+  - **Monthly minutes.** `SANDBOX_MONTHLY_MINUTES` refuses a turn that needs a sandbox once the
+    workspace has used that much of the UTC month. The refusal names the first day of the next
+    UTC month. When a sandbox run ends, the registry checks usage against 80% and 100% of a
+    positive cap. It records each threshold once per workspace per month and calls
+    `sandboxMinutesPassed`. The app's `RegistryDO` emails the workspace's owners.
+  - **Monthly budget.** `SANDBOX_MONTHLY_BUDGET` covers the whole deployment. Before such a turn
+    and after it ends, the registry reports the workspace's figure for the month to `SandboxMeterDO`
     (`packages/registry/src/sandbox-meter.ts`). That is one Durable Object per deployment, bound as
     `SANDBOX_METER`, with no route. It keeps each workspace's latest figure, and prices the total
     at `SANDBOX_SECOND_PRICE`, the most a second of the machine costs. Turns are refused once that
     reaches the budget.
     - The first report to pass 80% or 100% calls `sandboxBudgetPassed` once a month. The app's
       `RegistryDO` emails `SANDBOX_ALERT_EMAIL` from there.
-    - A setting that is not a number allows nothing, so a typo never lifts a limit.
     - A budget without the meter refuses too.
 
+  A setting that is not a number allows nothing, so a typo never lifts a limit.
   A turn that begins under a limit runs to its end, so a limit can be passed by up to an hour of
   each sandbox in use.
 - **A repository in the sandbox** (AGT-41). An agent with a sandbox can choose a repository the

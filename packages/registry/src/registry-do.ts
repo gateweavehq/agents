@@ -100,11 +100,14 @@ import {
 	runCursor,
 	runFinish,
 	runPullRequest,
+	SANDBOX_BUDGET_ALERTS,
 	SANDBOX_BUDGET_SPENT,
 	SANDBOX_DAY_USED,
+	SANDBOX_MONTH_USED,
 	SANDBOX_NOT_INVITED,
 	SANDBOX_NOT_OFFERED,
 	type SandboxBudgetPassed,
+	type SandboxMinutesPassed,
 	type SandboxSettings,
 	type ScanResult,
 	type Setup,
@@ -389,6 +392,8 @@ import {
 	METER_NAME,
 	type MeterReading,
 	type SandboxMeterDO,
+	sandboxMonthResetsOn,
+	type UtcMonth,
 	utcDay,
 	utcMonth,
 } from "./sandbox-meter";
@@ -2047,9 +2052,9 @@ export class RegistryDO extends DurableObject {
 
 	/**
 	 * Why a turn of `agent` in `conversation` may not have a sandbox now, or null when it may: the
-	 * workspace's sandboxes are all in use, or its minutes for the day are. Synchronous, so it can
-	 * decide again in the `#write` that begins the run: a turn awaits as it is prepared, and others
-	 * may begin meanwhile (AGT-63).
+	 * workspace's sandboxes are all in use, or it has used its minutes for the day or month.
+	 * Synchronous, so it can decide again in the `#write` that begins the run: a turn awaits as it
+	 * is prepared, and others may begin meanwhile.
 	 */
 	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): TurnRefusal | null {
 		const idle = this.#idleMinutes();
@@ -2059,12 +2064,22 @@ export class RegistryDO extends DurableObject {
 				"waiting-for-slot",
 			);
 		}
-		const { dailyMinutes } = sandboxLimits(this.env as SandboxSettings);
+		const { dailyMinutes, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
 		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
 			return refused(
 				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
 				"budget-limit",
 			);
+		}
+		if (monthlyMinutes !== null) {
+			const now = Date.now();
+			const month = utcMonth(now);
+			if (this.#sandboxSecondsInMonth(month, now) >= monthlyMinutes * 60) {
+				return refused(
+					`${SANDBOX_MONTH_USED}, ${monthlyMinutes} minutes, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
+					"budget-limit",
+				);
+			}
 		}
 		return null;
 	}
@@ -2074,7 +2089,11 @@ export class RegistryDO extends DurableObject {
 		const run = id.parse(runId);
 		const data = runFinish.parse(finish);
 		const counts = wouldRefuseCounts.optional().parse(finish.wouldRefuse);
+		const { monthlyBudget, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
+		const cap = monthlyMinutes ?? 0;
 		let report: PendingTrackReport | undefined;
+		let hadSandbox = false;
+		let minutesPassed: SandboxMinutesPassed[] = [];
 		const closed = this.#write(() => {
 			if (!finishRun(this.#db, run, data)) return false;
 			const reporting = this.#db
@@ -2089,6 +2108,8 @@ export class RegistryDO extends DurableObject {
 					now,
 				);
 			}
+			hadSandbox = (monthlyBudget !== null || cap > 0) && runHadSandbox(this.#db, run);
+			if (hadSandbox && cap > 0) minutesPassed = this.#sandboxMinutesAlerts(cap);
 			return true;
 		});
 		this.#publishTrackReports(report);
@@ -2098,8 +2119,8 @@ export class RegistryDO extends DurableObject {
 			if (done)
 				this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done, counts));
 		}
-		const { monthlyBudget } = sandboxLimits(this.env as SandboxSettings);
-		if (closed && monthlyBudget !== null && runHadSandbox(this.#db, run)) {
+		if (minutesPassed.length > 0) this.ctx.waitUntil(this.#notifySandboxMinutes(minutesPassed));
+		if (hadSandbox && monthlyBudget !== null) {
 			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
 			this.ctx.waitUntil(
 				this.#meterSandboxes(monthlyBudget).catch((error: unknown) => {
@@ -2124,6 +2145,16 @@ export class RegistryDO extends DurableObject {
 		const now = Date.now();
 		const today = utcDay(now);
 		return sandboxSeconds(this.#db, today.start, today.end, now, this.#idleMinutes());
+	}
+
+	/** Seconds of sandbox time the workspace's conversations use this month (UTC), for its limit. */
+	sandboxSecondsThisMonth(): number {
+		const now = Date.now();
+		return this.#sandboxSecondsInMonth(utcMonth(now), now);
+	}
+
+	#sandboxSecondsInMonth(month: UtcMonth, now: number): number {
+		return sandboxSeconds(this.#db, month.start, month.end, now, this.#idleMinutes());
 	}
 
 	/**
@@ -3521,6 +3552,44 @@ export class RegistryDO extends DurableObject {
 		);
 	}
 
+	/** The app's Worker emails the workspace's owners when a share of its minutes is used. */
+	protected async sandboxMinutesPassed(passed: SandboxMinutesPassed): Promise<void> {
+		console.warn(
+			`registry: workspace ${this.ctx.id.name ?? this.ctx.id.toString()} has used ${passed.share}% of its sandbox minutes for ${passed.month}`,
+		);
+	}
+
+	/** Claims each alert in the same write that closes the run. */
+	#sandboxMinutesAlerts(cap: number): SandboxMinutesPassed[] {
+		const now = Date.now();
+		const month = utcMonth(now);
+		const minutes = this.#sandboxSecondsInMonth(month, now) / 60;
+		const { kv } = this.ctx.storage;
+		const passed: SandboxMinutesPassed[] = [];
+		for (const share of SANDBOX_BUDGET_ALERTS) {
+			if (minutes < cap * (share / 100)) continue;
+			const key = `sandbox-minutes-alert:${month.name}:${share}`;
+			if (kv.get(key)) continue;
+			kv.put(key, true);
+			passed.push({
+				share,
+				minutes,
+				cap,
+				month: month.name,
+				resetsOn: sandboxMonthResetsOn(month),
+			});
+		}
+		return passed;
+	}
+
+	async #notifySandboxMinutes(passed: SandboxMinutesPassed[]): Promise<void> {
+		for (const alert of passed) {
+			await this.sandboxMinutesPassed(alert).catch((error: unknown) => {
+				console.error("registry: telling of the workspace's sandbox minutes failed", error);
+			});
+		}
+	}
+
 	/**
 	 * An agent remembered or forgot something. The audit log is the app's, in D1, which this
 	 * package cannot reach: the app's Worker exports a `RegistryDO` that writes it there
@@ -3547,7 +3616,7 @@ export class RegistryDO extends DurableObject {
 		if (!meter) return null;
 		const now = Date.now();
 		const month = utcMonth(now);
-		const seconds = sandboxSeconds(this.#db, month.start, month.end, now, this.#idleMinutes());
+		const seconds = this.#sandboxSecondsInMonth(month, now);
 		// Each registry is named for its workspace (`registryFor` in the app).
 		const workspace = this.ctx.id.name ?? this.ctx.id.toString();
 		// One meter for the deployment, kept where it keeps its workspaces.
