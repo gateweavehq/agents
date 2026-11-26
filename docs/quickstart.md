@@ -108,6 +108,11 @@ Docker is not needed: sandboxes are off until you turn them on.
    address. The wiki Workflow's name, `gateweave-agents-wiki`, is unique in an account, so change it
    too if your account already has a Workflow with that name.
 
+   If the account already has a Worker, a database or a Workflow under one of these names, the
+   deploy does not make a new one: it replaces that Worker's code, keeps its secrets, applies these
+   migrations to a database of that name, and updates the Workflow. To keep a new Agents apart from
+   what is there, choose other names for all three before this step.
+
    <details>
    <summary>Expected output</summary>
 
