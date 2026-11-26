@@ -184,7 +184,9 @@ to their requests on the way out, so the key never enters the sandbox either.
 
 The button copies Agents to your GitHub or GitLab account, creates the database, and deploys it
 to your Cloudflare account; every push to your copy deploys again. From the command line, use
-`pnpm run deploy`. See [docs/self-hosting.md](docs/self-hosting.md) for the first deploy, every
+`pnpm run deploy`; [docs/quickstart.md](docs/quickstart.md) takes you from a fresh clone to an
+agent that answers a first message through Workers AI. See
+[docs/self-hosting.md](docs/self-hosting.md) for the first deploy, every
 setting, your own domain, email, sandboxes and their limits, and updating, and
 [docs/first-pull-request.md](docs/first-pull-request.md) for each step from the button to an
 agent's first pull request, with the plan and the accounts each one needs.

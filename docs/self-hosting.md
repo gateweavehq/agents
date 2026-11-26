@@ -61,7 +61,8 @@ file unless you want them, and close what it opened.
 
 ## Deploy from the command line
 
-Requirements: Node.js 24 (22+ works) and pnpm 12.
+Requirements: Node.js 24 (22+ works) and pnpm 12. [The quickstart](quickstart.md) walks through
+these steps and on to an agent's first answer through Workers AI.
 
 ```sh
 git clone https://github.com/gateweavehq/agents.git
