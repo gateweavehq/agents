@@ -8,6 +8,23 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.35.1] - 2026-11-26
+
+### Internal
+
+- Each run's usage point in Analytics Engine now also counts the run's calls that would be
+  refused if `TARGET_RULE` were `enforce`: in total, and by target kind (email, URL, IP). It
+  holds numbers only. The destinations stay in the workspace, on the run page. These counts
+  decide when refusing becomes the default.
+  ([#333](https://github.com/gateweavehq/agents/pull/333))
+
+### If you run your own
+
+- **Update.** There is no migration. If the usage dataset is bound, each run's point gains
+  `double10` to `double13` after the existing fields, so queries that name the earlier fields
+  keep working. "Usage across workspaces" in `docs/self-hosting.md` has a query that sums the
+  counts by workspace and agent.
+
 ## [0.35.0] - 2026-11-26
 
 Owners and admins can pause an agent, and an agent's runs on Gateweave Track issues can report
