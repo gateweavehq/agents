@@ -27,20 +27,24 @@ it is written there.
 The client calls `ask_wiki_question` with `repoName` (one repository as `owner/name`, or a list of up to 10)
 and your `question`. The tool does not answer: no model on the server reads the wiki. It gives the pages whose
 words match the question, best first, each with the source files it was written from, and names a few others
-worth reading. Your client's model reads them and answers.
+worth reading, without their text. Your client's model reads them and answers.
 
-## 3. Read a page that came back cut
+## 3. Read a page you do not have whole
 
 A page that `ask_wiki_question` gave whole is cited as it came back: the client makes no further call for it.
-Only a page the answer cut needs reading. A cut page ends with a note such as `(Cut here: read_wiki_contents
-with page "3.1" gives the rest.)`, and for it the client calls `read_wiki_contents` with `repoName` and that
-`page` number. `repoName` is one string, the one repository the page belongs to, even when the question named
-several: each page in a multi-repository answer is labelled `Repository: owner/name`. Without `page` it reads
-every page of that repository. If the number is not at hand, `read_wiki_structure` with `repoName` lists every
-page of the repository with its number.
+A page it does not have whole, the client reads before citing it, with `read_wiki_contents`, `repoName` and the
+page's `page` number. There are two such pages:
 
-The pages the answer only names, under `Other pages that may help`, were not shown, so the client does not
-cite them.
+- A page the answer cut. It ends with a note such as `(Cut here: read_wiki_contents with page "3.1" gives the
+  rest.)`.
+- A page the answer only names, as a line such as `- 3.1 Retries of failed webhooks` under `Other pages that may
+  help`. Its text was not shown. Its number begins the line, and in an answer about several repositories the
+  repository follows the title in brackets.
+
+`repoName` is one string, the one repository the page belongs to, even when the question named several: each
+shown page in a multi-repository answer is labelled `Repository: owner/name`. Without `page` it reads every page
+of that repository. If the number is not at hand, `read_wiki_structure` with `repoName` lists every page of the
+repository with its number.
 
 ## 4. Ask for the answer
 
@@ -52,12 +56,13 @@ when one fails.
 
 1. Call list_wiki_repos and check that acme/billing-api has a wiki.
 2. Call ask_wiki_question with repoName "acme/billing-api" and that question.
-3. Cite a page as ask_wiki_question showed it when it came back whole. Call read_wiki_contents only for a page
-   you will cite that came back cut, with its repository and the page number from its "Cut here" note; if you
-   no longer have the number, call read_wiki_structure for that repository to find it. Do not cite a page the
-   tool only named.
+3. Cite a page as ask_wiki_question showed it when it came back whole. For any page you will cite that you do
+   not have whole, a page that came back cut or one the tool only named under "Other pages that may help", call
+   read_wiki_contents with its repository and its page number, and cite it only after you have its full text.
+   The number is in the "Cut here" note or at the start of the named page's line; if you no longer have it,
+   call read_wiki_structure for that repository to find it.
 
-Answer from the wiki pages you were shown or read, and from nothing else. Name each wiki page you used by its
+Answer from the wiki pages you have whole, shown or read, and from nothing else. Name each wiki page you used by its
 title, and the source files and line ranges it lists. If the pages do not say, tell me that instead of
 guessing.
 ```
@@ -72,8 +77,8 @@ The client's calls, in order:
 | `ask_wiki_question`  | The pages headed `Retries of failed webhooks` and `Webhooks`, each with its source files, in that order |
 | `read_wiki_contents` | Not called: both pages came back whole, so the answer cites them as they came                           |
 
-Neither page was cut, so the client makes no third call. Had one been cut, it would call `read_wiki_contents`
-with that page's `page` number from its note.
+Neither page was cut and none was only named, so the client makes no third call. Had one been cut or only
+named, it would call `read_wiki_contents` with that page's `page` number.
 
 The answer says that a webhook's signature is checked in `verifySignature` before `handleEvent` marks an
 invoice paid, and that a failed one is retried five times and then parked. It names the pages `Webhooks` and
