@@ -26,8 +26,9 @@ it is written there.
 
 The client calls `ask_wiki_question` with `repoName` (one repository as `owner/name`, or a list of up to 10)
 and your `question`. The tool does not answer: no model on the server reads the wiki. It gives the pages whose
-words match the question, best first, each with the source files it was written from, and names a few others
-worth reading, without their text. Your client's model reads them and answers.
+words match the question, best first, each headed by its number and title and with the source files it was
+written from, and names a few others worth reading, without their text. Your client's model reads them and
+answers.
 
 ## 3. Read a page you do not have whole
 
@@ -43,8 +44,7 @@ page's `page` number. There are two such pages:
 
 `repoName` is one string, the one repository the page belongs to, even when the question named several: each
 shown page in a multi-repository answer is labelled `Repository: owner/name`. Without `page` it reads every page
-of that repository. If the number is not at hand, `read_wiki_structure` with `repoName` lists every page of the
-repository with its number.
+of that repository.
 
 ## 4. Ask for the answer
 
@@ -59,11 +59,10 @@ when one fails.
 3. Cite a page as ask_wiki_question showed it when it came back whole. For any page you will cite that you do
    not have whole, a page that came back cut or one the tool only named under "Other pages that may help", call
    read_wiki_contents with its repository and its page number, and cite it only after you have its full text.
-   The number is in the "Cut here" note or at the start of the named page's line; if you no longer have it,
-   call read_wiki_structure for that repository to find it.
+   The number is in the page heading, the "Cut here" note or at the start of the named page's line.
 
 Answer from the wiki pages you have whole, shown or read, and from nothing else. Name each wiki page you used by its
-title, and the source files and line ranges it lists. If the pages do not say, tell me that instead of
+number and title, and the source files and line ranges it lists. If the pages do not say, tell me that instead of
 guessing.
 ```
 
@@ -71,18 +70,18 @@ guessing.
 
 The client's calls, in order:
 
-| Call                 | What comes back                                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------------------------- |
-| `list_wiki_repos`    | `acme/billing-api (workspace acme, private): 4 pages, at commit 9f3c1a2, written 2026-11-20`            |
-| `ask_wiki_question`  | The pages headed `Retries of failed webhooks` and `Webhooks`, each with its source files, in that order |
-| `read_wiki_contents` | Not called: both pages came back whole, so the answer cites them as they came                           |
+| Call                 | What comes back                                                                                                               |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `list_wiki_repos`    | `acme/billing-api (workspace acme, private): 4 pages, at commit 9f3c1a2, written 2026-11-20`                                  |
+| `ask_wiki_question`  | The pages headed `# Page 3.1: Retries of failed webhooks` and `# Page 3: Webhooks`, each with its source files, in that order |
+| `read_wiki_contents` | Not called: both pages came back whole, so the answer cites them as they came                                                 |
 
 Neither page was cut and none was only named, so the client makes no third call. Had one been cut or only
 named, it would call `read_wiki_contents` with that page's `page` number.
 
 The answer says that a webhook's signature is checked in `verifySignature` before `handleEvent` marks an
-invoice paid, and that a failed one is retried five times and then parked. It names the pages `Webhooks` and
-`Retries of failed webhooks` and the files `src/webhooks/verify.ts`, `src/webhooks/handle.ts` and
+invoice paid, and that a failed one is retried five times and then parked. It names the pages `3 Webhooks` and
+`3.1 Retries of failed webhooks` and the files `src/webhooks/verify.ts`, `src/webhooks/handle.ts` and
 `src/webhooks/retry.ts`. Your repository's answer will follow its own wiki. The `Invoices` page, which has none
 of the question's words, is left out.
 
