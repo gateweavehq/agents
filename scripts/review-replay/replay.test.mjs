@@ -1402,13 +1402,20 @@ test("the preflight passes a reviewer whose transcript shows its own read and re
 		assert.equal(seen[0].files[name].startsWith(seen[0].cwd), false, name);
 });
 
-test("the preflight passes when the network is tried and refused, whatever the tool list says", async () => {
+test("the preflight refuses a session that has a network tool, even when its calls were denied", async () => {
 	for (const network of ["denied", "bash-denied"]) {
-		await runPreflight(async (_e, prompt) => confinedTranscript(prompt, { network }));
+		await assert.rejects(
+			runPreflight(async (_e, prompt) => confinedTranscript(prompt, { network })),
+			refused(/not proven.*tools include (WebFetch|Bash), which can reach the network/),
+			network,
+		);
 	}
-	// No init message at all, but the attempt on the network was refused.
-	await runPreflight(async (_e, prompt) =>
-		confinedTranscript(prompt, { network: "denied", init: false }),
+	// No init message at all: the session's tools are not verified, whatever was denied.
+	await assert.rejects(
+		runPreflight(async (_e, prompt) =>
+			confinedTranscript(prompt, { network: "denied", init: false }),
+		),
+		refused(/not proven.*no init message that lists the session's tools/),
 	);
 });
 
@@ -1427,7 +1434,6 @@ const SECRETS = {
 };
 const HEADS = "9".repeat(40);
 const CHECKOUT = "/tmp/replay-preflight-A/row/repo";
-const PROBE_URL = "https://example.invalid/agents.git";
 const check = (transcript, platform = "linux") =>
 	checkTranscript({
 		transcript,
@@ -1435,7 +1441,6 @@ const check = (transcript, platform = "linux") =>
 		secrets: SECRETS,
 		checkout: CHECKOUT,
 		head: HEADS,
-		url: PROBE_URL,
 		platform,
 	});
 const INIT = '{"type":"system","subtype":"init","session_id":"s-1","tools":["Read","Grep","Glob"]}';
@@ -1624,58 +1629,36 @@ test("a transcript without a successful Read of the inside canary refuses", () =
 	}
 });
 
-test("a transcript proves the network by an explicit denial or by a tool list without a way to it", () => {
+test("a transcript proves the network only by an init message that lists no way to it", () => {
 	const part = [
 		insideRead,
 		denial("t2", FILES.answer_file),
 		denial("t3", FILES.cache),
 		denial("t4", FILES.beside),
 	];
-	const withFetch = '{"type":"system","subtype":"init","tools":["Read","Grep","Glob","WebFetch"]}';
-	// The tool is there and nothing was tried: unproven.
-	assert.throws(
-		() => check(lines(withFetch, part, RESULT)),
-		refused(/not proven.*explicit permission denial of a call that names the probe/),
-	);
-	// No init message and no attempt: unproven.
+	// The rows' own tool list proves it.
+	check(lines(INIT, part, RESULT));
+	// No init message and no list: nothing is verified.
 	assert.throws(
 		() => check(lines(part, RESULT)),
-		refused(/not proven.*explicit permission denial of a call that names the probe/),
+		refused(/not proven.*no init message that lists the session's tools/),
 	);
-	// An init message that does not list the tools: unproven too.
 	assert.throws(
 		() => check(lines('{"type":"system","subtype":"init"}', part, RESULT)),
-		refused(/not proven.*explicit permission denial of a call that names the probe/),
-	);
-	// A tool list with Bash is not a tool list without a way to the network.
-	assert.throws(
-		() => check(lines('{"type":"system","subtype":"init","tools":["Read","Bash"]}', part, RESULT)),
-		refused(/not proven/),
-	);
-	// An explicit denial of a call that asked for the probe proves it, with or without the list.
-	check(
-		lines(
-			withFetch,
-			part,
-			[use("t5", "WebFetch", { url: PROBE_URL }), answer("t5", WEBFETCH_DENIAL, true)],
-			RESULT,
-		),
-	);
-	check(
-		lines(
-			part,
-			[use("t5", "Bash", { command: `git clone ${PROBE_URL}` }), answer("t5", BASH_DENIAL, true)],
-			RESULT,
-		),
+		refused(/not proven.*no init message that lists the session's tools/),
 	);
 	// A call that got through, or the head commit anywhere, is a leak.
+	const withFetch = '{"type":"system","subtype":"init","tools":["Read","Grep","Glob","WebFetch"]}';
 	assert.throws(
 		() =>
 			check(
 				lines(
 					withFetch,
 					part,
-					[use("t5", "WebFetch", { url: PROBE_URL }), answer("t5", "fine", false)],
+					[
+						use("t5", "WebFetch", { url: "https://example.invalid/agents.git" }),
+						answer("t5", "fine", false),
+					],
 					RESULT,
 				),
 			),
@@ -1862,7 +1845,7 @@ test("the preflight refuses a reviewer that reaches the network", async () => {
 		runPreflight(async (_e, prompt) =>
 			confinedTranscript(prompt, { tools: ["Read", "Grep", "Glob", "WebSearch"] }),
 		),
-		refused(/not proven.*explicit permission denial of a call that names the probe/),
+		refused(/not proven.*tools include WebSearch, which can reach the network/),
 	);
 });
 
@@ -2305,7 +2288,8 @@ test("SIGINT and SIGTERM end the running model, clean up, and exit with the sign
 // REAL_LAUNCH is the launch the rows use: an init message that lists Glob, Grep and Read, a read
 // of the inside canary, and the denial text of --restricted for each of the three outside files.
 // NETWORK_PROBE is a diagnostic launch with the same flags plus WebFetch and Bash in --tools (not
-// in --allowedTools), to see what Claude Code writes when it refuses a call by permission.
+// in --allowedTools). Its calls were denied, and it is still refused: it lists tools that can reach
+// the network.
 const REAL_LAUNCH = [
 	{
 		type: "system",
@@ -2594,7 +2578,7 @@ const withResultOn = (path, change) => (events) => {
 	return events;
 };
 
-/** The recorded launch with the network probe's init message (it lists WebFetch and Bash) and calls. */
+/** The recorded launch with the network probe's init message (it lists WebFetch and Bash) and its denied calls. */
 const withNetworkProbe =
 	(change = () => {}) =>
 	(events) => {
@@ -2606,26 +2590,12 @@ const withNetworkProbe =
 		return events;
 	};
 
-/** Only the probe's call to `name` (WebFetch or Bash) and its result. */
-const onlyCall = (name) => (rest) => {
-	const id = callsOf(rest).find((call) => call.name === name)?.id;
-	return rest.filter((event) =>
-		[...partsOf([event], "tool_use"), ...partsOf([event], "tool_result")].every(
-			(p) => (p.id ?? p.tool_use_id) === id,
-		),
-	);
-};
-
 test("the session recorded from a real run of the launcher passes", () => {
 	// As the rows' launch ran: no tool that can reach the network, three denials, the inside read.
 	check(recorded(REAL_LAUNCH));
 	const seen = readTranscript(recorded(REAL_LAUNCH));
 	assert.deepEqual(seen.tools, ["Glob", "Grep", "Read"]);
 	assert.equal(seen.calls.length, 4);
-	// The network tools were listed, and each denial of the probe's session names its repository.
-	check(recorded(REAL_LAUNCH, { edit: withNetworkProbe() }));
-	check(recorded(REAL_LAUNCH, { edit: withNetworkProbe(onlyCall("WebFetch")) }));
-	check(recorded(REAL_LAUNCH, { edit: withNetworkProbe(onlyCall("Bash")) }));
 });
 
 const OTHER_ERRORS = {
@@ -2696,18 +2666,49 @@ test("the denial's path is compared as the system spells paths", () => {
 	assert.doesNotThrow(() => check(recorded(REAL_LAUNCH, { edit: upper }), "win32"));
 });
 
-test("a tool list that holds a tool that can reach the network is not verified unavailability", () => {
-	for (const tool of ["WebFetch", "WebSearch", "Bash", "mcp__docs__search"]) {
+// One refusal test per kind of tool that can reach the network: a named tool and an MCP tool.
+for (const tool of ["WebFetch", "WebSearch", "Bash", "mcp__docs__search"]) {
+	test(`a session whose tool list holds ${tool} is refused, named, whatever happened to its calls`, () => {
 		const listed = (events) => {
 			events[0].tools = [...events[0].tools, tool];
 			return events;
 		};
-		assert.throws(
-			() => check(recorded(REAL_LAUNCH, { edit: listed })),
-			refused(/not proven.*explicit permission denial of a call that names the probe/),
-			tool,
+		const unproven = refused(
+			new RegExp(`not proven.*tools include ${tool}, which can reach the network`),
 		);
-	}
+		// Listed, and nothing was tried.
+		assert.throws(() => check(recorded(REAL_LAUNCH, { edit: listed })), unproven);
+		// Listed, and a call of it was denied in the recorded text: a denial is no proof.
+		const denied = (events) => {
+			listed(events);
+			events.push(
+				{
+					type: "assistant",
+					message: { content: [{ type: "tool_use", id: "d1", name: tool, input: {} }] },
+				},
+				{
+					type: "user",
+					message: {
+						content: [
+							{ type: "tool_result", tool_use_id: "d1", content: BASH_DENIAL, is_error: true },
+						],
+					},
+				},
+			);
+			return events;
+		};
+		assert.throws(() => check(recorded(REAL_LAUNCH, { edit: denied })), unproven);
+	});
+}
+
+test("the recorded network probe, with its calls denied, is refused", () => {
+	assert.throws(
+		() => check(recorded(REAL_LAUNCH, { edit: withNetworkProbe() })),
+		refused(/not proven.*tools include Bash, WebFetch, which can reach the network/),
+	);
+});
+
+test("a tool list that is not a list of what the session could use is not verified unavailability", () => {
 	// A list with an entry that has no name says nothing about what the session could use.
 	for (const entry of [null, "", { description: "x" }, 7]) {
 		const nameless = (events) => {
@@ -2725,7 +2726,10 @@ test("a tool list that holds a tool that can reach the network is not verified u
 		delete events[0].tools;
 		return events;
 	};
-	assert.throws(() => check(recorded(REAL_LAUNCH, { edit: unlisted })), refused(/not proven/));
+	assert.throws(
+		() => check(recorded(REAL_LAUNCH, { edit: unlisted })),
+		refused(/not proven.*no init message that lists the session's tools/),
+	);
 	// A tool of an MCP server that ran is a way to the network that got through.
 	const mcp = (events) => {
 		events.push(
@@ -2747,187 +2751,5 @@ test("a tool list that holds a tool that can reach the network is not verified u
 	assert.throws(
 		() => check(recorded(REAL_LAUNCH, { edit: mcp })),
 		refused(/not confined to its checkout.*a mcp__docs__search call succeeded/),
-	);
-});
-
-test("a denial proves the network only when it is the recorded text of a call that names the probe", () => {
-	const run = (change) => check(recorded(REAL_LAUNCH, { edit: withNetworkProbe(change) }));
-	const unproven = refused(/not proven.*explicit permission denial of a call that names the probe/);
-
-	// The call names the probe by its address too.
-	run((rest) => {
-		for (const call of callsOf(rest)) if (call.name === "WebFetch") call.input.url = PROBE_URL;
-		return onlyCall("WebFetch")(rest);
-	});
-
-	// Another repository: the denial is explicit, but not of the probe.
-	assert.throws(
-		() =>
-			run((rest) => {
-				for (const call of callsOf(rest)) {
-					if (call.name === "WebFetch") call.input.url = "https://example.com/other.git";
-					if (call.name === "Bash") call.input.command = "git ls-remote https://example.com/o.git";
-				}
-			}),
-		unproven,
-	);
-	// Another repository whose owner or name only starts or ends like the probe's: the denial is
-	// explicit, but the call does not name the probe's complete identity.
-	const target = (name, value) => (rest) => {
-		for (const call of callsOf(rest)) {
-			if (call.name !== name) continue;
-			if (name === "WebFetch") call.input.url = value;
-			else call.input.command = `git ls-remote ${value} HEAD`;
-		}
-		return onlyCall(name)(rest);
-	};
-	for (const other of [
-		"https://github.com/gateweavehq/agents-evil.git",
-		"https://github.com/gateweavehq/agentsx",
-		"https://github.com/gateweavehq/agents.github.io",
-		"https://github.com/gateweavehq/agents.git.evil",
-		"https://github.com/gateweavehq/agents_old/",
-		"https://github.com/evil-gateweavehq/agents.git",
-		"https://github.com/xgateweavehq/agents",
-	]) {
-		for (const name of ["WebFetch", "Bash"]) {
-			assert.throws(() => run(target(name, other)), unproven, `${name} ${other}`);
-		}
-	}
-	// The probe named only in the prompt of a fetch of another repository is not named by the call.
-	assert.throws(
-		() =>
-			run((rest) => {
-				for (const call of callsOf(rest)) {
-					if (call.name === "WebFetch") {
-						call.input.url = "https://github.com/gateweavehq/agents-evil.git";
-						call.input.prompt = "Describe https://github.com/gateweavehq/agents.git";
-					}
-				}
-				return onlyCall("WebFetch")(rest);
-			}),
-		unproven,
-	);
-	// The exact repository, with ".git", a trailing slash, a query, a fragment or another case.
-	for (const same of [
-		"https://github.com/gateweavehq/agents",
-		"https://github.com/gateweavehq/agents.git",
-		"https://github.com/gateweavehq/agents/",
-		"https://github.com/gateweavehq/agents.git/",
-		"https://github.com/gateweavehq/agents?tab=readme",
-		"https://github.com/gateweavehq/agents#readme",
-		"https://github.com/GateweaveHQ/Agents.GIT",
-		"git@github.com:gateweavehq/agents.git",
-		"gateweavehq/agents",
-	]) {
-		for (const name of ["WebFetch", "Bash"]) run(target(name, same));
-	}
-	// An error that is not the explicit denial, though the call names the probe.
-	for (const text of [
-		"Request failed with status code 404",
-		"unable to access: Could not resolve host",
-		"Error: fetch failed",
-		`${WEBFETCH_DENIAL} Try later.`,
-		"",
-	]) {
-		assert.throws(
-			() =>
-				run((rest) => {
-					for (const result of resultsOf(rest)) result.content = text;
-				}),
-			unproven,
-			text,
-		);
-	}
-	// A denial text on a call of another tool, or on a tool whose text was not recorded.
-	assert.throws(
-		() =>
-			run((rest) => {
-				for (const result of resultsOf(rest)) result.content = BASH_DENIAL;
-				for (const call of callsOf(rest)) call.name = "WebFetch";
-			}),
-		unproven,
-	);
-	assert.throws(
-		() =>
-			run((rest) => {
-				for (const call of callsOf(rest)) call.name = "WebSearch";
-			}),
-		unproven,
-	);
-	// The denial's text on a call that did not error is a call that got through.
-	assert.throws(
-		() =>
-			run((rest) => {
-				for (const result of resultsOf(rest)) result.is_error = false;
-			}),
-		refused(/call succeeded/),
-	);
-	// A call that never got its result shows no denial.
-	assert.throws(
-		() => run((rest) => rest.filter((event) => resultsOf([event]).length === 0)),
-		unproven,
-	);
-});
-
-test("the address the reviewer was asked for names the probe as a whole too", () => {
-	const part = [
-		insideRead,
-		denial("t2", FILES.answer_file),
-		denial("t3", FILES.cache),
-		denial("t4", FILES.beside),
-	];
-	const withFetch = '{"type":"system","subtype":"init","tools":["Read","Grep","Glob","WebFetch"]}';
-	const fetched = (url) =>
-		lines(
-			withFetch,
-			part,
-			[use("t5", "WebFetch", { url }), answer("t5", WEBFETCH_DENIAL, true)],
-			RESULT,
-		);
-	for (const same of [
-		PROBE_URL,
-		`${PROBE_URL}/`,
-		"https://example.invalid/agents",
-		"https://example.invalid/agents/",
-		"HTTPS://EXAMPLE.INVALID/AGENTS.GIT",
-	]) {
-		check(fetched(same));
-	}
-	for (const other of [
-		"https://example.invalid/agents-evil.git",
-		"https://example.invalid/agents.github.io",
-		"https://example.invalid/agentsx",
-		"https://example.invalid/other.git",
-		"https://other-example.invalid/agents.git",
-	]) {
-		assert.throws(
-			() => check(fetched(other)),
-			refused(/not proven.*explicit permission denial of a call that names the probe/),
-			other,
-		);
-	}
-});
-
-test("an errored call unrelated to the probe does not prove the network", () => {
-	// The tools are there. The only denial is of a call on something else, in the recorded text.
-	const unrelated = withNetworkProbe((rest) => [
-		...rest.filter((event) => resultsOf([event]).length + callsOf([event]).length === 0),
-		{
-			type: "assistant",
-			message: {
-				content: [{ type: "tool_use", id: "u1", name: "Bash", input: { command: "ls" } }],
-			},
-		},
-		{
-			type: "user",
-			message: {
-				content: [{ type: "tool_result", tool_use_id: "u1", content: BASH_DENIAL, is_error: true }],
-			},
-		},
-	]);
-	assert.throws(
-		() => check(recorded(REAL_LAUNCH, { edit: unrelated })),
-		refused(/not proven.*explicit permission denial of a call that names the probe/),
 	);
 });

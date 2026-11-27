@@ -8,10 +8,11 @@
 //   - a successful Read of the inside canary, whose result holds its content;
 //   - for each outside canary, a Read of that exact path whose tool_result is the explicit denial
 //     Claude Code writes under --restricted (DENIALS.outside), naming that path and this checkout;
-//   - for the network, either an init message that lists no tool that can reach it (WebFetch,
-//     WebSearch, Bash, or any mcp__ tool), or a call of such a tool whose input names the probe
-//     repository (its owner and name as a whole, not a longer name that starts like it) and whose
-//     tool_result is the explicit permission denial Claude Code writes for it (DENIALS.network).
+//   - for the network, an init message that lists the session's tools and none of them can reach
+//     it: no WebFetch, no WebSearch, no Bash and no mcp__ tool. A session that has such a tool, or
+//     whose init message lists no tools, is refused even if its calls were denied: a request's
+//     text is not parsed to decide what it reaches, so a session with a way to the network fails
+//     closed. The rows' own launch (--restricted) lists only Glob, Grep and Read.
 // An error of any other text is not a denial: it proves nothing and the run is refused. The texts
 // were recorded from real local runs of the claude launcher with synthetic canaries (see the
 // recorded transcripts in replay.test.mjs).
@@ -34,18 +35,13 @@ export const reachesNetwork = (name) =>
 	typeof name === "string" && (NETWORK_TOOLS.includes(name) || name.startsWith("mcp__"));
 
 /**
- * The texts Claude Code writes when it refuses a call by permission, as recorded from real local
+ * The text Claude Code writes when it refuses a call by permission, as recorded from real local
  * runs (claude 2.1.332). An error with another text is not a denial.
  */
 export const DENIALS = {
 	/** A Read under --restricted of a path outside the working directory. */
 	outside: (path, checkout) =>
 		`${path} is outside ${checkout}; --restricted confines the file tools to the working directory.`,
-	/** A call of a network tool that no permission rule allows, by the tool's name. */
-	network: {
-		WebFetch: "Claude requested permissions to use WebFetch, but you haven't granted it yet.",
-		Bash: "This command requires approval",
-	},
 };
 
 const SEEN = 24;
@@ -154,34 +150,10 @@ const onPath = (call, path, platform) =>
 		(value) => typeof value === "string" && spelled(value, platform) === spelled(path, platform),
 	);
 
-// The part of a network call that names what it reaches: the address of a WebFetch, the command of
-// a Bash call. Nothing else of the input (a prompt, a description) names a target.
-const TARGET_OF = { WebFetch: "url", Bash: "command" };
-
-// Whether `value` names the repository `name` ("owner/name", or an address that ends with it) as a
-// whole: after it comes the end of the target, ".git", "/", "?", "#" or whitespace, and before it
-// no character that would make the owner longer. Compared without case. A repository whose name
-// merely starts with this one's ("agents-evil", "agents.github.io") is another repository.
-const namesRepository = (value, name) => {
-	const identity = String(name ?? "")
-		.trim()
-		.replace(/\.git$/i, "");
-	if (!identity) return false;
-	const escaped = identity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	return new RegExp(`(?<![A-Za-z0-9._-])${escaped}(?:\\.git)?(?=$|[/?#\\s])`, "i").test(value);
-};
-
-// Whether the call's target names the probe repository, by its name or by the address asked for.
-const namesProbe = (call, names) => {
-	const target = call.input[TARGET_OF[call.name]];
-	return typeof target === "string" && names.some((name) => namesRepository(target, name));
-};
-
 /**
  * Throws a plain error unless `transcript` proves the confinement (see the head of this file).
  * `files` and `secrets` are keyed inside, answer_file, cache and beside; `checkout` is the folder
- * the reviewer works in; `head` is the commit the network would show; `url` is the address the
- * reviewer was asked to retrieve. The error names the check, never a canary's content.
+ * the reviewer works in; and `head` is the commit the network would show. The error names the check, never a canary's content.
  */
 export function checkTranscript({
 	transcript,
@@ -189,7 +161,6 @@ export function checkTranscript({
 	secrets,
 	checkout,
 	head,
-	url = null,
 	platform = process.platform,
 }) {
 	const text = String(transcript ?? "");
@@ -262,19 +233,18 @@ export function checkTranscript({
 			),
 	).map(([, what]) => `no explicit permission denial of a Read of ${what}`);
 
-	// The network: no tool that can reach it, or an explicit denial of a call that asked for the probe.
-	const noNetworkTool = seen.tools !== null && !seen.tools.some(reachesNetwork);
-	const deniedProbe = seen.calls.some(
-		(call) =>
-			Object.hasOwn(DENIALS.network, call.name) &&
-			call.result?.isError === true &&
-			call.result.text.trim() === DENIALS.network[call.name] &&
-			namesProbe(call, [url, PREFLIGHT_REPO]),
-	);
-	if (!noNetworkTool && !deniedProbe) {
+	// The network: the init message must list the session's tools, and none may reach it.
+	if (seen.tools === null) {
 		unproven.push(
-			"no explicit permission denial of a call that names the probe repository, and no init message that lists no tool that can reach the network",
+			"no init message that lists the session's tools, so no verified tool unavailability",
 		);
+	} else {
+		const open = seen.tools.filter(reachesNetwork);
+		if (open.length > 0) {
+			unproven.push(
+				`a session whose tools include ${open.join(", ")}, which can reach the network, so no verified tool unavailability`,
+			);
+		}
 	}
 	if (unproven.length > 0) {
 		throw new Error(
@@ -357,7 +327,7 @@ export async function preflight({
 				`The reviewer could not be started for the preflight, so its confinement is not verified: ${why}`,
 			);
 		}
-		checkTranscript({ transcript, files, secrets, checkout, head, url, platform });
+		checkTranscript({ transcript, files, secrets, checkout, head, platform });
 	} catch (error) {
 		failure = error;
 	}
