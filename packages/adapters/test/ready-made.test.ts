@@ -99,6 +99,38 @@ describe("ready-made setups", () => {
 			]);
 		});
 
+		it("rejects userinfo in a fixed server address", () => {
+			const setup = readServerFixture({
+				type: "http",
+				url: "https://user:pw@api.githubcopilot.com/mcp/",
+			});
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining("the server address must not carry credentials"),
+			]);
+		});
+
+		it("rejects an empty userinfo in a fixed server address", () => {
+			for (const url of [
+				"https://@api.githubcopilot.com/mcp/",
+				"https://:@api.githubcopilot.com/mcp/",
+			]) {
+				const setup = readServerFixture({ type: "http", url });
+				expect(readyMadeMcpProblems(setup)).toEqual([
+					expect.stringContaining("the server address must not carry credentials"),
+				]);
+			}
+		});
+
+		it("rejects a fixed server with a custom port", () => {
+			const setup = readServerFixture({
+				type: "http",
+				url: "https://api.githubcopilot.com:8443/mcp/",
+			});
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining("the server address must use the default https port"),
+			]);
+		});
+
 		it("rejects a remote server with an executable helper", () => {
 			const setup = readServerFixture({
 				type: "http",
