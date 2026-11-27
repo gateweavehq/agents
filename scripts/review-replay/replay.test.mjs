@@ -741,8 +741,9 @@ test("a relative --out is read once, before the paths made from it", async () =>
 		JSON.stringify([row(1, { pre_fix: repo.preFix, fix: repo.fix })]),
 	);
 	const asked = [];
-	const askModel = async (_engine, _prompt, _dir, { role }) => {
+	const askModel = async (_engine, prompt, _dir, { role }) => {
 		asked.push(role);
+		if (prompt.includes(CHECK_MARK)) return confinedReply(prompt);
 		return role === "reviewer"
 			? JSON.stringify({ findings: [finding("zero")] })
 			: JSON.stringify({ verdicts: [{ index: 0, verdict: "hit", reason: "r" }] });
@@ -799,10 +800,13 @@ let configFiles = {};
 try {
 	for (const name of readdirSync(folder)) configFiles[name] = readFileSync(join(folder, name), "utf8");
 } catch {}
+const inside = /^- inside: (.+)$/m.exec(input)?.[1];
 const reply = JSON.stringify(
-	input.includes("You judge")
-		? { verdicts: [{ index: 0, verdict: "hit", reason: "r" }] }
-		: { findings: [] },
+	input.includes("check of the setup of this run")
+		? { inside: readFileSync(inside, "utf8"), answer_file: "UNREADABLE", cache: "UNREADABLE", beside: "UNREADABLE", network: "UNREADABLE" }
+		: input.includes("You judge")
+			? { verdicts: [{ index: 0, verdict: "hit", reason: "r" }] }
+			: { findings: [] },
 );
 writeFileSync(
 	join(dirname(fileURLToPath(import.meta.url)), "capture-" + tool + ".json"),
@@ -1193,13 +1197,30 @@ setTimeout(() => {}, 60000);
 	assert.ok(Date.now() - started < 10000);
 });
 
-// The preflight, with a launcher that stands in for a reviewer. A reviewer that is not confined
-// reads the files the prompt names; a confined one cannot.
-const named = (prompt) => [...prompt.matchAll(/^- (.+)$/gm)].map((m) => m[1]);
+// The preflight, with a launcher that stands in for a reviewer. It has to prove that it reads its
+// own checkout and that it cannot read anything outside it; silence proves nothing.
+const CHECK_MARK = "check of the setup of this run";
+const named = (prompt) =>
+	Object.fromEntries([...prompt.matchAll(/^- (\w+): (.+)$/gm)].map((m) => [m[1], m[2]]));
+const HEAD = "0123456789abcdef0123456789abcdef01234567";
 const preflightSource = {
 	cloneUrl: () => "https://example.invalid/agents.git",
-	headOf: async () => "0123456789abcdef0123456789abcdef01234567",
+	headOf: async () => HEAD,
 };
+const OUTSIDE = ["answer_file", "cache", "beside", "network"];
+
+// What a confined reviewer answers: its checkout's canary, and UNREADABLE for the rest.
+async function confinedReply(prompt, change = {}) {
+	const files = named(prompt);
+	return JSON.stringify({
+		inside: await readFile(files.inside, "utf8"),
+		answer_file: "UNREADABLE",
+		cache: "UNREADABLE",
+		beside: "UNREADABLE",
+		network: "UNREADABLE",
+		...change,
+	});
+}
 
 async function runPreflight(askModel) {
 	const cacheDir = join(root, `preflight-cache-${Math.random().toString(36).slice(2)}`);
@@ -1221,32 +1242,100 @@ async function runPreflight(askModel) {
 	}
 }
 
-test("the preflight passes a reviewer whose reply holds no canary and no retrieval", async () => {
+// A reply that is not proven: the error names the check, never a canary, and nothing was reviewed.
+const refused = (pattern) => (error) => {
+	assert.match(error.message, pattern);
+	assert.match(error.message, /Nothing was reviewed and no result was written/);
+	assert.equal(/canary-[0-9a-f]{8}/.test(error.message), false);
+	return true;
+};
+
+test("the preflight passes a reviewer that reads its checkout and nothing outside it", async () => {
 	const seen = [];
 	await runPreflight(async (engine, prompt, cwd, options) => {
 		seen.push({ engine: engine.spec, role: options.role, files: named(prompt), cwd });
 		assert.match(prompt, /example\.invalid\/agents\.git/);
-		return "I can read nothing outside my working folder, and I have no network.";
+		return confinedReply(prompt);
 	});
 	assert.equal(seen.length, 1);
 	assert.equal(seen[0].role, "reviewer");
-	assert.equal(seen[0].files.length, 3);
-	// The canaries sit outside the checkout the reviewer works in.
-	for (const file of seen[0].files) assert.equal(file.startsWith(seen[0].cwd), false, file);
+	assert.deepEqual(Object.keys(seen[0].files), ["inside", "answer_file", "cache", "beside"]);
+	// The inside canary is in the checkout the reviewer works in; the others are outside it.
+	assert.equal(seen[0].files.inside.startsWith(seen[0].cwd), true);
+	for (const name of ["answer_file", "cache", "beside"]) {
+		assert.equal(seen[0].files[name].startsWith(seen[0].cwd), false, name);
+	}
 });
 
-for (const [which, index] of [
-	["the replay set's stand-in", 0],
-	["the judge's cache folder", 1],
-	["a file beside the checkout", 2],
+test("the preflight accepts the object in a fenced block or among prose", async () => {
+	await runPreflight(async (_e, prompt) => `\`\`\`json\n${await confinedReply(prompt)}\n\`\`\``);
+	await runPreflight(
+		async (_e, prompt) => `Here is my answer: ${await confinedReply(prompt)} Done.`,
+	);
+});
+
+test("the preflight refuses an empty reply", async () => {
+	for (const reply of ["", "   \n", undefined]) {
+		await assert.rejects(
+			runPreflight(async () => reply),
+			refused(/not proven.*not one JSON object/),
+		);
+	}
+});
+
+test("the preflight refuses prose without a JSON object", async () => {
+	await assert.rejects(
+		runPreflight(async () => "I could not read any of the files and I have no network."),
+		refused(/not proven.*not one JSON object/),
+	);
+	await assert.rejects(
+		runPreflight(async () => '["UNREADABLE", "UNREADABLE"]'),
+		refused(/not one JSON object/),
+	);
+});
+
+test("the preflight refuses a reply that does not return the inside canary", async () => {
+	// Missing, empty, UNREADABLE, wrong, a number: the reviewer is not shown to read what it is given.
+	for (const inside of [undefined, "", "UNREADABLE", "canary-0000", 7]) {
+		await assert.rejects(
+			runPreflight(async (_e, prompt) => confinedReply(prompt, { inside })),
+			refused(/not proven.*inside its own checkout/),
+		);
+	}
+	// Only a part of it.
+	await assert.rejects(
+		runPreflight(async (_e, prompt) => {
+			const whole = JSON.parse(await confinedReply(prompt));
+			return JSON.stringify({ ...whole, inside: whole.inside.slice(0, 20) });
+		}),
+		refused(/inside its own checkout/),
+	);
+	// A reply with only the outside fields.
+	await assert.rejects(
+		runPreflight(async () =>
+			JSON.stringify({
+				answer_file: "UNREADABLE",
+				cache: "UNREADABLE",
+				beside: "UNREADABLE",
+				network: "UNREADABLE",
+			}),
+		),
+		refused(/inside its own checkout/),
+	);
+});
+
+for (const [which, field] of [
+	["the replay set's stand-in", "answer_file"],
+	["the judge's cache folder", "cache"],
+	["a file beside the checkout", "beside"],
 ]) {
 	test(`the preflight refuses a reviewer that prints ${which}`, async () => {
 		let secret = "";
 		await assert.rejects(
 			runPreflight(async (_engine, prompt) => {
 				// An unconfined reviewer reads the file it is asked for.
-				secret = (await readFile(named(prompt)[index], "utf8")).trim();
-				return `Here it is: ${secret}`;
+				secret = (await readFile(named(prompt)[field], "utf8")).trim();
+				return confinedReply(prompt, { [field]: secret });
 			}),
 			(error) => {
 				assert.match(error.message, /not confined to its checkout/);
@@ -1258,19 +1347,51 @@ for (const [which, index] of [
 			},
 		);
 	});
+
+	test(`the preflight refuses the canary of ${which} wherever it sits in the reply`, async () => {
+		// Not in its own field: in prose around a correct object, and inside the inside field.
+		for (const place of ["prose", "inside"]) {
+			await assert.rejects(
+				runPreflight(async (_engine, prompt) => {
+					const secret = (await readFile(named(prompt)[field], "utf8")).trim();
+					const good = JSON.parse(await confinedReply(prompt));
+					if (place === "inside") {
+						return JSON.stringify({ ...good, inside: `${good.inside} ${secret}` });
+					}
+					return `I also saw ${secret}. ${JSON.stringify(good)}`;
+				}),
+				/not confined to its checkout/,
+			);
+		}
+	});
 }
 
 test("the preflight refuses a reviewer that retrieves the repository from the network", async () => {
 	await assert.rejects(
-		runPreflight(async () => "The default branch is at 0123456789abcdef0123456789abcdef01234567."),
+		runPreflight(async (_e, prompt) => confinedReply(prompt, { network: HEAD })),
 		/showed the repository, retrieved from the network/,
 	);
-	// A short id counts too.
+	// A short id counts too, and so does one in prose beside an UNREADABLE field.
 	await assert.rejects(
-		runPreflight(async () => "it is 0123456789ab"),
+		runPreflight(async (_e, prompt) => confinedReply(prompt, { network: HEAD.slice(0, 12) })),
+		/retrieved from the network/,
+	);
+	await assert.rejects(
+		runPreflight(async (_e, prompt) => `${await confinedReply(prompt)} (default branch ${HEAD})`),
 		/retrieved from the network/,
 	);
 });
+
+for (const field of OUTSIDE) {
+	test(`the preflight refuses a reply that leaves "${field}" out or does not say UNREADABLE`, async () => {
+		for (const value of [undefined, "", "I could not", "unreadable", null, 0]) {
+			await assert.rejects(
+				runPreflight(async (_e, prompt) => confinedReply(prompt, { [field]: value })),
+				refused(/not proven.*each outside field must be the word UNREADABLE/),
+			);
+		}
+	});
+}
 
 test("the preflight stops when the reviewer cannot be started", async () => {
 	await assert.rejects(
@@ -1281,37 +1402,45 @@ test("the preflight stops when the reviewer cannot be started", async () => {
 	);
 });
 
-test("the run stops before any row when the preflight refuses, and writes no result", async () => {
+test("the run stops before any row when the preflight is not proven, and writes no result", async () => {
 	const repo = await fixtureRepo();
 	const set = join(root, "preflight-set.json");
 	await writeFile(set, JSON.stringify([row(1, { pre_fix: repo.preFix, fix: repo.fix })]));
-	const out = join(root, "out-preflight");
-	const asked = [];
-	let prepared = 0;
-	const source = {
-		cloneUrl: () => repo.dir,
-		baseOf: async () => {
-			prepared++;
-			return repo.base;
-		},
-		headOf: async () => "f".repeat(40),
+	const replies = {
+		"a leak": async (prompt) =>
+			// An unconfined reviewer prints the file beside its checkout.
+			confinedReply(prompt, { beside: (await readFile(named(prompt).beside, "utf8")).trim() }),
+		"an empty reply": async () => "",
+		prose: async () => "All fine, nothing to report.",
 	};
-	await assert.rejects(
-		main(["--set", set, "--reviewer", "claude:m", "--judge", "codex:m", "--out", out], {
-			source,
-			async askModel(_engine, prompt, _cwd, { role }) {
-				asked.push(role);
-				// An unconfined reviewer: it prints whatever file it is asked to.
-				const files = await Promise.all(named(prompt).map((file) => readFile(file, "utf8")));
-				return files.join("\n");
+	for (const [name, reply] of Object.entries(replies)) {
+		const out = join(root, `out-preflight-${name.replace(/ /g, "-")}`);
+		const asked = [];
+		let prepared = 0;
+		const source = {
+			cloneUrl: () => repo.dir,
+			baseOf: async () => {
+				prepared++;
+				return repo.base;
 			},
-		}),
-		/not confined to its checkout/,
-	);
-	assert.deepEqual(asked, ["reviewer"]);
-	assert.equal(prepared, 0);
-	assert.equal(existsSync(join(out, "results.json")), false);
-	assert.equal(existsSync(join(out, "summary.md")), false);
+			headOf: async () => "f".repeat(40),
+		};
+		await assert.rejects(
+			main(["--set", set, "--reviewer", "claude:m", "--judge", "codex:m", "--out", out], {
+				source,
+				async askModel(_engine, prompt, _cwd, { role }) {
+					asked.push(role);
+					return reply(prompt);
+				},
+			}),
+			/not confined to its checkout|not proven/,
+			name,
+		);
+		assert.deepEqual(asked, ["reviewer"], name);
+		assert.equal(prepared, 0, name);
+		assert.equal(existsSync(join(out, "results.json")), false, name);
+		assert.equal(existsSync(join(out, "summary.md")), false, name);
+	}
 });
 
 test("the preflight goes through the launcher the rows use, with the same flags", async () => {
@@ -1329,7 +1458,7 @@ test("the preflight goes through the launcher the rows use, with the same flags"
 		assert.ok(seen.args.includes(flag), flag);
 	}
 	assert.equal(seen.args[seen.args.indexOf("--tools") + 1], "Read,Grep,Glob");
-	assert.match(seen.input, /Print the exact contents of each of these three files/);
+	assert.match(seen.input, /Reply with exactly one JSON object/);
 	// Its folder is the throwaway checkout, and the login folder is the one of the rows' reviewer.
 	assert.match(seen.cwd, /replay-preflight-/);
 	assert.deepEqual(seen.configFiles, { ".credentials.json": "synthetic-claude-login" });

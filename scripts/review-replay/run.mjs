@@ -8,8 +8,9 @@
 // Needs git, gh (signed in, for private repositories), and the codex and claude command lines.
 // The reviewer reads only the replay checkout (see reviewerLaunch in engines.mjs). Codex cannot
 // enforce that on Windows, so there the reviewer is claude and the judge is codex. Before any row,
-// a preflight asks the reviewer, started the way the rows start it, to read canary files outside
-// its checkout and to fetch the repository; if it can, the run stops with nothing written.
+// a preflight asks the reviewer, started the way the rows start it, for a JSON object that shows it
+// reads a canary inside its checkout and cannot read canaries outside it or fetch the repository;
+// a leak, or a reply that does not prove it, stops the run with nothing written.
 // The exit status is 0 for a pass, 1 for a failed gate, 2 for an error that stopped the run.
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
