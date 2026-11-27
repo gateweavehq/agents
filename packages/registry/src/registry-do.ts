@@ -3490,6 +3490,24 @@ export class RegistryDO extends DurableObject {
 		return [...listed, ...queuedConversations(this.#db)];
 	}
 
+	/**
+	 * The conversations a workspace deletion has not finished yet. Destroying one does not take it
+	 * out of the registry's tables, so the deletion notes it here and a retry skips it.
+	 */
+	conversationsToDestroy(): string[] {
+		return this.conversationIds().filter(
+			(id) => !this.ctx.storage.kv.get(FORGOTTEN_CONVERSATION + id),
+		);
+	}
+
+	/** Records conversations whose objects a workspace deletion destroyed or forgot. */
+	noteConversationsDestroyed(ids: string[]): void {
+		const storage = this.ctx.storage;
+		storage.transactionSync(() => {
+			for (const id of ids) storage.kv.put(FORGOTTEN_CONVERSATION + id, true);
+		});
+	}
+
 	// RPC for moving the workspace's objects somewhere else (`move.ts`), which the app does from its
 	// daily run when the deployment keeps workspaces in a jurisdiction. Nothing else calls these.
 
