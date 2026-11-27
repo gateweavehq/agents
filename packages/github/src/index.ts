@@ -49,6 +49,7 @@ export {
 	type CommitInput,
 	changedFiles,
 	commitChanges,
+	commitDiff,
 	convertPullRequestToDraft,
 	createBranch,
 	createCommit,

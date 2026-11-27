@@ -921,6 +921,15 @@ export const runPullRequest = z
 			}, "Not a repository's owner/name"),
 		number: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
 		url: z.string().max(400),
+		// What a review of the run's work needs: the commit the run left, and whether and why the
+		// pull request is a draft. Runs from before these were kept have none.
+		head: z
+			.string()
+			.regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+			.optional(),
+		state: z.enum(["open", "closed", "merged"]).optional(),
+		draft: z.boolean().optional(),
+		draftReason: z.string().max(2000).optional(),
 	})
 	// The app links to it, so it must be the pull request's page on GitHub and nothing else.
 	.refine(

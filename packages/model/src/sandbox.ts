@@ -237,6 +237,11 @@ export interface PullRequestOutcome {
 	/** What the model should know of the checks, in words. */
 	note?: string;
 	/**
+	 * Why the pull request is a draft, in words the tool makes of the checks' status and of the
+	 * files the branch changes. It holds no output of any command, so it may be kept and shown.
+	 */
+	draftReason?: string;
+	/**
 	 * The pull request as GitHub has it, for the card the chat draws of the call. Left out by an
 	 * answer from before these were kept, which the card draws without.
 	 */

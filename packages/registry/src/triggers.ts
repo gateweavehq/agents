@@ -41,6 +41,7 @@ import {
 	triggerDeliveries,
 	triggers,
 } from "./db/schema";
+import { releaseReviews } from "./review-triggers";
 import { RUN_TIMEOUT } from "./runs";
 import type { Db } from "./state";
 import { teamLead } from "./teams";
@@ -165,6 +166,31 @@ export function targetRefusal(db: Db, target: TriggerTarget): string | null {
 	return runnable(db, target.agentId) ? null : "That agent was removed or is not run by Gateweave";
 }
 
+/**
+ * Why a pull request trigger could not start a review of `target`, if it could not: a review runs
+ * on Gateweave's own loop, in a sandbox, so an agent without one would fail every review it was
+ * given. Checked when the trigger is made; `beginReviewTurn` checks again, since an agent may change.
+ */
+export function reviewTargetRefusal(db: Db, target: TriggerTarget): string | null {
+	const agentId =
+		target.kind === "team" ? teamLead(db, target.teamId)?.leadAgentId : target.agentId;
+	if (agentId === undefined) return null;
+	const agent = db
+		.select({
+			name: agents.name,
+			sandbox: agentDefinitions.sandbox,
+			engine: agentDefinitions.engine,
+		})
+		.from(agents)
+		.innerJoin(agentDefinitions, eq(agentDefinitions.agentId, agents.id))
+		.where(eq(agents.id, agentId))
+		.get();
+	if (!agent || (agent.sandbox && agent.engine === "gateweave")) return null;
+	return agent.engine === "gateweave"
+		? `${agent.name} has no sandbox: turn its sandbox on, so it can review pull requests`
+		: `${agent.name} does not run on Gateweave's own loop, which a review agent must`;
+}
+
 /** Why the workspace cannot have another trigger, if it has as many as it may. */
 export function triggerCapRefusal(db: Db): string | null {
 	const existing = db.select({ n: count() }).from(triggers).get()?.n ?? 0;
@@ -188,6 +214,7 @@ export function insertTrigger(
 		assigneeName: string | null;
 		perIssue: boolean;
 		schedule: TriggerSchedule | null;
+		pullRequest?: boolean;
 		sealed: string;
 		secretStart: string;
 		createdBy: string;
@@ -196,9 +223,13 @@ export function insertTrigger(
 ): Trigger | { refused: string } {
 	const full = triggerCapRefusal(db);
 	if (full) return { refused: full };
-	const refusal = targetRefusal(db, row.target);
+	const refusal =
+		targetRefusal(db, row.target) ??
+		(row.pullRequest === true ? reviewTargetRefusal(db, row.target) : null);
 	if (refusal) return { refused: refusal };
 	const { target, ...rest } = row;
+	// A pull request trigger starts on pull requests alone, as a schedule's starts on its time.
+	const pullRequest = row.pullRequest === true;
 	db.insert(triggers)
 		.values({
 			...rest,
@@ -207,11 +238,14 @@ export function insertTrigger(
 			active: true,
 			// A scheduled trigger has no label or assignee, as it has no event types, and its runs are
 			// about no issue.
-			label: row.schedule ? null : row.label,
-			assignee: row.schedule ? null : row.assignee,
-			assigneeName: row.schedule || row.assignee === null ? null : row.assigneeName,
-			perIssue: row.schedule ? false : row.perIssue,
-			nextRunAt: row.schedule && nextScheduledRun(row.schedule, now),
+			label: row.schedule || pullRequest ? null : row.label,
+			assignee: row.schedule || pullRequest ? null : row.assignee,
+			assigneeName: row.schedule || pullRequest || row.assignee === null ? null : row.assigneeName,
+			events: pullRequest ? null : row.events,
+			perIssue: row.schedule || pullRequest ? false : row.perIssue,
+			schedule: pullRequest ? null : row.schedule,
+			pullRequest,
+			nextRunAt: !pullRequest && row.schedule ? nextScheduledRun(row.schedule, now) : null,
 			createdAt: now,
 			updatedAt: now,
 		})
@@ -239,7 +273,12 @@ export function updateTrigger(
 	now: number,
 ): Trigger | null {
 	const current = db
-		.select({ schedule: triggers.schedule, active: triggers.active, assignee: triggers.assignee })
+		.select({
+			schedule: triggers.schedule,
+			active: triggers.active,
+			assignee: triggers.assignee,
+			pullRequest: triggers.pullRequest,
+		})
 		.from(triggers)
 		.where(eq(triggers.id, id))
 		.get();
@@ -253,7 +292,12 @@ export function updateTrigger(
 			: assignee !== current.assignee
 				? { assigneeName: patch.assigneeName ?? null }
 				: {};
-	const schedule = patch.schedule === undefined ? current.schedule : patch.schedule;
+	// A pull request trigger has no schedule to give it.
+	const schedule = current.pullRequest
+		? null
+		: patch.schedule === undefined
+			? current.schedule
+			: patch.schedule;
 	const active = patch.active ?? current.active;
 	// A schedule given, changed or resumed counts from now: a resumed one does not run at once for
 	// a time it missed while paused.
@@ -263,11 +307,19 @@ export function updateTrigger(
 			: { nextRunAt: active && schedule ? nextScheduledRun(schedule, now) : null };
 	// A schedule's runs all start the same way, so it has no event types, label or assignee, and
 	// they are about no issue.
-	const webhookOnly = schedule
-		? { events: null, label: null, assignee: null, assigneeName: null, perIssue: false }
-		: {};
+	const webhookOnly =
+		schedule || current.pullRequest
+			? { events: null, label: null, assignee: null, assigneeName: null, perIssue: false }
+			: {};
 	db.update(triggers)
-		.set({ ...patch, ...renamed, ...timing, ...webhookOnly, updatedAt: now })
+		.set({
+			...patch,
+			...renamed,
+			...timing,
+			...webhookOnly,
+			...(current.pullRequest ? { schedule: null } : {}),
+			updatedAt: now,
+		})
 		.where(eq(triggers.id, id))
 		.run();
 	return getTrigger(db, id);
@@ -294,6 +346,7 @@ export function replaceSecret(
  * do when a team they talked to is deleted.
  */
 export function deleteTrigger(db: Db, id: string): boolean {
+	releaseReviews(db, [id]);
 	db.delete(triggerDeliveries).where(eq(triggerDeliveries.triggerId, id)).run();
 	const deleted = db
 		.delete(triggers)
@@ -312,6 +365,7 @@ export function deleteTeamTriggers(db: Db, teamId: string): void {
 		.all()
 		.map((row) => row.id);
 	if (ids.length === 0) return;
+	releaseReviews(db, ids);
 	db.delete(triggerDeliveries).where(inArray(triggerDeliveries.triggerId, ids)).run();
 	db.delete(triggers).where(inArray(triggers.id, ids)).run();
 }

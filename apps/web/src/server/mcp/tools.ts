@@ -374,13 +374,15 @@ export function createAgentsServer(access: AgentsAccess, canRun = false): McpSer
 		{
 			title: "Read a wiki",
 			description:
-				"Gives a repository's wiki in one of your workspaces: every page, or the one asked for, each with the source files it was written from and citations of their lines.",
+				"Gives a repository's wiki in one of your workspaces: every page, or the one asked for, each headed by its number, with the source files it was written from and citations of their lines.",
 			inputSchema: wikiInput.extend({
 				page: z
 					.string()
 					.regex(WIKI_PAGE_NUMBER)
 					.optional()
-					.describe('One page\'s number from read_wiki_structure, such as "2.1", to read only it.'),
+					.describe(
+						'One page\'s number, as its heading or read_wiki_structure shows it, such as "2.1", to read only it.',
+					),
 			}),
 			annotations: { readOnlyHint: true, openWorldHint: false },
 		},

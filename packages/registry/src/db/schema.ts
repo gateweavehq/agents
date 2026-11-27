@@ -18,6 +18,7 @@ import {
 	type Metadata,
 	MODEL_PROVIDERS,
 	OUTSIDE_TASK_STATUSES,
+	PULL_REQUEST_REVIEW_STATUSES,
 	REPOSITORY_PROVIDERS,
 	RUN_STATUSES,
 	type RunPullRequest,
@@ -649,6 +650,8 @@ export const triggers = sqliteTable(
 		schedule: text("schedule", { mode: "json" }).$type<TriggerSchedule>(),
 		/** When its schedule starts the next run, while it is active: the alarm wakes for it. */
 		nextRunAt: integer("next_run_at"),
+		/** Whether it starts a review of each pull request an agent's run opened, as the run ends. */
+		pullRequest: integer("pull_request", { mode: "boolean" }).notNull().default(false),
 		createdBy: text("created_by").notNull(),
 		createdAt: integer("created_at").notNull(),
 		updatedAt: integer("updated_at").notNull(),
@@ -687,6 +690,56 @@ export const triggerDeliveries = sqliteTable(
 		index("trigger_deliveries_conversation_idx").on(table.conversationId),
 	],
 );
+
+/**
+ * The review of one head of a pull request an agent opened, one row for each repository, pull
+ * request and head in the workspace, made for one of its `pull_request` triggers
+ * (`../pull-request-reviews.ts`). The findings' text stays in the review conversation, as the
+ * result of `submit_review`: a row holds counts only.
+ */
+export const pullRequestReviews = sqliteTable(
+	"pull_request_reviews",
+	{
+		/**
+		 * The trigger the review was made for, chosen when the head was first seen. Null once that
+		 * trigger was deleted while the review was running or over: the row stays, so the head is not
+		 * reviewed again by the trigger that replaced it. A queued review moves to another trigger.
+		 */
+		triggerId: text("trigger_id"),
+		/** The delivery's id: `review:<repository id>:<number>:<head>`, unique in the workspace. */
+		id: text("id").primaryKey(),
+		repositoryId: text("repository_id").notNull(),
+		/** `owner/name`, as the run recorded it. */
+		repository: text("repository").notNull(),
+		number: integer("number").notNull(),
+		head: text("head").notNull(),
+		/** The run of the review itself, once it began. */
+		runId: text("run_id"),
+		/** The run that left the head. */
+		sourceRunId: text("source_run_id").notNull(),
+		conversationId: text("conversation_id"),
+		status: text("status", { enum: PULL_REQUEST_REVIEW_STATUSES }).notNull(),
+		reason: text("reason"),
+		draft: integer("draft", { mode: "boolean" }).notNull().default(false),
+		draftReason: text("draft_reason"),
+		found: integer("found"),
+		shown: integer("shown"),
+		proven: integer("proven"),
+		/** How many times a refusal for want of a sandbox sent it back to the queue. */
+		retries: integer("retries").notNull().default(0),
+		/** When a queued review is admitted next; null once it is not queued. */
+		nextAttemptAt: integer("next_attempt_at"),
+		createdAt: integer("created_at").notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(table) => [
+		index("pull_request_reviews_trigger_idx").on(table.triggerId),
+		index("pull_request_reviews_due_idx").on(table.status, table.nextAttemptAt),
+		index("pull_request_reviews_run_idx").on(table.runId),
+		index("pull_request_reviews_conversation_idx").on(table.conversationId),
+	],
+);
+export type PullRequestReviewRow = typeof pullRequestReviews.$inferSelect;
 
 /**
  * A task an MCP client handed an agent (`run_agent` on /mcp, AGT-155): admitted like a trigger's

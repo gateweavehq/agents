@@ -2,7 +2,7 @@
  * Tasks an MCP client hands an agent from outside the app (`run_agent` and `get_run` on /mcp,
  * AGT-155). A task starts a run the way a trigger's delivery does: counted in the workspace's runs,
  * bounded by the same per-minute and per-day limits a trigger starts with, and refused for an
- * agent whose owner did not allow outside tasks.
+ * agent without outside tasks allowed.
  */
 
 /** How many outside tasks one agent may start in a minute, and in a day. */
