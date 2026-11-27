@@ -8,6 +8,51 @@ read its entry before updating a self-hosted copy.
 Each version's [GitHub release](https://github.com/gateweavehq/agents/releases) carries the same
 notes. Publishing a release deploys it to Gateweave Cloud.
 
+## [0.36.0] - 2026-11-27
+
+A server can now cap each workspace's sandbox minutes per UTC month with an optional
+`SANDBOX_MONTHLY_MINUTES`, and the docs gain a quickstart, an MCP reference and two recipes for
+using Agents from an AI client. This release has no migration and changes nothing in the
+workspace registry's storage. Gateweave Cloud does not set the new limit yet.
+
+### Added
+
+- **A monthly cap on each workspace's sandbox minutes.** `SANDBOX_MONTHLY_MINUTES` counts a
+  workspace's sandbox time per UTC month, including the idle minutes before each sandbox stops.
+  ([#335](https://github.com/gateweavehq/agents/pull/335))
+  - When the month's minutes are used up, a new turn that needs a sandbox is refused, and the
+    message names the date the count resets. A turn under way is never cut: the check runs only
+    when a turn begins.
+  - The workspace's owners get an email once at 80% and once at 100% of the cap each month, on a
+    server that sends email.
+  - Settings > Models shows the month's usage, the cap and the reset date.
+  - Unset or empty, there is no monthly cap. `SANDBOX_DAILY_MINUTES` and `SANDBOX_MONTHLY_BUDGET`
+    work as before.
+- **A quickstart** that goes from a fresh clone to a first agent on your own Cloudflare account.
+  ([#340](https://github.com/gateweavehq/agents/pull/340))
+- **An MCP reference page**, `docs/mcp.md`, with the scopes and a table of the tools `/mcp` gives
+  an AI client, checked against the server by a test.
+  ([#338](https://github.com/gateweavehq/agents/pull/338))
+- **Two recipes for using Agents from an AI client**: finding where a repository handles
+  something from its wiki, and running an agent from your editor.
+  ([#339](https://github.com/gateweavehq/agents/pull/339))
+
+### Internal
+
+- The CLI is published from the `npm` environment, whose deployments accept only `cli-v*` tags,
+  so an edited copy of the publish workflow on a branch cannot publish.
+  ([#337](https://github.com/gateweavehq/agents/pull/337))
+- The contributing guide links the community rules and says how to claim an issue, and the pull
+  request template asks which agent helped, for disclosure only.
+  ([#336](https://github.com/gateweavehq/agents/pull/336))
+
+### If you run your own
+
+- **Update.** There is no D1 migration and no change to the workspace registry's storage.
+- **`SANDBOX_MONTHLY_MINUTES`** is optional. Unset or empty, a workspace has no monthly cap. A
+  number sets the minutes; a value that is not a number allows none. "Sandboxes" in
+  `docs/self-hosting.md` describes it, and the Settings table in the same file lists it.
+
 ## [0.35.1] - 2026-11-26
 
 ### Internal
