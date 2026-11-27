@@ -2,23 +2,29 @@
 // had, without too much noise? It holds no data. The set is read from `--set`, and the bar is
 // REVIEW_GATE in @gateweave/agents-model.
 //
-//   node scripts/review-replay/run.mjs --set <replay-set.json> --reviewer codex:<model> \
-//     --judge claude:<model> --out <dir> [--org gateweavehq]
+//   node scripts/review-replay/run.mjs --set <replay-set.json> --reviewer claude:<model> \
+//     --judge codex:<model> --out <dir> [--org gateweavehq]
 //
 // Needs git, gh (signed in, for private repositories), and the codex and claude command lines.
+// The reviewer reads only the replay checkout (see reviewerLaunch in engines.mjs). Codex cannot
+// enforce that on Windows, so there the reviewer is claude and the judge is codex.
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { ask, checkFamilies, parseEngine } from "./engines.mjs";
-import { cleanHistory, fixDiff, githubSource, mirrorOf } from "./history.mjs";
+import { ask, checkFamilies, checkReviewerBoundary, parseEngine } from "./engines.mjs";
+import { cleanHistory, fixPatch, githubSource } from "./history.mjs";
 import { loadModel } from "./model.mjs";
 import { runReplay } from "./replay.mjs";
 
 const USAGE =
-	"Usage: node scripts/review-replay/run.mjs --set <replay-set.json> --reviewer codex:<model> --judge claude:<model> --out <dir> [--org <github org>]";
+	"Usage: node scripts/review-replay/run.mjs --set <replay-set.json> --reviewer <codex|claude>:<model> --judge <claude|codex>:<model> --out <dir> [--org <github org>]";
 
-export async function main(argv) {
+/**
+ * `overrides` is for tests: `source` replaces GitHub, `askModel` replaces the command lines, and
+ * `platform` replaces the system the boundary of the reviewer is checked for.
+ */
+export async function main(argv, overrides = {}) {
 	const { values } = parseArgs({
 		args: argv,
 		options: {
@@ -34,31 +40,36 @@ export async function main(argv) {
 	const reviewer = parseEngine(values.reviewer, "--reviewer");
 	const judge = parseEngine(values.judge, "--judge");
 	checkFamilies(reviewer, judge);
+	checkReviewerBoundary(reviewer, overrides.platform);
 
 	const model = await loadModel();
 	const setText = await readFile(values.set, "utf8");
-	const source = githubSource(values.org);
-	const cacheDir = join(values.out, "cache");
+	const source = overrides.source ?? githubSource(values.org);
+	const askModel = overrides.askModel ?? ask;
+	// Once, before any path is made from it: a relative --out is read against the folder the run
+	// started in, and every git command runs in some other folder.
+	const out = resolve(values.out);
+	const cacheDir = join(out, "cache");
 
 	const deps = {
 		async prepare(view, dir) {
 			const { diff, mirror, preFix } = await cleanHistory({ source, cacheDir, dir, row: view });
 			return {
 				diff,
-				async fixDiff(judgeView) {
-					await mirrorOf(
+				fixDiff: (judgeView) =>
+					fixPatch({
 						source,
-						cacheDir,
-						view.repo,
-						view.pr,
-						[judgeView.fix, judgeView.also_fix].filter(Boolean),
-					);
-					return fixDiff(mirror, preFix, judgeView.fix, judgeView.also_fix);
-				},
+						mirror,
+						repo: view.repo,
+						pr: view.pr,
+						preFix,
+						fix: judgeView.fix,
+						alsoFix: judgeView.also_fix,
+					}),
 			};
 		},
-		review: (prompt, dir) => ask(reviewer, prompt, dir),
-		judge: (prompt, dir) => ask(judge, prompt, dir),
+		review: (prompt, dir) => askModel(reviewer, prompt, dir, { role: "reviewer" }),
+		judge: (prompt, dir) => askModel(judge, prompt, dir, { role: "judge" }),
 	};
 
 	const { totals } = await runReplay({
@@ -66,12 +77,12 @@ export async function main(argv) {
 		setText,
 		reviewer: reviewer.spec,
 		judge: judge.spec,
-		out: values.out,
+		out,
 		deps,
 		log: (line) => console.error(line),
 	});
 	console.log(
-		`Gate: ${totals.pass ? "PASS" : "FAIL"}: ${totals.hits} hits of ${totals.rows} rows, real share ${(totals.realShare * 100).toFixed(1)}%. Wrote results.json and summary.md to ${values.out}`,
+		`Gate: ${totals.pass ? "PASS" : "FAIL"}: ${totals.hits} hits of ${totals.rows} rows, real share ${(totals.realShare * 100).toFixed(1)}%. Wrote results.json and summary.md to ${out}`,
 	);
 }
 

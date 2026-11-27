@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jsonIn } from "./engines.mjs";
 
+const REPO = /^\w[\w.-]*(\/\w[\w.-]*)?$/;
+const REVISION = /^[0-9a-f]{7,40}$/i;
+
 /** What only the judge may see. The reviewer's view is built from the other keys by name. */
 export const HIDDEN_KEYS = ["defect", "fix", "also_fix", "files", "found_by"];
 export const VERDICTS = ["hit", "real", "false", "unsure"];
@@ -24,13 +27,19 @@ export function splitSet(raw) {
 	if (!Array.isArray(rows) || rows.length === 0) throw new Error("The set holds no rows");
 	const seen = new Set();
 	return rows.map((row, index) => {
-		const id = String(row?.row ?? index + 1);
-		const at = `Row ${id}`;
+		const raw = row?.row ?? index + 1;
+		if ((typeof raw !== "string" && typeof raw !== "number") || String(raw).trim() === "")
+			throw new Error(`Row ${index + 1} has an id that is not a string or a number`);
+		const id = String(raw);
+		const at = `Row ${JSON.stringify(id)}`;
 		if (seen.has(id)) throw new Error(`${at} appears twice in the set`);
 		seen.add(id);
-		if (typeof row.repo !== "string" || !row.repo) throw new Error(`${at} has no repo`);
+		if (typeof row.repo !== "string" || !REPO.test(row.repo)) throw new Error(`${at} has no repo`);
+		for (const key of ["fix", "also_fix"]) {
+			if (row[key] != null && !REVISION.test(row[key])) throw new Error(`${at} has a bad ${key}`);
+		}
 		if (!Number.isInteger(Number(row.pr))) throw new Error(`${at} has no pr number`);
-		if (!/^[0-9a-f]{7,40}$/i.test(row.pre_fix ?? "")) throw new Error(`${at} has no pre_fix`);
+		if (!REVISION.test(row.pre_fix ?? "")) throw new Error(`${at} has no pre_fix`);
 		if (typeof row.defect !== "string" || !row.defect.trim())
 			throw new Error(`${at} has no defect`);
 		return {
@@ -54,30 +63,45 @@ export function splitSet(raw) {
 	});
 }
 
-const FORMAT_NOTE = `There is no ${"submit_review"} tool in this run. Reply with one JSON object and nothing else:
-{"findings": [{"severity", "path", "line", "side", "title", "failingCase", "criterion", "test"}]}
-with the fields ${"submit_review"} takes for a finding. "test" is null or {"path", "content", "command"}.
-It is not run here. The working folder is the repository at the reviewed head.`;
-
+/**
+ * The product's instructions, then what this run is (the repository, pull request and reviewed
+ * head: the only identifiers the reviewer gets) and the schema the submit_review tool validates a
+ * whole submission with, then the product's message.
+ */
 export function reviewPrompt(model, view, diff) {
-	return `${model.REVIEW_INSTRUCTIONS}\n\n${FORMAT_NOTE}\n\n${model.reviewMessage(diff, view.criteria)}`;
+	const schema = JSON.stringify(model.reviewJsonSchema, null, 2);
+	return `${model.REVIEW_INSTRUCTIONS}
+
+This review is of pull request ${view.pr} of ${view.repo}, at the reviewed head ${view.pre_fix}. The working folder is that repository at the reviewed head. Nothing is run here, so a proposed test is not run.
+
+There is no ${model.REVIEW_TOOL} tool in this run. Reply with one JSON object and nothing else: the input the tool takes. It is refused as a whole unless it satisfies this JSON Schema:
+${schema}
+
+${model.reviewMessage(diff, view.criteria)}`;
 }
 
-/** Keeps every finding the product's schema accepts, as the tool does: one bad one costs only itself. */
+/** The reply as the product's tool takes it: the whole submission is valid, or none of it is. */
 export function parseFindings(model, reply) {
-	const list = jsonIn(reply).findings;
-	if (!Array.isArray(list)) throw new Error("The reply has no findings list");
-	const findings = [];
-	let rejected = 0;
-	for (const item of list) {
-		const parsed = model.reviewFinding.safeParse(item);
-		if (parsed.success) findings.push(parsed.data);
-		else rejected += 1;
+	const parsed = model.reviewInput.safeParse(jsonIn(reply));
+	if (!parsed.success) {
+		const why = parsed.error.issues
+			.slice(0, 3)
+			.map((issue) => `${issue.path.join(".") || "reply"}: ${issue.message}`)
+			.join("; ");
+		throw new Error(`The reply is not a valid ${model.REVIEW_TOOL} input: ${why}`);
 	}
-	return { findings: findings.slice(0, model.REVIEW_LIMITS.findings), rejected };
+	return parsed.data.findings;
 }
 
-export function judgePrompt(view, findings, fixDiff) {
+/** `fix` is `{ diff, reason }`: a null diff says why the judge has no patch. */
+export function judgePrompt(view, findings, fix) {
+	const change =
+		fix.diff === null
+			? `The change that fixed it is not available (${fix.reason}). Judge from the defect above and the code at the reviewed head.`
+			: `The change that fixed it (for you only, the reviewer never saw it):
+\`\`\`diff
+${fix.diff}
+\`\`\``;
 	const listed = findings
 		.map((f, i) => `[${i}] ${f.path}:${f.line} ${f.title}\n    Failing case: ${f.failingCase}`)
 		.join("\n");
@@ -86,10 +110,7 @@ export function judgePrompt(view, findings, fixDiff) {
 The defect this pull request is known to have:
 ${view.defect}
 
-The change that fixed it (for you only, the reviewer never saw it):
-\`\`\`diff
-${fixDiff}
-\`\`\`
+${change}
 
 The findings:
 ${listed}
@@ -136,7 +157,7 @@ export function score(model, rows) {
 		const { shown } = model.rankFindings(
 			row.findings.map((f) => ({
 				...f,
-				offDiff: false,
+				offDiff: Boolean(f.offDiff),
 				proof: { proven: false, reason: "not run" },
 			})),
 		);
@@ -160,6 +181,9 @@ export function score(model, rows) {
 		pass: hits >= bar.hits && realShare >= bar.realShare,
 	};
 }
+
+// A row id is whatever the set says, and sits in a table cell or a list line.
+const label = (id) => id.replace(/[\r\n|`]/g, " ");
 
 const pct = (n) => `${(n * 100).toFixed(1)}%`;
 
@@ -189,7 +213,14 @@ export function summaryOf(rows, totals, { reviewer, judge }) {
 	const failed = rows.filter((row) => row.status === "failed");
 	lines.push("", "## Rows that failed to run, counted as misses", "");
 	if (failed.length === 0) lines.push("None.");
-	for (const row of failed) lines.push(`- Row ${row.id} (${row.repo}#${row.pr}): ${row.error}`);
+	for (const row of failed)
+		lines.push(`- Row ${label(row.id)} (${row.repo}#${row.pr}): ${row.error}`);
+	const unpatched = rows.filter((row) => row.fixPatch && !row.fixPatch.available);
+	lines.push("", "## Rows judged without the fix patch", "");
+	if (unpatched.length === 0) lines.push("None.");
+	for (const row of unpatched) {
+		lines.push(`- Row ${label(row.id)} (${row.repo}#${row.pr}): ${row.fixPatch.reason}`);
+	}
 	lines.push(
 		"",
 		"## Rows",
@@ -200,7 +231,7 @@ export function summaryOf(rows, totals, { reviewer, judge }) {
 	for (const row of rows) {
 		const hit = row.findings.some((f) => f.verdict === "hit");
 		lines.push(
-			`| ${row.id} | ${row.repo}#${row.pr} | ${row.findings.length} | ${row.findings.filter(isReal).length} | ${hit ? "yes" : "no"} |`,
+			`| ${label(row.id)} | ${row.repo}#${row.pr} | ${row.findings.length} | ${row.findings.filter(isReal).length} | ${hit ? "yes" : "no"} |`,
 		);
 	}
 	return `${lines.join("\n")}\n`;
@@ -220,11 +251,19 @@ async function readResults(file) {
 	}
 }
 
+const RESULTS_VERSION = 2;
+
+/** The judge's patch as `{ diff, reason }`; a bare string is a patch that was found. */
+const asFix = (fix) => (typeof fix === "string" ? { diff: fix, reason: null } : fix);
+
 /**
  * Runs every row of the set and writes `results.json` and `summary.md` to `out`.
  * `deps.prepare(view, dir)` builds the clean history in `dir` and returns the diff and a way to
  * read the fix for the judge; `deps.review(prompt, dir)` and `deps.judge(prompt, dir)` return a
  * model's reply. A row that fails is a miss with no findings, and runs again on a resume.
+ *
+ * A row's id is only a label the set gives it. The rows are kept in a Map and saved as a list, and
+ * every row works in a folder the system names, so no id decides a path or a property.
  */
 export async function runReplay({ model, setText, reviewer, judge, out, deps, log = () => {} }) {
 	const entries = splitSet(JSON.parse(setText));
@@ -235,62 +274,82 @@ export async function runReplay({ model, setText, reviewer, judge, out, deps, lo
 	const previous = await readResults(file);
 	if (
 		previous &&
-		(previous.set !== setHash || previous.reviewer !== reviewer || previous.judge !== judge)
+		(previous.version !== RESULTS_VERSION ||
+			previous.set !== setHash ||
+			previous.reviewer !== reviewer ||
+			previous.judge !== judge)
 	) {
-		throw new Error(`${file} is from another set, reviewer or judge: use another --out`);
+		throw new Error(`${file} is from another set, reviewer, judge or format: use another --out`);
 	}
-	const results = previous ?? { version: 1, set: setHash, reviewer, judge, rows: {} };
+	const done = new Map((previous?.rows ?? []).map((row) => [row.id, row]));
+	const save = () =>
+		writeAtomic(
+			file,
+			`${JSON.stringify({ version: RESULTS_VERSION, set: setHash, reviewer, judge, rows: [...done.values()] }, null, 2)}\n`,
+		);
 
 	const scratch = await mkdtemp(join(tmpdir(), "replay-"));
 	try {
 		for (const entry of entries) {
-			if (results.rows[entry.id]?.status === "done") {
+			if (done.get(entry.id)?.status === "done") {
 				log(`row ${entry.id}: done already`);
 				continue;
 			}
 			const { repo, pr, pre_fix } = entry.reviewer;
 			const base = { id: entry.id, repo, pr, pre_fix };
-			const dir = join(scratch, entry.id, "repo");
+			const rowDir = await mkdtemp(join(scratch, "row-"));
+			const dir = join(rowDir, "repo");
 			try {
 				const history = await deps.prepare(entry.reviewer, dir);
-				const { findings, rejected } = parseFindings(
+				const submitted = parseFindings(
 					model,
 					await deps.review(reviewPrompt(model, entry.reviewer, history.diff), dir),
 				);
+				// Whether a finding sits on the diff the reviewer was given, as the product decides it.
+				const parsedDiff = model.parseDiff(history.diff);
+				const findings = submitted.map((f) => ({
+					...f,
+					offDiff: !model.lineOnDiff(parsedDiff, f),
+				}));
 				let verdicts = [];
+				let fixPatch = null;
 				if (findings.length > 0) {
-					const fix = await history.fixDiff(entry.judge);
+					const fix = asFix(await history.fixDiff(entry.judge));
+					fixPatch = { available: fix.diff !== null, reason: fix.reason ?? null };
 					verdicts = parseVerdicts(
 						await deps.judge(judgePrompt(entry.judge, findings, fix), dir),
 						findings.length,
 					);
 				}
-				results.rows[entry.id] = {
+				done.set(entry.id, {
 					...base,
 					status: "done",
-					rejected,
+					fixPatch,
 					findings: findings.map((f, i) => ({ ...f, ...verdicts[i] })),
-				};
+				});
 			} catch (error) {
-				results.rows[entry.id] = {
+				done.set(entry.id, {
 					...base,
 					status: "failed",
 					error: error instanceof Error ? error.message : String(error),
 					findings: [],
-				};
+				});
 			} finally {
-				await rm(join(scratch, entry.id), { recursive: true, force: true, maxRetries: 3 });
+				await rm(rowDir, { recursive: true, force: true, maxRetries: 3 });
 			}
-			log(`row ${entry.id}: ${results.rows[entry.id].status}`);
-			await writeAtomic(file, `${JSON.stringify(results, null, 2)}\n`);
+			log(`row ${entry.id}: ${done.get(entry.id)?.status}`);
+			await save();
 		}
 	} finally {
 		await rm(scratch, { recursive: true, force: true, maxRetries: 3 });
 	}
 
-	const rows = entries.map((entry) => results.rows[entry.id]);
+	const rows = entries.map((entry) => done.get(entry.id));
 	const totals = score(model, rows);
-	await writeAtomic(file, `${JSON.stringify({ ...results, totals }, null, 2)}\n`);
+	await writeAtomic(
+		file,
+		`${JSON.stringify({ version: RESULTS_VERSION, set: setHash, reviewer, judge, rows, totals }, null, 2)}\n`,
+	);
 	await writeAtomic(join(out, "summary.md"), summaryOf(rows, totals, { reviewer, judge }));
 	return { totals, rows };
 }

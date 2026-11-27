@@ -2,8 +2,9 @@
 // its `pre_fix` head. Nothing after `pre_fix` is ever fetched into it, so the fix cannot be read.
 import { execFile } from "node:child_process";
 import { access, mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { runCommand } from "./launcher.mjs";
 
 const run = promisify(execFile);
 const GIT_ENV = {
@@ -36,54 +37,96 @@ export function repoName(repo, org) {
 	return repo.includes("/") ? repo : `${org}/${repo}`;
 }
 
-/** Where the real run gets its repositories and each pull request's merge base: GitHub. */
+const gh = (args) => runCommand("gh", args, {});
+
+/** Where the real run gets its repositories and each pull request's base: GitHub. */
 export function githubSource(org) {
 	return {
 		cloneUrl: (repo) => `https://github.com/${repoName(repo, org)}.git`,
+		/** The base revision GitHub recorded for the pull request. */
 		async baseOf(repo, pr) {
-			// The first commit of the pull request's own list, then its parent: the merge base the
-			// pull request was opened from. Asking git alone cannot tell it after a rebase merge.
-			const { stdout } = await run(
-				"gh",
-				[
-					"api",
-					`repos/${repoName(repo, org)}/pulls/${pr}/commits`,
-					"--paginate",
-					"--jq",
-					".[0].parents[0].sha",
-				],
-				{ maxBuffer: 16 * 1024 * 1024, shell: process.platform === "win32" },
-			);
-			const sha = stdout.split(/\r?\n/).find((line) => /^[0-9a-f]{40}$/.test(line));
-			if (!sha) throw new Error(`No merge base found for ${repo}#${pr}`);
+			const out = await gh([
+				"api",
+				`repos/${repoName(repo, org)}/pulls/${pr}`,
+				"--jq",
+				".base.sha",
+			]);
+			const sha = out.split(/\r?\n/).find((line) => /^[0-9a-f]{40}$/.test(line));
+			if (!sha) throw new Error(`No base revision found for ${repo}#${pr}`);
 			return sha;
+		},
+		/** The refs of the pull requests that hold a commit: a squash-merged one is only on those. */
+		async refsFor(repo, sha) {
+			const out = await gh([
+				"api",
+				`repos/${repoName(repo, org)}/commits/${sha}/pulls`,
+				"--jq",
+				".[].number",
+			]);
+			return out
+				.split(/\r?\n/)
+				.filter((line) => /^\d+$/.test(line))
+				.map((number) => `refs/pull/${number}/head`);
 		},
 	};
 }
 
-/** A bare copy of the repository, kept between rows, with the pull request's own commits in it. */
-export async function mirrorOf(source, cacheDir, repo, pr, shas) {
-	const mirror = join(cacheDir, `${repo.replace(/[^\w.-]/g, "__")}.git`);
-	if (!(await exists(mirror))) {
-		await mkdir(cacheDir, { recursive: true });
-		await git(cacheDir, ["clone", "--bare", "--quiet", source.cloneUrl(repo), mirror]);
-		await git(mirror, ["config", "uploadpack.allowAnySHA1InWant", "true"]);
+const hasCommit = (mirror, sha) =>
+	git(mirror, ["cat-file", "-t", `${sha}^{commit}`]).then(
+		() => true,
+		() => false,
+	);
+
+const absent = async (mirror, shas) => {
+	const missing = [];
+	for (const sha of shas) if (!(await hasCommit(mirror, sha))) missing.push(sha);
+	return missing;
+};
+
+/**
+ * Makes sure every revision in `shas` is in the mirror and returns those that could not be had.
+ * A commit of a pull request merged by squash is on no branch, so it is fetched by its revision,
+ * then from the reviewed pull request's head, then from the head of each pull request that holds it.
+ */
+export async function fetchMissing({ source, mirror, repo, pr, shas }) {
+	let missing = await absent(mirror, shas);
+	for (const sha of missing) {
+		await git(mirror, ["fetch", "--quiet", "--no-tags", "origin", sha]).catch(() => {});
 	}
-	const missing = async () => {
-		for (const sha of shas) {
-			if (
-				!(await git(mirror, ["cat-file", "-t", `${sha}^{commit}`]).then(
-					() => true,
-					() => false,
-				))
-			)
-				return true;
+	missing = await absent(mirror, missing);
+	if (missing.length === 0) return [];
+
+	const refs = new Set([`refs/pull/${pr}/head`]);
+	for (const sha of missing) {
+		try {
+			for (const ref of (await source.refsFor?.(repo, sha)) ?? []) {
+				if (/^refs\/pull\/\d+\/head$/.test(ref)) refs.add(ref);
+			}
+		} catch {
+			// No answer from the host: the refs already named are all there is to try.
 		}
-		return false;
-	};
-	if (await missing()) {
-		// A pull request merged by squash leaves its commits on no branch, only here.
-		await git(mirror, ["fetch", "--quiet", "origin", `+refs/pull/${pr}/head:refs/replay/pr-${pr}`]);
+	}
+	for (const ref of refs) {
+		await git(mirror, [
+			"fetch",
+			"--quiet",
+			"--no-tags",
+			"origin",
+			`+${ref}:refs/replay/${ref.replaceAll("/", "-")}`,
+		]).catch(() => {});
+		missing = await absent(mirror, missing);
+		if (missing.length === 0) return [];
+	}
+	return missing;
+}
+
+/** A bare copy of the repository, kept between rows. Its path is absolute, whatever `cacheDir` is. */
+export async function mirrorOf(source, cacheDir, repo) {
+	const mirror = resolve(cacheDir, `${repo.replace(/[^\w.-]/g, "__")}.git`);
+	if (!(await exists(mirror))) {
+		await mkdir(resolve(cacheDir), { recursive: true });
+		await git(resolve(cacheDir), ["clone", "--bare", "--quiet", source.cloneUrl(repo), mirror]);
+		await git(mirror, ["config", "uploadpack.allowAnySHA1InWant", "true"]);
 	}
 	return mirror;
 }
@@ -91,15 +134,41 @@ export async function mirrorOf(source, cacheDir, repo, pr, shas) {
 const full = async (mirror, sha) =>
 	(await git(mirror, ["rev-parse", "--verify", `${sha}^{commit}`])).trim();
 
+// The product reads its diff with these options, and `lineOnDiff` expects what they make.
+const DIFF = [
+	"-c",
+	"core.quotePath=false",
+	"diff",
+	"--no-color",
+	"--no-ext-diff",
+	"--find-renames",
+	"--src-prefix=a/",
+	"--dst-prefix=b/",
+	"--unified=3",
+];
+
 /**
- * Makes `<dir>` a repository of two commits and returns the diff between them. Only the two trees
- * are fetched, with the history behind them, and that history is then pruned away.
+ * Makes `<dir>` a repository of two commits and returns the diff between them. The two commits
+ * are the merge base of the pull request's recorded base and `pre_fix`, and `pre_fix`. Only the two
+ * trees are fetched, with the history behind them, and that history is then pruned away.
  */
 export async function cleanHistory({ source, cacheDir, dir, row }) {
-	const base = await source.baseOf(row.repo, row.pr);
-	const mirror = await mirrorOf(source, cacheDir, row.repo, row.pr, [base, row.pre_fix]);
-	const baseSha = await full(mirror, base);
+	const recorded = await source.baseOf(row.repo, row.pr);
+	const mirror = await mirrorOf(source, cacheDir, row.repo);
+	const missing = await fetchMissing({
+		source,
+		mirror,
+		repo: row.repo,
+		pr: row.pr,
+		shas: [recorded, row.pre_fix],
+	});
+	if (missing.length > 0) {
+		throw new Error(`${missing.join(", ")} is not in ${row.repo}, not even on a pull request ref`);
+	}
 	const preFix = await full(mirror, row.pre_fix);
+	// The recorded base may be the base branch's tip, ahead of or behind what the branch merged
+	// from it: the pull request's own changes start at the commit they have in common.
+	const baseSha = (await git(mirror, ["merge-base", await full(mirror, recorded), preFix])).trim();
 
 	await rm(dir, { recursive: true, force: true });
 	await mkdir(dir, { recursive: true });
@@ -117,7 +186,7 @@ export async function cleanHistory({ source, cacheDir, dir, row }) {
 	await git(dir, ["reflog", "expire", "--expire=now", "--all"]);
 	await git(dir, ["gc", "--prune=now", "--quiet"]);
 
-	const diff = await git(dir, ["diff", "--no-color", "--no-ext-diff", "HEAD~1", "HEAD"]);
+	const diff = await git(dir, [...DIFF, "HEAD~1", "HEAD", "--"]);
 	return { diff, mirror, preFix };
 }
 
@@ -138,4 +207,22 @@ export async function fixDiff(mirror, preFix, fix, alsoFix) {
 		);
 	}
 	return parts.join("\n");
+}
+
+/**
+ * The fix for the judge, or why there is none: a fix on a pull request ref that cannot be fetched
+ * does not cost the row its findings, the judge then reads the reviewed tree and the defect alone.
+ */
+export async function fixPatch({ source, mirror, repo, pr, preFix, fix, alsoFix }) {
+	if (!fix) return { diff: null, reason: "The row names no fix" };
+	const wanted = [fix, alsoFix].filter(Boolean);
+	const missing = await fetchMissing({ source, mirror, repo, pr, shas: wanted });
+	if (missing.length > 0) {
+		return { diff: null, reason: `The fix revision ${missing.join(", ")} could not be fetched` };
+	}
+	try {
+		return { diff: await fixDiff(mirror, preFix, fix, alsoFix), reason: null };
+	} catch {
+		return { diff: null, reason: "The fix patch could not be computed" };
+	}
 }
