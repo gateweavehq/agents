@@ -149,3 +149,12 @@ it("reads the same diff whatever prefixes git is configured to show", async () =
 	if ("error" in read) throw new Error(read.error);
 	expect(parseDiff(read.diff)).toEqual(diff);
 });
+it("counts a blank context line that git printed without its space", () => {
+	// diff.suppressBlankEmpty drops the leading space of an empty context line.
+	const text =
+		"diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,3 +1,3 @@\n x\n\n-y\n+z\n" +
+		"diff --git a/b b/b\n--- a/b\n+++ b/b\n@@ -1 +1 @@\n-p\n+q\n";
+	const parsed = parseDiff(text);
+	expect(parsed.map((file) => file.newPath)).toEqual(["a", "b"]);
+	expect(lineOnDiff(parsed, { path: "b", line: 1, side: "RIGHT" })).toBe(true);
+});

@@ -13,6 +13,7 @@ import {
 import type { ChangesPort } from "../src/changes";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
 import type { Comparison } from "../src/checks";
+import { DisposalGuard } from "../src/disposal";
 import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
 import {
 	assertForgotten,
@@ -84,6 +85,22 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 	/** What `discardCheckout` was called with, in order; `discardError` makes it throw. */
 	discards = 0;
 	discardError: Error | undefined;
+	/**
+	 * The real disposal guard over a container that fails to destroy while `discardError` is set, so
+	 * a failed disposal leaves the fake unusable, as it does the real sandbox, until one succeeds.
+	 */
+	readonly #marks = new Map<string, unknown>();
+	readonly #disposal = new DisposalGuard({
+		get: (key) => this.#marks.get(key),
+		put: (key, value) => void this.#marks.set(key, value),
+		delete: (key) => void this.#marks.delete(key),
+	});
+	readonly #container = {
+		running: true,
+		destroy: async () => {
+			if (this.discardError) throw this.discardError;
+		},
+	};
 	/** Why `createFile` refuses, for a test of a path that exists or goes through a symlink. */
 	createError: string | undefined;
 	gitAnswer: ((args: string[]) => CommandAnswer | undefined) | undefined;
@@ -122,6 +139,7 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		timeoutSeconds: number,
 		captureOutput?: boolean,
 	): Promise<CommandResult> {
+		await this.#usable();
 		this.commands.push({
 			command,
 			cwd,
@@ -146,7 +164,12 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 	async discardCheckout(): Promise<void> {
 		this.log.push("discard");
 		this.discards++;
-		if (this.discardError) throw this.discardError;
+		await this.#disposal.discard(this.#container);
+	}
+
+	/** The container's own refusal, as the real sandbox has it: nothing is handed out while it stands. */
+	async #usable(): Promise<void> {
+		await this.#disposal.assertReusable(this.#container);
 	}
 
 	async commit(message: string, author: CommitAuthor, model: string): Promise<CommitResult> {
@@ -162,14 +185,17 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		_env?: Record<string, string>,
 		_outputLimit?: number,
 	): Promise<CommandResult> {
+		await this.#usable();
 		this.log.push(`git ${args.join(" ")}`);
 		this.gitCalls.push(args);
-		if (args[0] === "clean") {
+		// A scripted answer comes first: a clean that fails removes nothing, and a test that wants a
+		// partial clean scripts that state itself.
+		const answer = this.gitAnswer?.(args);
+		if (answer instanceof Error) throw answer;
+		if (args[0] === "clean" && (!answer || answer.exitCode === 0)) {
 			for (const path of this.untracked) this.files.delete(`${SANDBOX_REPOSITORY_PATH}/${path}`);
 			this.untracked.clear();
 		}
-		const answer = this.gitAnswer?.(args);
-		if (answer instanceof Error) throw answer;
 		if (answer) return answer;
 		const listed = args[0] === "status" && args.includes("-z");
 		return {
@@ -180,6 +206,7 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 	}
 
 	async changedSince(head: string): Promise<Comparison> {
+		await this.#usable();
 		this.log.push(`compare ${head.slice(0, 7)}`);
 		const answer = this.changes.shift() ?? null;
 		if (answer instanceof Error) throw answer;
@@ -214,6 +241,7 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 
 	/** Creates a file that is new, as `createProofFile` does; `createError` refuses it. */
 	async createFile(path: string, content: string): Promise<WriteResult> {
+		await this.#usable();
 		this.log.push(`create ${path}`);
 		if (this.createError) return { error: this.createError };
 		if (this.files.has(path)) return { error: `${path} already exists` };

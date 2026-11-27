@@ -33,6 +33,7 @@ import type { CheckoutResult } from "./checkout";
 import type { Comparison } from "./checks";
 import { claudeCodeCommand } from "./claude-code";
 import { CODEX_SESSIONS, codexCommand } from "./codex";
+import { DisposalGuard } from "./disposal";
 import { toolsRequest } from "./engine-tools";
 import {
 	ENGINE_SECONDS,
@@ -209,10 +210,13 @@ export class RunnerSandbox
 	} | null = null;
 	/** Milliseconds the container may sit without a request before it stops (`SANDBOX_IDLE_MINUTES`). */
 	#idleMs: number;
+	/** Whether a destroy of the container is owed after a review proof left it unusable. */
+	readonly #disposal: DisposalGuard;
 
 	constructor(ctx: SandboxState, env: Cloudflare.Env) {
 		super(ctx, env);
 		this.#idleMs = sandboxIdleMinutes(env as SandboxSettings) * 60_000;
+		this.#disposal = new DisposalGuard(ctx.storage.kv);
 		this.#container = ctx.container;
 		this.#outbound = ctx.exports.SandboxOutbound({ props: { sandbox: ctx.id.toString() } });
 		// Each instance sets its own timeout: a container that outlived the last one keeps none.
@@ -632,7 +636,8 @@ export class RunnerSandbox
 	 * next command starts on an empty machine.
 	 */
 	async discardCheckout(): Promise<void> {
-		await this.destroy();
+		// Marked first: if the destroy fails, `#ready` refuses this container until one succeeds.
+		await this.#disposal.discard(this.#container);
 	}
 
 	/**
@@ -949,7 +954,7 @@ export class RunnerSandbox
 
 	/** Stops the container, and its files go with it. The conversation calls it as it is deleted. */
 	async destroy(): Promise<void> {
-		if (this.#container?.running) await this.#container.destroy();
+		await this.#disposal.destroy(this.#container);
 	}
 
 	/**
@@ -1056,6 +1061,8 @@ export class RunnerSandbox
 	async #ready(): Promise<Container> {
 		const container = this.#container;
 		if (!container) throw new Error(SANDBOX_NOT_OFFERED);
+		// A condemned container is not handed out until a destroy of it has succeeded.
+		await this.#disposal.assertReusable(container);
 		if (!this.#starting && !container.running) {
 			this.#starting = this.#start(container).finally(() => {
 				this.#starting = undefined;

@@ -1,5 +1,6 @@
 import { SANDBOX_REPOSITORY_PATH } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
+import type { ProofRun } from "../src/proof-scripts";
 import { PROOF_WAIT_MARGIN_SECONDS } from "../src/review";
 import { answer, finding, HEAD, MERGE_BASE, setup } from "./review-fixture";
 
@@ -41,14 +42,50 @@ describe("submitting a review", () => {
 			findings: [{ proof: { proven: false, reason: "the finding proposes no test" } }],
 		});
 	});
-	it("records a sandbox failure as unproven and restores the checkout", async () => {
+	it("treats a rejected proof call as a hang: discards the checkout and never cleans it under the process", async () => {
 		const { sandbox, call } = setup();
-		sandbox.answers.push(new Error("sandbox lost"));
-		expect((await call()).findings[0]?.proof).toEqual({
-			proven: false,
-			reason: "the sandbox could not run the command",
+		// A failed read of the process's output rejects the call while the process still runs.
+		let running = false;
+		vi.spyOn(sandbox, "runProof").mockImplementation(async () => {
+			running = true;
+			throw new Error("stdout read failed");
 		});
-		expect(sandbox.log.slice(-3)).toEqual([reset, "git clean -fdq", compare]);
+		const cleaned: boolean[] = [];
+		const normal = sandbox.gitAnswer;
+		sandbox.gitAnswer = (args) => {
+			if (args[0] === "reset" || args[0] === "clean") cleaned.push(running);
+			return normal?.(args);
+		};
+		const outcome = await call([finding, finding]);
+		expect(outcome.findings.map((f) => f.proof)).toEqual([
+			{
+				proven: false,
+				reason: "the sandbox call failed, so it could not be confirmed that the command had ended",
+			},
+			{ proven: false, reason: `no further proof ran: ${HUNG}` },
+		]);
+		expect(outcome).toMatchObject({ checkoutProblem: HUNG, checkoutDiscarded: true });
+		// The only reset and clean ran before the command started; none after it.
+		expect(cleaned).toEqual([false, false]);
+		expect(sandbox.log.slice(-2)).toEqual([status, "discard"]);
+		expect(sandbox.discards).toBe(1);
+	});
+	it.each([
+		["a non-integer exit code", Number.NaN, 0],
+		["no count of surviving processes", 1, undefined],
+	])("treats %s as an unconfirmed end: a hang", async (_name, exitCode, left) => {
+		const { sandbox, call } = setup();
+		vi.spyOn(sandbox, "runProof").mockResolvedValue({
+			...answer("", exitCode),
+			left,
+		} as unknown as ProofRun);
+		const outcome = await call([finding, finding]);
+		expect(outcome.findings[0]?.proof).toMatchObject({
+			proven: false,
+			reason: "it could not be confirmed that every process the command started had ended",
+		});
+		expect(outcome).toMatchObject({ checkoutProblem: HUNG, checkoutDiscarded: true });
+		expect(sandbox.log.slice(-2)).toEqual([status, "discard"]);
 	});
 	it("keeps the output tail of a timed-out command without proving it", async () => {
 		const { sandbox, call } = setup();
@@ -327,7 +364,7 @@ describe("submitting a review", () => {
 		expect(sandbox.discards).toBe(1);
 		expect(outcome.checkoutDiscarded).toBe(true);
 	});
-	it("says so when the checkout could not be discarded", async () => {
+	it("says so when the checkout could not be discarded, and the sandbox is not reused until it is", async () => {
 		const { call, sandbox } = setup();
 		sandbox.answers.push(failed);
 		sandbox.changes.push(null, { changed: "dirty" });
@@ -335,6 +372,14 @@ describe("submitting a review", () => {
 		const outcome = await call([finding]);
 		expect(outcome).toMatchObject({ checkoutProblem: notPutBack, checkoutDiscarded: false });
 		expect(outcome.findings[0]?.proof.proven).toBe(false);
+		// The container is still there, dirty: nothing is handed out while its destroy keeps failing.
+		const refused = /could not be destroyed yet, so it is not reused/;
+		await expect(sandbox.git(["status"])).rejects.toThrow(refused);
+		await expect(sandbox.runProof(finding.test.command, 5)).rejects.toThrow(refused);
+		await expect(sandbox.createFile("x/new.test.ts", "")).rejects.toThrow(refused);
+		// Once a destroy succeeds the sandbox is usable again, on the fresh container.
+		sandbox.discardError = undefined;
+		await expect(sandbox.git(["status"])).resolves.toMatchObject({ exitCode: 0 });
 	});
 	it("does not discard a checkout that every proof left clean", async () => {
 		const { call, sandbox } = setup();
@@ -466,12 +511,29 @@ describe("submitting a review", () => {
 		record.mockRejectedValueOnce(new Error("storage unavailable"));
 		await expect(call()).rejects.toThrow("storage unavailable");
 		const commands = sandbox.commands.length;
-		const retried = await call([]);
+		const retried = await call();
 		expect(retried.findings).toHaveLength(1);
 		expect(retried.proofsRun).toBe(1);
 		expect(sandbox.commands).toHaveLength(commands);
 		expect(record).toHaveBeenCalledTimes(2);
 		expect(record.mock.calls[1]?.[0]).toBe(record.mock.calls[0]?.[0]);
+		await expect(call([])).rejects.toThrow("The review was already submitted");
+	});
+	it("refuses a different submission while an earlier one waits to be recorded", async () => {
+		const { call, record, sandbox } = setup();
+		record.mockRejectedValueOnce(new Error("storage unavailable"));
+		await expect(call()).rejects.toThrow("storage unavailable");
+		const commands = sandbox.commands.length;
+		await expect(call([{ ...finding, title: "Another finding" }])).rejects.toThrow(
+			/submit the same findings again/,
+		);
+		// Nothing was recorded for the other submission, and its proofs did not run.
+		expect(record).toHaveBeenCalledTimes(1);
+		expect(sandbox.commands).toHaveLength(commands);
+		// The same findings still record the first outcome, once.
+		const retried = await call();
+		expect(retried.findings[0]?.title).toBe(finding.title);
+		expect(record).toHaveBeenCalledTimes(2);
 		await expect(call([])).rejects.toThrow("The review was already submitted");
 	});
 	it("refuses a second submission", async () => {

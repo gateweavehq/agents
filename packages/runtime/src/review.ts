@@ -89,25 +89,29 @@ async function runTest(sandbox: ReviewPort, command: string, seconds: number): P
 			};
 		const output = lastBytes(result.output, REVIEW_LIMITS.outputBytes);
 		const { exitCode } = result;
-		// A launch failure carries the sandbox's own exit code, which says nothing of the test.
-		if (result.notStarted || !Number.isInteger(exitCode))
+		// A launch failure carries the sandbox's own exit code, which says nothing of the test, and
+		// nothing was started that could still run.
+		if (result.notStarted)
 			return {
 				proof: unproven(`the command did not start: ${output.trim() || "no reason given"}`),
 				hung: false,
 			};
-		// What the proof started and left running may still write in the checkout.
-		if (result.left !== 0)
+		// A result that cannot confirm the process ended is a hang, whatever else it says: only an
+		// integer exit code and a count of zero survivors show that nothing still uses the checkout.
+		if (!Number.isInteger(exitCode) || result.left !== 0) {
+			const survivors = typeof result.left === "number" && result.left > 0 ? result.left : null;
 			return {
 				proof: {
 					proven: false,
 					reason:
-						result.left === null
+						survivors === null
 							? "it could not be confirmed that every process the command started had ended"
-							: `${result.left} process(es) the command started were still running after it ended`,
+							: `${survivors} process(es) the command started were still running after it ended`,
 					output,
 				},
 				hung: true,
 			};
+		}
 		if (result.timedOut)
 			return {
 				proof: { proven: false, reason: `the command timed out after ${seconds} seconds`, output },
@@ -120,7 +124,14 @@ async function runTest(sandbox: ReviewPort, command: string, seconds: number): P
 			};
 		return { proof: { proven: true, exitCode, output }, hung: false };
 	} catch {
-		return { proof: unproven("the sandbox could not run the command"), hung: false };
+		// A rejected call says nothing of the process: a failed read of its output can reject while
+		// it is still running, so the checkout is not cleaned under it but discarded.
+		return {
+			proof: unproven(
+				"the sandbox call failed, so it could not be confirmed that the command had ended",
+			),
+			hung: true,
+		};
 	} finally {
 		clearTimeout(timer);
 	}
@@ -137,10 +148,11 @@ export function reviewTools({
 	const git: Git = (...args) => sandbox.git(...args);
 	// idle: nothing is recorded and no call runs; busy: a call runs; done: the outcome is recorded.
 	// A call that fails before the outcome is recorded goes back to idle and keeps the outcome it
-	// had finished, so a retry only records it again and never runs the proofs, or their budgets,
-	// a second time.
+	// had finished, with the submission it belongs to, so a retry of that submission only records
+	// it again and never runs the proofs, or their budgets, a second time. A different submission
+	// is refused: it would be recorded under another review's outcome.
 	let state: "idle" | "busy" | "done" = "idle";
-	let finished: ReviewOutcome | null = null;
+	let finished: { submission: string; outcome: ReviewOutcome } | null = null;
 
 	async function review(findings: ReviewFinding[]): Promise<ReviewOutcome> {
 		const read = await readReviewDiff(git, base, head);
@@ -271,10 +283,15 @@ export function reviewTools({
 			if (state !== "idle") throw new Error("The review was already submitted");
 			state = "busy";
 			try {
-				finished ??= await review(findings);
-				await record(finished);
+				const submission = JSON.stringify(findings);
+				if (finished && finished.submission !== submission)
+					throw new Error(
+						"The first submission has run its proofs but is not recorded yet; submit the same findings again to record it",
+					);
+				finished ??= { submission, outcome: await review(findings) };
+				await record(finished.outcome);
 				state = "done";
-				return finished;
+				return finished.outcome;
 			} catch (error) {
 				state = "idle";
 				throw error;

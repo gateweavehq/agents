@@ -28,8 +28,10 @@ export function parseDiff(text: string): ParsedDiff {
 		if (oldLeft > 0 || newLeft > 0) {
 			// A removed or added line can look exactly like a path header.
 			if (line.startsWith("\\ No newline")) continue;
-			if (line.startsWith("-") || line.startsWith(" ")) oldLeft--;
-			if (line.startsWith("+") || line.startsWith(" ")) newLeft--;
+			// With diff.suppressBlankEmpty git prints an empty context line without its space.
+			const context = line.startsWith(" ") || line === "";
+			if (line.startsWith("-") || context) oldLeft--;
+			if (line.startsWith("+") || context) newLeft--;
 			continue;
 		}
 		if (line.startsWith("diff --git ")) {
