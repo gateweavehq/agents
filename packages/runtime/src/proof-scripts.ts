@@ -83,7 +83,9 @@ export async function createProofFile(
  * proof's own remaining processes, waits, and counts what is still alive. Those candidates are only
  * the processes whose session id (field 6 of /proc/PID/stat) is the command's pid and those whose
  * parent is the supervisor: no other process in the container is looked at, however it started.
- * Zombies are not counted. The last line of its output carries the nonce and a JSON verdict.
+ * Zombies are not counted, and a child of the supervisor that a scan of /proc missed still is. If
+ * the subreaper could not be set, the survivor count is -1: nothing can be confirmed. The last line
+ * of its output carries the nonce and a JSON verdict.
  */
 export const RUN_PROOF_SCRIPT = `
 import ctypes, json, os, signal, subprocess, sys, time
@@ -92,9 +94,9 @@ deadline = time.monotonic() + seconds
 grace = min(1.5, seconds / 3)
 me = os.getpid()
 try:
-    ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
+    reaper = ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
 except Exception:
-    pass
+    reaper = False
 def owned(session):
     found = set()
     for name in os.listdir("/proc"):
@@ -111,12 +113,15 @@ def owned(session):
             found.add(int(name))
     return found
 def reap():
+    # Reaps every child that has ended; true while the supervisor still has a child that has not.
+    # With the subreaper set, every process the command left behind is such a child, so no child
+    # means nothing of the proof is alive, whatever a scan of /proc could have missed.
     while True:
         try:
             if os.waitpid(-1, os.WNOHANG)[0] == 0:
-                return
+                return True
         except ChildProcessError:
-            return
+            return False
 def end(group, number):
     try:
         os.killpg(group, number)
@@ -139,27 +144,31 @@ if code is None:
     code = wait(child, deadline - grace / 2)
 settle = min(deadline, time.monotonic() + 1.0)
 left = set()
+children = False
 while True:
-    reap()
+    children = reap()
     left = owned(session)
     for pid in left:
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-    if not left:
+    if not left and not children:
         break
     if time.monotonic() >= settle:
-        reap()
+        children = reap()
         left = owned(session)
         break
     time.sleep(0.05)
 if code is None:
     code = -signal.SIGKILL
+# A child the scan missed (it was forked while /proc was being read) still counts as alive. Without
+# the subreaper nothing can be confirmed: -1 says so.
+count = max(len(left), 1 if children else 0)
 sys.stdout.write("\\n" + nonce + " " + json.dumps({
     "exitCode": 128 - code if code < 0 else code,
     "timedOut": timed_out,
-    "left": len(left),
+    "left": count if reaper else -1,
 }) + "\\n")
 sys.stdout.flush()
 `;

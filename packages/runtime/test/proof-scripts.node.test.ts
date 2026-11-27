@@ -88,6 +88,10 @@ describe("reading a proof's verdict", () => {
 		const text = `\nn ${JSON.stringify({ exitCode: 143, timedOut: true, left: 2 })}\n`;
 		expect(readProofRun("n", text, 0)).toMatchObject({ timedOut: true, left: 2, exitCode: 143 });
 	});
+	it("passes on -1, the supervisor's word that it could not confirm what was left", () => {
+		const text = `\nn ${JSON.stringify({ exitCode: 0, timedOut: false, left: -1 })}\n`;
+		expect(readProofRun("n", text, 0)).toMatchObject({ left: -1 });
+	});
 	it.each([126, 127])("says python3 did not start for exit code %i", (exitCode) => {
 		expect(readProofRun("n", "python3: not found", exitCode)).toMatchObject({
 			notStarted: true,
