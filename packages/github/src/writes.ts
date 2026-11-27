@@ -95,6 +95,8 @@ export interface PullRequest {
 	headRef: string;
 	/** Whether it is a draft. Left out when the answer does not say. */
 	draft?: boolean;
+	/** Its description, as GitHub has it (empty when there is none). Left out by the list endpoint. */
+	body?: string;
 	/** GitHub's GraphQL id, which only an answer about the pull request carries. */
 	nodeId?: string;
 	/**
@@ -120,6 +122,7 @@ const pullSchema = z.object({
 	merged_at: z.string().nullable().optional(),
 	head: z.object({ sha: objectId, ref: z.string() }),
 	draft: z.boolean().optional(),
+	body: z.string().nullable().optional(),
 	node_id: z.string().optional(),
 	// Only an answer about one pull request counts changes; the list leaves them out.
 	additions: z.number().int().nonnegative().optional(),
@@ -158,6 +161,7 @@ function toPullRequest(found: z.infer<typeof pullSchema>): PullRequest {
 		head: found.head.sha,
 		headRef: found.head.ref,
 		...(found.draft === undefined ? {} : { draft: found.draft }),
+		...(found.body === undefined ? {} : { body: found.body ?? "" }),
 		...(found.node_id === undefined ? {} : { nodeId: found.node_id }),
 		...counted,
 	};
@@ -545,6 +549,54 @@ export async function pullRequest(
 		if (error instanceof GitHubError && error.status === 404) return null;
 		throw error;
 	}
+}
+
+/**
+ * A pull request's diff against its base, as text, read up to `limit` bytes. `tooLarge` when it
+ * is longer, or when GitHub will not make one that big (it answers 406 or 422); null when there
+ * is no such pull request.
+ */
+export async function pullRequestDiff(
+	token: string,
+	repository: RepositoryName,
+	number: number,
+	limit: number,
+): Promise<{ diff: string } | { tooLarge: true } | null> {
+	let response: Response;
+	try {
+		response = await send(
+			`${repositoryPath(repository)}/pulls/${number}`,
+			token,
+			{},
+			"application/vnd.github.v3.diff",
+		);
+	} catch (error) {
+		if (error instanceof GitHubError) {
+			if (error.status === 404) return null;
+			if (error.status === 406 || error.status === 422) return { tooLarge: true };
+		}
+		throw error;
+	}
+	const reader = response.body?.getReader();
+	const chunks: Uint8Array[] = [];
+	let read = 0;
+	while (reader) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		read += value.length;
+		if (read > limit) {
+			await reader.cancel();
+			return { tooLarge: true };
+		}
+		chunks.push(value);
+	}
+	const bytes = new Uint8Array(read);
+	let at = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, at);
+		at += chunk.length;
+	}
+	return { diff: new TextDecoder().decode(bytes) };
 }
 
 /** The open pull request from `branch` of the repository itself, or null when it has none. */

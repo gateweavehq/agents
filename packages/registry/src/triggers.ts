@@ -35,6 +35,7 @@ import {
 	agentDefinitions,
 	agents,
 	conversations,
+	pullRequestReviews,
 	runs,
 	type TriggerDeliveryRow,
 	teams,
@@ -188,6 +189,7 @@ export function insertTrigger(
 		assigneeName: string | null;
 		perIssue: boolean;
 		schedule: TriggerSchedule | null;
+		pullRequest?: boolean;
 		sealed: string;
 		secretStart: string;
 		createdBy: string;
@@ -199,6 +201,8 @@ export function insertTrigger(
 	const refusal = targetRefusal(db, row.target);
 	if (refusal) return { refused: refusal };
 	const { target, ...rest } = row;
+	// A pull request trigger starts on pull requests alone, as a schedule's starts on its time.
+	const pullRequest = row.pullRequest === true;
 	db.insert(triggers)
 		.values({
 			...rest,
@@ -207,11 +211,14 @@ export function insertTrigger(
 			active: true,
 			// A scheduled trigger has no label or assignee, as it has no event types, and its runs are
 			// about no issue.
-			label: row.schedule ? null : row.label,
-			assignee: row.schedule ? null : row.assignee,
-			assigneeName: row.schedule || row.assignee === null ? null : row.assigneeName,
-			perIssue: row.schedule ? false : row.perIssue,
-			nextRunAt: row.schedule && nextScheduledRun(row.schedule, now),
+			label: row.schedule || pullRequest ? null : row.label,
+			assignee: row.schedule || pullRequest ? null : row.assignee,
+			assigneeName: row.schedule || pullRequest || row.assignee === null ? null : row.assigneeName,
+			events: pullRequest ? null : row.events,
+			perIssue: row.schedule || pullRequest ? false : row.perIssue,
+			schedule: pullRequest ? null : row.schedule,
+			pullRequest,
+			nextRunAt: !pullRequest && row.schedule ? nextScheduledRun(row.schedule, now) : null,
 			createdAt: now,
 			updatedAt: now,
 		})
@@ -239,7 +246,12 @@ export function updateTrigger(
 	now: number,
 ): Trigger | null {
 	const current = db
-		.select({ schedule: triggers.schedule, active: triggers.active, assignee: triggers.assignee })
+		.select({
+			schedule: triggers.schedule,
+			active: triggers.active,
+			assignee: triggers.assignee,
+			pullRequest: triggers.pullRequest,
+		})
 		.from(triggers)
 		.where(eq(triggers.id, id))
 		.get();
@@ -253,7 +265,12 @@ export function updateTrigger(
 			: assignee !== current.assignee
 				? { assigneeName: patch.assigneeName ?? null }
 				: {};
-	const schedule = patch.schedule === undefined ? current.schedule : patch.schedule;
+	// A pull request trigger has no schedule to give it.
+	const schedule = current.pullRequest
+		? null
+		: patch.schedule === undefined
+			? current.schedule
+			: patch.schedule;
 	const active = patch.active ?? current.active;
 	// A schedule given, changed or resumed counts from now: a resumed one does not run at once for
 	// a time it missed while paused.
@@ -263,11 +280,19 @@ export function updateTrigger(
 			: { nextRunAt: active && schedule ? nextScheduledRun(schedule, now) : null };
 	// A schedule's runs all start the same way, so it has no event types, label or assignee, and
 	// they are about no issue.
-	const webhookOnly = schedule
-		? { events: null, label: null, assignee: null, assigneeName: null, perIssue: false }
-		: {};
+	const webhookOnly =
+		schedule || current.pullRequest
+			? { events: null, label: null, assignee: null, assigneeName: null, perIssue: false }
+			: {};
 	db.update(triggers)
-		.set({ ...patch, ...renamed, ...timing, ...webhookOnly, updatedAt: now })
+		.set({
+			...patch,
+			...renamed,
+			...timing,
+			...webhookOnly,
+			...(current.pullRequest ? { schedule: null } : {}),
+			updatedAt: now,
+		})
 		.where(eq(triggers.id, id))
 		.run();
 	return getTrigger(db, id);
@@ -294,6 +319,7 @@ export function replaceSecret(
  * do when a team they talked to is deleted.
  */
 export function deleteTrigger(db: Db, id: string): boolean {
+	db.delete(pullRequestReviews).where(eq(pullRequestReviews.triggerId, id)).run();
 	db.delete(triggerDeliveries).where(eq(triggerDeliveries.triggerId, id)).run();
 	const deleted = db
 		.delete(triggers)
@@ -312,6 +338,7 @@ export function deleteTeamTriggers(db: Db, teamId: string): void {
 		.all()
 		.map((row) => row.id);
 	if (ids.length === 0) return;
+	db.delete(pullRequestReviews).where(inArray(pullRequestReviews.triggerId, ids)).run();
 	db.delete(triggerDeliveries).where(inArray(triggerDeliveries.triggerId, ids)).run();
 	db.delete(triggers).where(inArray(triggers.id, ids)).run();
 }

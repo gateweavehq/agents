@@ -58,6 +58,7 @@ export {
 	openPullRequestFrom,
 	type PullRequest,
 	pullRequest,
+	pullRequestDiff,
 	readTextAt,
 	textAt,
 	updatePullRequest,

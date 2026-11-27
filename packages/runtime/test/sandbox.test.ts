@@ -396,10 +396,13 @@ describe("a conversation with a sandbox", () => {
 		);
 
 		const [run] = await registry.listRuns();
+		// The head and state are what a review of the run's work is made for.
 		expect(run?.pullRequest).toEqual({
 			repository: "acme/site",
 			number: 12,
 			url: "https://github.com/acme/site/pull/12",
+			head: "1".repeat(40),
+			state: "open",
 		});
 		const trace = await stub.runTrace(run?.id ?? "");
 		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([

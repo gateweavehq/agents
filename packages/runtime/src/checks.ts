@@ -547,6 +547,16 @@ const BODY_LIMIT = 65_536;
 export const SHORTENED =
 	"_The description above was shortened to fit GitHub's length limit for a pull request._";
 
+/** The body without the AI disclosure `pullRequestBody` writes: its comment and its byline. */
+export function withoutDisclosure(body: string): string {
+	return body
+		.replace(/<!--\s*AI-Disclosure:[\s\S]*?-->/gi, "")
+		.replace(
+			/^[ \t]*Written and opened by (?:[^\r\n]+, )?an AI agent in Gateweave Agents\.[ \t]*\r?(?:\n|$)/gm,
+			"",
+		);
+}
+
 /**
  * Keep the checks and disclosure whole, shortening only the model's part at a code point.
  */
@@ -559,12 +569,7 @@ export function pullRequestBody(body: string, section: string | null, agentName:
 	const byline = name ? `\`${name}\`, an AI agent` : "an AI agent";
 	const disclosure = `Written and opened by ${byline} in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->`;
 	const suffix = section === null ? disclosure : `${section}\n\n${disclosure}`;
-	const description = body
-		.replace(/<!--\s*AI-Disclosure:[\s\S]*?-->/gi, "")
-		.replace(
-			/^[ \t]*Written and opened by (?:[^\r\n]+, )?an AI agent in Gateweave Agents\.[ \t]*\r?(?:\n|$)/gm,
-			"",
-		);
+	const description = withoutDisclosure(body);
 	const model = withoutChecksSection(description === body ? description : description.trimEnd());
 	const before = closed(section === null ? model : model.trimEnd());
 	const full = before === "" ? suffix : `${before}\n\n${suffix}`;

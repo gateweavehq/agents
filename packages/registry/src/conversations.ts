@@ -56,6 +56,11 @@ export interface ConversationTurn {
 	 */
 	steps?: number;
 	origin?: "person" | "trigger" | "replay" | "edge";
+	/**
+	 * Set when the turn reviews a pull request at a head: it has the sandbox's tools and
+	 * `submit_review`, and its sandbox is on that head.
+	 */
+	review?: { number: number; head: string };
 	/** The configured template, before a delivery fills its placeholders. */
 	triggerPrompt?: string;
 	runId: string;

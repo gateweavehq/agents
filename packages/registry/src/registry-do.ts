@@ -73,6 +73,7 @@ import {
 	type ProviderKeyInput,
 	type ProviderModel,
 	type ProviderRefusal,
+	type PullRequestReview,
 	priceOf,
 	projectInput,
 	projectPatch,
@@ -87,6 +88,8 @@ import {
 	type RepositoryChecksInput,
 	type RepositoryDetail,
 	type RepositoryInput,
+	type ReviewCounts,
+	type ReviewDelivery,
 	type Run,
 	type RunCursor,
 	type RunFinish,
@@ -97,6 +100,7 @@ import {
 	rememberInput,
 	repositoryChecksInput,
 	repositoryInput,
+	reviewCounts,
 	runCursor,
 	runFinish,
 	runPullRequest,
@@ -108,6 +112,7 @@ import {
 	SANDBOX_NOT_OFFERED,
 	type SandboxBudgetPassed,
 	type SandboxMinutesPassed,
+	type SandboxRepository,
 	type SandboxSettings,
 	type ScanResult,
 	type Setup,
@@ -348,6 +353,23 @@ import {
 	saveProviderKey,
 	sealedKeyOf,
 } from "./providers";
+import {
+	admitReview,
+	dueReviews,
+	expireReviews,
+	failReview,
+	finishReviewRun,
+	listReviews,
+	nextReviewAt,
+	queueReviews,
+	REVIEWS_PER_ALARM,
+	recordReviewCounts,
+	retryReview,
+	reviewOfConversation,
+	reviewRepository,
+	skipReview,
+	startReview,
+} from "./pull-request-reviews";
 import {
 	agentPause,
 	agentPauseById,
@@ -1742,6 +1764,144 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
+	 * What the review a conversation was opened for is of, for the runtime alone: the repository to
+	 * check out, the pull request and the head it is reviewed at. Null once the review has had its
+	 * run, or when the conversation is not a review's.
+	 */
+	reviewDelivery(conversationId: string, attemptId?: string): ReviewDelivery | null {
+		const conversation = id.parse(conversationId);
+		const attempt = attemptId === undefined ? null : id.parse(attemptId);
+		const review = reviewOfConversation(this.#db, conversation);
+		if (review?.status !== "queued") return null;
+		if (!deliveryOf(this.#db, conversation, attempt)) return null;
+		const repository = reviewRepository(this.#db, review);
+		if ("problem" in repository) return null;
+		return {
+			repository,
+			number: review.number,
+			head: review.head,
+			draft: review.draft,
+			draftReason: review.draftReason,
+		};
+	}
+
+	/**
+	 * Ends a review as never reviewed, with why: the pull request closed, its head is gone, or its
+	 * diff is too large. For the runtime alone. False when the conversation has no such review.
+	 */
+	skipReviewOf(conversationId: string, reason: string): boolean {
+		const conversation = id.parse(conversationId);
+		const why = z.string().min(1).max(500).parse(reason);
+		return this.#write(() => {
+			const review = reviewOfConversation(this.#db, conversation);
+			if (!review) return false;
+			skipReview(this.#db, review, why, Date.now());
+			return true;
+		});
+	}
+
+	/** Keeps what a review found, as counts, while its run goes. For the runtime alone. */
+	recordReviewCounts(runId: string, counts: ReviewCounts): boolean {
+		const run = id.parse(runId);
+		const data = reviewCounts.parse(counts);
+		return this.#write(() => recordReviewCounts(this.#db, run, data, Date.now()));
+	}
+
+	/** The workspace's reviews of pull requests, the oldest first. */
+	listPullRequestReviews(): PullRequestReview[] {
+		return listReviews(this.#db);
+	}
+
+	/**
+	 * Begins the run of a review's delivery, for the runtime alone, in the conversation the alarm
+	 * opened for it. The run has the agent's sandbox on the pull request's repository, and the
+	 * message is the review's. A refusal because every sandbox is in use or the day's minutes are
+	 * used up sends the review back to the queue; another ends it as failed.
+	 */
+	async beginReviewTurn(
+		conversationId: string,
+		text: string,
+		attemptId?: string,
+	): Promise<ConversationTurn | ProviderRefusal> {
+		const conversation = id.parse(conversationId);
+		const message = z.string().max(100_000).parse(text);
+		const attempt = attemptId === undefined ? null : id.parse(attemptId);
+		const parties = conversationParties(this.#db, conversation);
+		if (!parties || parties.triggerId === null) {
+			return refused("This conversation was not opened by a trigger");
+		}
+		const delivery = deliveryOf(this.#db, conversation, attempt);
+		const review = reviewOfConversation(this.#db, conversation);
+		const gone = refused("This review has had its run already");
+		if (!delivery || review?.status !== "queued") return gone;
+		const current = () => {
+			const now = reviewOfConversation(this.#db, conversation);
+			const active = deliveryOf(this.#db, conversation, delivery.attemptId);
+			return (
+				now?.status === "queued" &&
+				now.id === review.id &&
+				active?.id === delivery.id &&
+				active.attemptId === delivery.attemptId
+			);
+		};
+		const decline = (refusal: TurnRefusal) => {
+			const now = Date.now();
+			settleDelivery(this.#db, delivery, { error: refusal.message });
+			if (refusal.trackReason === "waiting-for-slot" || refusal.trackReason === "budget-limit") {
+				retryReview(this.#db, review, now, refusal.message);
+			} else {
+				failReview(this.#db, review, refusal.message, now);
+			}
+			return refusal;
+		};
+		const settle = (refusal: TurnRefusal) =>
+			this.#write(() => (current() ? decline(refusal) : gone));
+		const plan = this.#planTurn(parties);
+		if ("status" in plan) return settle(plan);
+		const { agent } = plan;
+		if (!agent.sandbox || agent.engine !== "gateweave") {
+			return settle(
+				refused(
+					`${agent.name} cannot review: a review agent runs on Gateweave's own loop, with a sandbox`,
+				),
+			);
+		}
+		const repository = reviewRepository(this.#db, review);
+		if ("problem" in repository) return settle(refused(repository.problem, "needs-mapping"));
+		const prepared = await this.#prepareTurn(conversation, agent, null, true, repository);
+		if ("status" in prepared) return settle(prepared);
+		return this.#write((): ConversationTurn | ProviderRefusal => {
+			// A retry may have taken the review over while the key was opened.
+			if (!current()) return gone;
+			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
+			// The sandbox slots and the day's minutes decide as the run begins: other turns may have
+			// begun while this one awaited. A run is what holds a slot, so none is held before it.
+			const over = this.#sandboxLimitRefusal(conversation, agent);
+			if (over) return decline(over);
+			const now = Date.now();
+			noteTurn(this.#db, conversation, message, now);
+			const runId = beginRun(
+				this.#db,
+				{
+					agent,
+					conversationId: conversation,
+					startedBy: parties.startedBy,
+					sandbox: prepared.sandbox,
+				},
+				now,
+			);
+			settleDelivery(this.#db, delivery, { runId });
+			startReview(this.#db, review, runId, now);
+			return {
+				...prepared,
+				runId,
+				origin: "trigger",
+				review: { number: review.number, head: review.head },
+			};
+		});
+	}
+
+	/**
 	 * Begins the run of an outside task's conversation, for the runtime alone, in the conversation
 	 * `admitOutsideTask` opened for it. Only that task takes a turn there, once, and its message
 	 * is the MCP client's, not the person's who asked.
@@ -1879,6 +2039,7 @@ export class RegistryDO extends DurableObject {
 		agent: AgentSnapshot,
 		position: TeamPosition | null,
 		tools: boolean,
+		review?: SandboxRepository,
 	): Promise<Omit<ConversationTurn, "runId"> | TurnRefusal> {
 		const { provider } = agent;
 		const standIn = this.standInTurns();
@@ -1913,13 +2074,15 @@ export class RegistryDO extends DurableObject {
 		// ask has no tools, so it has no files to work on either. The runtime gives such a turn no
 		// file tools yet, so a server refuses it unless it says otherwise (`FILES_ONLY_RUNS`): an
 		// agent told it can edit files does not quietly answer as one that cannot.
-		const files = agent.files === true && tools;
+		// A review reads the pull request's repository in the sandbox, with no files mode.
+		const files = agent.files === true && tools && !review;
 		if (files && !filesOffered(this.env as FilesSettings)) {
 			return refused(`${FILES_NOT_OFFERED}, so ${agent.name} cannot answer.`, "files-policy");
 		}
 		const limits = sandboxLimits(this.env as SandboxSettings);
 		// Read with the agent, before anything awaits, so a turn never mixes two versions of it.
-		const repository = sandbox || files ? agentRepository(this.#db, agent.agentId) : null;
+		const repository =
+			review ?? (sandbox || files ? agentRepository(this.#db, agent.agentId) : null);
 		if (repository && "problem" in repository) {
 			return refused(
 				`${repository.problem}, so ${agent.name} cannot answer. An owner or admin can choose another repository on the agent, or reconnect it in Repositories.`,
@@ -1935,7 +2098,8 @@ export class RegistryDO extends DurableObject {
 			);
 		}
 		// A stand-in turn reaches nothing outside, so none of the agent's MCP servers either.
-		const servers = tools && !standIn ? agentServers(this.#db, agent.agentId) : [];
+		// A review has the sandbox's tools and `submit_review` only: no servers, edges or memory.
+		const servers = tools && !standIn && !review ? agentServers(this.#db, agent.agentId) : [];
 		const edges = tools && position ? turnEdges(this.#db, position) : [];
 		if (sandbox && limits.monthlyBudget !== null) {
 			const reading = await this.#meterSandboxes(limits.monthlyBudget);
@@ -1974,7 +2138,7 @@ export class RegistryDO extends DurableObject {
 			sandbox,
 			repository,
 			// Gateweave's own loop only, for now: an engine in the sandbox gets none.
-			memory: tools && agent.memory && agent.engine === "gateweave",
+			memory: tools && agent.memory && agent.engine === "gateweave" && !review,
 			// Its work goes in many small steps, as a sandbox's does.
 			...(files ? { files: true as const, steps: MAX_SANDBOX_STEPS } : {}),
 		};
@@ -2095,8 +2259,13 @@ export class RegistryDO extends DurableObject {
 		let report: PendingTrackReport | undefined;
 		let hadSandbox = false;
 		let minutesPassed: SandboxMinutesPassed[] = [];
+		let reviewsQueued = false;
 		const closed = this.#write(() => {
 			if (!finishRun(this.#db, run, data)) return false;
+			const ended = Date.now();
+			// A review's run settles its row; a run that recorded a pull request makes its reviews.
+			finishReviewRun(this.#db, run, data, ended);
+			reviewsQueued = queueReviews(this.#db, run, ended) > 0;
 			const reporting = this.#db
 				.select({ association: schema.runs.trackReport, startedAt: schema.runs.startedAt })
 				.from(schema.runs)
@@ -2114,6 +2283,8 @@ export class RegistryDO extends DurableObject {
 			return true;
 		});
 		this.#publishTrackReports(report);
+		// The alarm admits what was queued; it is set here, since this answers synchronously.
+		if (reviewsQueued) this.ctx.waitUntil(this.#scheduleAlarm());
 		if (closed) {
 			const done = getRun(this.#db, run, this.#idleMinutes());
 			// Each registry is named for its workspace (`registryFor` in the app).
@@ -2461,7 +2632,9 @@ export class RegistryDO extends DurableObject {
 		const delivery = parsed.data;
 		const trigger = triggerRow(this.#db, delivery.triggerId);
 		// A scheduled trigger starts its own runs, and its URL takes nothing.
-		if (!trigger || trigger.schedule !== null) return { status: "not_found" };
+		if (!trigger || trigger.schedule !== null || trigger.pullRequest) {
+			return { status: "not_found" };
+		}
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return { status: "refused", message: sealer.unavailable };
 		let secret: string;
@@ -2480,7 +2653,9 @@ export class RegistryDO extends DurableObject {
 		const receipt = this.#write((): TriggerReceipt => {
 			// The trigger as it is now: it, or its secret, may have changed while that was opened.
 			const current = triggerRow(this.#db, trigger.id);
-			if (!current || current.schedule !== null) return { status: "not_found" };
+			if (!current || current.schedule !== null || current.pullRequest) {
+				return { status: "not_found" };
+			}
 			if (current.sealed !== trigger.sealed) return { status: "unauthorized" };
 			const now = Date.now();
 			const admitted = admitDelivery(
@@ -3231,6 +3406,7 @@ export class RegistryDO extends DurableObject {
 
 	async #maintainRegistry(): Promise<void> {
 		await this.#runSchedules();
+		await this.#runReviews();
 		const due = dueScans(this.#db, Date.now(), SCANS_PER_ALARM);
 		for (const request of due) await this.#scan(request);
 		await this.#destroyDueConversations();
@@ -3479,6 +3655,7 @@ export class RegistryDO extends DurableObject {
 			freezeEnds(this.ctx.storage),
 			nextScanAt(this.#db),
 			nextScheduleAt(this.#db),
+			nextReviewAt(this.#db),
 			nextDestroyAt(this.#db),
 			nextTrackReportAt(this.#db),
 		].filter((at) => at !== null);
@@ -3530,6 +3707,56 @@ export class RegistryDO extends DurableObject {
 		_attemptId: string,
 	): Promise<TriggerTurnOutcome> {
 		return { runId: null, error: "This server does not start scheduled runs" };
+	}
+
+	/**
+	 * Begins the run of an admitted review in the conversation opened for it. The runtime is not
+	 * this package's to reach, so here it cannot: the app's Worker exports a `RegistryDO` that does
+	 * (`apps/web/src/server/registry-do.ts`).
+	 */
+	protected async startReviewTurn(
+		_conversationId: string,
+		_attemptId: string,
+	): Promise<TriggerTurnOutcome> {
+		return { runId: null, error: "This server does not run reviews" };
+	}
+
+	/**
+	 * Admits the reviews that are due, in one write, then begins their runs. A review the
+	 * workspace's sandboxes cannot take yet stays queued and is tried again, up to six times in a
+	 * day (`./pull-request-reviews.ts`).
+	 */
+	async #runReviews(): Promise<void> {
+		const now = Date.now();
+		const starts = this.#write(() => {
+			expireReviews(this.#db, now);
+			return dueReviews(this.#db, now, REVIEWS_PER_ALARM).flatMap((review) => {
+				const admitted = admitReview(this.#db, review, now);
+				return admitted.status === "start" ? [admitted] : [];
+			});
+		});
+		for (const { conversationId, attemptId } of starts) {
+			let outcome: TriggerTurnOutcome;
+			try {
+				outcome = await this.startReviewTurn(conversationId, attemptId);
+			} catch (error) {
+				console.error(
+					"registry: a review could not be started",
+					error instanceof Error ? error.message : String(error),
+				);
+				outcome = { runId: null, error: "The review could not be started" };
+			}
+			if (outcome.runId !== null) continue;
+			const { error } = outcome;
+			this.#write(() => {
+				// The runtime settled the review itself when it refused or skipped it. What is left is a
+				// failure nobody noted, which may pass: the review is tried again.
+				const review = reviewOfConversation(this.#db, conversationId);
+				const delivery = deliveryOf(this.#db, conversationId, attemptId);
+				if (delivery) settleDelivery(this.#db, delivery, { error });
+				if (review?.status === "queued") retryReview(this.#db, review, Date.now(), error);
+			});
+		}
 	}
 
 	/**
