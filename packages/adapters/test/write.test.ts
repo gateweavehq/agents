@@ -410,6 +410,7 @@ describe("MCP servers", () => {
 			["empty-password", "https://:@mcp.acme.dev/mcp"],
 			["backslash", "https:\\\\@mcp.acme.dev/mcp"],
 			["tab", "https://\t@mcp.acme.dev/mcp"],
+			["control", "\u0001https://@mcp.acme.dev/mcp"],
 		] as const) {
 			const result = write([server(name, { type: "http", url }), github], "claude-code");
 			expect(result.problems).toEqual([

@@ -92,11 +92,21 @@ export interface McpHeader {
 	value: string | { variable: string; prefix: string };
 }
 
+/** The text the URL parser reads: tabs and line breaks out, C0 controls and spaces off the ends. */
+function urlTextAsWritten(value: string): string {
+	const withoutIgnored = value.replace(/[\t\n\r]/g, "");
+	let start = 0;
+	while (start < withoutIgnored.length && withoutIgnored.charCodeAt(start) <= 0x20) start += 1;
+	let end = withoutIgnored.length;
+	while (end > start && withoutIgnored.charCodeAt(end - 1) <= 0x20) end -= 1;
+	return withoutIgnored.slice(start, end);
+}
+
 /** Whether the authority of an address as written holds a userinfo delimiter, empty or not. */
 function authorityHasUserinfo(value: string): boolean {
-	// The URL parser ignores tabs and line breaks and reads a backslash as a slash in https.
-	const text = value.replace(/[\t\n\r]/g, "").trim();
-	const authority = /^[a-z][a-z0-9+.-]*:[/\\]*([^/\\?#]*)/i.exec(text)?.[1] ?? "";
+	// The URL parser reads a backslash as a slash in https.
+	const authority =
+		/^[a-z][a-z0-9+.-]*:[/\\]*([^/\\?#]*)/i.exec(urlTextAsWritten(value))?.[1] ?? "";
 	return authority.includes("@");
 }
 
