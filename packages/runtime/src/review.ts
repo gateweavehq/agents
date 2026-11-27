@@ -37,6 +37,11 @@ export interface ReviewToolOptions {
 	head: string;
 	run: RunRecorder;
 	record: (outcome: ReviewOutcome) => Promise<void>;
+	/**
+	 * The words that open the completed review: how many findings it holds, and that the pull
+	 * request is a draft and why. They are made of the outcome, and come back with it as `summary`.
+	 */
+	summarize?: (outcome: ReviewOutcome) => string;
 	now?: () => number;
 }
 
@@ -142,6 +147,7 @@ export function reviewTools({
 	base,
 	head,
 	record,
+	summarize,
 	run,
 	now = Date.now,
 }: ReviewToolOptions): ToolSet {
@@ -291,7 +297,9 @@ export function reviewTools({
 				finished ??= { submission, outcome: await review(findings) };
 				await record(finished.outcome);
 				state = "done";
-				return finished.outcome;
+				return summarize
+					? { ...finished.outcome, summary: summarize(finished.outcome) }
+					: finished.outcome;
 			} catch (error) {
 				state = "idle";
 				throw error;

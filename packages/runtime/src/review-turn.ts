@@ -15,7 +15,10 @@ import {
 import {
 	REVIEW_INSTRUCTIONS,
 	REVIEW_LIMITS,
+	REVIEW_MESSAGE_LIMIT,
 	REVIEW_SKIPPED,
+	type ReviewCounts,
+	type ReviewOutcome,
 	reviewMessage,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
@@ -27,6 +30,10 @@ export interface ReviewedPullRequest {
 	state: "open" | "closed" | "merged";
 	/** The commit its branch is at now. */
 	head: string;
+	/** The branch it is to be merged into, which is not always the repository's default one. */
+	base: string;
+	/** Whether GitHub says it is a draft. */
+	draft: boolean;
 	title: string;
 	body: string;
 }
@@ -54,6 +61,9 @@ export function gitHubReviewSource(app: GitHubApp, repository: SandboxRepository
 				found && {
 					state: found.state,
 					head: found.head,
+					// An answer that does not name its base is read against the default branch.
+					base: found.baseRef ?? repository.defaultBranch,
+					draft: found.draft === true,
 					title: found.title,
 					body: found.body ?? "",
 				}
@@ -65,21 +75,26 @@ export function gitHubReviewSource(app: GitHubApp, repository: SandboxRepository
 	};
 }
 
-/** The longest description a review takes as a criterion. */
-const BODY_CHARACTERS = 20_000;
-
 /**
  * What the pull request is meant to do: its title and its description without Gateweave's own
- * sections, which are not the author's claim: the checks section and the AI disclosure.
+ * sections, which are not the author's claim: the checks section and the AI disclosure. Both are
+ * kept whole: a requirement at the end of a long description is as much a criterion as the first.
+ * The registry's limit on the review's message (`REVIEW_MESSAGE_LIMIT`) allows all that GitHub
+ * lets a title and a description hold.
  */
 export function reviewCriteria(title: string, body: string): string[] {
 	const description = withoutChecksSection(withoutDisclosure(body)).trim();
-	return [title.trim(), Array.from(description).slice(0, BODY_CHARACTERS).join("")].filter(
-		(criterion) => criterion !== "",
-	);
+	return [title.trim(), description].filter((criterion) => criterion !== "");
 }
 
-export type PreparedReview = { message: string } | { skipped: string };
+/**
+ * A review's message, and what the turn needs to know of the pull request besides: the branch it
+ * is based on, from which the findings are checked against the same diff the model reads, and
+ * whether GitHub says it is a draft.
+ */
+export type PreparedReview =
+	| { message: string; base: string; draft: boolean }
+	| { skipped: string };
 
 /**
  * The message a review's turn starts with, or why there is nothing to review. The head must still
@@ -96,7 +111,21 @@ export async function prepareReview(
 	const read = await source.diff(number, REVIEW_LIMITS.diffBytes);
 	if (!read) return { skipped: "The pull request was not found on GitHub" };
 	if ("tooLarge" in read) return { skipped: REVIEW_SKIPPED.tooLarge };
-	return { message: reviewMessage(read.diff, reviewCriteria(pull.title, pull.body)) };
+	const message = reviewMessage(read.diff, reviewCriteria(pull.title, pull.body));
+	// The limit holds all that a diff within `REVIEW_LIMITS.diffBytes` and a pull request's words
+	// can make; one over it is a message the registry would refuse.
+	if (message.length > REVIEW_MESSAGE_LIMIT) return { skipped: REVIEW_SKIPPED.tooLarge };
+	return { message, base: pull.base, draft: pull.draft };
+}
+
+/** What a review found, as the registry keeps it: counts only. */
+export function reviewCountsOf({ findings }: Pick<ReviewOutcome, "findings">): ReviewCounts {
+	return {
+		found: findings.length,
+		// Those a comment can sit on: a finding outside the diff is kept and not shown inline.
+		shown: findings.filter((finding) => !finding.offDiff).length,
+		proven: findings.filter((finding) => finding.proof.proven).length,
+	};
 }
 
 /** What the review's system prompt adds to the agent's own instructions. */

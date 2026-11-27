@@ -23,6 +23,19 @@ import { agentDefinitions, agents, conversations, teams } from "./db/schema";
 import type { Db } from "./state";
 
 /**
+ * What a review turn is of. The registry says the pull request and the head; the runtime adds the
+ * rest from GitHub as it prepares the turn: the branch the pull request is based on, which is not
+ * always the repository's default one, and whether it is a draft and why.
+ */
+export interface ReviewTurnOf {
+	number: number;
+	head: string;
+	base?: string;
+	draft?: boolean;
+	draftReason?: string | null;
+}
+
+/**
  * What a turn needs: the agent as it is now, the workspace's key for its provider, opened (none
  * for Workers AI, which the runtime reaches with the deployment's own token), the agent's MCP
  * servers with their headers' secrets, opened too, the edges it can take in a team, and the run
@@ -60,7 +73,7 @@ export interface ConversationTurn {
 	 * Set when the turn reviews a pull request at a head: it has the sandbox's tools and
 	 * `submit_review`, and its sandbox is on that head.
 	 */
-	review?: { number: number; head: string };
+	review?: ReviewTurnOf;
 	/** The configured template, before a delivery fills its placeholders. */
 	triggerPrompt?: string;
 	runId: string;

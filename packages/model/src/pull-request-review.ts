@@ -6,6 +6,7 @@
  * the review conversation, as the result of `submit_review`; the registry keeps counts only.
  */
 import { z } from "zod";
+import { REVIEW_LIMITS } from "./review";
 import type { SandboxRepository } from "./sandbox";
 
 /** Where a review stands. */
@@ -39,6 +40,22 @@ export function reviewRetryAt(tries: number, now: number): number | null {
 	return wait === undefined ? null : now + wait * 60_000;
 }
 
+/**
+ * The longest message a review turn may begin with, the one limit the runtime and the registry
+ * share. It is the whole envelope `reviewMessage` can make of what a pull request may hold: a diff
+ * of up to `REVIEW_LIMITS.diffBytes` bytes (its UTF-16 length is never more) and the note of what
+ * was left out of it; the fence on each side, which is as long as the longest run of backticks or
+ * tildes in the patch needs and never more than half the patch; a title of at most 256 characters
+ * and a description of at most 65,536 characters, which GitHub allows, counted in UTF-16 units, so
+ * twice over; and the headings and numbering around them.
+ */
+export const REVIEW_MESSAGE_LIMIT =
+	REVIEW_LIMITS.diffBytes +
+	64 +
+	2 * (Math.floor(REVIEW_LIMITS.diffBytes / 2) + 1) +
+	2 * (256 + 65_536) +
+	256;
+
 /** The id of a review's delivery: one for each repository, pull request and head. */
 export function reviewDeliveryId(repositoryId: string, number: number, head: string): string {
 	return `review:${repositoryId}:${number}:${head}`;
@@ -47,6 +64,7 @@ export function reviewDeliveryId(repositoryId: string, number: number, head: str
 /** Why a review is skipped, in the words the registry keeps. */
 export const REVIEW_SKIPPED = {
 	closed: "The pull request is closed",
+	notFound: "The pull request was not found on GitHub",
 	headGone: "The reviewed head is no longer the pull request's head on GitHub",
 	tooLarge: "The diff is too large to review",
 	paused: "The trigger was paused",
@@ -60,9 +78,23 @@ export const reviewCounts = z.object({
 });
 export type ReviewCounts = z.infer<typeof reviewCounts>;
 
-/** One review of a pull request's head, by one review trigger. */
+/**
+ * The pull request as GitHub has it when a review is about to begin: whether it is still open, the
+ * commit its branch is at, and whether it is a draft.
+ */
+export interface ReviewPullState {
+	state: "open" | "closed" | "merged";
+	head: string;
+	draft: boolean;
+}
+
+/**
+ * One review of a pull request's head, made once for the workspace by one of its review triggers.
+ * Its trigger is gone (null) when it was deleted after the review began or ended: the row stays,
+ * so a head that was reviewed is not reviewed again by the trigger that replaced it.
+ */
 export interface PullRequestReview {
-	triggerId: string;
+	triggerId: string | null;
 	/** The delivery's id (`reviewDeliveryId`). */
 	id: string;
 	/** `owner/name`. */
@@ -76,9 +108,9 @@ export interface PullRequestReview {
 	status: PullRequestReviewStatus;
 	/** Why it was skipped or failed, or why it waits to be tried again. */
 	reason: string | null;
-	/** Whether the pull request was a draft when the run left it. */
+	/** Whether GitHub says the pull request is a draft: as the run left it, then as read before the review. */
 	draft: boolean;
-	/** What the run recorded of why it is a draft. */
+	/** Why it is a draft, from the check status and changed files the run recorded; never command output. */
 	draftReason: string | null;
 	found: number | null;
 	shown: number | null;

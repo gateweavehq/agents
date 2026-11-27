@@ -7,15 +7,19 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
 	MAX_WORKSPACE_SANDBOXES,
+	REVIEW_LIMITS,
+	REVIEW_MESSAGE_LIMIT,
 	REVIEW_RETRY_MINUTES,
 	type RepositoryInput,
 	type RunFinish,
 	type RunPullRequestInput,
 	reviewDeliveryId,
+	reviewMessage,
 	reviewSummary,
 } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
+import { RUN_TIMEOUT } from "../src/runs";
 import type { RegistryDO as TestRegistry } from "./worker";
 
 type Stub = ReturnType<typeof registry>;
@@ -70,12 +74,11 @@ async function workspace(perDay?: number) {
 	const builder = await agent("Builder", false);
 	const sandboxed = await agent("Sandboxed builder", true);
 	const reviewer = await agent("Reviewer", true);
-	const made = await stub.createTrigger(
+	const made = await stub.createReviewTrigger(
 		{
 			name: "Review pull requests",
 			prompt: "Review it",
 			target: { kind: "agent", agentId: reviewer.id },
-			pullRequest: true,
 			...(perDay === undefined ? {} : { perDay }),
 		},
 		ADA,
@@ -493,5 +496,238 @@ describe("how a review ends", () => {
 		]);
 		// A skipped review is settled: asking again changes nothing.
 		expect(await stub.skipReviewOf(conversationId, "Again")).toBe(false);
+	});
+});
+
+/** What the test worker adds to the registry: GitHub's word on pull requests, and the message. */
+type Controls = {
+	livePull(
+		number: number,
+		state: { state: "open" | "closed" | "merged"; head: string; draft: boolean } | "gone" | null,
+	): Promise<void>;
+	pullsRead(): Promise<number[]>;
+	reviewMessageIs(text: string): Promise<void>;
+};
+const controls = (stub: Stub) => stub as unknown as Controls;
+const open = (head = HEAD, draft = false) => ({ state: "open" as const, head, draft });
+
+describe("one delivery for a head in the workspace, whatever the number of triggers", () => {
+	it("makes one delivery with two review triggers, for the oldest that is on", async () => {
+		const { stub, builder, reviewer, trigger } = await workspace();
+		const second = await stub.createReviewTrigger(
+			{
+				name: "Second review",
+				prompt: "Review it again",
+				target: { kind: "agent", agentId: reviewer.id },
+			},
+			ADA,
+		);
+		if ("status" in second) throw new Error(second.message);
+		const ordered = [trigger, second.trigger].sort(
+			(a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+		);
+		await built(stub, builder);
+		await built(stub, builder);
+		let reviews = await stub.listPullRequestReviews();
+		expect(reviews).toHaveLength(1);
+		expect(reviews[0]?.triggerId).toBe(ordered[0]?.id);
+
+		// One alarm admits it once: one delivery, on the one trigger, whichever is asked.
+		await withSandboxes(stub, (instance) => instance.alarmNow());
+		const entries = await stub.listTriggers();
+		expect(entries.flatMap((entry) => entry.deliveries)).toHaveLength(1);
+		expect(entries.find((entry) => entry.id === ordered[0]?.id)?.deliveries).toHaveLength(1);
+
+		// When the oldest is paused, the next head goes to the one that is on, and a paused one is
+		// chosen only when none is on.
+		await stub.updateTrigger(ordered[0]?.id ?? "", { active: false });
+		await built(stub, builder, { head: NEXT });
+		reviews = await stub.listPullRequestReviews();
+		expect(reviews).toHaveLength(2);
+		expect(reviews[1]?.triggerId).toBe(ordered[1]?.id);
+		await stub.updateTrigger(ordered[1]?.id ?? "", { active: false });
+		await built(stub, builder, { head: "c".repeat(40) });
+		expect((await stub.listPullRequestReviews())[2]?.triggerId).toBe(ordered[0]?.id);
+	});
+
+	it("does not review a head again when the trigger that reviewed it is replaced", async () => {
+		const { stub, builder, reviewer, trigger } = await workspace();
+		await built(stub, builder);
+		await withSandboxes(stub, (instance) => instance.alarmNow());
+		const [running] = await stub.listPullRequestReviews();
+		if (!running?.runId) throw new Error("The review did not begin");
+		await stub.recordReviewCounts(running.runId, { found: 1, shown: 1, proven: 0 });
+		await stub.finishRun(running.runId, FINISHED);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({ status: "posted" });
+
+		// The trigger is deleted and another made in its place.
+		expect(await stub.deleteTrigger(trigger.id)).toBe(true);
+		const replacement = await stub.createReviewTrigger(
+			{
+				name: "Replacement",
+				prompt: "Review it",
+				target: { kind: "agent", agentId: reviewer.id },
+			},
+			ADA,
+		);
+		if ("status" in replacement) throw new Error(replacement.message);
+		// A second run that ends at the reviewed head makes no delivery for the new trigger.
+		await built(stub, builder);
+		const reviews = await stub.listPullRequestReviews();
+		expect(reviews).toHaveLength(1);
+		expect(reviews[0]).toMatchObject({ status: "posted", triggerId: null, found: 1 });
+		await withSandboxes(stub, (instance) => instance.alarmNow());
+		expect((await stub.listTriggers())[0]?.deliveries).toEqual([]);
+		// A head after it is the new trigger's.
+		await built(stub, builder, { head: NEXT });
+		expect((await stub.listPullRequestReviews())[1]).toMatchObject({
+			triggerId: replacement.trigger.id,
+			status: "queued",
+		});
+	});
+
+	it("moves a queued review to the trigger that remains, and drops it with the last one", async () => {
+		const { stub, builder, reviewer, trigger } = await workspace();
+		const second = await stub.createReviewTrigger(
+			{ name: "Second", prompt: "Review it", target: { kind: "agent", agentId: reviewer.id } },
+			ADA,
+		);
+		if ("status" in second) throw new Error(second.message);
+		await built(stub, builder);
+		const chosen = (await stub.listPullRequestReviews())[0]?.triggerId ?? "";
+		const other = chosen === trigger.id ? second.trigger.id : trigger.id;
+		await stub.deleteTrigger(chosen);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({
+			status: "queued",
+			triggerId: other,
+		});
+		await withSandboxes(stub, (instance) => instance.alarmNow());
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({ status: "running" });
+		await stub.deleteTrigger(other);
+		// Its run goes on without a trigger; the row stays so the head is not reviewed again.
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({
+			status: "running",
+			triggerId: null,
+		});
+
+		const lone = await workspace();
+		await built(lone.stub, lone.builder);
+		await lone.stub.deleteTrigger(lone.trigger.id);
+		expect(await lone.stub.listPullRequestReviews()).toEqual([]);
+	});
+});
+
+describe("a pull request closed before its review is admitted (criterion 5)", () => {
+	it("is held to GitHub's state before any delivery is made, whatever the builder recorded", async () => {
+		const { stub, builder } = await workspace();
+		await built(stub, builder);
+		await controls(stub).livePull(12, { state: "closed", head: HEAD, draft: false });
+		await alarm(stub);
+		expect(await stub.listPullRequestReviews()).toMatchObject([
+			{ status: "skipped", reason: "The pull request is closed", runId: null },
+		]);
+		// No delivery, conversation or run exists for it.
+		expect((await stub.listTriggers())[0]?.deliveries).toEqual([]);
+		const runs = await stub.listRuns();
+		expect(runs.filter((run) => run.triggerId !== null)).toEqual([]);
+		expect(await controls(stub).pullsRead()).toEqual([12]);
+	});
+
+	it("skips a merged pull request, one whose head moved on and one GitHub no longer has", async () => {
+		const { stub, builder } = await workspace();
+		const at = (number: number) => ({
+			number,
+			url: `https://github.com/acme/site/pull/${number}`,
+		});
+		await built(stub, builder);
+		await built(stub, builder, { head: NEXT, ...at(13) });
+		await built(stub, builder, { head: "c".repeat(40), ...at(14) });
+		await controls(stub).livePull(12, { state: "merged", head: HEAD, draft: false });
+		await controls(stub).livePull(13, open("d".repeat(40)));
+		await controls(stub).livePull(14, "gone");
+		await alarm(stub);
+		const ended = (await stub.listPullRequestReviews()).map(({ status, reason }) => [
+			status,
+			reason,
+		]);
+		expect(ended).toEqual([
+			["skipped", "The pull request is closed"],
+			["skipped", "The reviewed head is no longer the pull request's head on GitHub"],
+			["skipped", "The pull request was not found on GitHub"],
+		]);
+		expect((await stub.listTriggers())[0]?.deliveries).toEqual([]);
+	});
+
+	it("admits an open one at its head, with GitHub's word on whether it is a draft", async () => {
+		const { stub, builder } = await workspace();
+		await built(stub, builder, { draft: true, draftReason: "Its checks failed." });
+		await controls(stub).livePull(12, open(HEAD, false));
+		await alarm(stub);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({
+			status: "running",
+			draft: false,
+			draftReason: null,
+		});
+		expect((await stub.listTriggers())[0]?.deliveries).toHaveLength(1);
+	});
+
+	it("leaves a pull request GitHub cannot be asked about to the review turn", async () => {
+		const { stub, builder } = await workspace();
+		await built(stub, builder);
+		await alarm(stub);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({ status: "running" });
+	});
+});
+
+describe("a review whose run never reports (criterion 4)", () => {
+	it("is given up on by an alarm of its own, in a workspace with nothing else to do", async () => {
+		const { stub, builder } = await workspace();
+		await built(stub, builder);
+		await alarm(stub);
+		const [review] = await stub.listPullRequestReviews();
+		expect(review).toMatchObject({ status: "running" });
+		// Nothing is queued and nothing else is due, yet the alarm is set, for when the run is given up on.
+		const set = await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm());
+		expect(set).not.toBeNull();
+		expect(set ?? 0).toBeGreaterThan(Date.now() + RUN_TIMEOUT);
+		expect(set ?? 0).toBeLessThan(Date.now() + RUN_TIMEOUT + 11 * 60_000);
+
+		// When it comes, and the run never said anything, the review is failed.
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("UPDATE pull_request_reviews SET updated_at = 1");
+		});
+		await alarm(stub);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({
+			status: "failed",
+			reason: "The review's run did not report back",
+		});
+	});
+});
+
+describe("the review's message (criterion 4)", () => {
+	it("begins with a valid diff's message at the published limit, over 100,000 characters", async () => {
+		const { stub, builder } = await workspace();
+		await built(stub, builder);
+		const body = "+é\n".repeat(Math.floor((REVIEW_LIMITS.diffBytes - 24) / 4));
+		const diff = `diff --git a/big b/big\n${body}`;
+		const text = reviewMessage(diff, ["T".repeat(256), "b".repeat(65_536)]);
+		expect(text.length).toBeGreaterThan(100_000);
+		expect(text.length).toBeLessThanOrEqual(REVIEW_MESSAGE_LIMIT);
+		await controls(stub).reviewMessageIs(text);
+		await alarm(stub);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({ status: "running" });
+	});
+
+	it("is the longest the review's envelope can make: fences, a title and a description", () => {
+		// The worst patch for the fence: backticks and tildes in runs as long as the diff allows.
+		const run = REVIEW_LIMITS.diffBytes / 2 - 1;
+		const patch = `${"`".repeat(run)}${"~".repeat(run)}\n`;
+		const worst = reviewMessage(patch, ["T".repeat(256), "🙂".repeat(65_536)]);
+		expect(worst.length).toBeLessThanOrEqual(REVIEW_MESSAGE_LIMIT);
+		const wide = reviewMessage("é".repeat(REVIEW_LIMITS.diffBytes), [
+			"T".repeat(256),
+			"b".repeat(65_536),
+		]);
+		expect(wide.length).toBeLessThanOrEqual(REVIEW_MESSAGE_LIMIT);
 	});
 });

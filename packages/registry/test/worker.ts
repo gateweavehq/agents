@@ -1,7 +1,9 @@
 import type {
 	MemoryAgentEvent,
+	ReviewPullState,
 	SandboxBudgetPassed,
 	SandboxMinutesPassed,
+	SandboxRepository,
 	TriggerTurnOutcome,
 } from "@gateweave/agents-model";
 import { RegistryDO as Registry } from "../src";
@@ -24,6 +26,9 @@ const BATCHES_KEY = "test:batches";
 const MEMORY_KEY = "test:memory-events";
 const HELD_KEY = "test:alarms-held";
 const REVIEWS_KEY = "test:started-reviews";
+const PULLS_KEY = "test:live-pulls";
+const MESSAGE_KEY = "test:review-message";
+const PULLS_READ_KEY = "test:live-pulls-read";
 
 /**
  * The registry, beginning scheduled runs as the app's does, but with no runtime: the run begins in
@@ -48,8 +53,42 @@ export class RegistryDO extends Registry {
 	): Promise<TriggerTurnOutcome> {
 		const started = this.ctx.storage.kv.get<string[]>(REVIEWS_KEY) ?? [];
 		this.ctx.storage.kv.put(REVIEWS_KEY, [...started, conversationId]);
-		const turn = await this.beginReviewTurn(conversationId, "The review's message", attemptId);
+		const message = this.ctx.storage.kv.get<string>(MESSAGE_KEY) ?? "The review's message";
+		const turn = await this.beginReviewTurn(conversationId, message, attemptId);
 		return "status" in turn ? { runId: null, error: turn.message } : { runId: turn.runId };
+	}
+
+	/**
+	 * The pull requests as GitHub has them, which a test sets with `livePull`: none is set, so a
+	 * pull request is unreadable, as on a server with no GitHub App.
+	 */
+	protected override async readReviewPull(
+		_repository: SandboxRepository,
+		number: number,
+	): Promise<ReviewPullState | "gone" | null> {
+		const read = this.ctx.storage.kv.get<number[]>(PULLS_READ_KEY) ?? [];
+		this.ctx.storage.kv.put(PULLS_READ_KEY, [...read, number]);
+		const pulls = this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone">>(PULLS_KEY);
+		return pulls?.[String(number)] ?? null;
+	}
+
+	/** Sets what GitHub says of a pull request, for the reviews the alarm admits next. */
+	livePull(number: number, state: ReviewPullState | "gone" | null): void {
+		const pulls =
+			this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone">>(PULLS_KEY) ?? {};
+		if (state === null) delete pulls[String(number)];
+		else pulls[String(number)] = state;
+		this.ctx.storage.kv.put(PULLS_KEY, pulls);
+	}
+
+	/** The message the registry begins the next reviews with, in place of a short one. */
+	reviewMessageIs(text: string): void {
+		this.ctx.storage.kv.put(MESSAGE_KEY, text);
+	}
+
+	/** The pull requests the registry read from GitHub before admitting their reviews. */
+	pullsRead(): number[] {
+		return this.ctx.storage.kv.get<number[]>(PULLS_READ_KEY) ?? [];
 	}
 
 	/** The conversations the registry began reviews in. */

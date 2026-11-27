@@ -7,6 +7,11 @@
  * runs are a webhook's. A delivery the workspace's sandboxes or minutes cannot take yet is queued
  * again, up to six times in a day, and not lost (`retryReview`).
  *
+ * There is one review for each repository, pull request and head in the workspace, whatever the
+ * number of its review triggers: the one that reviews it is chosen when the head is first seen
+ * (`reviewTrigger`), and the row stays when that trigger is deleted, so a trigger that replaces it
+ * does not review the head again.
+ *
  * A row holds counts and where the review stands, never the findings: those stay in the review
  * conversation as the result of `submit_review`.
  */
@@ -16,6 +21,7 @@ import {
 	REVIEW_RETRY_MINUTES,
 	REVIEW_SKIPPED,
 	type ReviewCounts,
+	type ReviewPullState,
 	reviewDeliveryId,
 	reviewRetryAt,
 	type SandboxRepository,
@@ -27,8 +33,8 @@ import {
 	repositories,
 	runs,
 	triggerDeliveries,
-	triggers,
 } from "./db/schema";
+import { reviewTrigger } from "./review-triggers";
 import { RUN_TIMEOUT } from "./runs";
 import type { Db } from "./state";
 import { admitDelivery, triggerRow } from "./triggers";
@@ -74,36 +80,31 @@ export function queueReviews(db: Db, runId: string, now: number): number {
 		)
 		.get();
 	if (!repository) return 0;
-	const id = reviewDeliveryId(repository.id, pull.number, pull.head);
-	let made = 0;
-	for (const trigger of db
-		.select({ id: triggers.id })
-		.from(triggers)
-		.where(eq(triggers.pullRequest, true))
-		.all()) {
-		const queued = db
-			.insert(pullRequestReviews)
-			.values({
-				triggerId: trigger.id,
-				id,
-				repositoryId: repository.id,
-				repository: pull.repository,
-				number: pull.number,
-				head: pull.head,
-				sourceRunId: runId,
-				status: "queued",
-				draft: pull.draft === true,
-				draftReason: pull.draft === true ? (pull.draftReason ?? null) : null,
-				nextAttemptAt: now,
-				createdAt: now,
-				updatedAt: now,
-			})
-			.onConflictDoNothing()
-			.returning({ id: pullRequestReviews.id })
-			.get();
-		if (queued) made++;
-	}
-	return made;
+	const trigger = reviewTrigger(db);
+	if (!trigger) return 0;
+	// One row for the head in the whole workspace: the id is the primary key, so a head that was
+	// queued or reviewed before, by this trigger or another that is gone, makes none.
+	const queued = db
+		.insert(pullRequestReviews)
+		.values({
+			triggerId: trigger,
+			id: reviewDeliveryId(repository.id, pull.number, pull.head),
+			repositoryId: repository.id,
+			repository: pull.repository,
+			number: pull.number,
+			head: pull.head,
+			sourceRunId: runId,
+			status: "queued",
+			draft: pull.draft === true,
+			draftReason: pull.draft === true ? (pull.draftReason ?? null) : null,
+			nextAttemptAt: now,
+			createdAt: now,
+			updatedAt: now,
+		})
+		.onConflictDoNothing()
+		.returning({ id: pullRequestReviews.id })
+		.get();
+	return queued ? 1 : 0;
 }
 
 /** The queued reviews whose time has come, the oldest first. */
@@ -117,15 +118,80 @@ export function dueReviews(db: Db, now: number, limit: number): PullRequestRevie
 		.all();
 }
 
-/** When the next queued review is due, for the alarm; null when none waits. */
-export function nextReviewAt(db: Db): number | null {
+/** A review as it is now, if it is still queued and its time has come. */
+export function dueReview(db: Db, id: string, now: number): PullRequestReviewRow | null {
 	return (
+		db
+			.select()
+			.from(pullRequestReviews)
+			.where(
+				and(
+					eq(pullRequestReviews.id, id),
+					eq(pullRequestReviews.status, "queued"),
+					lte(pullRequestReviews.nextAttemptAt, now),
+				),
+			)
+			.get() ?? null
+	);
+}
+
+/**
+ * Holds a review to the pull request as GitHub has it now, read outside the registry's
+ * synchronous write, before any delivery is made for it: a pull request that was closed or merged
+ * since the run left it, whose branch moved on, or that is gone ends the review as skipped, and no
+ * delivery, conversation or run exists for it. The draft status is GitHub's. `null`, when GitHub
+ * could not be read, leaves it to the review turn, which reads it again. True when the review may
+ * be admitted.
+ */
+export function holdToPull(
+	db: Db,
+	review: PullRequestReviewRow,
+	live: ReviewPullState | "gone" | null,
+	now: number,
+): boolean {
+	if (live === null) return true;
+	if (live === "gone") {
+		skipReview(db, review, REVIEW_SKIPPED.notFound, now);
+		return false;
+	}
+	if (live.state !== "open") {
+		skipReview(db, review, REVIEW_SKIPPED.closed, now);
+		return false;
+	}
+	if (live.head !== review.head) {
+		skipReview(db, review, REVIEW_SKIPPED.headGone, now);
+		return false;
+	}
+	if (live.draft !== review.draft) {
+		db.update(pullRequestReviews)
+			.set({ draft: live.draft, draftReason: live.draft ? review.draftReason : null })
+			.where(sameReview(review))
+			.run();
+	}
+	return true;
+}
+
+/**
+ * When the alarm must next look at the reviews, or null when none needs it: the next queued
+ * review's time, or the time the longest-running review's run is given up on, whichever is first.
+ * Without the second, a review whose run never reported would stay `running` in a workspace that
+ * has nothing else for the alarm to do.
+ */
+export function nextReviewAt(db: Db): number | null {
+	const queued =
 		db
 			.select({ at: min(pullRequestReviews.nextAttemptAt) })
 			.from(pullRequestReviews)
 			.where(eq(pullRequestReviews.status, "queued"))
-			.get()?.at ?? null
-	);
+			.get()?.at ?? null;
+	const oldest =
+		db
+			.select({ at: min(pullRequestReviews.updatedAt) })
+			.from(pullRequestReviews)
+			.where(eq(pullRequestReviews.status, "running"))
+			.get()?.at ?? null;
+	const expires = oldest === null ? null : oldest + RUNNING_LIMIT + 1;
+	return queued === null ? expires : expires === null ? queued : Math.min(queued, expires);
 }
 
 /** Reviews whose run never reported are failed, as runs that went on too long are interrupted. */
@@ -164,7 +230,7 @@ export function reviewEvent(review: PullRequestReviewRow): string {
  * delivery over them, or whose trigger is busy, is queued again; a paused trigger skips it.
  */
 export function admitReview(db: Db, review: PullRequestReviewRow, now: number): ReviewAdmission {
-	const trigger = triggerRow(db, review.triggerId);
+	const trigger = review.triggerId === null ? null : triggerRow(db, review.triggerId);
 	if (!trigger?.pullRequest) {
 		skipReview(db, review, REVIEW_SKIPPED.paused, now);
 		return { status: "settled" };
@@ -208,14 +274,12 @@ export function admitReview(db: Db, review: PullRequestReviewRow, now: number): 
 	return { status: "settled" };
 }
 
-function sameReview(review: Pick<PullRequestReviewRow, "triggerId" | "id">) {
-	return and(
-		eq(pullRequestReviews.triggerId, review.triggerId),
-		eq(pullRequestReviews.id, review.id),
-	);
+function sameReview(review: Pick<PullRequestReviewRow, "id">) {
+	return eq(pullRequestReviews.id, review.id);
 }
 
 function deliveryNote(db: Db, review: PullRequestReviewRow): string | null {
+	if (review.triggerId === null) return null;
 	return (
 		db
 			.select({ error: triggerDeliveries.error })
@@ -276,6 +340,7 @@ export function skipReview(db: Db, review: PullRequestReviewRow, reason: string,
 		.set({ status: "skipped", reason, nextAttemptAt: null, updatedAt: now })
 		.where(sameReview(review))
 		.run();
+	if (review.triggerId === null) return;
 	db.update(triggerDeliveries)
 		.set({ status: "skipped", error: reason })
 		.where(
@@ -310,7 +375,7 @@ export function reviewRepository(
 		.from(repositories)
 		.where(eq(repositories.id, review.repositoryId))
 		.get();
-	if (!repository || repository.provider !== "github" || repository.removedAt !== null) {
+	if (repository?.provider !== "github" || repository.removedAt !== null) {
 		return { problem: `The workspace's GitHub App no longer reaches ${review.repository}` };
 	}
 	if (repository.installationId === null) {

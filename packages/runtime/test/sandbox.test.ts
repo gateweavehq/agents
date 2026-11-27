@@ -549,6 +549,14 @@ describe("a conversation with a sandbox", () => {
 		expect(requests).toHaveLength(4);
 		const [run] = await registry.listRuns();
 		expect(run).toMatchObject({ status: "succeeded", pullRequest: { number: 12 } });
+		// What the registry keeps, and the Runs page shows, of why it is a draft is made of the
+		// checks' status: nothing a command printed, and no command.
+		expect(run?.pullRequest).toMatchObject({
+			draft: true,
+			draftReason: "The repository's checks did not pass: check 2 of 2 exited with code 1.",
+		});
+		expect(JSON.stringify(run)).not.toContain(SECRET_TEXT);
+		expect(JSON.stringify(run)).not.toContain("pnpm test");
 		// The first two rounds reached GitHub with nothing; the third pushed the third commit.
 		const pulls = github.filter(({ route }) => route.includes("/repos/acme/site/pulls"));
 		expect(pulls.map(({ route }) => route)).toEqual([

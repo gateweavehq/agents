@@ -16,6 +16,7 @@ import {
 	type ReviewOutcome,
 	RUN_PART,
 	type RunSpan,
+	reviewSummary,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
@@ -121,7 +122,13 @@ import {
 } from "./pull-requests";
 import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
 import { type ReviewPort, reviewTools } from "./review";
-import { gitHubReviewSource, prepareReview, type ReviewSource, reviewNote } from "./review-turn";
+import {
+	gitHubReviewSource,
+	prepareReview,
+	type ReviewSource,
+	reviewCountsOf,
+	reviewNote,
+} from "./review-turn";
 import { SANDBOX_ROOT, sandboxTools } from "./sandbox-tools";
 import { type ParentTargets, startTargetRule } from "./target-rule";
 import { createOutbox, queueExport, sendDue } from "./telemetry-export";
@@ -733,7 +740,19 @@ ${runPageNote(runs, turn.runId)}`
 		}
 		const turn = await registry.beginReviewTurn(conversationId, prepared.message, attemptId);
 		if ("status" in turn) return { runId: null, error: turn.message };
-		this.#begun = turn;
+		// The registry named the pull request and the head; GitHub says what it is based on and
+		// whether it is a draft, which the review reads and checks its findings against.
+		this.#begun = {
+			...turn,
+			review: {
+				number: delivery.number,
+				head: delivery.head,
+				...turn.review,
+				base: prepared.base,
+				draft: prepared.draft,
+				draftReason: delivery.draftReason,
+			},
+		};
 		const message: UIMessage = {
 			id: crypto.randomUUID(),
 			role: "user",
@@ -927,7 +946,7 @@ ${runPageNote(runs, turn.runId)}`
 					if (review && sandbox && repository) {
 						progress("Checking out the pull request");
 						const result = await sandbox
-							.checkout(repository, branch, review)
+							.checkout(repository, branch, { number: review.number, head: review.head })
 							.catch((error: unknown): { error: string; gone?: true } => {
 								console.error("A review's checkout failed", failureForLogs(error));
 								return { error: "The pull request's head could not be checked out." };
@@ -1004,10 +1023,17 @@ ${runPageNote(runs, turn.runId)}`
 						...(review && sandbox && repository
 							? reviewTools({
 									sandbox,
-									base: `origin/${repository.defaultBranch}`,
+									// The branch the pull request is based on, as the diff the model reads is.
+									base: `origin/${review.base ?? repository.defaultBranch}`,
 									head: review.head,
 									run,
 									record: (outcome) => this.#recordReview(registry, runId, outcome),
+									summarize: (outcome) =>
+										reviewSummary({
+											...reviewCountsOf(outcome),
+											draft: review.draft === true,
+											draftReason: review.draftReason ?? null,
+										}),
 								})
 							: {}),
 						// The registry reads who asks, and what started the run, from the run itself.
@@ -1517,19 +1543,14 @@ ${runPageNote(runs, turn.runId)}`
 		runId: string,
 		{ findings }: ReviewOutcome,
 	): Promise<void> {
-		await registry.recordReviewCounts(runId, {
-			found: findings.length,
-			// Those a comment can sit on: a finding outside the diff is kept and not shown inline.
-			shown: findings.filter((finding) => !finding.offDiff).length,
-			proven: findings.filter((finding) => finding.proof.proven).length,
-		});
+		await registry.recordReviewCounts(runId, reviewCountsOf({ findings }));
 	}
 
 	/** Puts the pull request on the run. A failure is logged: the pull request is made anyway. */
 	async #recordPullRequest(
 		registry: DurableObjectStub<RegistryDO>,
 		runId: string,
-		{ repository, number, url, head, state, draft, note }: PullRequestOutcome,
+		{ repository, number, url, head, state, draft, draftReason }: PullRequestOutcome,
 	): Promise<void> {
 		try {
 			await registry.recordRunPullRequest(runId, {
@@ -1540,7 +1561,8 @@ ${runPageNote(runs, turn.runId)}`
 				head,
 				...(state === undefined ? {} : { state }),
 				...(draft === undefined ? {} : { draft }),
-				...(draft && note ? { draftReason: note.slice(0, 2000) } : {}),
+				// Made by the tool of the checks' status and the changed files: never a command's output.
+				...(draft && draftReason ? { draftReason } : {}),
 			});
 		} catch (error) {
 			console.error("A run's pull request was not recorded", { runId, ...failureForLogs(error) });

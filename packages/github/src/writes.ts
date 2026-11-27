@@ -93,6 +93,8 @@ export interface PullRequest {
 	head: string;
 	/** The branch it is from, which a card names. */
 	headRef: string;
+	/** The branch it is to be merged into, when the answer says (the list endpoint does too). */
+	baseRef?: string;
 	/** Whether it is a draft. Left out when the answer does not say. */
 	draft?: boolean;
 	/** Its description, as GitHub has it (empty when there is none). Left out by the list endpoint. */
@@ -121,6 +123,7 @@ const pullSchema = z.object({
 	merged: z.boolean().optional(),
 	merged_at: z.string().nullable().optional(),
 	head: z.object({ sha: objectId, ref: z.string() }),
+	base: z.object({ ref: z.string() }).optional(),
 	draft: z.boolean().optional(),
 	body: z.string().nullable().optional(),
 	node_id: z.string().optional(),
@@ -160,6 +163,7 @@ function toPullRequest(found: z.infer<typeof pullSchema>): PullRequest {
 		state: found.state === "open" ? "open" : merged ? "merged" : "closed",
 		head: found.head.sha,
 		headRef: found.head.ref,
+		...(found.base === undefined ? {} : { baseRef: found.base.ref }),
 		...(found.draft === undefined ? {} : { draft: found.draft }),
 		...(found.body === undefined ? {} : { body: found.body ?? "" }),
 		...(found.node_id === undefined ? {} : { nodeId: found.node_id }),

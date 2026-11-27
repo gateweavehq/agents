@@ -8,7 +8,7 @@ import {
 	type TriggerTarget,
 } from "@gateweave/agents-model";
 import { Link, useRouter } from "@tanstack/react-router";
-import { Clock, Copy, Ellipsis, Plus, Webhook } from "lucide-react";
+import { Clock, Copy, Ellipsis, GitPullRequest, Plus, Webhook } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "#/components/ui/button";
@@ -91,7 +91,8 @@ export function Triggers({
 				<p className="rounded-lg border p-6 text-sm text-muted-foreground">
 					No triggers: {targetName} answers only people in Chat. A trigger gives another service a
 					URL to post its webhooks to, and each event it signs starts a run of {targetName}. Or it
-					starts runs on a schedule, such as at 9:00 on weekdays.
+					starts runs on a schedule, such as at 9:00 on weekdays, or a review of each pull request
+					an agent of the workspace opens.
 				</p>
 			) : (
 				<ul className="divide-y rounded-lg border text-sm">
@@ -106,10 +107,14 @@ export function Triggers({
 			{creating && (
 				<TriggerDialog
 					targetName={targetName}
+					reviews={target.kind === "agent"}
 					onSave={async (input) => {
 						const made = await createTrigger({ data: { slug, trigger: { ...input, target } } });
-						// A schedule takes no webhooks, so its secret is of no use to anyone.
-						if (made.trigger.schedule) toast.success(`${made.trigger.name} is scheduled`);
+						// A review trigger has no URL and no secret to show. A schedule takes no webhooks, so
+						// its secret is of no use to anyone.
+						if (made.secret === null) {
+							toast.success(`${made.trigger.name} will review the pull requests agents open`);
+						} else if (made.trigger.schedule) toast.success(`${made.trigger.name} is scheduled`);
 						else setShown(made);
 						await router.invalidate();
 					}}
@@ -133,6 +138,9 @@ function TriggerRow({
 	const [open, setOpen] = useState<"edit" | "rotate" | "paste" | "delete" | null>(null);
 	const close = () => setOpen(null);
 	const { schedule } = trigger;
+	// A review trigger starts on the pull requests the workspace's agents open: it has no URL and
+	// no secret, as a schedule has none to post to.
+	const review = trigger.pullRequest;
 
 	async function setActive(active: boolean) {
 		try {
@@ -157,7 +165,9 @@ function TriggerRow({
 			<div className="flex items-start justify-between gap-3">
 				<div className="min-w-0 space-y-1">
 					<p className="flex flex-wrap items-center gap-2 font-medium">
-						{schedule ? (
+						{review ? (
+							<GitPullRequest aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+						) : schedule ? (
 							<Clock aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
 						) : (
 							<Webhook aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
@@ -171,7 +181,9 @@ function TriggerRow({
 					</p>
 					<p className="text-xs text-muted-foreground">
 						Up to {trigger.perDay} {trigger.perDay === 1 ? "run" : "runs"} a day ·{" "}
-						{schedule ? (
+						{review ? (
+							"reviews each pull request an agent of the workspace opens"
+						) : schedule ? (
 							<>
 								<code>{schedule.cron}</code> in {schedule.timeZone}
 							</>
@@ -219,7 +231,7 @@ function TriggerRow({
 							{trigger.active ? "Pause" : "Turn on"}
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
-						{!schedule && (
+						{!schedule && !review && (
 							<>
 								<DropdownMenuItem onSelect={() => setOpen("rotate")}>New secret</DropdownMenuItem>
 								<DropdownMenuItem onSelect={() => setOpen("paste")}>
@@ -237,7 +249,13 @@ function TriggerRow({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			{schedule ? (
+			{review ? (
+				<p className="text-xs text-muted-foreground">
+					{trigger.active
+						? "Starts when a run of the workspace's agents ends with a pull request open."
+						: "Paused: no pull request is reviewed while it is."}
+				</p>
+			) : schedule ? (
 				<p className="text-xs">
 					{trigger.nextRunAt === null ? (
 						<span className="text-muted-foreground">No run is coming while it is paused.</span>
@@ -261,7 +279,7 @@ function TriggerRow({
 						size="icon"
 						className="size-7"
 						aria-label="Copy the URL"
-						onClick={() => copy(trigger.url, "URL")}
+						onClick={() => trigger.url && copy(trigger.url, "URL")}
 					>
 						<Copy />
 					</Button>
@@ -272,7 +290,7 @@ function TriggerRow({
 				<TriggerDialog
 					trigger={trigger}
 					targetName={trigger.targetName ?? "it"}
-					onSave={async (input) => {
+					onSave={async ({ pullRequest: _, ...input }) => {
 						await updateTrigger({ data: { slug, triggerId: trigger.id, patch: input } });
 						await router.invalidate();
 					}}
@@ -321,8 +339,8 @@ function TriggerRow({
 					}}
 					onClose={close}
 				>
-					{schedule ? "It starts no more runs." : "Its URL stops starting runs."} The runs it
-					started stay.
+					{schedule || review ? "It starts no more runs." : "Its URL stops starting runs."} The runs
+					it started stay.
 				</ConfirmDialog>
 			)}
 		</li>
@@ -390,6 +408,8 @@ interface TriggerFields {
 	assignee: string | null;
 	perIssue: boolean;
 	schedule: TriggerSchedule | null;
+	/** A review of each pull request an agent opens: no events, schedule, label or assignee. */
+	pullRequest: boolean;
 }
 
 const FIRST_SCHEDULE = "0 9 * * 1-5";
@@ -422,16 +442,19 @@ function schedulePreview(schedule: TriggerSchedule): { problem: string } | { run
 function TriggerDialog({
 	trigger,
 	targetName,
+	reviews = false,
 	onSave,
 	onClose,
 }: {
 	trigger?: TriggerView;
 	targetName: string;
+	/** Whether a new trigger may be one that reviews pull requests: an agent's, not a team's. */
+	reviews?: boolean;
 	onSave: (input: TriggerFields) => Promise<void>;
 	onClose: () => void;
 }) {
-	const [kind, setKind] = useState<"webhook" | "schedule">(
-		trigger?.schedule ? "schedule" : "webhook",
+	const [kind, setKind] = useState<"webhook" | "schedule" | "pullRequest">(
+		trigger?.pullRequest ? "pullRequest" : trigger?.schedule ? "schedule" : "webhook",
 	);
 	const [name, setName] = useState(trigger?.name ?? "");
 	const [prompt, setPrompt] = useState(trigger?.prompt ?? "");
@@ -447,6 +470,7 @@ function TriggerDialog({
 	const [pending, setPending] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const scheduled = kind === "schedule";
+	const reviewing = kind === "pullRequest";
 	const schedule = { cron: cron.trim(), timeZone: timeZone.trim() };
 	const preview =
 		scheduled && schedule.cron && schedule.timeZone ? schedulePreview(schedule) : null;
@@ -461,11 +485,12 @@ function TriggerDialog({
 				name: name.trim(),
 				prompt: prompt.trim(),
 				perDay: Number(perDay),
-				events: !scheduled && types.length > 0 ? types : null,
-				label: !scheduled && label.trim() ? label.trim() : null,
-				assignee: !scheduled && assignee.trim() ? assignee.trim() : null,
-				perIssue: !scheduled && perIssue,
+				events: !scheduled && !reviewing && types.length > 0 ? types : null,
+				label: !scheduled && !reviewing && label.trim() ? label.trim() : null,
+				assignee: !scheduled && !reviewing && assignee.trim() ? assignee.trim() : null,
+				perIssue: !scheduled && !reviewing && perIssue,
 				schedule: scheduled ? schedule : null,
+				pullRequest: reviewing,
 			});
 			onClose();
 		} catch (failure) {
@@ -482,9 +507,11 @@ function TriggerDialog({
 					<DialogHeader>
 						<DialogTitle>{trigger ? `Edit ${trigger.name}` : "New trigger"}</DialogTitle>
 						<DialogDescription>
-							{scheduled
-								? `Each time the schedule comes round, a run of ${targetName} starts with this prompt.`
-								: `Each event the sender signs starts a run of ${targetName}, with this prompt and the event after it.`}{" "}
+							{reviewing
+								? `Each pull request a run of the workspace's agents opens starts a review by ${targetName}, once for each head, with this prompt.`
+								: scheduled
+									? `Each time the schedule comes round, a run of ${targetName} starts with this prompt.`
+									: `Each event the sender signs starts a run of ${targetName}, with this prompt and the event after it.`}{" "}
 							Runs spend the workspace's model keys.
 						</DialogDescription>
 					</DialogHeader>
@@ -495,7 +522,7 @@ function TriggerDialog({
 								<input
 									type="radio"
 									name="trigger-kind"
-									checked={!scheduled}
+									checked={kind === "webhook"}
 									onChange={() => setKind("webhook")}
 								/>
 								Webhook events
@@ -509,6 +536,17 @@ function TriggerDialog({
 								/>
 								A schedule
 							</Label>
+							{reviews && (
+								<Label className="flex items-center gap-2 font-normal">
+									<input
+										type="radio"
+										name="trigger-kind"
+										checked={reviewing}
+										onChange={() => setKind("pullRequest")}
+									/>
+									Pull requests
+								</Label>
+							)}
 						</fieldset>
 					)}
 					<div className="space-y-2">
@@ -518,7 +556,9 @@ function TriggerDialog({
 							value={name}
 							onChange={(event) => setName(event.target.value)}
 							maxLength={80}
-							placeholder={scheduled ? "Standup" : "New issues"}
+							placeholder={
+								reviewing ? "Review pull requests" : scheduled ? "Standup" : "New issues"
+							}
 							autoFocus
 							required
 						/>
@@ -532,14 +572,18 @@ function TriggerDialog({
 							rows={6}
 							maxLength={10_000}
 							placeholder={
-								scheduled
-									? "Sum up what changed in the repository since yesterday"
-									: "Triage this issue: {{data.title}}"
+								reviewing
+									? "Review this pull request for defects"
+									: scheduled
+										? "Sum up what changed in the repository since yesterday"
+										: "Triage this issue: {{data.title}}"
 							}
 							required
 						/>
 						<p className="text-xs text-muted-foreground">
-							{scheduled ? (
+							{reviewing ? (
+								<>Write what the review should weigh; the pull request and its diff are added.</>
+							) : scheduled ? (
 								<>
 									Write <code>{"{{data.scheduledFor}}"}</code> to put in the time the run was due.
 								</>
@@ -603,7 +647,7 @@ function TriggerDialog({
 									</p>
 								))}
 						</div>
-					) : (
+					) : reviewing ? null : (
 						<div className="space-y-2">
 							<Label htmlFor="trigger-events">Events</Label>
 							<Input
@@ -622,7 +666,7 @@ function TriggerDialog({
 							</p>
 						</div>
 					)}
-					{!scheduled && (
+					{!scheduled && !reviewing && (
 						<div className="space-y-2">
 							<Label htmlFor="trigger-label">Label</Label>
 							<Input
@@ -641,7 +685,7 @@ function TriggerDialog({
 							</p>
 						</div>
 					)}
-					{!scheduled && (
+					{!scheduled && !reviewing && (
 						<div className="space-y-2">
 							<Label htmlFor="trigger-assignee">Assignee</Label>
 							<Input
@@ -667,7 +711,7 @@ function TriggerDialog({
 							)}
 						</div>
 					)}
-					{!scheduled && (
+					{!scheduled && !reviewing && (
 						<Label className="flex cursor-pointer items-start gap-3 font-normal">
 							<Checkbox
 								className="mt-0.5"
@@ -697,9 +741,11 @@ function TriggerDialog({
 							required
 						/>
 						<p className="text-xs text-muted-foreground">
-							{scheduled
-								? "Times past this are skipped until the next day."
-								: `Events past this, or past ${TRIGGER_LIMITS.perMinute} a minute, are turned away for the sender to retry later.`}
+							{reviewing
+								? "Reviews past this wait, and are tried again later, until the next day."
+								: scheduled
+									? "Times past this are skipped until the next day."
+									: `Events past this, or past ${TRIGGER_LIMITS.perMinute} a minute, are turned away for the sender to retry later.`}
 						</p>
 					</div>
 					{error && (

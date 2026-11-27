@@ -67,3 +67,19 @@ describe("a pull request's description", () => {
 		expect(await pullRequest("ghs_x", repository, 12)).not.toHaveProperty("body");
 	});
 });
+
+describe("a pull request's base", () => {
+	it("is the branch it is to be merged into, and left out when the answer does not name it", async () => {
+		const pull = {
+			number: 12,
+			html_url: "https://github.com/acme/site/pull/12",
+			title: "Fix",
+			state: "open",
+			head: { sha: "a".repeat(40), ref: "b" },
+		};
+		github(() => Response.json({ ...pull, base: { ref: "release/1.x" } }));
+		expect((await pullRequest("ghs_x", repository, 12))?.baseRef).toBe("release/1.x");
+		github(() => Response.json(pull));
+		expect(await pullRequest("ghs_x", repository, 12)).not.toHaveProperty("baseRef");
+	});
+});

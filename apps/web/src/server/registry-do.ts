@@ -126,6 +126,10 @@ export class RegistryDO extends Registry {
 		return demoEnabled() ? offInDemo() : super.createTrigger(...args);
 	}
 
+	override async createReviewTrigger(...args: Parameters<Registry["createReviewTrigger"]>) {
+		return demoEnabled() ? offInDemo() : super.createReviewTrigger(...args);
+	}
+
 	override async setUpTrackTriage(...args: Parameters<Registry["setUpTrackTriage"]>) {
 		return demoEnabled() ? offInDemo() : super.setUpTrackTriage(...args);
 	}

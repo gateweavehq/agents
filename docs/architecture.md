@@ -2006,26 +2006,42 @@ many runs it may start a day.
 ### Pull request reviews
 
 A review agent has a trigger of the kind `pull_request` (`triggers.pull_request`). Like a scheduled
-trigger it has no URL, so a webhook posted to it answers `404`, and no secret is shown. Its
-deliveries are made by the registry (`packages/registry/src/pull-request-reviews.ts`), and nothing
+trigger it has no URL, so a webhook posted to it answers `404`, and it has no secret at all: it is
+made with `createReviewTrigger`, which seals and returns nothing (`createTrigger` refuses the
+kind, and `replaceTriggerSecret` has nothing to replace). The trigger list gives it no URL and the
+trigger page no webhook or secret controls. Its deliveries are made by the registry (`packages/registry/src/pull-request-reviews.ts`), and nothing
 is started from GitHub's webhook: in v1 only pull requests the workspace's own agents opened are
 reviewed.
 
 - **One source of deliveries.** When `finishRun` closes a run that recorded a pull request, the
-  registry makes one delivery for each `pull_request` trigger, for the head the run left
-  (`runPullRequest` carries `head`, the pull request's `state`, and whether it is a `draft` and
-  why). Only a run that ended `succeeded` or `step-limit` does; a run that ended `failed`,
+  registry makes one review for the head the run left (`runPullRequest` carries `head`, the pull
+  request's `state`, and whether it is a `draft` and why). There is one for each repository, pull
+  request and head in the whole workspace, whatever the number of its `pull_request` triggers: the
+  id is the row's key, and the trigger that reviews it is chosen once, the oldest that is on (the
+  lowest id breaks a tie; a paused one only when none is on). Deleting that trigger moves a queued
+  review to the one that remains, or drops it with the last, and leaves a review that began or
+  ended in place with no trigger, so a trigger that replaces it does not review the head again.
+  `open_pull_request` records the head each push leaves on a pull request the run recorded, even
+  when the update of the pull request's words fails after the push. Only a run that ended `succeeded` or `step-limit` does; a run that ended `failed`,
   `stopped` or `interrupted` makes none. Nor does a closed or merged pull request, or one in a
   repository the workspace's app no longer reaches. A head that already has a delivery makes no
   other, whatever came of that review, so a second run that ends at the same head makes none.
 - **A draft is reviewed.** An agent opens a draft when its checks failed or its branch edits its
-  own tests or checks; those are the pull requests most worth a second reader. The review keeps
-  `draft` and the run's own account of why, and its summary says that the pull request is a
-  draft and why when the run recorded why (`reviewSummary`).
-- **Admitted as a trigger's delivery.** The alarm admits each queued review with `admitDelivery`,
+  own tests or checks; those are the pull requests most worth a second reader. `draft` is
+  GitHub's word, read before the review is admitted and again by the turn. The run's account of why
+  is made by the tool of the checks' status (which check ended how) and of the changed files (their
+  paths and how they changed), never of a command or its output, since the Runs page shows it. The
+  completed review, the result of `submit_review`, opens with `summary` (`reviewSummary`): the
+  counts, and that the pull request is a draft and why, or that the run recorded none.
+- **Admitted as a trigger's delivery.** The alarm first reads each due pull request from GitHub,
+  outside the registry's synchronous write (`readReviewPull`), and ends as `skipped`, with no
+  delivery, conversation or run, one that was closed or merged since the builder's run, whose head
+  moved on or that GitHub no longer has. It then admits the rest with `admitDelivery`,
   under the id `review:<repository id>:<number>:<head>`, so the trigger's limits per minute and
   per day, its pause, "What came lately" and the ownership of its runs apply as to a webhook's.
-  At most three are admitted by one alarm.
+  At most three are admitted by one alarm. A review whose run never reports is failed after the
+  run's time limit and ten minutes, and the alarm is scheduled for that moment beside the queued
+  reviews' times, so it happens in a workspace with nothing else to do.
 - **No delivery is lost.** A review the trigger's limits, the workspace's sandboxes
   (`MAX_WORKSPACE_SANDBOXES`) or the day's or month's sandbox minutes cannot take yet stays
   `queued` and is tried again by the alarm after 5 minutes, then 15, 60, 180, 360 and 720: six
@@ -2036,7 +2052,11 @@ reviewed.
 - **The turn.** `ConversationAgent.reviewTurn` reads the pull request and its diff from GitHub
   with the workspace's app and makes the message, `reviewMessage(diff, criteria)`, from the diff
   and the pull request's title and description without Gateweave's checks section and AI
-  disclosure (`reviewCriteria`). It ends the review as `skipped`, with the reason and no run, when
+  disclosure (`reviewCriteria`), both whole. The message is held to one limit that the registry
+  shares (`REVIEW_MESSAGE_LIMIT`), the longest message a diff within `REVIEW_LIMITS.diffBytes`, its
+  fences, and the longest title and description GitHub allows can make. The turn also reads the
+  branch the pull request is based on, and the findings are checked against that base and the
+  reviewed head, the same diff the model reads. It ends the review as `skipped`, with the reason and no run, when
   the pull request is closed, when its head is no longer the one reviewed, or when the diff is
   over `REVIEW_LIMITS.diffBytes` ("The diff is too large to review"). Each review has a fresh
   conversation of its own; it holds no message of the builder's, no review thread and no memory.
@@ -2047,8 +2067,8 @@ reviewed.
   `refs/pull/<number>/head`, checks that the commit it finds is the head it was given, checks that
   commit out detached, and opens no push window, so nothing in it can be pushed. A head that is
   no longer on GitHub answers `gone`, which ends the review as `skipped`.
-- **Storage.** `pull_request_reviews` (migration `0050`) holds one row for each delivery: the
-  repository, number, head, the builder's run and the review's own, the status (`queued`,
+- **Storage.** `pull_request_reviews` (migration `0050`) holds one row for each head, keyed by the
+  delivery's id: the trigger (null once deleted), the repository, number, head, the builder's run and the review's own, the status (`queued`,
   `running`, `posted`, `failed` or `skipped`) and why, the counts (found, shown, proven) and the
   retries. The findings' text stays in the review conversation, as the result of `submit_review`,
   and not in the registry, which follows the rule of "Runs" that a trace holds no message text.

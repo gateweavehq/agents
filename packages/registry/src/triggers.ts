@@ -35,13 +35,13 @@ import {
 	agentDefinitions,
 	agents,
 	conversations,
-	pullRequestReviews,
 	runs,
 	type TriggerDeliveryRow,
 	teams,
 	triggerDeliveries,
 	triggers,
 } from "./db/schema";
+import { releaseReviews } from "./review-triggers";
 import { RUN_TIMEOUT } from "./runs";
 import type { Db } from "./state";
 import { teamLead } from "./teams";
@@ -319,7 +319,7 @@ export function replaceSecret(
  * do when a team they talked to is deleted.
  */
 export function deleteTrigger(db: Db, id: string): boolean {
-	db.delete(pullRequestReviews).where(eq(pullRequestReviews.triggerId, id)).run();
+	releaseReviews(db, [id]);
 	db.delete(triggerDeliveries).where(eq(triggerDeliveries.triggerId, id)).run();
 	const deleted = db
 		.delete(triggers)
@@ -338,7 +338,7 @@ export function deleteTeamTriggers(db: Db, teamId: string): void {
 		.all()
 		.map((row) => row.id);
 	if (ids.length === 0) return;
-	db.delete(pullRequestReviews).where(inArray(pullRequestReviews.triggerId, ids)).run();
+	releaseReviews(db, ids);
 	db.delete(triggerDeliveries).where(inArray(triggerDeliveries.triggerId, ids)).run();
 	db.delete(triggers).where(inArray(triggers.id, ids)).run();
 }

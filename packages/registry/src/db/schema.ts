@@ -692,18 +692,22 @@ export const triggerDeliveries = sqliteTable(
 );
 
 /**
- * The review of one head of a pull request an agent opened, one row for each delivery of a
- * `pull_request` trigger (`../pull-request-reviews.ts`). The findings' text stays in the review
- * conversation, as the result of `submit_review`: a row holds counts only.
+ * The review of one head of a pull request an agent opened, one row for each repository, pull
+ * request and head in the workspace, made for one of its `pull_request` triggers
+ * (`../pull-request-reviews.ts`). The findings' text stays in the review conversation, as the
+ * result of `submit_review`: a row holds counts only.
  */
 export const pullRequestReviews = sqliteTable(
 	"pull_request_reviews",
 	{
-		triggerId: text("trigger_id")
-			.notNull()
-			.references(() => triggers.id),
-		/** The delivery's id: `review:<repository id>:<number>:<head>`. */
-		id: text("id").notNull(),
+		/**
+		 * The trigger the review was made for, chosen when the head was first seen. Null once that
+		 * trigger was deleted while the review was running or over: the row stays, so the head is not
+		 * reviewed again by the trigger that replaced it. A queued review moves to another trigger.
+		 */
+		triggerId: text("trigger_id"),
+		/** The delivery's id: `review:<repository id>:<number>:<head>`, unique in the workspace. */
+		id: text("id").primaryKey(),
 		repositoryId: text("repository_id").notNull(),
 		/** `owner/name`, as the run recorded it. */
 		repository: text("repository").notNull(),
@@ -729,7 +733,7 @@ export const pullRequestReviews = sqliteTable(
 		updatedAt: integer("updated_at").notNull(),
 	},
 	(table) => [
-		primaryKey({ columns: [table.triggerId, table.id] }),
+		index("pull_request_reviews_trigger_idx").on(table.triggerId),
 		index("pull_request_reviews_due_idx").on(table.status, table.nextAttemptAt),
 		index("pull_request_reviews_run_idx").on(table.runId),
 		index("pull_request_reviews_conversation_idx").on(table.conversationId),

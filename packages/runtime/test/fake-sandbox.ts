@@ -630,6 +630,11 @@ export class FakeSandbox
 		forgetKept(new KeptMap(this.#kept));
 	}
 
+	/** The arguments of each `git` the sandbox ran for a tool, in order. */
+	gitCalls(): string[][] {
+		return this.#memory.gitCalls;
+	}
+
 	/**
 	 * What the tests check: files, commands, checkouts, pushes, local MCP servers, and whether
 	 * the conversation destroyed it.

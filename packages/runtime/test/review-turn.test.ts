@@ -9,6 +9,7 @@ import {
 	CHECKS_HEADING,
 	REVIEW_INSTRUCTIONS,
 	REVIEW_LIMITS,
+	REVIEW_MESSAGE_LIMIT,
 	REVIEW_SKIPPED,
 	reviewMessage,
 } from "@gateweave/agents-model";
@@ -43,11 +44,16 @@ function github({
 	head = HEAD,
 	diff = REVIEW_DIFF,
 	body = BODY,
+	base = "main",
+	draft = false,
 }: {
 	state?: string;
 	head?: string;
 	diff?: string;
 	body?: string;
+	/** The branch the pull request is to be merged into. */
+	base?: string;
+	draft?: boolean;
 } = {}) {
 	const asked: string[] = [];
 	const handler = async (request: Request) => {
@@ -69,8 +75,9 @@ function github({
 				body,
 				state,
 				merged_at: null,
-				draft: false,
+				draft,
 				head: { sha: head, ref: "gateweave/builder" },
+				base: { ref: base },
 			});
 		}
 		return Response.json({ message: "Not Found" }, { status: 404 });
@@ -79,7 +86,7 @@ function github({
 }
 
 /** A workspace whose builder left a pull request at `HEAD`, and a review agent to read it. */
-async function reviewing() {
+async function reviewing(recorded: { draft?: boolean; draftReason?: string } = {}) {
 	const workspaceId = crypto.randomUUID();
 	const registry = env.REGISTRY.getByName(workspaceId);
 	await registry.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
@@ -98,12 +105,11 @@ async function reviewing() {
 		});
 	const builder = await agent("Builder", false);
 	const reviewer = await agent("Reviewer", true, true);
-	const made = await registry.createTrigger(
+	const made = await registry.createReviewTrigger(
 		{
 			name: "Review",
 			prompt: "Review it",
 			target: { kind: "agent", agentId: reviewer.id },
-			pullRequest: true,
 		},
 		"user-ada",
 	);
@@ -118,6 +124,7 @@ async function reviewing() {
 		url: "https://github.com/acme/site/pull/12",
 		head: HEAD,
 		state: "open",
+		...recorded,
 	});
 	await registry.finishRun(begun.runId, {
 		status: "succeeded",
@@ -281,15 +288,174 @@ describe("a review turn", () => {
 		expect((await registry.listRuns()).filter((run) => run.triggerId !== null)).toEqual([]);
 	});
 
-	it("ends as skipped when the pull request was closed since the run", async () => {
+	it("makes no delivery when the pull request was closed after the builder recorded it open", async () => {
 		const { registry } = await reviewing();
-		fakeModel(() => anthropicStream("Never asked."), {
+		const requests = fakeModel(() => anthropicStream("Never asked."), {
 			"api.github.com": github({ state: "closed" }).handler,
 		});
 		expect(await admitted(registry)).toMatchObject({
 			status: "skipped",
 			reason: REVIEW_SKIPPED.closed,
+			runId: null,
 		});
+		// The live state was read before the delivery was made: none exists, and no run began.
+		const [entry] = await registry.listTriggers();
+		expect(entry?.deliveries).toEqual([]);
+		expect((await registry.listRuns()).filter((run) => run.triggerId !== null)).toEqual([]);
+		expect(requests).toHaveLength(0);
+	});
+
+	it("makes no delivery for a head whose pull request moved on", async () => {
+		const { registry } = await reviewing();
+		fakeModel(() => anthropicStream("Never asked."), {
+			"api.github.com": github({ head: MOVED }).handler,
+		});
+		expect(await admitted(registry)).toMatchObject({
+			status: "skipped",
+			reason: REVIEW_SKIPPED.headGone,
+		});
+		expect((await registry.listTriggers())[0]?.deliveries).toEqual([]);
+	});
+
+	it("reviews a draft, and the completed review says it is one and why the run recorded", async () => {
+		const reason = "The repository's checks did not pass: check 1 of 1 exited with code 1.";
+		const { registry } = await reviewing({ draft: true, draftReason: reason });
+		const requests = fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("submit_review", { findings: [] })
+					: anthropicStream("Nothing to report."),
+			{ "api.github.com": github({ draft: true }).handler },
+		);
+		await admitted(registry);
+		await vi.waitFor(async () =>
+			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
+		);
+		expect((await registry.listPullRequestReviews())[0]).toMatchObject({
+			draft: true,
+			draftReason: reason,
+		});
+		// The summary is part of the review's result, the one the model and the conversation hold.
+		const result = JSON.stringify(requests[1]?.body.messages);
+		expect(result).toContain(`This pull request is a draft. Why: ${reason}`);
+		expect(result).toContain("0 findings, 0 shown, 0 proven.");
+	});
+
+	it("says a draft did not record why, when GitHub says it is a draft and the run recorded none", async () => {
+		// The builder meant the pull request to be ready; GitHub has it as a draft.
+		const { registry } = await reviewing({ draft: false });
+		const requests = fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("submit_review", { findings: [] })
+					: anthropicStream("Nothing to report."),
+			{ "api.github.com": github({ draft: true }).handler },
+		);
+		await admitted(registry);
+		await vi.waitFor(async () =>
+			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
+		);
+		expect((await registry.listPullRequestReviews())[0]).toMatchObject({
+			draft: true,
+			draftReason: null,
+		});
+		expect(JSON.stringify(requests[1]?.body.messages)).toContain(
+			"This pull request is a draft, and the run that opened it did not record why.",
+		);
+	});
+
+	it("does not call a pull request a draft that GitHub has ready, whatever the run recorded", async () => {
+		const { registry } = await reviewing({ draft: true, draftReason: "Its checks failed." });
+		const requests = fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("submit_review", { findings: [] })
+					: anthropicStream("Nothing to report."),
+			{ "api.github.com": github({ draft: false }).handler },
+		);
+		await admitted(registry);
+		await vi.waitFor(async () =>
+			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
+		);
+		expect((await registry.listPullRequestReviews())[0]).toMatchObject({
+			draft: false,
+			draftReason: null,
+		});
+		const result = JSON.stringify(requests[1]?.body.messages);
+		expect(result).not.toContain("is a draft");
+		expect(result).toContain("0 findings, 0 shown, 0 proven.");
+	});
+
+	it("keeps the whole description: a criterion past 20,000 characters is in the message", async () => {
+		const { registry } = await reviewing();
+		const body = `${"Context. ".repeat(2_504)}\n\nFinal requirement: a quantity of zero is refused.`;
+		expect(body.length).toBeGreaterThan(20_035);
+		const requests = fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("submit_review", { findings: [] })
+					: anthropicStream("Nothing to report."),
+			{ "api.github.com": github({ body }).handler },
+		);
+		await admitted(registry);
+		await vi.waitFor(async () =>
+			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
+		);
+		const messages = requests[0]?.body.messages as { content: { text?: string }[] }[];
+		const text = messages[0]?.content[0]?.text ?? "";
+		expect(text).toBe(reviewMessage(REVIEW_DIFF, [TITLE, body.trim()]));
+		expect(text).toContain("Final requirement: a quantity of zero is refused.");
+	});
+
+	it("begins a review of a valid diff at the published limit, with the longest description", async () => {
+		const { registry } = await reviewing();
+		const first = "diff --git a/big b/big\n--- a/big\n+++ b/big\n@@ -0,0 +1,60000 @@\n";
+		const diff = `${first}${"+é\n".repeat(Math.floor((REVIEW_LIMITS.diffBytes - first.length) / 4))}`;
+		const bytes = new TextEncoder().encode(diff).length;
+		expect(bytes).toBeGreaterThan(REVIEW_LIMITS.diffBytes - 8);
+		expect(bytes).toBeLessThanOrEqual(REVIEW_LIMITS.diffBytes);
+		const body = "x".repeat(60_000);
+		const requests = fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("submit_review", { findings: [] })
+					: anthropicStream("Nothing to report."),
+			{ "api.github.com": github({ diff, body }).handler },
+		);
+		await admitted(registry);
+		await vi.waitFor(async () =>
+			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
+		);
+		const messages = requests[0]?.body.messages as { content: { text?: string }[] }[];
+		const text = messages[0]?.content[0]?.text ?? "";
+		// Longer than the 100,000 characters the registry once refused, and within the shared limit.
+		expect(text.length).toBeGreaterThan(100_000);
+		expect(text.length).toBeLessThanOrEqual(REVIEW_MESSAGE_LIMIT);
+		expect(text).toBe(reviewMessage(diff, [TITLE, body]));
+	});
+
+	it("checks the findings against the pull request's own base, not the default branch", async () => {
+		const { registry, workspaceId } = await reviewing();
+		fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("submit_review", { findings: [] })
+					: anthropicStream("Nothing to report."),
+			{ "api.github.com": github({ base: "release/1.x" }).handler },
+		);
+		await admitted(registry);
+		await vi.waitFor(async () =>
+			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
+		);
+		const [review] = await registry.listPullRequestReviews();
+		const run = await registry.getRun(review?.runId ?? "");
+		const machine = (env.SANDBOX as unknown as DurableObjectNamespace<FakeSandbox>).getByName(
+			conversationName(workspaceId, run?.conversationId ?? ""),
+		);
+		const git = await machine.gitCalls();
+		// The common base is found against the base GitHub's diff was made against, at the same head.
+		expect(git).toContainEqual(["merge-base", "origin/release/1.x", HEAD]);
+		expect(git.some((args) => args.includes("origin/main"))).toBe(false);
 	});
 });
 
@@ -300,5 +466,8 @@ describe("a review's criteria", () => {
 		expect(written).toContain("AI-Disclosure");
 		expect(reviewCriteria(TITLE, written)).toEqual([TITLE, BODY]);
 		expect(reviewCriteria(TITLE, "")).toEqual([TITLE]);
+		// Nothing is cut: a description of any length GitHub allows is a criterion whole.
+		const long = `${"a".repeat(65_000)} last`;
+		expect(reviewCriteria(TITLE, long)).toEqual([TITLE, long]);
 	});
 });

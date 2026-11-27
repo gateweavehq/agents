@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "7b328e24-11b8-40a3-b1c7-5c25bdca18fb",
+  "id": "670a6491-8fea-43fb-8ca2-262a96800858",
   "prevId": "fffa970b-3c8d-4e1e-9b88-aef7ab49dd3d",
   "tables": {
     "agent_assets": {
@@ -1759,13 +1759,13 @@
           "name": "trigger_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
@@ -1899,6 +1899,13 @@
         }
       },
       "indexes": {
+        "pull_request_reviews_trigger_idx": {
+          "name": "pull_request_reviews_trigger_idx",
+          "columns": [
+            "trigger_id"
+          ],
+          "isUnique": false
+        },
         "pull_request_reviews_due_idx": {
           "name": "pull_request_reviews_due_idx",
           "columns": [
@@ -1922,30 +1929,8 @@
           "isUnique": false
         }
       },
-      "foreignKeys": {
-        "pull_request_reviews_trigger_id_triggers_id_fk": {
-          "name": "pull_request_reviews_trigger_id_triggers_id_fk",
-          "tableFrom": "pull_request_reviews",
-          "tableTo": "triggers",
-          "columnsFrom": [
-            "trigger_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "pull_request_reviews_trigger_id_id_pk": {
-          "columns": [
-            "trigger_id",
-            "id"
-          ],
-          "name": "pull_request_reviews_trigger_id_id_pk"
-        }
-      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

@@ -80,6 +80,7 @@ import {
 	providerKeyInput,
 	providerMissing,
 	REPOSITORY_PROVIDERS,
+	REVIEW_MESSAGE_LIMIT,
 	type RecallInput,
 	type RecallOutcome,
 	type RememberInput,
@@ -90,6 +91,7 @@ import {
 	type RepositoryInput,
 	type ReviewCounts,
 	type ReviewDelivery,
+	type ReviewPullState,
 	type Run,
 	type RunCursor,
 	type RunFinish,
@@ -355,10 +357,12 @@ import {
 } from "./providers";
 import {
 	admitReview,
+	dueReview,
 	dueReviews,
 	expireReviews,
 	failReview,
 	finishReviewRun,
+	holdToPull,
 	listReviews,
 	nextReviewAt,
 	queueReviews,
@@ -437,7 +441,14 @@ import {
 	secretsProblem,
 } from "./secrets";
 import { createSetup, deleteSetup, importSetup, setSetupAssets, updateSetup } from "./setups";
-import { GITHUB_NOT_SET_UP, githubSetUp, type SourceEnv, sourceFor, writerFor } from "./sources";
+import {
+	GITHUB_NOT_SET_UP,
+	githubSetUp,
+	readPullState,
+	type SourceEnv,
+	sourceFor,
+	writerFor,
+} from "./sources";
 import { type Db, toApplication } from "./state";
 import { nestedTurnPlan, teamTurnPlan } from "./team-turns";
 import {
@@ -1616,7 +1627,7 @@ export class RegistryDO extends DurableObject {
 		via?: TurnVia,
 	): Promise<ConversationTurn | ProviderRefusal> {
 		const conversation = id.parse(conversationId);
-		const message = z.string().max(100_000).parse(text);
+		const message = z.string().max(REVIEW_MESSAGE_LIMIT).parse(text);
 		if (via !== undefined) return this.#beginNestedTurn(conversation, message, turnVia.parse(via));
 		const parties = conversationParties(this.#db, conversation);
 		if (!parties) return refused("This conversation was deleted");
@@ -1667,7 +1678,7 @@ export class RegistryDO extends DurableObject {
 		attemptId?: string,
 	): Promise<ConversationTurn | ProviderRefusal> {
 		const conversation = id.parse(conversationId);
-		const message = z.string().max(100_000).parse(text);
+		const message = z.string().max(REVIEW_MESSAGE_LIMIT).parse(text);
 		// A callback from before the upgrade may only start a row from before the upgrade.
 		const attempt = attemptId === undefined ? null : id.parse(attemptId);
 		const parties = conversationParties(this.#db, conversation);
@@ -1824,7 +1835,7 @@ export class RegistryDO extends DurableObject {
 		attemptId?: string,
 	): Promise<ConversationTurn | ProviderRefusal> {
 		const conversation = id.parse(conversationId);
-		const message = z.string().max(100_000).parse(text);
+		const message = z.string().max(REVIEW_MESSAGE_LIMIT).parse(text);
 		const attempt = attemptId === undefined ? null : id.parse(attemptId);
 		const parties = conversationParties(this.#db, conversation);
 		if (!parties || parties.triggerId === null) {
@@ -1870,7 +1881,7 @@ export class RegistryDO extends DurableObject {
 		if ("problem" in repository) return settle(refused(repository.problem, "needs-mapping"));
 		const prepared = await this.#prepareTurn(conversation, agent, null, true, repository);
 		if ("status" in prepared) return settle(prepared);
-		return this.#write((): ConversationTurn | ProviderRefusal => {
+		const turn = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry may have taken the review over while the key was opened.
 			if (!current()) return gone;
 			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
@@ -1899,6 +1910,9 @@ export class RegistryDO extends DurableObject {
 				review: { number: review.number, head: review.head },
 			};
 		});
+		// A review that is running is given up on if its run never reports: the alarm is set for it.
+		if (!("status" in turn)) await this.#scheduleAlarm();
+		return turn;
 	}
 
 	/**
@@ -1911,7 +1925,7 @@ export class RegistryDO extends DurableObject {
 		text: string,
 	): Promise<ConversationTurn | ProviderRefusal> {
 		const conversation = id.parse(conversationId);
-		const message = z.string().max(100_000).parse(text);
+		const message = z.string().max(REVIEW_MESSAGE_LIMIT).parse(text);
 		const parties = conversationParties(this.#db, conversation);
 		if (!parties || parties.triggerId !== null) {
 			return refused("This conversation was not opened by an outside task");
@@ -2529,6 +2543,9 @@ export class RegistryDO extends DurableObject {
 		createdBy: string,
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal> {
 		const data = triggerInput.parse(input);
+		if (data.pullRequest) {
+			return refused("A pull request trigger is made with createReviewTrigger: it has no secret");
+		}
 		const member = id.parse(createdBy);
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
@@ -2545,6 +2562,29 @@ export class RegistryDO extends DurableObject {
 		if ("refused" in made) return refused(made.refused);
 		await this.#scheduleAlarm();
 		return { trigger: made, secret };
+	}
+
+	/**
+	 * Adds a trigger that starts a review of each pull request the workspace's agents opened. It has
+	 * no URL and nothing to sign with, so it has no secret: none is made, sealed or handed back, and
+	 * the sealing key need not be set up. Its name, prompt, limits and target are as a webhook's.
+	 */
+	async createReviewTrigger(
+		input: Omit<TriggerInput, "pullRequest">,
+		createdBy: string,
+	): Promise<{ trigger: Trigger } | TriggerRefusal> {
+		const data = triggerInput.parse({ ...input, pullRequest: true });
+		const member = id.parse(createdBy);
+		const made = this.#write(() =>
+			insertTrigger(
+				this.#db,
+				{ id: crypto.randomUUID(), ...data, sealed: "", secretStart: "", createdBy: member },
+				Date.now(),
+			),
+		);
+		if ("refused" in made) return refused(made.refused);
+		await this.#scheduleAlarm();
+		return { trigger: made };
 	}
 
 	/**
@@ -2574,6 +2614,10 @@ export class RegistryDO extends DurableObject {
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal | null> {
 		const trigger = id.parse(triggerId);
 		const next = secret === undefined ? newTriggerSecret() : triggerSecret.parse(secret);
+		// A pull request trigger has no secret to give a new one to.
+		if (triggerRow(this.#db, trigger)?.pullRequest) {
+			return refused("A pull request trigger has no secret: it takes no webhooks");
+		}
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
 		const sealed = await sealer.seal(triggerPlace(trigger), next);
@@ -3722,19 +3766,56 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * Admits the reviews that are due, in one write, then begins their runs. A review the
-	 * workspace's sandboxes cannot take yet stays queued and is tried again, up to six times in a
-	 * day (`./pull-request-reviews.ts`).
+	 * Reads a pull request as GitHub has it now, for a review about to be admitted: its state, the
+	 * commit its branch is at and whether it is a draft; "gone" when GitHub has no such pull
+	 * request; null when it cannot be read here, which leaves it to the review turn. The registry
+	 * reads it outside its synchronous writes, and only then makes the review's delivery.
+	 */
+	protected async readReviewPull(
+		repository: SandboxRepository,
+		number: number,
+	): Promise<ReviewPullState | "gone" | null> {
+		return readPullState(this.env as SourceEnv, repository, number);
+	}
+
+	/**
+	 * Admits the reviews that are due, then begins their runs. Each is first held to the pull
+	 * request as GitHub has it now, read outside the registry's write: one that closed or moved on
+	 * since the builder's run ends as skipped and makes no delivery. The rest are admitted in one
+	 * write. A review the workspace's sandboxes cannot take yet stays queued and is tried again, up
+	 * to six times in a day (`./pull-request-reviews.ts`).
 	 */
 	async #runReviews(): Promise<void> {
 		const now = Date.now();
-		const starts = this.#write(() => {
+		const due = this.#write(() => {
 			expireReviews(this.#db, now);
-			return dueReviews(this.#db, now, REVIEWS_PER_ALARM).flatMap((review) => {
+			return dueReviews(this.#db, now, REVIEWS_PER_ALARM);
+		});
+		const live = await Promise.all(
+			due.map(async (review): Promise<ReviewPullState | "gone" | null> => {
+				const repository = reviewRepository(this.#db, review);
+				// A repository that cannot be reached fails the review when it is admitted.
+				if ("problem" in repository) return null;
+				try {
+					return await this.readReviewPull(repository, review.number);
+				} catch (error) {
+					console.error(
+						"registry: a pull request to review was not read",
+						error instanceof Error ? error.message : String(error),
+					);
+					return null;
+				}
+			}),
+		);
+		const starts = this.#write(() =>
+			due.flatMap((queued, at) => {
+				// As it is now: a write may have changed or settled it while GitHub was read.
+				const review = dueReview(this.#db, queued.id, now);
+				if (!review || !holdToPull(this.#db, review, live[at] ?? null, now)) return [];
 				const admitted = admitReview(this.#db, review, now);
 				return admitted.status === "start" ? [admitted] : [];
-			});
-		});
+			}),
+		);
 		for (const { conversationId, attemptId } of starts) {
 			let outcome: TriggerTurnOutcome;
 			try {
