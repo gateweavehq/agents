@@ -181,20 +181,135 @@ function commandsOf(text: string | null): string[] {
 /** The most `package.json` files at the base that are read; a base with more is not reviewed. */
 export const MANIFESTS_LIMIT = 40;
 
+/** A script word that can name a file, normalized as `wordsOf` reads it, or null. */
+function fileWord(found: string): string | null {
+	// A variable, a glob or a brace names no file, and nothing is guessed about what it stands for.
+	if (/[$*?{[]/.test(found)) return null;
+	// The place the script stands in is not looked at, so `./x.mjs` and `../x.mjs` are `x.mjs`.
+	let word = found;
+	while (word.startsWith("./") || word.startsWith("../")) word = word.slice(word.indexOf("/") + 1);
+	if (word === "" || word === "." || word === "..") return null;
+	return word;
+}
+
 /** The words of a script, as what is left of it after whitespace, quotes and shell operators. */
 function wordsOf(command: string): string[] {
 	const words: string[] = [];
 	for (const found of command.split(/[\s"'`;&|<>()=]+/)) {
-		// A variable, a glob or a brace names no file, and nothing is guessed about what it stands for.
-		if (/[$*?{[]/.test(found)) continue;
-		// The place the script stands in is not looked at, so `./x.mjs` and `../x.mjs` are `x.mjs`.
-		let word = found;
-		while (word.startsWith("./") || word.startsWith("../"))
-			word = word.slice(word.indexOf("/") + 1);
-		if (word === "" || word === "." || word === "..") continue;
-		words.push(word);
+		const word = fileWord(found);
+		if (word !== null) words.push(word);
 	}
 	return words;
+}
+
+/**
+ * The simple commands of a shell command, with words split enough to tell a runner's arguments
+ * from text in another command. Anything incomplete or substituted is no proof command.
+ */
+function shellSegments(command: string): string[][] {
+	if (command.includes("`") || command.includes("$(")) return [];
+	const segments: string[][] = [];
+	let words: string[] = [];
+	let word = "";
+	let started = false;
+	let quote: "'" | '"' | null = null;
+	let escaped = false;
+	const endWord = () => {
+		if (started) words.push(word);
+		word = "";
+		started = false;
+	};
+	const endSegment = () => {
+		endWord();
+		if (words.length > 0) segments.push(words);
+		words = [];
+	};
+	for (let at = 0; at < command.length; at++) {
+		const char = command.charAt(at);
+		if (escaped) {
+			word += char;
+			started = true;
+			escaped = false;
+			continue;
+		}
+		if (quote !== null) {
+			if (char === quote) quote = null;
+			else word += char;
+			started = true;
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			quote = char;
+			started = true;
+			continue;
+		}
+		if (char === "\\") {
+			escaped = true;
+			started = true;
+			continue;
+		}
+		if (/\s/.test(char)) {
+			endWord();
+			continue;
+		}
+		if (";&|<>()".includes(char)) {
+			endSegment();
+			continue;
+		}
+		word += char;
+		started = true;
+	}
+	if (quote !== null || escaped) return [];
+	endSegment();
+	return segments;
+}
+
+function withoutLeadingSetup(words: readonly string[]): readonly string[] {
+	let rest = words;
+	const assignment = () => /^[A-Za-z_][A-Za-z0-9_]*=/.test(rest[0] ?? "");
+	while (assignment()) rest = rest.slice(1);
+	if (rest[0] === "env") {
+		rest = rest.slice(1);
+		while (assignment()) rest = rest.slice(1);
+	}
+	if (rest[0] === "command") rest = rest.slice(1);
+	return rest;
+}
+
+/** The command after a package-runner word, when that word only starts the real command. */
+function withoutLauncher(words: readonly string[]): readonly string[] | null {
+	const [first, second] = words;
+	if ((first === "pnpm" || first === "yarn") && words.length > 1) {
+		const skip = second === "exec" ? 2 : 1;
+		return words.length > skip ? words.slice(skip) : null;
+	}
+	if ((first === "npx" || first === "bunx") && words.length > 1) return words.slice(1);
+	if (first === "npm" && second === "exec" && words.length > 2) return words.slice(2);
+	if (first === "bun" && second === "x" && words.length > 2) return words.slice(2);
+	return null;
+}
+
+/** The arguments after a recognized test runner's own words, or null for another command. */
+function directRunnerArguments(words: readonly string[]): readonly string[] | null {
+	const [runner, next] = words;
+	if (runner === "vitest" && next === "run") return words.slice(2);
+	if (runner === "node") {
+		const test = words.indexOf("--test");
+		if (test !== -1) return words.slice(test + 1);
+	}
+	if (runner === "jest" || runner === "mocha" || runner === "ava" || runner === "pytest") {
+		return words.slice(1);
+	}
+	if ((runner === "deno" || runner === "bun") && next === "test") return words.slice(2);
+	return null;
+}
+
+function runnerArguments(words: readonly string[]): readonly string[] | null {
+	const simple = withoutLeadingSetup(words);
+	const direct = directRunnerArguments(simple);
+	if (direct !== null) return direct;
+	const unwrapped = withoutLauncher(simple);
+	return unwrapped === null ? null : runnerArguments(unwrapped);
 }
 
 /** Whether a word of a script names the file: the path ends with the word at a path boundary. */
@@ -208,8 +323,16 @@ function isNamed(words: ReadonlySet<string>, path: string): boolean {
 	}
 }
 
+/** Whether the command passes the file to a recognized test runner in one of its simple commands. */
 export function namesFile(command: string, path: string): boolean {
-	return isNamed(new Set(wordsOf(command)), path);
+	const named = new Set<string>();
+	for (const segment of shellSegments(command)) {
+		for (const argument of runnerArguments(segment) ?? []) {
+			const word = fileWord(argument);
+			if (word !== null) named.add(word);
+		}
+	}
+	return isNamed(named, path);
 }
 
 /** Where the `package.json` files of the base are, and whether that is all of them. */
