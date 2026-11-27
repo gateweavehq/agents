@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
@@ -141,6 +141,15 @@ it("restores modified, deleted and untracked files to the reviewed head", async 
 	expect(await changedSince(git, head)).not.toBeNull();
 	expect(await restoreHead(git, head)).toBeNull();
 	expect(await changedSince(git, head)).toBeNull();
+});
+it("removes a written file git ignores, without globbing the scoped path", async () => {
+	writeFileSync(join(directory, ".git/info/exclude"), "ignored/\n");
+	mkdirSync(join(directory, "ignored"), { recursive: true });
+	write("ignored/*.test.ts", "proof");
+	write("ignored/keep", "keep");
+	expect(await restoreHead(git, head, ["ignored/*.test.ts"])).toBeNull();
+	expect(existsSync(join(directory, "ignored/*.test.ts"))).toBe(false);
+	expect(existsSync(join(directory, "ignored/keep"))).toBe(true);
 });
 it("reads the same diff whatever prefixes git is configured to show", async () => {
 	const configured: Git = (args, ...rest) =>

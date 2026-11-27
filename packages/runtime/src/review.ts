@@ -56,6 +56,11 @@ interface Attempt {
 	hung: boolean;
 }
 
+interface ProofAttempt extends Attempt {
+	/** The proof file was created and must be cleaned even when git ignores it. */
+	written: boolean;
+}
+
 function unproven(reason: string): ReviewProof {
 	return { proven: false, reason };
 }
@@ -64,8 +69,19 @@ const NOT_PUT_BACK = "the checkout could not be put back at the reviewed head";
 const HUNG = "a proof command did not return in time and may still be running in the checkout";
 
 /** Resets, cleans and checks that nothing differs: why the checkout is not the head, or null. */
-async function putBack(sandbox: ReviewPort, head: string): Promise<string | null> {
-	if (await restoreHead((...args) => sandbox.git(...args), head)) return NOT_PUT_BACK;
+async function putBack(
+	sandbox: ReviewPort,
+	head: string,
+	writtenFile?: string,
+): Promise<string | null> {
+	if (
+		await restoreHead(
+			(...args) => sandbox.git(...args),
+			head,
+			writtenFile === undefined ? [] : [writtenFile],
+		)
+	)
+		return NOT_PUT_BACK;
 	try {
 		if ((await sandbox.changedSince(head)) !== null) return NOT_PUT_BACK;
 	} catch {
@@ -194,7 +210,7 @@ export function reviewTools({
 			content: string,
 			command: string,
 			seconds: number,
-		): Promise<Attempt> {
+		): Promise<ProofAttempt> {
 			const created = await sandbox
 				.createFile(`${SANDBOX_REPOSITORY_PATH}/${relative}`, content)
 				.catch(() => ({ error: "the file could not be created" }));
@@ -202,6 +218,7 @@ export function reviewTools({
 				return {
 					proof: unproven(`the test file could not be created: ${created.error}`),
 					hung: false,
+					written: false,
 				};
 			// The new file must be the only difference, whatever the path held before.
 			const status = await git([
@@ -211,18 +228,28 @@ export function reviewTools({
 				"--untracked-files=all",
 				"--ignore-submodules=none",
 			]);
-			if (status.exitCode !== 0 || status.timedOut || status.output !== `?? ${relative}\0`)
+			let ignored = false;
+			if (status.output === "") {
+				const check = await git(["check-ignore", "-q", "--", relative]);
+				ignored = check.exitCode === 0 && !check.timedOut;
+			}
+			if (
+				status.exitCode !== 0 ||
+				status.timedOut ||
+				(status.output !== `?? ${relative}\0` && !ignored)
+			)
 				return {
 					proof: unproven(
 						"the test file was not the only change in the checkout, so it was not run",
 					),
 					hung: false,
+					written: true,
 				};
 			const started = now();
 			const result = await runTest(sandbox, command, seconds);
 			const elapsed = Math.max(0, (now() - started) / 1000);
 			outcome.proofSeconds += result.hung ? Math.max(elapsed, seconds) : elapsed;
-			return result;
+			return { ...result, written: true };
 		}
 
 		async function prove(test: ReviewFinding["test"]): Promise<ReviewProof> {
@@ -251,7 +278,7 @@ export function reviewTools({
 				await retire(before);
 				return unproven(`${before}, so the test was not run`);
 			}
-			let result: Attempt;
+			let result: ProofAttempt;
 			try {
 				result = await attempt(
 					relative,
@@ -260,14 +287,14 @@ export function reviewTools({
 					Math.floor(Math.min(REVIEW_LIMITS.proofSeconds, timeLeft)),
 				);
 			} catch {
-				result = { proof: unproven("the proof could not be run"), hung: false };
+				result = { proof: unproven("the proof could not be run"), hung: false, written: true };
 			}
 			// A command that never returned may be using the checkout, and cleaning would race it.
 			if (result.hung) {
 				await retire(HUNG);
 				return result.proof;
 			}
-			const after = await putBack(sandbox, head);
+			const after = await putBack(sandbox, head, result.written ? relative : undefined);
 			if (!after) return result.proof;
 			await retire(after);
 			return { ...result.proof, proven: false, reason: `${after} after this proof` };

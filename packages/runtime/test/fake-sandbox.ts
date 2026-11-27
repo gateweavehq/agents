@@ -93,12 +93,19 @@ export const sandboxDiff = { text: REVIEW_DIFF };
 /** What a command answers; with `seconds`, how long it took by the sandbox's clock. */
 export type CommandAnswer = (CommandResult & { seconds?: number }) | Error;
 
+function pathIsIgnored(ignored: ReadonlySet<string>, path: string): boolean {
+	for (const prefix of ignored) if (path === prefix || path.startsWith(`${prefix}/`)) return true;
+	return false;
+}
+
 export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, ChangesPort {
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
 	readonly gitCalls: string[][] = [];
 	/** Files `createFile` made that a `git clean` has not removed yet, as `git status` lists them. */
 	readonly untracked = new Set<string>();
+	/** Repository-relative path prefixes git ignores, as an ignored directory ignores what is in it. */
+	readonly ignored = new Set<string>();
 	/** What `createFile` made, in order, whether or not a `git clean` removed it since. */
 	readonly created: { path: string; content: string }[] = [];
 	/** How many processes the next proofs leave running, in order; then none (null: not confirmed). */
@@ -214,14 +221,36 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		const answer = this.gitAnswer?.(args);
 		if (answer instanceof Error) throw answer;
 		if (args[0] === "clean" && (!answer || answer.exitCode === 0)) {
-			for (const path of this.untracked) this.files.delete(`${SANDBOX_REPOSITORY_PATH}/${path}`);
-			this.untracked.clear();
+			const forced = args.some((arg) => arg.startsWith("-") && arg.includes("x"));
+			const separator = args.indexOf("--");
+			const scoped =
+				separator < 0
+					? null
+					: args.slice(separator + 1).map((path) => path.replace(/^:\(literal\)/, ""));
+			for (const path of [...this.untracked]) {
+				if (scoped !== null && !scoped.includes(path)) continue;
+				if (!forced && pathIsIgnored(this.ignored, path)) continue;
+				this.files.delete(`${SANDBOX_REPOSITORY_PATH}/${path}`);
+				this.untracked.delete(path);
+			}
 		}
 		if (answer) return answer;
+		if (args[0] === "check-ignore") {
+			return {
+				exitCode: pathIsIgnored(this.ignored, args.at(-1) ?? "") ? 0 : 1,
+				output: "",
+				timedOut: false,
+			};
+		}
 		const listed = args[0] === "status" && args.includes("-z");
 		return {
 			exitCode: 0,
-			output: listed ? [...this.untracked].map((path) => `?? ${path}\0`).join("") : "",
+			output: listed
+				? [...this.untracked]
+						.filter((path) => !pathIsIgnored(this.ignored, path))
+						.map((path) => `?? ${path}\0`)
+						.join("")
+				: "",
 			timedOut: false,
 		};
 	}
