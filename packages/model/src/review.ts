@@ -5,6 +5,7 @@ export const REVIEW_TOOL = "submit_review";
 export const REVIEW_SEVERITIES = ["critical", "high", "medium", "low"] as const;
 export const REVIEW_LIMITS = {
 	findings: 20,
+	shown: 5,
 	proofs: 8,
 	proofSeconds: 5 * 60,
 	totalProofSeconds: 15 * 60,
@@ -53,6 +54,49 @@ export interface ReviewedFinding extends ReviewFinding {
 	offDiff: boolean;
 	proof: ReviewProof;
 }
+
+export function rankFindings(findings: readonly ReviewedFinding[]): {
+	shown: ReviewedFinding[];
+	collapsed: ReviewedFinding[];
+} {
+	const merged = new Map<string, { finding: ReviewedFinding; index: number }>();
+	findings.forEach((finding, index) => {
+		const key = JSON.stringify([finding.path, finding.line, finding.title]);
+		const entry = merged.get(key);
+		if (!entry) {
+			merged.set(key, { finding, index });
+			return;
+		}
+
+		const first = entry.finding;
+		entry.finding = {
+			...first,
+			severity:
+				REVIEW_SEVERITIES.indexOf(finding.severity) < REVIEW_SEVERITIES.indexOf(first.severity)
+					? finding.severity
+					: first.severity,
+			proof: first.proof.proven || !finding.proof.proven ? first.proof : finding.proof,
+			// An on-diff location is the stronger signal when duplicates disagree.
+			offDiff: first.offDiff && finding.offDiff,
+		};
+	});
+
+	const ranked = [...merged.values()]
+		.sort(
+			(a, b) =>
+				REVIEW_SEVERITIES.indexOf(a.finding.severity) -
+					REVIEW_SEVERITIES.indexOf(b.finding.severity) ||
+				Number(b.finding.proof.proven) - Number(a.finding.proof.proven) ||
+				Number(a.finding.offDiff) - Number(b.finding.offDiff) ||
+				a.index - b.index,
+		)
+		.map(({ finding }) => finding);
+	return {
+		shown: ranked.slice(0, REVIEW_LIMITS.shown),
+		collapsed: ranked.slice(REVIEW_LIMITS.shown),
+	};
+}
+
 export interface ReviewOutcome {
 	findings: ReviewedFinding[];
 	proofsRun: number;
