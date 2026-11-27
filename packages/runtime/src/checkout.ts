@@ -12,11 +12,18 @@ import {
 import type { SandboxPort } from "./sandbox-tools";
 
 /** How a checkout went: done now, there already, or why not, in words the model reads. */
-export type CheckoutResult = { checkedOut: boolean } | { error: string };
+export type CheckoutResult =
+	| { checkedOut: boolean }
+	/** `gone`: a review's head is no longer on GitHub, so there is nothing to check out. */
+	| { error: string; gone?: true };
 
 /** A sandbox that can check out a repository. */
 export interface CheckoutPort extends SandboxPort {
-	checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult>;
+	checkout(
+		repository: SandboxRepository,
+		branch: string,
+		review?: { number: number; head: string },
+	): Promise<CheckoutResult>;
 }
 
 /** The sandbox as the tools reach it, with the repository checked out before any of them runs. */

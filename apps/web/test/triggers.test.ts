@@ -4,6 +4,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { type RegistryStub, startAgents } from "./agents-worker";
 import { FakeModels } from "./fake-models";
+import { callServerFn } from "./server-fn";
 import { fromWorkerOn, whileJunkGoesOn } from "./workers";
 
 const origin = "https://agents.test";
@@ -234,4 +235,86 @@ it("starts the lead of a team, with the team's edges", async () => {
 	});
 	const sent = models.requests.find((request) => request.body.includes("Plan the release"));
 	expect(sent?.body).toContain("delegate");
+});
+
+it("makes and manages a review trigger with no URL and no secret", async () => {
+	const slug = "triggers-review";
+	const { owner, workspaceId, registry, agentId, url, secret } = await workspace(slug);
+	const call = (name: string, data: Record<string, unknown>, method: "GET" | "POST" = "POST") =>
+		callServerFn(agents, origin, name, {
+			data: { slug, ...data },
+			cookie: owner.headers.cookie,
+			client: owner.headers["cf-connecting-ip"],
+			method,
+		});
+
+	// An agent with no sandbox cannot review, and the admin is told so as the trigger is made.
+	const refused = await call("createTrigger", {
+		trigger: {
+			name: "Review pull requests",
+			prompt: "Review it",
+			target: { kind: "agent", agentId },
+			pullRequest: true,
+		},
+	});
+	expect(refused.failed).toBe(true);
+	expect(refused.text).toContain("no sandbox");
+	const reviewer = await registry.createAgent({
+		name: "Reviewer",
+		description: null,
+		provider: "anthropic",
+		model: "claude-sonnet-5-5",
+		instructions: null,
+		sandbox: true,
+	});
+
+	// Made through the app: nothing in the answer is a URL or a secret.
+	const created = await call("createTrigger", {
+		trigger: {
+			name: "Review pull requests",
+			prompt: "Review it",
+			target: { kind: "agent", agentId: reviewer.id },
+			pullRequest: true,
+		},
+	});
+	expect(created.failed).toBe(false);
+	expect(created.text).not.toContain("whsec_");
+	expect(created.text).not.toContain("/api/triggers/");
+	const review = (await registry.listTriggers()).find((entry) => entry.pullRequest);
+	if (!review) throw new Error("The review trigger was not made");
+	expect(review).toMatchObject({ name: "Review pull requests", schedule: null, secretStart: "" });
+	const reviewUrl = `${origin}/api/triggers/${workspaceId}/${review.id}`;
+
+	// Listed through the app: the webhook has its URL, the review trigger has none.
+	const listed = await call("getTriggers", { target: { kind: "agent", agentId } }, "GET");
+	expect(listed.failed).toBe(false);
+	expect(listed.text).toContain(url);
+	expect(listed.text).not.toContain(reviewUrl);
+
+	// It shows on the agent's page without a URL or a secret control.
+	const agent = await page(`/${slug}/agents/${reviewer.id}`, owner.headers.cookie);
+	expect(agent).toContain("Review pull requests");
+	expect(agent).toContain("reviews each pull request an agent of the workspace opens");
+	expect(agent).not.toContain(reviewUrl);
+	expect(agent).not.toContain(secret);
+
+	// It has no secret to replace, and a webhook to it is not taken, signed or not.
+	const replaced = await call("replaceTriggerSecret", { triggerId: review.id });
+	expect(replaced.failed).toBe(true);
+	expect(replaced.text).toContain("has no secret");
+	expect(replaced.text).not.toContain("whsec_");
+	expect((await post(reviewUrl, secret)).status).toBe(404);
+	expect((await registry.listTriggers()).find((entry) => entry.id === review.id)?.secretStart).toBe(
+		"",
+	);
+
+	// It is paused and resumed like any other.
+	expect(
+		(await call("updateTrigger", { triggerId: review.id, patch: { active: false } })).failed,
+	).toBe(false);
+	expect((await registry.listTriggers()).find((entry) => entry.id === review.id)?.active).toBe(
+		false,
+	);
+	expect((await call("deleteTrigger", { triggerId: review.id })).failed).toBe(false);
+	expect((await registry.listTriggers()).some((entry) => entry.id === review.id)).toBe(false);
 });

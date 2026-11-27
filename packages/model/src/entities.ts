@@ -647,6 +647,13 @@ export interface RunPullRequest {
 	repository: string;
 	number: number;
 	url: string;
+	/** The commit the run left the branch at, which a review is of. */
+	head?: string;
+	/** The pull request's state when the run left it. */
+	state?: "open" | "closed" | "merged";
+	/** Whether it is a draft, and what the run recorded of why. */
+	draft?: boolean;
+	draftReason?: string;
 }
 
 /** What runs used over a period. */
