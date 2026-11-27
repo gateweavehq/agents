@@ -23,7 +23,7 @@ Starting a task needs the agent's **Tasks from MCP clients** setting to be on, a
 it on. An owner or admin of the workspace can: open the agent under **Agents**, choose **Edit**, tick
 **Tasks from MCP clients** and save.
 
-An agent without it refuses the task, saying that its owner can turn the setting on.
+An agent without it refuses the task, saying that a workspace owner or admin can turn the setting on.
 
 ## 2. Start the run
 
@@ -90,7 +90,7 @@ The last `get_run` also gives `steps`, `inputTokens`, `outputTokens`, `cost` (in
 and the run is on the Runs page.
 
 With **Tasks from MCP clients** off, `run_agent` answers `status: "refused"` with the message `That agent does
-not allow tasks from outside; its owner can turn it on`, and no run starts.
+not allow tasks from outside; a workspace owner or admin can turn it on`, and no run starts.
 
 ## What has not been tried
 
