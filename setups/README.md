@@ -55,8 +55,9 @@ adding it. For each folder:
 - `detect` finds each asset again in what it writes, for each runtime.
 - The MCP configuration it writes holds no literal token.
 - Every MCP server passes the allowlist in `packages/adapters/src/ready-made-policy.ts`: a fixed
-  network server uses HTTPS and a listed host, an `askUrl` example may use `example.com` or a
-  host under it, a command server uses a listed command with exactly its arguments and only
+  network server uses HTTPS without credentials or a custom port, and a listed host; an `askUrl`
+  example may use `example.com` or a host under it, a command server uses a listed command with
+  exactly its arguments and only
   variable references in `env`, and every server key is in the policy's closed set.
 - Every address it asks for (`askUrl`) can be given, as its example is.
 

@@ -5,7 +5,7 @@
  */
 import { parseJsonConfig, parseTomlConfig } from "./assets";
 import type { SetupFolder } from "./setup-folder";
-import { readMcpConnection } from "./write-mcp";
+import { readMcpConnection, remoteMcpUrlProblem } from "./write-mcp";
 
 /** The remote hosts and exact local commands a ready-made setup may configure. */
 export interface ReadyMadeMcpAllowlist {
@@ -83,18 +83,12 @@ export function readyMadeMcpProblems(
 			continue;
 		}
 
-		let host: string;
-		try {
-			const url = new URL(connection.url);
-			if (url.protocol !== "https:") {
-				problems.push(`${asset.name}: the server address must use https`);
-				continue;
-			}
-			host = url.hostname.toLowerCase();
-		} catch {
-			problems.push(`${asset.name}: the server address is not a valid URL`);
+		const invalid = remoteMcpUrlProblem(connection.url);
+		if (invalid !== null) {
+			problems.push(`${asset.name}: the server address ${invalid}`);
 			continue;
 		}
+		const host = new URL(connection.url).hostname.toLowerCase();
 		const example =
 			asked.has(asset.name) &&
 			allowlist.askUrlExampleHosts.some((domain) => host === domain || host.endsWith(`.${domain}`));
