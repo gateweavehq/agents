@@ -157,9 +157,11 @@ describe("a conversation that holds a repository's files", () => {
 			moveWriteKeys: (token, entries) => target.moveWriteKeys(token, entries),
 			moveCheck: (token, manifest) => target.moveCheck(token, manifest),
 			moveDigest: () => target.moveDigest(),
-			async moveStart(place) {
+			moveStart: (place) => target.moveStart(place),
+			async moveRestart() {
+				if (!target.moveRestart) return;
 				try {
-					await target.moveStart(place);
+					await target.moveRestart();
 				} catch (error) {
 					if ((error instanceof Error ? error.message : String(error)) !== MOVED_IN) throw error;
 				}
@@ -180,8 +182,8 @@ describe("a conversation that holds a repository's files", () => {
 		expect(report).toMatchObject({ moved: true, conversations: 1 });
 
 		const copy = conversationName(moved, conversationId);
-		// The copy restarts as the move ends, so a call right away can still meet that.
-		const after = await vi.waitFor(() => inConversation(async (storage) => rowsOf(storage), copy));
+		// The copy has restarted by the time the move ends.
+		const after = await inConversation(async (storage) => rowsOf(storage), copy);
 		expect(after).toEqual(before);
 
 		// It goes on where the conversation was: no checkout again, the edit as written, and a push.
