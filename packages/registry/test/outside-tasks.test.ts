@@ -32,7 +32,7 @@ describe("outside tasks (AGT-155)", () => {
 		expect(await stub.admitOutsideTask(task(closed.id, "r1"))).toEqual({
 			status: "refused",
 			message:
-				"That agent does not allow tasks from outside; a workspace owner or admin can turn it on",
+				'That agent does not allow tasks from outside. A workspace owner or admin can turn on "Tasks from MCP clients" in the agent\'s settings.',
 		});
 
 		const admitted = await stub.admitOutsideTask(task("Builder", "r1"));
