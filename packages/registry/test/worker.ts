@@ -19,6 +19,10 @@ export interface StartedTurn {
 const STARTED_KEY = "test:started-turns";
 const BUDGET_KEY = "test:budget-passed";
 const MINUTES_KEY = "test:minutes-passed";
+const FAIL_BUDGET_KEY = "test:fail-budget-alerts";
+const FAIL_MINUTES_KEY = "test:fail-minutes-alerts";
+const FAILED_BUDGET_KEY = "test:failed-budget-alerts";
+const FAILED_MINUTES_KEY = "test:failed-minutes-alerts";
 const USAGE_KEY = "test:usage";
 const DESTROYED_KEY = "test:destroyed";
 const REFUSED_KEY = "test:refused";
@@ -155,12 +159,42 @@ export class RegistryDO extends Registry {
 	}
 
 	protected override async sandboxBudgetPassed(passed: SandboxBudgetPassed): Promise<void> {
+		if (this.#failsNext(FAIL_BUDGET_KEY, FAILED_BUDGET_KEY)) {
+			throw new Error("The test's budget alert failed");
+		}
 		const heard = this.ctx.storage.kv.get<SandboxBudgetPassed[]>(BUDGET_KEY) ?? [];
 		this.ctx.storage.kv.put(BUDGET_KEY, [...heard, passed]);
 	}
 
 	protected override async sandboxMinutesPassed(passed: SandboxMinutesPassed): Promise<void> {
+		if (this.#failsNext(FAIL_MINUTES_KEY, FAILED_MINUTES_KEY)) {
+			throw new Error("The test's minutes alert failed");
+		}
 		this.ctx.storage.kv.put(MINUTES_KEY, [...this.minutesPassed(), passed]);
+	}
+
+	#failsNext(failuresKey: string, failedKey: string): boolean {
+		const failures = this.ctx.storage.kv.get<number>(failuresKey) ?? 0;
+		if (failures === 0) return false;
+		this.ctx.storage.kv.put(failuresKey, failures - 1);
+		this.ctx.storage.kv.put(failedKey, (this.ctx.storage.kv.get<number>(failedKey) ?? 0) + 1);
+		return true;
+	}
+
+	failBudgetAlerts(count: number): void {
+		this.ctx.storage.kv.put(FAIL_BUDGET_KEY, count);
+	}
+
+	failMinutesAlerts(count: number): void {
+		this.ctx.storage.kv.put(FAIL_MINUTES_KEY, count);
+	}
+
+	failedBudgetAlerts(): number {
+		return this.ctx.storage.kv.get<number>(FAILED_BUDGET_KEY) ?? 0;
+	}
+
+	failedMinutesAlerts(): number {
+		return this.ctx.storage.kv.get<number>(FAILED_MINUTES_KEY) ?? 0;
 	}
 
 	protected override recordUsage(point: AnalyticsEngineDataPoint): void {
