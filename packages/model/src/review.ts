@@ -59,10 +59,12 @@ export interface ReviewOutcome {
 	proofSeconds: number;
 	/**
 	 * Set when the checkout could not be put back at the reviewed head, or a proof's command did
-	 * not return in time and may still run in it. No later proof ran; whoever holds the checkout
-	 * must discard it rather than reuse it.
+	 * not return in time, or left a process running, which may still use it. No later proof ran.
+	 * The tool has asked the sandbox to discard the checkout; whoever holds it must not reuse it.
 	 */
 	checkoutProblem?: string;
+	/** With `checkoutProblem`: whether the sandbox confirmed that it discarded the checkout. */
+	checkoutDiscarded?: boolean;
 }
 
 export const REVIEW_INSTRUCTIONS = `Review the branch diff against the acceptance criteria and for correctness.

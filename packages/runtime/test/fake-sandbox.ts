@@ -26,6 +26,7 @@ import {
 } from "../src/kept-keys";
 import type { LocalCommand, LocalServerPort } from "../src/local-servers";
 import { type EngineMeter, meterModelRequest } from "../src/meter";
+import type { ProofRun } from "../src/proof-scripts";
 import type {
 	CheckPort,
 	CommitAuthor,
@@ -78,6 +79,11 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 	readonly untracked = new Set<string>();
 	/** What `createFile` made, in order, whether or not a `git clean` removed it since. */
 	readonly created: { path: string; content: string }[] = [];
+	/** How many processes the next proofs leave running, in order; then none (null: not confirmed). */
+	readonly left: (number | null)[] = [];
+	/** What `discardCheckout` was called with, in order; `discardError` makes it throw. */
+	discards = 0;
+	discardError: Error | undefined;
 	/** Why `createFile` refuses, for a test of a path that exists or goes through a symlink. */
 	createError: string | undefined;
 	gitAnswer: ((args: string[]) => CommandAnswer | undefined) | undefined;
@@ -129,6 +135,18 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		const { seconds = 0, ...result } = answer;
 		this.clock += seconds * 1000;
 		return result;
+	}
+
+	/** A proof's command: recorded and answered as `run`, with the processes it left running. */
+	async runProof(command: string, seconds: number): Promise<ProofRun> {
+		const result = await this.run(command, SANDBOX_REPOSITORY_PATH, seconds);
+		return { ...result, left: this.left.length ? (this.left.shift() ?? null) : 0 };
+	}
+
+	async discardCheckout(): Promise<void> {
+		this.log.push("discard");
+		this.discards++;
+		if (this.discardError) throw this.discardError;
 	}
 
 	async commit(message: string, author: CommitAuthor, model: string): Promise<CommitResult> {
@@ -363,6 +381,14 @@ export class FakeSandbox
 
 	createFile(path: string, content: string) {
 		return this.#memory.createFile(path, content);
+	}
+
+	runProof(command: string, seconds: number) {
+		return this.#memory.runProof(command, seconds);
+	}
+
+	discardCheckout() {
+		return this.#memory.discardCheckout();
 	}
 
 	checkout(repository: SandboxRepository, branch: string) {

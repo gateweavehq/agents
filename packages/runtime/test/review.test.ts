@@ -1,5 +1,6 @@
 import { SANDBOX_REPOSITORY_PATH } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
+import { PROOF_WAIT_MARGIN_SECONDS } from "../src/review";
 import { answer, finding, HEAD, MERGE_BASE, setup } from "./review-fixture";
 
 const failed = answer("first".repeat(200) + "tail".repeat(1000), 1);
@@ -65,27 +66,31 @@ describe("submitting a review", () => {
 			],
 		});
 	});
-	it("stops waiting at the proof's own deadline and runs no further proof", async () => {
+	it("waits the proof's deadline and a small margin, then discards the checkout and runs no further proof", async () => {
 		vi.useFakeTimers();
 		try {
 			const { sandbox, call, record } = setup();
-			const hung = vi.spyOn(sandbox, "run").mockImplementation(() => new Promise(() => {}));
+			const hung = vi.spyOn(sandbox, "runProof").mockImplementation(() => new Promise(() => {}));
 			const pending = call(Array(3).fill(finding));
-			await vi.advanceTimersByTimeAsync(299_999);
+			// The sandbox ends the proof by its deadline, so only the margin is waited beyond it.
+			await vi.advanceTimersByTimeAsync(300_000 + PROOF_WAIT_MARGIN_SECONDS * 1000 - 1);
 			expect(record).not.toHaveBeenCalled();
-			sandbox.clock += 300_000;
+			expect(sandbox.discards).toBe(0);
+			sandbox.clock += (300 + PROOF_WAIT_MARGIN_SECONDS) * 1000;
 			await vi.advanceTimersByTimeAsync(1);
 			const outcome = await pending;
-			expect(outcome.proofSeconds).toBe(300);
+			expect(outcome.proofSeconds).toBe(300 + PROOF_WAIT_MARGIN_SECONDS);
 			expect(outcome.checkoutProblem).toBe(HUNG);
+			expect(outcome.checkoutDiscarded).toBe(true);
+			expect(sandbox.discards).toBe(1);
 			expect(outcome.findings.map((f) => f.proof)).toEqual([
-				{ proven: false, reason: "the command was stopped after 300 seconds" },
+				{ proven: false, reason: "the command did not return within 300 seconds" },
 				{ proven: false, reason: `no further proof ran: ${HUNG}` },
 				{ proven: false, reason: `no further proof ran: ${HUNG}` },
 			]);
 			expect(hung).toHaveBeenCalledTimes(1);
-			// The command may still be running: nothing cleans the checkout under it.
-			expect(sandbox.log.at(-1)).toBe(status);
+			// The command may still be running: nothing cleans the checkout under it, it is discarded.
+			expect(sandbox.log.slice(-2)).toEqual([status, "discard"]);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -296,6 +301,73 @@ describe("submitting a review", () => {
 			});
 			expect(outcome.findings[1]?.proof).toEqual({ proven: false, reason: later });
 			expect(sandbox.commands).toHaveLength(1);
+			// The checkout is thrown away, once, so nothing reuses it.
+			expect(sandbox.discards).toBe(1);
+			expect(outcome.checkoutDiscarded).toBe(true);
+		},
+	);
+	it("discards the checkout when the final proof leaves it dirty", async () => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push(failed);
+		// A dirty submodule that survives the reset: the comparison after the proof still differs.
+		sandbox.changes.push(null, { changed: "m vendor/lib" });
+		const outcome = await call([finding]);
+		expect(outcome.findings[0]?.proof).toMatchObject({
+			proven: false,
+			reason: `${notPutBack} after this proof`,
+		});
+		expect(outcome).toMatchObject({ checkoutProblem: notPutBack, checkoutDiscarded: true });
+		expect(sandbox.discards).toBe(1);
+		expect(sandbox.log.at(-1)).toBe("discard");
+	});
+	it("discards a checkout that could not be put back before a proof", async () => {
+		const { call, sandbox } = setup();
+		sandbox.changes.push({ changed: "M app.ts" });
+		const outcome = await call([finding, finding]);
+		expect(sandbox.discards).toBe(1);
+		expect(outcome.checkoutDiscarded).toBe(true);
+	});
+	it("says so when the checkout could not be discarded", async () => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push(failed);
+		sandbox.changes.push(null, { changed: "dirty" });
+		sandbox.discardError = new Error("container would not stop");
+		const outcome = await call([finding]);
+		expect(outcome).toMatchObject({ checkoutProblem: notPutBack, checkoutDiscarded: false });
+		expect(outcome.findings[0]?.proof.proven).toBe(false);
+	});
+	it("does not discard a checkout that every proof left clean", async () => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push(failed, failed);
+		const outcome = await call([finding, finding]);
+		expect(sandbox.discards).toBe(0);
+		expect(outcome).not.toHaveProperty("checkoutDiscarded");
+	});
+	it.each([
+		[1, "1 process(es) the command started were still running after it ended"],
+		[3, "3 process(es) the command started were still running after it ended"],
+		[null, "it could not be confirmed that every process the command started had ended"],
+	])(
+		"counts %s surviving processes as a hang: unproven, no further proof, checkout discarded",
+		async (left, reason) => {
+			const { call, sandbox } = setup();
+			sandbox.answers.push(failed);
+			sandbox.left.push(left);
+			const outcome = await call([finding, finding]);
+			expect(outcome.findings[0]?.proof).toEqual({
+				proven: false,
+				reason,
+				output: failed.output.slice(-4000),
+			});
+			expect(outcome.findings[1]?.proof).toEqual({
+				proven: false,
+				reason: `no further proof ran: ${HUNG}`,
+			});
+			expect(outcome).toMatchObject({ checkoutProblem: HUNG, checkoutDiscarded: true });
+			expect(sandbox.commands).toHaveLength(1);
+			expect(sandbox.discards).toBe(1);
+			// Nothing cleans the checkout under a process that may still use it.
+			expect(sandbox.log.slice(-2)).toEqual([runCommand, "discard"]);
 		},
 	);
 	it("does not start a proof on a checkout that differs from the head", async () => {

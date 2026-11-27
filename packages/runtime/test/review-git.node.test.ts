@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { changedSince, type Git } from "../src/git-work";
 import {
-	createProofFile,
 	lineOnDiff,
 	type ParsedDiff,
-	type ProofFiles,
 	parseDiff,
 	readReviewDiff,
 	restoreHead,
@@ -150,70 +148,4 @@ it("reads the same diff whatever prefixes git is configured to show", async () =
 	const read = await readReviewDiff(configured, "main", head);
 	if ("error" in read) throw new Error(read.error);
 	expect(parseDiff(read.diff)).toEqual(diff);
-});
-
-/** A file system in memory, where a path is a directory, a file or a symlink. */
-function memoryFiles(entries: Record<string, string>) {
-	const kinds = new Map(Object.entries(entries));
-	const written = new Map<string, string>();
-	const files: ProofFiles = {
-		lstat: async (path) => {
-			const type = kinds.get(path);
-			return type ? { type } : null;
-		},
-		mkdir: async (path) => {
-			let at = "";
-			for (const part of path.split("/").slice(1)) {
-				at += `/${part}`;
-				if (!kinds.has(at)) kinds.set(at, "directory");
-			}
-		},
-		writeFile: async (path, content) => {
-			written.set(path, content);
-			kinds.set(path, "file");
-		},
-	};
-	return { files, written };
-}
-const ROOT = "/workspace/repo";
-
-it("creates a new file and the directories it needs", async () => {
-	const { files, written } = memoryFiles({ [ROOT]: "directory" });
-	expect(await createProofFile(files, ROOT, "test/deep/a.test.ts", "body")).toEqual({
-		written: 4,
-	});
-	expect(written.get(`${ROOT}/test/deep/a.test.ts`)).toBe("body");
-});
-it("refuses a path that exists, whatever it is, and writes nothing", async () => {
-	for (const type of ["file", "symlink", "directory"]) {
-		const { files, written } = memoryFiles({
-			[ROOT]: "directory",
-			[`${ROOT}/test`]: "directory",
-			[`${ROOT}/test/a.test.ts`]: type,
-		});
-		expect(await createProofFile(files, ROOT, "test/a.test.ts", "body")).toEqual({
-			error: "test/a.test.ts already exists",
-		});
-		expect(written.size).toBe(0);
-	}
-});
-it("refuses to go through a symlink or a file on the way", async () => {
-	const symlink = memoryFiles({ [ROOT]: "directory", [`${ROOT}/test`]: "symlink" });
-	expect(await createProofFile(symlink.files, ROOT, "test/a.test.ts", "body")).toEqual({
-		error: "test is a symlink",
-	});
-	const file = memoryFiles({ [ROOT]: "directory", [`${ROOT}/test`]: "file" });
-	expect(await createProofFile(file.files, ROOT, "test/a.test.ts", "body")).toEqual({
-		error: "test is not a directory",
-	});
-	expect(symlink.written.size + file.written.size).toBe(0);
-});
-it("answers a failing file system with an error and no throw", async () => {
-	const { files } = memoryFiles({ [ROOT]: "directory" });
-	files.writeFile = async () => {
-		throw new Error("disk full");
-	};
-	expect(await createProofFile(files, ROOT, "a.test.ts", "body")).toEqual({
-		error: "the file could not be created",
-	});
 });

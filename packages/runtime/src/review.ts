@@ -11,17 +11,24 @@ import { type ToolSet, tool } from "ai";
 import { type Comparison, lastBytes } from "./checks";
 import type { Git } from "./git-work";
 import { namesFile, oracleKind } from "./oracles";
+import type { ProofRun } from "./proof-scripts";
 import { lineOnDiff, parseDiff, readReviewDiff, restoreHead } from "./review-git";
-import { SANDBOX_SERVER, type SandboxPort, type WriteResult } from "./sandbox-tools";
+import { SANDBOX_SERVER, type WriteResult } from "./sandbox-tools";
 import { traced } from "./tools";
 import type { RunRecorder } from "./trace";
 
 export interface ReviewPort {
-	run: SandboxPort["run"];
+	/**
+	 * Runs the command in the checkout in a session of its own and ends it and its process group
+	 * within `seconds`, kill-after grace included, then says whether anything it started is alive.
+	 */
+	runProof(command: string, seconds: number): Promise<ProofRun>;
 	/** Creates a file that does not exist yet; it never replaces a file or follows a symlink. */
 	createFile(path: string, content: string): Promise<WriteResult>;
 	changedSince(head: string): Promise<Comparison>;
 	git: Git;
+	/** Throws the checkout away, and every process that may still use it, so nothing reuses it. */
+	discardCheckout(): Promise<void>;
 }
 
 export interface ReviewToolOptions {
@@ -57,21 +64,29 @@ async function putBack(sandbox: ReviewPort, head: string): Promise<string | null
 	return null;
 }
 
+/** How long past the proof's deadline the tool still waits: the sandbox ends the proof by then. */
+export const PROOF_WAIT_MARGIN_SECONDS = 3;
+
 /**
- * Runs the command for at most `seconds`. The sandbox stops it then, and this stops waiting at the
- * same moment, so a call that never returns costs no more than the proof's own time.
+ * Runs the command for at most `seconds`. The sandbox ends the command and its whole process
+ * group by that deadline, its kill-after grace included, and then checks that nothing the proof
+ * started is alive. This waits the deadline and a small margin; a call that has not returned by
+ * then, or that reports a survivor, is a hang.
  */
 async function runTest(sandbox: ReviewPort, command: string, seconds: number): Promise<Attempt> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		const result = await Promise.race([
-			sandbox.run(command, SANDBOX_REPOSITORY_PATH, seconds),
+			sandbox.runProof(command, seconds),
 			new Promise<null>((resolve) => {
-				timer = setTimeout(() => resolve(null), seconds * 1000);
+				timer = setTimeout(() => resolve(null), (seconds + PROOF_WAIT_MARGIN_SECONDS) * 1000);
 			}),
 		]);
 		if (!result)
-			return { proof: unproven(`the command was stopped after ${seconds} seconds`), hung: true };
+			return {
+				proof: unproven(`the command did not return within ${seconds} seconds`),
+				hung: true,
+			};
 		const output = lastBytes(result.output, REVIEW_LIMITS.outputBytes);
 		const { exitCode } = result;
 		// A launch failure carries the sandbox's own exit code, which says nothing of the test.
@@ -79,6 +94,19 @@ async function runTest(sandbox: ReviewPort, command: string, seconds: number): P
 			return {
 				proof: unproven(`the command did not start: ${output.trim() || "no reason given"}`),
 				hung: false,
+			};
+		// What the proof started and left running may still write in the checkout.
+		if (result.left !== 0)
+			return {
+				proof: {
+					proven: false,
+					reason:
+						result.left === null
+							? "it could not be confirmed that every process the command started had ended"
+							: `${result.left} process(es) the command started were still running after it ended`,
+					output,
+				},
+				hung: true,
 			};
 		if (result.timedOut)
 			return {
@@ -121,6 +149,17 @@ export function reviewTools({
 		const outcome: ReviewOutcome = { findings: [], proofsRun: 0, proofSeconds: 0 };
 		/** Why no further proof may run: the checkout is not the head, or a command may still use it. */
 		let unusable: string | null = null;
+		let discarded: boolean | null = null;
+
+		/** From now on no proof runs; the checkout and whatever may use it are thrown away, once. */
+		async function retire(reason: string): Promise<void> {
+			unusable ??= reason;
+			if (discarded !== null) return;
+			discarded = await sandbox.discardCheckout().then(
+				() => true,
+				() => false,
+			);
+		}
 
 		async function attempt(
 			relative: string,
@@ -181,7 +220,7 @@ export function reviewTools({
 			// A proof starts on a checkout that is the head, and ends with one.
 			const before = await putBack(sandbox, head);
 			if (before) {
-				unusable = before;
+				await retire(before);
 				return unproven(`${before}, so the test was not run`);
 			}
 			let result: Attempt;
@@ -197,12 +236,12 @@ export function reviewTools({
 			}
 			// A command that never returned may be using the checkout, and cleaning would race it.
 			if (result.hung) {
-				unusable = HUNG;
+				await retire(HUNG);
 				return result.proof;
 			}
 			const after = await putBack(sandbox, head);
 			if (!after) return result.proof;
-			unusable = after;
+			await retire(after);
 			return { ...result.proof, proven: false, reason: `${after} after this proof` };
 		}
 
@@ -214,7 +253,10 @@ export function reviewTools({
 			});
 		}
 		outcome.proofSeconds = Math.round(outcome.proofSeconds);
-		if (unusable) outcome.checkoutProblem = unusable;
+		if (unusable) {
+			outcome.checkoutProblem = unusable;
+			outcome.checkoutDiscarded = discarded === true;
+		}
 		return outcome;
 	}
 
