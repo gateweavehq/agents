@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { createMCPClient } from "@ai-sdk/mcp";
 import { tool } from "ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,7 @@ import { ENGINE_TOOLS_URL, serveEngineTools } from "../src/engine-tools";
 import { connectTools } from "../src/tools";
 import type { RunRecorder } from "../src/trace";
 import { type CallResult, FakeMcpServer } from "./fake-mcp";
+import { answer, finding, MERGE_BASE, setup as reviewSetup } from "./review-fixture";
 import { anthropicStream, fakeModel } from "./support";
 
 const LIMIT = 16 * 1024;
@@ -187,4 +189,36 @@ describe("connected MCP result budget", () => {
 			await toolbox.close();
 		}
 	});
+});
+
+it("lists submit_review and returns the tool's proof over MCP", async () => {
+	const sandbox = env.SANDBOX.getByName(crypto.randomUUID());
+	await sandbox.answerGit([{ match: ["merge-base"], answer: answer(MERGE_BASE) }]);
+	const { tools } = reviewSetup(sandbox);
+	const client = await createMCPClient({
+		transport: {
+			type: "http",
+			url: ENGINE_TOOLS_URL,
+			fetch: (input, init) =>
+				serveEngineTools(
+					tools,
+					new Request(input, { ...init, redirect: "manual" }),
+					new AbortController().signal,
+				),
+		},
+	});
+	try {
+		expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["submit_review"]);
+		const result = await client.callTool({
+			name: "submit_review",
+			arguments: { findings: [{ ...finding, proven: true }] },
+		});
+		expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
+		const content = result.content as { type: string; text: string }[];
+		expect(JSON.parse(content[0]?.text ?? "")).toMatchObject({
+			findings: [{ proof: { proven: false, exitCode: 0 } }],
+		});
+	} finally {
+		await client.close();
+	}
 });

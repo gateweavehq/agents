@@ -47,6 +47,8 @@ export interface CommandResult {
 	output: string;
 	/** It ran out of time and was stopped. */
 	timedOut: boolean;
+	/** The command never started, so `exitCode` is the sandbox's, not the command's. */
+	notStarted?: boolean;
 	/** Confirmed full combined output, kept until this sandbox stops. */
 	outputPath?: string;
 	/** Bytes of output the bound left out; absent when nothing was left out. */

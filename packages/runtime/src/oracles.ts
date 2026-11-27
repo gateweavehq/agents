@@ -208,6 +208,10 @@ function isNamed(words: ReadonlySet<string>, path: string): boolean {
 	}
 }
 
+export function namesFile(command: string, path: string): boolean {
+	return isNamed(new Set(wordsOf(command)), path);
+}
+
 /** Where the `package.json` files of the base are, and whether that is all of them. */
 export interface BaseManifests {
 	paths: string[];

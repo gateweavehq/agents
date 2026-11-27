@@ -33,6 +33,7 @@ import type { CheckoutResult } from "./checkout";
 import type { Comparison } from "./checks";
 import { claudeCodeCommand } from "./claude-code";
 import { CODEX_SESSIONS, codexCommand } from "./codex";
+import { DisposalGuard } from "./disposal";
 import { toolsRequest } from "./engine-tools";
 import {
 	ENGINE_SECONDS,
@@ -85,7 +86,9 @@ import {
 	withGitHubToken,
 } from "./outbound";
 import { boundedSearchOutput, clipCommandOutput, clipOutput, readPrefix } from "./output";
+import { createProofFile, type ProofRun, RUN_PROOF_SCRIPT, readProofRun } from "./proof-scripts";
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
+import type { ReviewPort } from "./review";
 import {
 	type CommandResult,
 	type ReadResult,
@@ -174,7 +177,7 @@ interface SandboxState extends DurableObjectState {
 
 export class RunnerSandbox
 	extends DurableObject
-	implements SandboxPort, EnginePort, LocalServerPort
+	implements SandboxPort, EnginePort, LocalServerPort, ReviewPort
 {
 	readonly #container: Container | undefined;
 	readonly #outbound: Fetcher;
@@ -207,10 +210,13 @@ export class RunnerSandbox
 	} | null = null;
 	/** Milliseconds the container may sit without a request before it stops (`SANDBOX_IDLE_MINUTES`). */
 	#idleMs: number;
+	/** Whether a destroy of the container is owed after a review proof left it unusable. */
+	readonly #disposal: DisposalGuard;
 
 	constructor(ctx: SandboxState, env: Cloudflare.Env) {
 		super(ctx, env);
 		this.#idleMs = sandboxIdleMinutes(env as SandboxSettings) * 60_000;
+		this.#disposal = new DisposalGuard(ctx.storage.kv);
 		this.#container = ctx.container;
 		this.#outbound = ctx.exports.SandboxOutbound({ props: { sandbox: ctx.id.toString() } });
 		// Each instance sets its own timeout: a container that outlived the last one keeps none.
@@ -230,7 +236,7 @@ export class RunnerSandbox
 		const container = await this.#ready();
 		if (cwd !== SANDBOX_ROOT) {
 			const missing = await this.#directoryProblem(container, cwd);
-			if (missing) return { exitCode: 1, output: missing, timedOut: false };
+			if (missing) return { exitCode: 1, output: missing, timedOut: false, notStarted: true };
 		}
 		if (captureOutput) return this.#runCaptured(container, command, cwd, timeoutSeconds);
 		return this.#exec(
@@ -454,6 +460,15 @@ export class RunnerSandbox
 			);
 	}
 
+	async git(
+		args: string[],
+		seconds?: number,
+		env?: Record<string, string>,
+		outputLimit?: number,
+	): Promise<CommandResult> {
+		return this.#git(await this.#ready())(args, seconds, env, outputLimit);
+	}
+
 	/**
 	 * Whether the checkout still is the commit `head` (`changedSince` in `./git-work.ts`).
 	 * `open_pull_request` asks after each of the repository's checks that passed, since they run
@@ -553,6 +568,78 @@ export class RunnerSandbox
 		} catch (error) {
 			return { error: describeFileFailure(error, path) };
 		}
+	}
+
+	/**
+	 * Creates a file that does not exist yet, making the directories it needs, in one exclusive,
+	 * no-follow step inside the container (`CREATE_FILE_SCRIPT` in `./proof-scripts.ts`). It never
+	 * replaces a file and never writes through a symlink.
+	 */
+	async createFile(path: string, content: string): Promise<WriteResult> {
+		if (!path.startsWith(`${SANDBOX_REPOSITORY_PATH}/`))
+			return { error: `${path} is not in the repository.` };
+		const container = await this.#ready();
+		return createProofFile(
+			async (script, args, input) => {
+				// The paths are argv and the content is standard input: none is in the program's source.
+				const process = await container.exec(
+					["timeout", "--kill-after=5s", "30s", "python3", "-I", "-c", script, ...args],
+					{
+						cwd: SANDBOX_ROOT,
+						env: COMMAND_ENV,
+						stdin: "pipe",
+						stdout: "pipe",
+						stderr: "combined",
+					},
+				);
+				const feed = (async () => {
+					const writer = process.stdin?.getWriter();
+					await writer?.write(new TextEncoder().encode(input));
+					await writer?.close();
+				})().catch(() => {});
+				const [output, exitCode] = await Promise.all([
+					clipOutput(process.stdout),
+					process.exitCode,
+					feed,
+				]);
+				return { exitCode, output: output.text };
+			},
+			SANDBOX_REPOSITORY_PATH,
+			path.slice(SANDBOX_REPOSITORY_PATH.length + 1),
+			content,
+		);
+	}
+
+	/**
+	 * Runs a review proof's command in the checkout, in a session of its own, and ends it and its
+	 * whole process group by the deadline, `seconds` from now, kill-after grace included. The
+	 * result says whether any process the command started is still alive (`RUN_PROOF_SCRIPT` in
+	 * `./proof-scripts.ts`).
+	 */
+	async runProof(command: string, seconds: number): Promise<ProofRun> {
+		const container = await this.#ready();
+		const missing = await this.#directoryProblem(container, SANDBOX_REPOSITORY_PATH);
+		if (missing)
+			return { exitCode: 1, output: missing, timedOut: false, notStarted: true, left: 0 };
+		// The checkout may have been condemned while the directory check was pending.
+		await this.#disposal.assertReusable(container);
+		const nonce = crypto.randomUUID();
+		const process = await container.exec(
+			["python3", "-I", "-c", RUN_PROOF_SCRIPT, String(seconds), command, nonce],
+			{ cwd: SANDBOX_REPOSITORY_PATH, env: COMMAND_ENV, stdout: "pipe", stderr: "combined" },
+		);
+		const [output, exitCode] = await Promise.all([clipOutput(process.stdout), process.exitCode]);
+		return readProofRun(nonce, output.text, exitCode);
+	}
+
+	/**
+	 * Throws the checkout away by destroying the container, which ends every process in it. A
+	 * process that may still be writing to the checkout makes deleting its folder not enough. The
+	 * next command starts on an empty machine.
+	 */
+	async discardCheckout(): Promise<void> {
+		// Marked first: if the destroy fails, `#ready` refuses this container until one succeeds.
+		await this.#disposal.discard(this.#container);
 	}
 
 	/**
@@ -869,7 +956,7 @@ export class RunnerSandbox
 
 	/** Stops the container, and its files go with it. The conversation calls it as it is deleted. */
 	async destroy(): Promise<void> {
-		if (this.#container?.running) await this.#container.destroy();
+		await this.#disposal.destroy(this.#container);
 	}
 
 	/**
@@ -976,6 +1063,8 @@ export class RunnerSandbox
 	async #ready(): Promise<Container> {
 		const container = this.#container;
 		if (!container) throw new Error(SANDBOX_NOT_OFFERED);
+		// A condemned container is not handed out until a destroy of it has succeeded.
+		await this.#disposal.assertReusable(container);
 		if (!this.#starting && !container.running) {
 			this.#starting = this.#start(container).finally(() => {
 				this.#starting = undefined;

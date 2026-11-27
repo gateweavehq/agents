@@ -5,10 +5,15 @@
  * engine writes what a test scripted for it.
  */
 import { DurableObject, env } from "cloudflare:workers";
-import type { ChangesPartData, SandboxRepository } from "@gateweave/agents-model";
+import {
+	type ChangesPartData,
+	SANDBOX_REPOSITORY_PATH,
+	type SandboxRepository,
+} from "@gateweave/agents-model";
 import type { ChangesPort } from "../src/changes";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
 import type { Comparison } from "../src/checks";
+import { DisposalGuard } from "../src/disposal";
 import type { EngineExit, EngineJob, EnginePort } from "../src/engines";
 import {
 	assertForgotten,
@@ -22,6 +27,7 @@ import {
 } from "../src/kept-keys";
 import type { LocalCommand, LocalServerPort } from "../src/local-servers";
 import { type EngineMeter, meterModelRequest } from "../src/meter";
+import type { ProofRun } from "../src/proof-scripts";
 import type {
 	CheckPort,
 	CommitAuthor,
@@ -69,6 +75,35 @@ export type CommandAnswer = (CommandResult & { seconds?: number }) | Error;
 export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, ChangesPort {
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
+	readonly gitCalls: string[][] = [];
+	/** Files `createFile` made that a `git clean` has not removed yet, as `git status` lists them. */
+	readonly untracked = new Set<string>();
+	/** What `createFile` made, in order, whether or not a `git clean` removed it since. */
+	readonly created: { path: string; content: string }[] = [];
+	/** How many processes the next proofs leave running, in order; then none (null: not confirmed). */
+	readonly left: (number | null)[] = [];
+	/** What `discardCheckout` was called with, in order; `discardError` makes it throw. */
+	discards = 0;
+	discardError: Error | undefined;
+	/**
+	 * The real disposal guard over a container that fails to destroy while `discardError` is set, so
+	 * a failed disposal leaves the fake unusable, as it does the real sandbox, until one succeeds.
+	 */
+	readonly #marks = new Map<string, unknown>();
+	readonly #disposal = new DisposalGuard({
+		get: (key) => this.#marks.get(key),
+		put: (key, value) => void this.#marks.set(key, value),
+		delete: (key) => void this.#marks.delete(key),
+	});
+	readonly #container = {
+		running: true,
+		destroy: async () => {
+			if (this.discardError) throw this.discardError;
+		},
+	};
+	/** Why `createFile` refuses, for a test of a path that exists or goes through a symlink. */
+	createError: string | undefined;
+	gitAnswer: ((args: string[]) => CommandAnswer | undefined) | undefined;
 	readonly checkouts: Checkout[] = [];
 	/**
 	 * What the next commands answer, in order; then each exits 0 and prints its command line. An
@@ -104,6 +139,7 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		timeoutSeconds: number,
 		captureOutput?: boolean,
 	): Promise<CommandResult> {
+		await this.#usable();
 		this.commands.push({
 			command,
 			cwd,
@@ -119,6 +155,23 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		return result;
 	}
 
+	/** A proof's command: recorded and answered as `run`, with the processes it left running. */
+	async runProof(command: string, seconds: number): Promise<ProofRun> {
+		const result = await this.run(command, SANDBOX_REPOSITORY_PATH, seconds);
+		return { ...result, left: this.left.length ? (this.left.shift() ?? null) : 0 };
+	}
+
+	async discardCheckout(): Promise<void> {
+		this.log.push("discard");
+		this.discards++;
+		await this.#disposal.discard(this.#container);
+	}
+
+	/** The container's own refusal, as the real sandbox has it: nothing is handed out while it stands. */
+	async #usable(): Promise<void> {
+		await this.#disposal.assertReusable(this.#container);
+	}
+
 	async commit(message: string, author: CommitAuthor, model: string): Promise<CommitResult> {
 		this.commits.push({ message, author, model });
 		this.log.push("commit");
@@ -126,7 +179,34 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		return this.commitAnswers.shift() ?? { head };
 	}
 
+	async git(
+		args: string[],
+		_seconds?: number,
+		_env?: Record<string, string>,
+		_outputLimit?: number,
+	): Promise<CommandResult> {
+		await this.#usable();
+		this.log.push(`git ${args.join(" ")}`);
+		this.gitCalls.push(args);
+		// A scripted answer comes first: a clean that fails removes nothing, and a test that wants a
+		// partial clean scripts that state itself.
+		const answer = this.gitAnswer?.(args);
+		if (answer instanceof Error) throw answer;
+		if (args[0] === "clean" && (!answer || answer.exitCode === 0)) {
+			for (const path of this.untracked) this.files.delete(`${SANDBOX_REPOSITORY_PATH}/${path}`);
+			this.untracked.clear();
+		}
+		if (answer) return answer;
+		const listed = args[0] === "status" && args.includes("-z");
+		return {
+			exitCode: 0,
+			output: listed ? [...this.untracked].map((path) => `?? ${path}\0`).join("") : "",
+			timedOut: false,
+		};
+	}
+
 	async changedSince(head: string): Promise<Comparison> {
+		await this.#usable();
 		this.log.push(`compare ${head.slice(0, 7)}`);
 		const answer = this.changes.shift() ?? null;
 		if (answer instanceof Error) throw answer;
@@ -156,6 +236,18 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 
 	async writeFile(path: string, content: string): Promise<WriteResult> {
 		this.files.set(path, content);
+		return { written: new TextEncoder().encode(content).length };
+	}
+
+	/** Creates a file that is new, as `createProofFile` does; `createError` refuses it. */
+	async createFile(path: string, content: string): Promise<WriteResult> {
+		await this.#usable();
+		this.log.push(`create ${path}`);
+		if (this.createError) return { error: this.createError };
+		if (this.files.has(path)) return { error: `${path} already exists` };
+		this.files.set(path, content);
+		this.created.push({ path, content });
+		this.untracked.add(path.slice(`${SANDBOX_REPOSITORY_PATH}/`.length));
 		return { written: new TextEncoder().encode(content).length };
 	}
 
@@ -315,6 +407,18 @@ export class FakeSandbox
 		return this.#memory.writeFile(path, content);
 	}
 
+	createFile(path: string, content: string) {
+		return this.#memory.createFile(path, content);
+	}
+
+	runProof(command: string, seconds: number) {
+		return this.#memory.runProof(command, seconds);
+	}
+
+	discardCheckout() {
+		return this.#memory.discardCheckout();
+	}
+
 	checkout(repository: SandboxRepository, branch: string) {
 		// As the real sandbox: the repository it cloned is what it keeps of the conversation.
 		this.#kept.set(REPOSITORY_KEY, repository);
@@ -328,6 +432,15 @@ export class FakeSandbox
 
 	commit(message: string, author: CommitAuthor, model: string) {
 		return this.#memory.commit(message, author, model);
+	}
+
+	git(args: string[], seconds?: number, env?: Record<string, string>, outputLimit?: number) {
+		return this.#memory.git(args, seconds, env, outputLimit);
+	}
+
+	answerGit(answers: { match: string[]; answer: CommandResult }[]) {
+		this.#memory.gitAnswer = (args) =>
+			answers.find(({ match }) => match.every((word, i) => word === args[i]))?.answer;
 	}
 
 	changedSince(head: string) {
