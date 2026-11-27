@@ -44,6 +44,13 @@ async function create(stub: Stub, input: TriggerInput) {
 	return made;
 }
 
+/** Makes a scheduled trigger, failing the test when it is refused. */
+async function createScheduled(stub: Stub, input: Omit<TriggerInput, "pullRequest">) {
+	const made = await stub.createScheduledTrigger(input, ADA);
+	if ("status" in made) throw new Error(made.message);
+	return made;
+}
+
 /** Signs as a Standard Webhooks sender does. */
 async function sign(secret: string, id: string, timestamp: string, body: string) {
 	const raw = Uint8Array.from(atob(secret.slice("whsec_".length)), (char) => char.charCodeAt(0));
@@ -772,7 +779,7 @@ describe("scheduled triggers", () => {
 
 	async function scheduled(stub: Stub, input: Partial<TriggerInput> = {}) {
 		const agentId = await withAgent(stub);
-		const made = await create(stub, {
+		const made = await createScheduled(stub, {
 			name: "Standup",
 			prompt: "Sum up what changed since {{data.scheduledFor}}",
 			target: { kind: "agent", agentId },
@@ -865,14 +872,18 @@ describe("scheduled triggers", () => {
 		expect(listed?.deliveries.map((delivery) => delivery.status)).toEqual(["limited", "started"]);
 	});
 
-	it("take no webhooks, and take them again once the schedule is taken away", async () => {
+	it("take no webhooks, and take them once the schedule is taken away and a secret is made", async () => {
 		const stub = registry();
-		const { trigger, secret } = await scheduled(stub);
-		expect(await deliver(stub, trigger.id, secret)).toEqual({ status: "not_found" });
+		const { trigger } = await scheduled(stub);
+		expect(trigger.secretStart).toBe("");
+		expect(await deliver(stub, trigger.id, "whsec_dGVzdA==")).toEqual({ status: "not_found" });
+		expect(await stub.replaceTriggerSecret(trigger.id)).toMatchObject({ status: "refused" });
 
 		const changed = await stub.updateTrigger(trigger.id, { schedule: null });
 		expect(changed).toMatchObject({ schedule: null, nextRunAt: null });
-		expect(await deliver(stub, trigger.id, secret)).toMatchObject({ status: "start" });
+		const rotated = await stub.replaceTriggerSecret(trigger.id);
+		if (!rotated || "status" in rotated) throw new Error("The secret was not made");
+		expect(await deliver(stub, trigger.id, rotated.secret)).toMatchObject({ status: "start" });
 
 		const again = await stub.updateTrigger(trigger.id, {
 			schedule: { cron: "30 18 * * 5", timeZone: "UTC" },
