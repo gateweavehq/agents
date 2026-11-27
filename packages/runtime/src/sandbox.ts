@@ -327,8 +327,17 @@ export class RunnerSandbox
 	 * branch, or from what the conversation pushed (`#branchStart`), unless it is there already. A
 	 * conversation keeps the repository it first checked out: a repository chosen later on the agent
 	 * is for its next conversations.
+	 *
+	 * With `review`, it checks out a pull request's head to be reviewed instead: it fetches
+	 * `refs/pull/<number>/head`, checks the commit it finds is `head`, and checks that commit out
+	 * detached, on no branch. The sandbox opens no push window for it, so nothing it holds can be
+	 * pushed. A head that is no longer the pull request's is `gone`.
 	 */
-	async checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult> {
+	async checkout(
+		repository: SandboxRepository,
+		branch: string,
+		review?: { number: number; head: string },
+	): Promise<CheckoutResult> {
 		const kept = this.#repository();
 		const name = `${repository.owner}/${repository.name}`;
 		if (kept && kept.externalId !== repository.externalId) {
@@ -361,6 +370,14 @@ export class RunnerSandbox
 			return { error };
 		};
 		if (clone.exitCode !== 0) return failed(`${name} could not be checked out.\n${clone.output}`);
+		if (review) {
+			const reviewed = await this.#checkoutHead(container, name, review);
+			if ("error" in reviewed) {
+				await failed(reviewed.error);
+				return reviewed;
+			}
+			return { checkedOut: true };
+		}
 		const start = await this.#branchStart(container, branch);
 		if ("error" in start) return failed(start.error);
 		const switched = await this.#exec(
@@ -375,6 +392,56 @@ export class RunnerSandbox
 			);
 		}
 		return { checkedOut: true };
+	}
+
+	/** Puts a fresh clone on a pull request's head, detached (`checkout`'s `review`). */
+	async #checkoutHead(
+		container: Container,
+		name: string,
+		{ number, head }: { number: number; head: string },
+	): Promise<{ ok: true } | { error: string; gone?: true }> {
+		if (!Number.isSafeInteger(number) || number < 1 || !isCommitId(head)) {
+			return { error: "The pull request to review is not a pull request and a commit id" };
+		}
+		const gone = (why: string) => ({
+			error: `${name}#${number} cannot be reviewed at ${head.slice(0, 7)}: ${why}`,
+			gone: true as const,
+		});
+		const fetched = await this.#exec(
+			container,
+			["git", "fetch", "--quiet", "origin", `refs/pull/${number}/head`],
+			SANDBOX_REPOSITORY_PATH,
+			CLONE_SECONDS,
+		);
+		if (fetched.exitCode !== 0) {
+			if (/couldn't find remote ref/i.test(fetched.output)) {
+				return gone("GitHub no longer has the pull request's head");
+			}
+			return {
+				error: `The pull request's head could not be fetched.\n${fetched.output}`,
+			};
+		}
+		const tip = await this.#exec(
+			container,
+			["git", "rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"],
+			SANDBOX_REPOSITORY_PATH,
+			30,
+		);
+		if (tip.exitCode !== 0 || tip.output.trim() !== head) {
+			return gone("it is no longer the pull request's head on GitHub");
+		}
+		const switched = await this.#exec(
+			container,
+			["git", "checkout", "--quiet", "--detach", head],
+			SANDBOX_REPOSITORY_PATH,
+			CLONE_SECONDS,
+		);
+		if (switched.exitCode !== 0) {
+			return {
+				error: `The pull request's head could not be checked out.\n${switched.output}`,
+			};
+		}
+		return { ok: true };
 	}
 
 	/**

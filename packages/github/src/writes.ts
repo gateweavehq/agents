@@ -93,8 +93,12 @@ export interface PullRequest {
 	head: string;
 	/** The branch it is from, which a card names. */
 	headRef: string;
+	/** The branch it is to be merged into, when the answer says (the list endpoint does too). */
+	baseRef?: string;
 	/** Whether it is a draft. Left out when the answer does not say. */
 	draft?: boolean;
+	/** Its description, as GitHub has it (empty when there is none). Left out by the list endpoint. */
+	body?: string;
 	/** GitHub's GraphQL id, which only an answer about the pull request carries. */
 	nodeId?: string;
 	/**
@@ -119,7 +123,9 @@ const pullSchema = z.object({
 	merged: z.boolean().optional(),
 	merged_at: z.string().nullable().optional(),
 	head: z.object({ sha: objectId, ref: z.string() }),
+	base: z.object({ ref: z.string() }).optional(),
 	draft: z.boolean().optional(),
+	body: z.string().nullable().optional(),
 	node_id: z.string().optional(),
 	// Only an answer about one pull request counts changes; the list leaves them out.
 	additions: z.number().int().nonnegative().optional(),
@@ -157,7 +163,9 @@ function toPullRequest(found: z.infer<typeof pullSchema>): PullRequest {
 		state: found.state === "open" ? "open" : merged ? "merged" : "closed",
 		head: found.head.sha,
 		headRef: found.head.ref,
+		...(found.base === undefined ? {} : { baseRef: found.base.ref }),
 		...(found.draft === undefined ? {} : { draft: found.draft }),
+		...(found.body === undefined ? {} : { body: found.body ?? "" }),
 		...(found.node_id === undefined ? {} : { nodeId: found.node_id }),
 		...counted,
 	};
@@ -545,6 +553,57 @@ export async function pullRequest(
 		if (error instanceof GitHubError && error.status === 404) return null;
 		throw error;
 	}
+}
+
+/**
+ * The diff between two commits, as text, read up to `limit` bytes: what `head` changes since
+ * `base`, which for a pull request is the commit where its branch left the one it is based on
+ * (`changedFiles` names it). Both are commit ids, so the answer does not move when a branch does.
+ * `tooLarge` when it is longer, or when GitHub will not make one that big (it answers 406 or 422);
+ * null when GitHub has no such commit.
+ */
+export async function commitDiff(
+	token: string,
+	repository: RepositoryName,
+	base: string,
+	head: string,
+	limit: number,
+): Promise<{ diff: string } | { tooLarge: true } | null> {
+	let response: Response;
+	try {
+		response = await send(
+			`${repositoryPath(repository)}/compare/${objectId.parse(base)}...${objectId.parse(head)}`,
+			token,
+			{},
+			"application/vnd.github.v3.diff",
+		);
+	} catch (error) {
+		if (error instanceof GitHubError) {
+			if (error.status === 404) return null;
+			if (error.status === 406 || error.status === 422) return { tooLarge: true };
+		}
+		throw error;
+	}
+	const reader = response.body?.getReader();
+	const chunks: Uint8Array[] = [];
+	let read = 0;
+	while (reader) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		read += value.length;
+		if (read > limit) {
+			await reader.cancel();
+			return { tooLarge: true };
+		}
+		chunks.push(value);
+	}
+	const bytes = new Uint8Array(read);
+	let at = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, at);
+		at += chunk.length;
+	}
+	return { diff: new TextDecoder().decode(bytes) };
 }
 
 /** The open pull request from `branch` of the repository itself, or null when it has none. */
