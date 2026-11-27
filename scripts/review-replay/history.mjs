@@ -26,6 +26,17 @@ export async function git(cwd, args) {
 	return stdout;
 }
 
+/** The same as `git`, but the bytes as git wrote them. */
+async function gitBytes(cwd, args) {
+	const { stdout } = await run("git", args, {
+		cwd,
+		env: GIT_ENV,
+		maxBuffer: 256 * 1024 * 1024,
+		encoding: "buffer",
+	});
+	return stdout;
+}
+
 const exists = (path) =>
 	access(path).then(
 		() => true,
@@ -151,6 +162,7 @@ const DIFF = [
  * Makes `<dir>` a repository of two commits and returns the diff between them. The two commits
  * are the merge base of the pull request's recorded base and `pre_fix`, and `pre_fix`. Only the two
  * trees are fetched, with the history behind them, and that history is then pruned away.
+ * Returns the diff as text and `diffBytes`, the size of the bytes git wrote for it.
  */
 export async function cleanHistory({ source, cacheDir, dir, row }) {
 	const recorded = await source.baseOf(row.repo, row.pr);
@@ -186,8 +198,10 @@ export async function cleanHistory({ source, cacheDir, dir, row }) {
 	await git(dir, ["reflog", "expire", "--expire=now", "--all"]);
 	await git(dir, ["gc", "--prune=now", "--quiet"]);
 
-	const diff = await git(dir, [...DIFF, "HEAD~1", "HEAD", "--"]);
-	return { diff, mirror, preFix };
+	// The product limits the bytes the host sends and then the length of the decoded text, so both
+	// are kept: `diffBytes` is what git wrote, and `diff` is what a reader of it makes of them.
+	const raw = await gitBytes(dir, [...DIFF, "HEAD~1", "HEAD", "--"]);
+	return { diff: raw.toString("utf8"), diffBytes: raw.length, mirror, preFix };
 }
 
 /** What the fix commit or commits changed, for the judge only. */

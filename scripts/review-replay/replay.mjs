@@ -215,6 +215,11 @@ export function summaryOf(rows, totals, { reviewer, judge }) {
 	if (failed.length === 0) lines.push("None.");
 	for (const row of failed)
 		lines.push(`- Row ${label(row.id)} (${row.repo}#${row.pr}): ${row.error}`);
+	const skipped = rows.filter((row) => row.status === "skipped");
+	lines.push("", "## Rows the product skips, counted as misses", "");
+	if (skipped.length === 0) lines.push("None.");
+	for (const row of skipped)
+		lines.push(`- Row ${label(row.id)} (${row.repo}#${row.pr}): ${row.error}`);
 	const unpatched = rows.filter((row) => row.fixPatch && !row.fixPatch.available);
 	lines.push("", "## Rows judged without the fix patch", "");
 	if (unpatched.length === 0) lines.push("None.");
@@ -252,6 +257,29 @@ async function readResults(file) {
 }
 
 const RESULTS_VERSION = 2;
+
+/** The product does not review this pull request, so the row is a miss with no findings. */
+class SkippedByProduct extends Error {}
+
+/**
+ * The checks `prepareReview` in the runtime makes before it sends a diff to the reviewer: the
+ * limit on the bytes the host sends, the same limit on the decoded text's UTF-8 length (bytes that
+ * are not UTF-8 decode to longer text), and the registry's limit on the whole message. A diff over
+ * a limit is skipped there, not cut, so nothing the reviewer is given is ever clipped here.
+ */
+export function skipReason(model, history, criteria) {
+	const limit = model.REVIEW_LIMITS.diffBytes;
+	const text = Buffer.byteLength(history.diff, "utf8");
+	const raw = history.diffBytes ?? text;
+	if (raw > limit) return `The diff is ${raw} bytes, over the review limit of ${limit}`;
+	if (text > limit) {
+		return `The diff decodes to ${text} bytes, over the review limit of ${limit}`;
+	}
+	if (model.reviewMessage(history.diff, criteria).length > model.REVIEW_MESSAGE_LIMIT) {
+		return "The review message is over the registry's limit";
+	}
+	return null;
+}
 
 /** The judge's patch as `{ diff, reason }`; a bare string is a patch that was found. */
 const asFix = (fix) => (typeof fix === "string" ? { diff: fix, reason: null } : fix);
@@ -301,6 +329,8 @@ export async function runReplay({ model, setText, reviewer, judge, out, deps, lo
 			const dir = join(rowDir, "repo");
 			try {
 				const history = await deps.prepare(entry.reviewer, dir);
+				const skipped = skipReason(model, history, entry.reviewer.criteria);
+				if (skipped) throw new SkippedByProduct(skipped);
 				const submitted = parseFindings(
 					model,
 					await deps.review(reviewPrompt(model, entry.reviewer, history.diff), dir),
@@ -330,7 +360,7 @@ export async function runReplay({ model, setText, reviewer, judge, out, deps, lo
 			} catch (error) {
 				done.set(entry.id, {
 					...base,
-					status: "failed",
+					status: error instanceof SkippedByProduct ? "skipped" : "failed",
 					error: error instanceof Error ? error.message : String(error),
 					findings: [],
 				});

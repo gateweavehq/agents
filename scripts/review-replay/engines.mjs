@@ -169,6 +169,10 @@ export function reviewerLaunch(engine, { cwd, home, file, host = process.env, pl
 				`permissions.replay.filesystem={":minimal"="read", ${tomlPath(cwd)}="read"}`,
 				"-c",
 				"permissions.replay.network.enabled=false",
+				// The profile's network switch covers commands. Codex's own hosted web search is a
+				// separate tool (cached by default) that could look the fix up, so it is turned off.
+				"-c",
+				'web_search="disabled"',
 				"-",
 			],
 		};

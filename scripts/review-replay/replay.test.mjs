@@ -435,6 +435,93 @@ test("a finding on the diff outranks one off it, so the top five are chosen on m
 	assert.equal(totals.topPrecision, 1 / 5);
 });
 
+/** Runs one row whose preparation gives `history`, and says which model calls were made. */
+async function runWith(name, history) {
+	const called = [];
+	const out = join(root, name);
+	const result = await runReplay({
+		model,
+		setText: setOf(2),
+		reviewer: "codex:m",
+		judge: "claude:m",
+		out,
+		deps: {
+			prepare: async (view) =>
+				view.id === "1" ? history : { diff: "diff --git a/x b/x\n", fixDiff: async () => "a fix" },
+			review: async () => {
+				called.push("review");
+				return JSON.stringify({ findings: [finding("f2-0")] });
+			},
+			judge: async () => {
+				called.push("judge");
+				return JSON.stringify({ verdicts: [{ index: 0, verdict: "hit", reason: "r" }] });
+			},
+		},
+	});
+	return { ...result, called, summary: await readFile(join(out, "summary.md"), "utf8") };
+}
+
+test("a diff over the review limit is skipped as the product skips it: a miss, listed", async () => {
+	const limit = model.REVIEW_LIMITS.diffBytes;
+	const big = `diff --git a/x b/x\n+${"a".repeat(limit)}\n`;
+	// Over the limit as the host sends it.
+	const raw = await runWith("out-big", { diff: big, fixDiff: async () => "a fix" });
+	// Within it as bytes, over it once decoded (bytes that are not UTF-8 become longer replacements).
+	const decoded = await runWith("out-decoded", {
+		diff: big,
+		diffBytes: limit - 1,
+		fixDiff: async () => "a fix",
+	});
+	// Exactly at the limit is reviewed, as the product reviews it.
+	const edge = `${"a".repeat(limit - 1)}\n`;
+	const atLimit = await runWith("out-edge", {
+		diff: edge,
+		diffBytes: limit,
+		fixDiff: async () => "a fix",
+	});
+	for (const { rows, called, summary, totals } of [raw, decoded]) {
+		assert.equal(rows[0].status, "skipped");
+		assert.deepEqual(rows[0].findings, []);
+		// No model was asked about the skipped row: only row 2 was reviewed and judged.
+		assert.deepEqual(called, ["review", "judge"]);
+		assert.equal(totals.hits, 1);
+		assert.equal(totals.rows, 2);
+		assert.match(
+			summary,
+			/## Rows the product skips, counted as misses\n\n- Row 1 \(widgets#11\): The diff .* over the review limit of 200000/,
+		);
+		assert.match(summary, /Rows that failed to run, counted as misses\n\nNone\./);
+	}
+	assert.match(raw.rows[0].error, /is 200\d+ bytes/);
+	assert.match(decoded.rows[0].error, /decodes to/);
+	assert.equal(atLimit.rows[0].status, "done");
+});
+
+test("a diff of bytes that are not UTF-8 is skipped once decoded past the limit", async () => {
+	// Latin-1 text: each byte is one byte to the host and three once decoded to a replacement.
+	const repo = await makeRepo("latin1");
+	const base = await repo.commit("calc.js", "export const half = (n) => n / 2;\n", "base");
+	const latin = Buffer.concat([Buffer.alloc(70_000, 0xe9), Buffer.from("\n")]);
+	const preFix = await repo.commit("wide.txt", latin, "latin-1 file");
+	const made = await cleanHistory({
+		source: { cloneUrl: () => repo.dir, baseOf: async () => base },
+		cacheDir: join(root, "cache-latin1"),
+		dir: join(root, "checkout-latin1"),
+		row: { repo: "widgets", pr: 11, pre_fix: preFix },
+	});
+	const limit = model.REVIEW_LIMITS.diffBytes;
+	assert.ok(made.diffBytes < limit);
+	assert.ok(Buffer.byteLength(made.diff, "utf8") > limit);
+	const { rows, called } = await runWith("out-latin1", {
+		diff: made.diff,
+		diffBytes: made.diffBytes,
+		fixDiff: async () => "a fix",
+	});
+	assert.equal(rows[0].status, "skipped");
+	assert.match(rows[0].error, /decodes to/);
+	assert.deepEqual(called, ["review", "judge"]);
+});
+
 test("a row id never becomes a property or a path", async () => {
 	const canary = await mkdtemp(join(tmpdir(), "replay-canary-"));
 	await writeFile(join(canary, "keep.txt"), "kept");
@@ -840,6 +927,33 @@ test("the codex reviewer's profile reads the checkout and the system, and has no
 	assert.equal(seen.env.OPENAI_API_KEY, "synthetic-openai-key");
 	assert.equal(seen.env.GITHUB_TOKEN, undefined);
 	assert.equal(seen.env.ANTHROPIC_API_KEY, undefined);
+});
+
+test("the codex reviewer's arguments turn hosted web search off and cut the network", () => {
+	const launch = reviewerLaunch(parseEngine("codex:m", "--reviewer"), {
+		cwd: "/work/checkout",
+		home: "/work/home",
+		file: "/work/home/tmp/reply.txt",
+		host: {},
+		platform: "linux",
+	});
+	const settings = launch.args.filter((_arg, i) => launch.args[i - 1] === "-c");
+	// Codex's own web search tool is separate from the profile's network switch: cached by default.
+	assert.ok(settings.includes('web_search="disabled"'));
+	assert.ok(settings.includes("permissions.replay.network.enabled=false"));
+	assert.ok(settings.includes('default_permissions="replay"'));
+	// No flag may turn a search back on, and the prompt still comes on stdin.
+	assert.equal(launch.args.includes("--search"), false);
+	assert.equal(launch.args.at(-1), "-");
+	// Claude's reviewer has no search or fetch tool at all.
+	const claude = reviewerLaunch(parseEngine("claude:m", "--reviewer"), {
+		cwd: "/work/checkout",
+		home: "/work/home",
+		file: "/work/home/tmp/reply.txt",
+		host: {},
+		platform: "linux",
+	});
+	assert.equal(claude.args[claude.args.indexOf("--tools") + 1], "Read,Grep,Glob");
 });
 
 test("a codex reviewer is refused where codex cannot confine reads", () => {
