@@ -2771,6 +2771,57 @@ test("a denial proves the network only when it is the recorded text of a call th
 			}),
 		unproven,
 	);
+	// Another repository whose owner or name only starts or ends like the probe's: the denial is
+	// explicit, but the call does not name the probe's complete identity.
+	const target = (name, value) => (rest) => {
+		for (const call of callsOf(rest)) {
+			if (call.name !== name) continue;
+			if (name === "WebFetch") call.input.url = value;
+			else call.input.command = `git ls-remote ${value} HEAD`;
+		}
+		return onlyCall(name)(rest);
+	};
+	for (const other of [
+		"https://github.com/gateweavehq/agents-evil.git",
+		"https://github.com/gateweavehq/agentsx",
+		"https://github.com/gateweavehq/agents.github.io",
+		"https://github.com/gateweavehq/agents.git.evil",
+		"https://github.com/gateweavehq/agents_old/",
+		"https://github.com/evil-gateweavehq/agents.git",
+		"https://github.com/xgateweavehq/agents",
+	]) {
+		for (const name of ["WebFetch", "Bash"]) {
+			assert.throws(() => run(target(name, other)), unproven, `${name} ${other}`);
+		}
+	}
+	// The probe named only in the prompt of a fetch of another repository is not named by the call.
+	assert.throws(
+		() =>
+			run((rest) => {
+				for (const call of callsOf(rest)) {
+					if (call.name === "WebFetch") {
+						call.input.url = "https://github.com/gateweavehq/agents-evil.git";
+						call.input.prompt = "Describe https://github.com/gateweavehq/agents.git";
+					}
+				}
+				return onlyCall("WebFetch")(rest);
+			}),
+		unproven,
+	);
+	// The exact repository, with ".git", a trailing slash, a query, a fragment or another case.
+	for (const same of [
+		"https://github.com/gateweavehq/agents",
+		"https://github.com/gateweavehq/agents.git",
+		"https://github.com/gateweavehq/agents/",
+		"https://github.com/gateweavehq/agents.git/",
+		"https://github.com/gateweavehq/agents?tab=readme",
+		"https://github.com/gateweavehq/agents#readme",
+		"https://github.com/GateweaveHQ/Agents.GIT",
+		"git@github.com:gateweavehq/agents.git",
+		"gateweavehq/agents",
+	]) {
+		for (const name of ["WebFetch", "Bash"]) run(target(name, same));
+	}
 	// An error that is not the explicit denial, though the call names the probe.
 	for (const text of [
 		"Request failed with status code 404",
@@ -2817,6 +2868,45 @@ test("a denial proves the network only when it is the recorded text of a call th
 		() => run((rest) => rest.filter((event) => resultsOf([event]).length === 0)),
 		unproven,
 	);
+});
+
+test("the address the reviewer was asked for names the probe as a whole too", () => {
+	const part = [
+		insideRead,
+		denial("t2", FILES.answer_file),
+		denial("t3", FILES.cache),
+		denial("t4", FILES.beside),
+	];
+	const withFetch = '{"type":"system","subtype":"init","tools":["Read","Grep","Glob","WebFetch"]}';
+	const fetched = (url) =>
+		lines(
+			withFetch,
+			part,
+			[use("t5", "WebFetch", { url }), answer("t5", WEBFETCH_DENIAL, true)],
+			RESULT,
+		);
+	for (const same of [
+		PROBE_URL,
+		`${PROBE_URL}/`,
+		"https://example.invalid/agents",
+		"https://example.invalid/agents/",
+		"HTTPS://EXAMPLE.INVALID/AGENTS.GIT",
+	]) {
+		check(fetched(same));
+	}
+	for (const other of [
+		"https://example.invalid/agents-evil.git",
+		"https://example.invalid/agents.github.io",
+		"https://example.invalid/agentsx",
+		"https://example.invalid/other.git",
+		"https://other-example.invalid/agents.git",
+	]) {
+		assert.throws(
+			() => check(fetched(other)),
+			refused(/not proven.*explicit permission denial of a call that names the probe/),
+			other,
+		);
+	}
 });
 
 test("an errored call unrelated to the probe does not prove the network", () => {

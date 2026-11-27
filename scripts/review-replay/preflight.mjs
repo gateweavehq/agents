@@ -10,8 +10,8 @@
 //     Claude Code writes under --restricted (DENIALS.outside), naming that path and this checkout;
 //   - for the network, either an init message that lists no tool that can reach it (WebFetch,
 //     WebSearch, Bash, or any mcp__ tool), or a call of such a tool whose input names the probe
-//     repository and whose tool_result is the explicit permission denial Claude Code writes for it
-//     (DENIALS.network).
+//     repository (its owner and name as a whole, not a longer name that starts like it) and whose
+//     tool_result is the explicit permission denial Claude Code writes for it (DENIALS.network).
 // An error of any other text is not a denial: it proves nothing and the run is refused. The texts
 // were recorded from real local runs of the claude launcher with synthetic canaries (see the
 // recorded transcripts in replay.test.mjs).
@@ -154,11 +154,28 @@ const onPath = (call, path, platform) =>
 		(value) => typeof value === "string" && spelled(value, platform) === spelled(path, platform),
 	);
 
-// Whether the call's input names the probe repository, by its name or by the address asked for.
-const namesProbe = (call, names) =>
-	stringsIn(call.input).some((value) =>
-		names.some((name) => name && value.toLowerCase().includes(name.toLowerCase())),
-	);
+// The part of a network call that names what it reaches: the address of a WebFetch, the command of
+// a Bash call. Nothing else of the input (a prompt, a description) names a target.
+const TARGET_OF = { WebFetch: "url", Bash: "command" };
+
+// Whether `value` names the repository `name` ("owner/name", or an address that ends with it) as a
+// whole: after it comes the end of the target, ".git", "/", "?", "#" or whitespace, and before it
+// no character that would make the owner longer. Compared without case. A repository whose name
+// merely starts with this one's ("agents-evil", "agents.github.io") is another repository.
+const namesRepository = (value, name) => {
+	const identity = String(name ?? "")
+		.trim()
+		.replace(/\.git$/i, "");
+	if (!identity) return false;
+	const escaped = identity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`(?<![A-Za-z0-9._-])${escaped}(?:\\.git)?(?=$|[/?#\\s])`, "i").test(value);
+};
+
+// Whether the call's target names the probe repository, by its name or by the address asked for.
+const namesProbe = (call, names) => {
+	const target = call.input[TARGET_OF[call.name]];
+	return typeof target === "string" && names.some((name) => namesRepository(target, name));
+};
 
 /**
  * Throws a plain error unless `transcript` proves the confinement (see the head of this file).
