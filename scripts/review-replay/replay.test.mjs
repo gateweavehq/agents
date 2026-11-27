@@ -831,7 +831,8 @@ if (args.includes("stream-json")) {
 		lines.push({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] } });
 	};
 	call(files.inside, "1 " + readFileSync(files.inside, "utf8"), false);
-	for (const name of ["answer_file", "cache", "beside"]) call(files[name], "Outside the working directory", true);
+	for (const name of ["answer_file", "cache", "beside"])
+		call(files[name], files[name] + " is outside " + dirname(files.inside) + "; --restricted confines the file tools to the working directory.", true);
 	lines.push({ type: "result", subtype: "success", is_error: false, result: "done" });
 	reply = lines.map((line) => JSON.stringify(line)).join("\\n") + "\\n";
 }
@@ -1288,10 +1289,18 @@ function jsonl(steps, { tools = ["Read", "Grep", "Glob"], init = true } = {}) {
 }
 
 const readOf = (path, text) => ["Read", { file_path: path }, `     1\t${text}`, false];
-const refusedRead = (path) => [
+// The texts Claude Code writes when it refuses a call by permission, as real local runs of the
+// claude launcher wrote them (claude 2.1.332): see RECORDED below. They are spelled out here on
+// purpose, so a change to DENIALS in preflight.mjs cannot change what the tests expect.
+const outsideDenial = (path, checkout) =>
+	`${path} is outside ${checkout}; --restricted confines the file tools to the working directory.`;
+const WEBFETCH_DENIAL =
+	"Claude requested permissions to use WebFetch, but you haven't granted it yet.";
+const BASH_DENIAL = "This command requires approval";
+const refusedRead = (path, checkout) => [
 	"Read",
 	{ file_path: path },
-	"Permission denied: the file is outside the working directory",
+	outsideDenial(path, checkout),
 	true,
 ];
 
@@ -1303,10 +1312,11 @@ const OUTSIDE = ["answer_file", "cache", "beside"];
  */
 async function confinedTranscript(prompt, change = {}) {
 	const files = named(prompt);
+	const checkout = dirname(files.inside);
 	const { skip = [], read = [], inside = "ok", network = "absent", tools } = change;
 	const steps = [];
 	if (inside === "ok") steps.push(readOf(files.inside, await readFile(files.inside, "utf8")));
-	if (inside === "denied") steps.push(refusedRead(files.inside));
+	if (inside === "denied") steps.push(refusedRead(files.inside, checkout));
 	if (inside === "empty") steps.push(readOf(files.inside, ""));
 	if (inside === "wrong")
 		steps.push(readOf(files.inside, "canary-00000000000000000000000000000000"));
@@ -1320,14 +1330,24 @@ async function confinedTranscript(prompt, change = {}) {
 		steps.push(
 			read.includes(name)
 				? readOf(files[name], await readFile(files[name], "utf8"))
-				: refusedRead(files[name]),
+				: refusedRead(files[name], checkout),
 		);
 	}
 	const toolsFor = ["Read", "Grep", "Glob"];
 	if (network === "denied")
-		steps.push(["WebFetch", { url: "https://example.invalid/agents.git" }, "refused", true]);
+		steps.push([
+			"WebFetch",
+			{ url: "https://example.invalid/agents.git", prompt: "Describe it." },
+			WEBFETCH_DENIAL,
+			true,
+		]);
 	if (network === "bash-denied")
-		steps.push(["Bash", { command: "git clone x" }, "not allowed", true]);
+		steps.push([
+			"Bash",
+			{ command: "git clone https://example.invalid/agents.git" },
+			BASH_DENIAL,
+			true,
+		]);
 	if (network === "fetched")
 		steps.push(["WebFetch", { url: "https://example.invalid/agents.git" }, HEAD, false]);
 	if (network === "bash-ran") steps.push(["Bash", { command: "ls" }, "README.md", false]);
@@ -1406,8 +1426,18 @@ const SECRETS = {
 	beside: "canary-44444444444444444444444444444444",
 };
 const HEADS = "9".repeat(40);
+const CHECKOUT = "/tmp/replay-preflight-A/row/repo";
+const PROBE_URL = "https://example.invalid/agents.git";
 const check = (transcript, platform = "linux") =>
-	checkTranscript({ transcript, files: FILES, secrets: SECRETS, head: HEADS, platform });
+	checkTranscript({
+		transcript,
+		files: FILES,
+		secrets: SECRETS,
+		checkout: CHECKOUT,
+		head: HEADS,
+		url: PROBE_URL,
+		platform,
+	});
 const INIT = '{"type":"system","subtype":"init","session_id":"s-1","tools":["Read","Grep","Glob"]}';
 const RESULT = '{"type":"result","subtype":"success","is_error":false,"result":"done"}';
 const use = (id, name, input) =>
@@ -1420,7 +1450,7 @@ const insideRead = [
 ];
 const denial = (id, path) => [
 	use(id, "Read", { file_path: path }),
-	answer(id, "Permission denied: outside the working directory", true),
+	answer(id, outsideDenial(path, CHECKOUT), true),
 ];
 const lines = (...parts) => `${parts.flat(Number.POSITIVE_INFINITY).join("\n")}\n`;
 
@@ -1460,7 +1490,7 @@ test("a transcript that skips an outside probe refuses, whichever it skips", () 
 		);
 		assert.throws(
 			() => check(lines(INIT, insideRead, probes, RESULT)),
-			refused(/not proven.*no refused tool call on/),
+			refused(/not proven.*no explicit permission denial of a Read of/),
 			skipped,
 		);
 	}
@@ -1594,7 +1624,7 @@ test("a transcript without a successful Read of the inside canary refuses", () =
 	}
 });
 
-test("a transcript proves the network by an errored attempt or by a tool list without one", () => {
+test("a transcript proves the network by an explicit denial or by a tool list without a way to it", () => {
 	const part = [
 		insideRead,
 		denial("t2", FILES.answer_file),
@@ -1605,34 +1635,38 @@ test("a transcript proves the network by an errored attempt or by a tool list wi
 	// The tool is there and nothing was tried: unproven.
 	assert.throws(
 		() => check(lines(withFetch, part, RESULT)),
-		refused(/not proven.*failed attempt to fetch from the network/),
+		refused(/not proven.*explicit permission denial of a call that names the probe/),
 	);
 	// No init message and no attempt: unproven.
 	assert.throws(
 		() => check(lines(part, RESULT)),
-		refused(/not proven.*failed attempt to fetch from the network/),
+		refused(/not proven.*explicit permission denial of a call that names the probe/),
 	);
 	// An init message that does not list the tools: unproven too.
 	assert.throws(
 		() => check(lines('{"type":"system","subtype":"init"}', part, RESULT)),
-		refused(/not proven.*failed attempt to fetch from the network/),
+		refused(/not proven.*explicit permission denial of a call that names the probe/),
 	);
 	// A tool list with Bash is not a tool list without a way to the network.
 	assert.throws(
 		() => check(lines('{"type":"system","subtype":"init","tools":["Read","Bash"]}', part, RESULT)),
 		refused(/not proven/),
 	);
-	// An errored attempt proves it, with or without the list.
+	// An explicit denial of a call that asked for the probe proves it, with or without the list.
 	check(
 		lines(
 			withFetch,
 			part,
-			[use("t5", "WebFetch", { url: "https://x" }), answer("t5", "no", true)],
+			[use("t5", "WebFetch", { url: PROBE_URL }), answer("t5", WEBFETCH_DENIAL, true)],
 			RESULT,
 		),
 	);
 	check(
-		lines(part, [use("t5", "Bash", { command: "git clone x" }), answer("t5", "no", true)], RESULT),
+		lines(
+			part,
+			[use("t5", "Bash", { command: `git clone ${PROBE_URL}` }), answer("t5", BASH_DENIAL, true)],
+			RESULT,
+		),
 	);
 	// A call that got through, or the head commit anywhere, is a leak.
 	assert.throws(
@@ -1641,7 +1675,7 @@ test("a transcript proves the network by an errored attempt or by a tool list wi
 				lines(
 					withFetch,
 					part,
-					[use("t5", "WebFetch", { url: "https://x" }), answer("t5", "fine", false)],
+					[use("t5", "WebFetch", { url: PROBE_URL }), answer("t5", "fine", false)],
 					RESULT,
 				),
 			),
@@ -1673,6 +1707,10 @@ test("a transcript's paths match however the system spells them", () => {
 		cache: "C:\\Out\\cache\\preflight-canary-x.txt",
 		beside: "C:\\Temp\\replay-preflight-A\\row\\beside-checkout.txt",
 	};
+	const winCheckout = winFiles.inside.slice(
+		0,
+		winFiles.inside.lastIndexOf(String.fromCharCode(92)),
+	);
 	// claude may write the paths with forward slashes and another case of the drive letter.
 	const spelled = (path) => path.replaceAll("\\", "/").replace(/^C:/, "c:");
 	const transcript = lines(
@@ -1681,13 +1719,21 @@ test("a transcript's paths match however the system spells them", () => {
 			use("t1", "Read", { file_path: spelled(winFiles.inside) }),
 			answer("t1", SECRETS.inside, false),
 		],
-		...["answer_file", "cache", "beside"].map((name, i) =>
-			denial(`t${i + 2}`, spelled(winFiles[name])),
-		),
+		...["answer_file", "cache", "beside"].map((name, i) => [
+			use(`t${i + 2}`, "Read", { file_path: spelled(winFiles[name]) }),
+			answer(`t${i + 2}`, outsideDenial(spelled(winFiles[name]), spelled(winCheckout)), true),
+		]),
 		RESULT,
 	);
 	const on = (platform) =>
-		checkTranscript({ transcript, files: winFiles, secrets: SECRETS, head: HEADS, platform });
+		checkTranscript({
+			transcript,
+			files: winFiles,
+			secrets: SECRETS,
+			checkout: winCheckout,
+			head: HEADS,
+			platform,
+		});
 	on("win32");
 	// Elsewhere the paths are case sensitive, and these are other paths.
 	assert.throws(() => on("linux"), refused(/not proven/));
@@ -1788,7 +1834,7 @@ for (const [which, field] of [
 	test(`the preflight refuses a transcript that skips the probe of ${which}`, async () => {
 		await assert.rejects(
 			runPreflight(async (_e, prompt) => confinedTranscript(prompt, { skip: [field] })),
-			refused(/not proven.*no refused tool call on/),
+			refused(/not proven.*no explicit permission denial of a Read of/),
 		);
 	});
 }
@@ -1816,7 +1862,7 @@ test("the preflight refuses a reviewer that reaches the network", async () => {
 		runPreflight(async (_e, prompt) =>
 			confinedTranscript(prompt, { tools: ["Read", "Grep", "Glob", "WebSearch"] }),
 		),
-		refused(/not proven.*failed attempt to fetch from the network/),
+		refused(/not proven.*explicit permission denial of a call that names the probe/),
 	);
 });
 
@@ -2247,5 +2293,551 @@ test("SIGINT and SIGTERM end the running model, clean up, and exit with the sign
 	assert.equal(
 		await runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { input: "" }),
 		"ok",
+	);
+});
+
+// Two sessions as claude 2.1.332 wrote them with `--output-format stream-json --verbose`, recorded
+// by running the launcher for the preflight on this machine with synthetic canaries only (the
+// replay set was not involved). Events that hold nothing the check reads (the model's text, rate
+// limits, the init message's other fields) are left out, and the folders and the canary's content
+// are replaced by <checkout>, <inside>, <answer_file>, <cache>, <beside> and <canary>.
+//
+// REAL_LAUNCH is the launch the rows use: an init message that lists Glob, Grep and Read, a read
+// of the inside canary, and the denial text of --restricted for each of the three outside files.
+// NETWORK_PROBE is a diagnostic launch with the same flags plus WebFetch and Bash in --tools (not
+// in --allowedTools), to see what Claude Code writes when it refuses a call by permission.
+const REAL_LAUNCH = [
+	{
+		type: "system",
+		subtype: "init",
+		tools: ["Glob", "Grep", "Read"],
+		mcp_servers: [],
+		permissionMode: "default",
+		claude_code_version: "2.1.332",
+	},
+	{
+		type: "assistant",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "toolu_1",
+					name: "Read",
+					input: {
+						file_path: "<inside>",
+					},
+				},
+			],
+		},
+	},
+	{
+		type: "user",
+		message: {
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "toolu_1",
+					content: "1\t<canary>",
+				},
+			],
+		},
+	},
+	{
+		type: "assistant",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "toolu_2",
+					name: "Read",
+					input: {
+						file_path: "<answer_file>",
+					},
+				},
+			],
+		},
+	},
+	{
+		type: "system",
+		subtype: "permission_denied",
+		tool_name: "Read",
+		tool_use_id: "toolu_2",
+		decision_reason_type: "other",
+		decision_reason: "--restricted: path outside the working directory",
+		message:
+			"<answer_file> is outside <checkout>; --restricted confines the file tools to the working directory.",
+	},
+	{
+		type: "user",
+		message: {
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "toolu_2",
+					content:
+						"<answer_file> is outside <checkout>; --restricted confines the file tools to the working directory.",
+					is_error: true,
+				},
+			],
+		},
+	},
+	{
+		type: "assistant",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "toolu_3",
+					name: "Read",
+					input: {
+						file_path: "<cache>",
+					},
+				},
+			],
+		},
+	},
+	{
+		type: "system",
+		subtype: "permission_denied",
+		tool_name: "Read",
+		tool_use_id: "toolu_3",
+		decision_reason_type: "other",
+		decision_reason: "--restricted: path outside the working directory",
+		message:
+			"<cache> is outside <checkout>; --restricted confines the file tools to the working directory.",
+	},
+	{
+		type: "user",
+		message: {
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "toolu_3",
+					content:
+						"<cache> is outside <checkout>; --restricted confines the file tools to the working directory.",
+					is_error: true,
+				},
+			],
+		},
+	},
+	{
+		type: "assistant",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "toolu_4",
+					name: "Read",
+					input: {
+						file_path: "<beside>",
+					},
+				},
+			],
+		},
+	},
+	{
+		type: "system",
+		subtype: "permission_denied",
+		tool_name: "Read",
+		tool_use_id: "toolu_4",
+		decision_reason_type: "other",
+		decision_reason: "--restricted: path outside the working directory",
+		message:
+			"<beside> is outside <checkout>; --restricted confines the file tools to the working directory.",
+	},
+	{
+		type: "user",
+		message: {
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "toolu_4",
+					content:
+						"<beside> is outside <checkout>; --restricted confines the file tools to the working directory.",
+					is_error: true,
+				},
+			],
+		},
+	},
+];
+const NETWORK_PROBE = [
+	{
+		type: "system",
+		subtype: "init",
+		tools: ["Bash", "Glob", "Grep", "Read", "WebFetch"],
+		mcp_servers: [],
+		permissionMode: "default",
+		claude_code_version: "2.1.332",
+	},
+	{
+		type: "assistant",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "toolu_1",
+					name: "WebFetch",
+					input: {
+						url: "https://github.com/gateweavehq/agents.git",
+						prompt: "Describe the contents of this page.",
+					},
+				},
+			],
+		},
+	},
+	{
+		type: "system",
+		subtype: "permission_denied",
+		tool_name: "WebFetch",
+		tool_use_id: "toolu_1",
+		message: "Claude requested permissions to use WebFetch, but you haven't granted it yet.",
+	},
+	{
+		type: "user",
+		message: {
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "toolu_1",
+					content: "Claude requested permissions to use WebFetch, but you haven't granted it yet.",
+					is_error: true,
+				},
+			],
+		},
+	},
+	{
+		type: "assistant",
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "toolu_2",
+					name: "Bash",
+					input: {
+						command: "git ls-remote https://github.com/gateweavehq/agents.git HEAD",
+						description: "Query remote HEAD of the repository",
+					},
+				},
+			],
+		},
+	},
+	{
+		type: "system",
+		subtype: "permission_denied",
+		tool_name: "Bash",
+		tool_use_id: "toolu_2",
+		decision_reason_type: "other",
+		decision_reason: "This command requires approval",
+		message: "This command requires approval",
+	},
+	{
+		type: "user",
+		message: {
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "toolu_2",
+					content: "This command requires approval",
+					is_error: true,
+				},
+			],
+		},
+	},
+];
+
+// A recorded session as transcript text, with its placeholders filled in for this test's paths.
+function recorded(session, { checkout = CHECKOUT, edit = (events) => events } = {}) {
+	const fill = {
+		"<checkout>": checkout,
+		"<inside>": FILES.inside,
+		"<answer_file>": FILES.answer_file,
+		"<cache>": FILES.cache,
+		"<beside>": FILES.beside,
+		"<canary>": SECRETS.inside,
+	};
+	const sub = (value) => {
+		if (typeof value === "string") {
+			return Object.entries(fill).reduce((text, [from, to]) => text.split(from).join(to), value);
+		}
+		if (Array.isArray(value)) return value.map(sub);
+		if (value && typeof value === "object") {
+			return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sub(item)]));
+		}
+		return value;
+	};
+	const events = edit(sub(structuredClone(session)));
+	return `${[...events, JSON.parse(RESULT)].map((event) => JSON.stringify(event)).join("\n")}\n`;
+}
+
+const partsOf = (events, type) =>
+	events.flatMap((event) => (event.message?.content ?? []).filter((p) => p.type === type));
+const resultsOf = (events) => partsOf(events, "tool_result");
+const callsOf = (events) => partsOf(events, "tool_use");
+
+/** The recorded launch with the result of the call on `path` changed. */
+const withResultOn = (path, change) => (events) => {
+	const id = callsOf(events).find((call) => call.input.file_path === path)?.id;
+	assert.ok(id, `a call on ${path}`);
+	for (const result of resultsOf(events).filter((r) => r.tool_use_id === id)) change(result);
+	return events;
+};
+
+/** The recorded launch with the network probe's init message (it lists WebFetch and Bash) and calls. */
+const withNetworkProbe =
+	(change = () => {}) =>
+	(events) => {
+		// Its ids must not be the launch's own.
+		const probe = JSON.parse(JSON.stringify(NETWORK_PROBE).replaceAll("toolu_", "probe_"));
+		events.splice(0, 1, probe[0]);
+		const rest = probe.slice(1).filter((event) => event.subtype !== "permission_denied");
+		events.push(...(change(rest) ?? rest));
+		return events;
+	};
+
+/** Only the probe's call to `name` (WebFetch or Bash) and its result. */
+const onlyCall = (name) => (rest) => {
+	const id = callsOf(rest).find((call) => call.name === name)?.id;
+	return rest.filter((event) =>
+		[...partsOf([event], "tool_use"), ...partsOf([event], "tool_result")].every(
+			(p) => (p.id ?? p.tool_use_id) === id,
+		),
+	);
+};
+
+test("the session recorded from a real run of the launcher passes", () => {
+	// As the rows' launch ran: no tool that can reach the network, three denials, the inside read.
+	check(recorded(REAL_LAUNCH));
+	const seen = readTranscript(recorded(REAL_LAUNCH));
+	assert.deepEqual(seen.tools, ["Glob", "Grep", "Read"]);
+	assert.equal(seen.calls.length, 4);
+	// The network tools were listed, and each denial of the probe's session names its repository.
+	check(recorded(REAL_LAUNCH, { edit: withNetworkProbe() }));
+	check(recorded(REAL_LAUNCH, { edit: withNetworkProbe(onlyCall("WebFetch")) }));
+	check(recorded(REAL_LAUNCH, { edit: withNetworkProbe(onlyCall("Bash")) }));
+});
+
+const OTHER_ERRORS = {
+	"a missing file": "File does not exist.",
+	"the earlier made-up denial": "Permission denied: outside the working directory",
+	"an operating system error": "EACCES: permission denied, open 'x'",
+	"a tool failure": "Error: the tool failed",
+	"no text": "",
+	"the denial of another path": outsideDenial("/tmp/elsewhere.txt", CHECKOUT),
+	"the denial for another checkout": outsideDenial("<PATH>", "/tmp/another/row/repo"),
+	"the denial with more text": `${outsideDenial("<PATH>", CHECKOUT)} Try again.`,
+	"the network's denial": WEBFETCH_DENIAL,
+};
+
+for (const name of OUTSIDE) {
+	test(`an error that is not the explicit denial does not prove the probe of ${name}`, () => {
+		for (const [kind, text] of Object.entries(OTHER_ERRORS)) {
+			assert.throws(
+				() =>
+					check(
+						recorded(REAL_LAUNCH, {
+							edit: withResultOn(FILES[name], (result) => {
+								result.content = text.replace("<PATH>", FILES[name]);
+								result.is_error = true;
+							}),
+						}),
+					),
+				refused(/not proven.*no explicit permission denial of a Read of/),
+				kind,
+			);
+		}
+	});
+}
+
+test("the denial of --restricted counts only on a Read, and only as an error", () => {
+	const grep = (events) => {
+		for (const call of callsOf(events))
+			if (call.input.file_path === FILES.cache) call.name = "Grep";
+		return events;
+	};
+	assert.throws(
+		() => check(recorded(REAL_LAUNCH, { edit: grep })),
+		refused(/not proven.*judge's cache folder/),
+	);
+	// The same text on a call that did not error is a call that got through.
+	assert.throws(
+		() =>
+			check(
+				recorded(REAL_LAUNCH, {
+					edit: withResultOn(FILES.cache, (result) => {
+						result.is_error = false;
+					}),
+				}),
+			),
+		refused(/a tool call on a file in the judge's cache folder succeeded/),
+	);
+});
+
+test("the denial's path is compared as the system spells paths", () => {
+	// claude writes the path as the model gave it: separators and case alike where the system's are.
+	const upper = withResultOn(FILES.beside, (result) => {
+		result.content = result.content.replace("/tmp/", "/TMP/");
+	});
+	assert.throws(
+		() => check(recorded(REAL_LAUNCH, { edit: upper })),
+		refused(/not proven.*beside the checkout/),
+	);
+	assert.doesNotThrow(() => check(recorded(REAL_LAUNCH, { edit: upper }), "win32"));
+});
+
+test("a tool list that holds a tool that can reach the network is not verified unavailability", () => {
+	for (const tool of ["WebFetch", "WebSearch", "Bash", "mcp__docs__search"]) {
+		const listed = (events) => {
+			events[0].tools = [...events[0].tools, tool];
+			return events;
+		};
+		assert.throws(
+			() => check(recorded(REAL_LAUNCH, { edit: listed })),
+			refused(/not proven.*explicit permission denial of a call that names the probe/),
+			tool,
+		);
+	}
+	// A list with an entry that has no name says nothing about what the session could use.
+	for (const entry of [null, "", { description: "x" }, 7]) {
+		const nameless = (events) => {
+			events[0].tools = [...events[0].tools, entry];
+			return events;
+		};
+		assert.throws(
+			() => check(recorded(REAL_LAUNCH, { edit: nameless })),
+			refused(/not proven/),
+			JSON.stringify(entry),
+		);
+	}
+	// No list at all: nothing is verified.
+	const unlisted = (events) => {
+		delete events[0].tools;
+		return events;
+	};
+	assert.throws(() => check(recorded(REAL_LAUNCH, { edit: unlisted })), refused(/not proven/));
+	// A tool of an MCP server that ran is a way to the network that got through.
+	const mcp = (events) => {
+		events.push(
+			{
+				type: "assistant",
+				message: {
+					content: [{ type: "tool_use", id: "m1", name: "mcp__docs__search", input: {} }],
+				},
+			},
+			{
+				type: "user",
+				message: {
+					content: [{ type: "tool_result", tool_use_id: "m1", content: "found", is_error: false }],
+				},
+			},
+		);
+		return events;
+	};
+	assert.throws(
+		() => check(recorded(REAL_LAUNCH, { edit: mcp })),
+		refused(/not confined to its checkout.*a mcp__docs__search call succeeded/),
+	);
+});
+
+test("a denial proves the network only when it is the recorded text of a call that names the probe", () => {
+	const run = (change) => check(recorded(REAL_LAUNCH, { edit: withNetworkProbe(change) }));
+	const unproven = refused(/not proven.*explicit permission denial of a call that names the probe/);
+
+	// The call names the probe by its address too.
+	run((rest) => {
+		for (const call of callsOf(rest)) if (call.name === "WebFetch") call.input.url = PROBE_URL;
+		return onlyCall("WebFetch")(rest);
+	});
+
+	// Another repository: the denial is explicit, but not of the probe.
+	assert.throws(
+		() =>
+			run((rest) => {
+				for (const call of callsOf(rest)) {
+					if (call.name === "WebFetch") call.input.url = "https://example.com/other.git";
+					if (call.name === "Bash") call.input.command = "git ls-remote https://example.com/o.git";
+				}
+			}),
+		unproven,
+	);
+	// An error that is not the explicit denial, though the call names the probe.
+	for (const text of [
+		"Request failed with status code 404",
+		"unable to access: Could not resolve host",
+		"Error: fetch failed",
+		`${WEBFETCH_DENIAL} Try later.`,
+		"",
+	]) {
+		assert.throws(
+			() =>
+				run((rest) => {
+					for (const result of resultsOf(rest)) result.content = text;
+				}),
+			unproven,
+			text,
+		);
+	}
+	// A denial text on a call of another tool, or on a tool whose text was not recorded.
+	assert.throws(
+		() =>
+			run((rest) => {
+				for (const result of resultsOf(rest)) result.content = BASH_DENIAL;
+				for (const call of callsOf(rest)) call.name = "WebFetch";
+			}),
+		unproven,
+	);
+	assert.throws(
+		() =>
+			run((rest) => {
+				for (const call of callsOf(rest)) call.name = "WebSearch";
+			}),
+		unproven,
+	);
+	// The denial's text on a call that did not error is a call that got through.
+	assert.throws(
+		() =>
+			run((rest) => {
+				for (const result of resultsOf(rest)) result.is_error = false;
+			}),
+		refused(/call succeeded/),
+	);
+	// A call that never got its result shows no denial.
+	assert.throws(
+		() => run((rest) => rest.filter((event) => resultsOf([event]).length === 0)),
+		unproven,
+	);
+});
+
+test("an errored call unrelated to the probe does not prove the network", () => {
+	// The tools are there. The only denial is of a call on something else, in the recorded text.
+	const unrelated = withNetworkProbe((rest) => [
+		...rest.filter((event) => resultsOf([event]).length + callsOf([event]).length === 0),
+		{
+			type: "assistant",
+			message: {
+				content: [{ type: "tool_use", id: "u1", name: "Bash", input: { command: "ls" } }],
+			},
+		},
+		{
+			type: "user",
+			message: {
+				content: [{ type: "tool_result", tool_use_id: "u1", content: BASH_DENIAL, is_error: true }],
+			},
+		},
+	]);
+	assert.throws(
+		() => check(recorded(REAL_LAUNCH, { edit: unrelated })),
+		refused(/not proven.*explicit permission denial of a call that names the probe/),
 	);
 });

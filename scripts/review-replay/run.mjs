@@ -10,7 +10,8 @@
 // enforce that on Windows, so there the reviewer is claude and the judge is codex. Before any row,
 // a preflight runs the reviewer, started the way the rows start it (plus --output-format
 // stream-json --verbose), and reads its transcript: a successful Read of a canary inside its
-// checkout, refused calls on canaries outside it, and a refused or absent way to the network. A
+// checkout, Claude Code's explicit permission denial of a Read of each canary outside it, and no
+// tool that reaches the network (or an explicit denial of a call that asks for the probe). A
 // leak, or a transcript that does not prove it all, stops the run with nothing written. Only a
 // claude reviewer can be proven for now: a codex reviewer is refused.
 // The exit status is 0 for a pass, 1 for a failed gate, 2 for an error that stopped the run, and
