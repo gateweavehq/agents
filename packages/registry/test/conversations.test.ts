@@ -780,6 +780,34 @@ describe("sandbox time", () => {
 		}
 	});
 
+	it("names the month's reset when the pool is full and the month's minutes are used up", async () => {
+		const stub = registry();
+		const ids = await builderConversations(stub, MAX_WORKSPACE_SANDBOXES + 1);
+		const target = ids.pop() ?? "";
+		const start = Date.UTC(2026, 11, 15, 10);
+		const cap = 10 + IDLE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					for (const id of ids) await turn(instance, id);
+					clock.mockReturnValue(start + 10 * MINUTE);
+					// Lower the cap only once the pool is full, so filling it did not refuse a turn.
+					(instance as unknown as { env: Record<string, unknown> }).env.SANDBOX_MONTHLY_MINUTES =
+						String(cap);
+					expect(await instance.beginTurn(target, "Build it")).toEqual({
+						status: "refused",
+						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
+					});
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: "1000" } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
 	it("names the month's reset when the day's and the month's minutes are both used up", async () => {
 		const stub = registry();
 		const [first = "", second = ""] = await builderConversations(stub, 2);
