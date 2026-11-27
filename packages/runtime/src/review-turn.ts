@@ -138,6 +138,12 @@ export async function prepareReview(
 	const read = await source.diff(mergeBase, head, REVIEW_LIMITS.diffBytes);
 	if (!read) return { skipped: REVIEW_SKIPPED.notFound };
 	if ("tooLarge" in read) return { skipped: REVIEW_SKIPPED.tooLarge };
+	// The limit is on the bytes GitHub sends. Bytes that are not UTF-8, such as a Latin-1 file's,
+	// decode to replacement characters and can make the text longer than the limit. The message
+	// would then cut it, and the findings would be checked against text the model never saw.
+	if (new TextEncoder().encode(read.diff).length > REVIEW_LIMITS.diffBytes) {
+		return { skipped: REVIEW_SKIPPED.tooLarge };
+	}
 	const message = reviewMessage(read.diff, reviewCriteria(pull.title, pull.body));
 	// The limit holds all that a diff within `REVIEW_LIMITS.diffBytes` and a pull request's words
 	// can make; one over it is a message the registry would refuse.

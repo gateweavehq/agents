@@ -52,7 +52,8 @@ function github({
 }: {
 	state?: string;
 	head?: string;
-	diff?: string;
+	/** The diff's text, or its raw bytes for a diff that is not UTF-8. */
+	diff?: string | Uint8Array;
 	body?: string;
 	/** The branch the pull request is to be merged into. */
 	base?: string;
@@ -331,6 +332,27 @@ describe("a review turn", () => {
 		expect(REVIEW_SKIPPED.tooLarge).toContain("too large to review");
 		expect(requests).toHaveLength(0);
 		expect((await registry.listRuns()).filter((run) => run.triggerId !== null)).toEqual([]);
+	});
+
+	it("ends as skipped, with `too large to review`, when a diff under the limit in bytes decodes to more", async () => {
+		const { registry } = await reviewing();
+		// Latin-1 bytes: each `é` (0xE9) is not UTF-8 and decodes to a three-byte replacement
+		// character, so 81,000 bytes from GitHub become 239,000 bytes of text, over the limit.
+		const header = new TextEncoder().encode(
+			"diff --git a/latin.txt b/latin.txt\n--- a/latin.txt\n+++ b/latin.txt\n@@ -0,0 +1,1000 @@\n",
+		);
+		const line = [0x2b, ...new Array<number>(79).fill(0xe9), 0x0a];
+		const diff = new Uint8Array([...header, ...Array.from({ length: 1000 }, () => line).flat()]);
+		expect(diff.length).toBeLessThan(REVIEW_LIMITS.diffBytes);
+		const requests = fakeModel(() => anthropicStream("Never asked."), {
+			"api.github.com": github({ diff }).handler,
+		});
+		expect(await admitted(registry)).toMatchObject({
+			status: "skipped",
+			reason: REVIEW_SKIPPED.tooLarge,
+			runId: null,
+		});
+		expect(requests).toHaveLength(0);
 	});
 
 	it("makes no delivery when the pull request was closed after the builder recorded it open", async () => {
