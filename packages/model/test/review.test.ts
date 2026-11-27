@@ -241,6 +241,20 @@ describe("rankFindings", () => {
 		}
 	});
 
+	it("keeps side and offDiff of the same duplicate when their sides differ", () => {
+		const offDiff = reviewed({ side: "RIGHT", offDiff: true });
+		const onDiff = reviewed({ side: "LEFT", offDiff: false });
+		for (const pair of [
+			[offDiff, onDiff],
+			[onDiff, offDiff],
+		] as const) {
+			expect(rankFindings(pair)).toEqual({
+				shown: [{ ...onDiff }],
+				collapsed: [],
+			});
+		}
+	});
+
 	it.each([7, 19, 42, 83])(
 		"ranks findings with distinct severity, proof and diff-location combinations after shuffling with seed %i",
 		(seed) => {

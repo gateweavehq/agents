@@ -76,8 +76,8 @@ export function rankFindings(findings: readonly ReviewedFinding[]): {
 					? finding.severity
 					: first.severity,
 			proof: first.proof.proven || !finding.proof.proven ? first.proof : finding.proof,
-			// An on-diff location is the stronger signal when duplicates disagree.
-			offDiff: first.offDiff && finding.offDiff,
+			// Side and offDiff describe one location: an on-diff duplicate brings its side along.
+			...(first.offDiff && !finding.offDiff ? { side: finding.side, offDiff: false } : {}),
 		};
 	});
 
