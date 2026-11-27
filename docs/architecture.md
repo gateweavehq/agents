@@ -2060,8 +2060,9 @@ reviewed.
   fences, and the longest title and description GitHub allows can make. The turn also reads the
   commit where the head left the branch the pull request is based on, and reads the diff between
   those two commits, so the diff is pinned to commits and does not change when the base branch
-  advances. The findings are checked against that same commit and the reviewed head, the very diff
-  the model reads. It ends the review as `skipped`, with the reason and no run, when
+  advances. That text is read once per turn and kept: `submit_review` checks the findings'
+  lines (`offDiff`) against it as it is, and the sandbox makes no diff of its own, so the model and
+  the check cannot differ. It ends the review as `skipped`, with the reason and no run, when
   the pull request is closed, when its head is no longer the one reviewed, or when the diff is
   over `REVIEW_LIMITS.diffBytes` ("The diff is too large to review"). Each review has a fresh
   conversation of its own; it holds no message of the builder's, no review thread and no memory.

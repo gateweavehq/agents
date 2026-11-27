@@ -84,6 +84,12 @@ export const REVIEW_DIFF = `diff --git a/app.ts b/app.ts
 /** The heads of pull requests that GitHub has dropped: a review's checkout of one is `gone`. */
 export const goneHeads = new Set<string>();
 
+/**
+ * The diff the fake sandbox's own `git diff` answers, which a test may change to stand for a
+ * patch made again after the base branch moved.
+ */
+export const sandboxDiff = { text: REVIEW_DIFF };
+
 /** What a command answers; with `seconds`, how long it took by the sandbox's clock. */
 export type CommandAnswer = (CommandResult & { seconds?: number }) | Error;
 
@@ -409,7 +415,7 @@ export class FakeSandbox
 			args[0] === "merge-base"
 				? { exitCode: 0, output: REVIEW_MERGE_BASE, timedOut: false }
 				: args.includes("diff")
-					? { exitCode: 0, output: REVIEW_DIFF, timedOut: false }
+					? { exitCode: 0, output: sandboxDiff.text, timedOut: false }
 					: undefined;
 	}
 	/** What the fake sandbox keeps of its conversation, as the real one's `storage.kv` does (AGT-156). */

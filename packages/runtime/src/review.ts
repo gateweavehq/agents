@@ -34,6 +34,11 @@ export interface ReviewPort {
 export interface ReviewToolOptions {
 	sandbox: ReviewPort;
 	base: string;
+	/**
+	 * The diff the model was given. The findings are checked against this text as it is; without
+	 * it the sandbox makes the diff of `base` and `head`.
+	 */
+	diff?: string;
 	head: string;
 	run: RunRecorder;
 	record: (outcome: ReviewOutcome) => Promise<void>;
@@ -145,6 +150,7 @@ async function runTest(sandbox: ReviewPort, command: string, seconds: number): P
 export function reviewTools({
 	sandbox,
 	base,
+	diff: supplied,
 	head,
 	record,
 	summarize,
@@ -161,9 +167,13 @@ export function reviewTools({
 	let finished: { submission: string; outcome: ReviewOutcome } | null = null;
 
 	async function review(findings: ReviewFinding[]): Promise<ReviewOutcome> {
-		const read = await readReviewDiff(git, base, head);
-		if ("error" in read) throw new Error(`${read.error}; nothing was recorded; try again`);
-		const diff = parseDiff(read.diff);
+		let text = supplied;
+		if (text === undefined) {
+			const read = await readReviewDiff(git, base, head);
+			if ("error" in read) throw new Error(`${read.error}; nothing was recorded; try again`);
+			text = read.diff;
+		}
+		const diff = parseDiff(text);
 		const outcome: ReviewOutcome = { findings: [], proofsRun: 0, proofSeconds: 0 };
 		/** Why no further proof may run: the checkout is not the head, or a command may still use it. */
 		let unusable: string | null = null;

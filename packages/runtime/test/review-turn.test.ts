@@ -17,11 +17,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { conversationName } from "../src";
 import { pullRequestBody } from "../src/checks";
 import { reviewCriteria } from "../src/review-turn";
-import { type FakeSandbox, goneHeads, REVIEW_DIFF } from "./fake-sandbox";
+import { type FakeSandbox, goneHeads, REVIEW_DIFF, sandboxDiff } from "./fake-sandbox";
 import { anthropicStream, anthropicToolCall, fakeModel, KEY } from "./support";
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	sandboxDiff.text = REVIEW_DIFF;
 });
 
 const HEAD = "a".repeat(40);
@@ -479,7 +480,7 @@ describe("a review turn", () => {
 		expect(text).toBe(reviewMessage(diff, [TITLE, body]));
 	});
 
-	it("reads the diff between two commits and checks the findings against those same two", async () => {
+	it("reads the diff between two commits once and checks the findings against that same text", async () => {
 		const { registry, workspaceId } = await reviewing();
 		const later = "f".repeat(40);
 		// The base branch advances between GitHub's readings: the second answer would name another commit.
@@ -507,28 +508,37 @@ describe("a review turn", () => {
 			conversationName(workspaceId, run?.conversationId ?? ""),
 		);
 		const git = await machine.gitCalls();
-		// The sandbox diffs that commit and the head, and no branch: nothing it reads can move.
-		expect(git).toContainEqual(["merge-base", MERGE_BASE, HEAD]);
+		// The findings are checked against the diff the model read: the sandbox makes no other, and
+		// reads no branch that may move.
+		expect(git.some((args) => args[0] === "merge-base" || args.includes("diff"))).toBe(false);
 		expect(git.flat().some((arg) => arg.startsWith("origin/"))).toBe(false);
 		expect(git.flat()).not.toContain(later);
 	});
 
-	it("counts a finding on a line the model read as on the diff, though the base branch advanced", async () => {
+	it("counts a finding on a line of the diff the model was given as inline, whatever the sandbox would make of it", async () => {
 		const { registry } = await reviewing();
 		const later = "f".repeat(40);
-		fakeModel(
+		// The base branch advanced: a diff made again would hold other hunks. The sandbox's own diff
+		// here lacks app.ts line 1, which the model read, and holds other.ts line 7, which it did not.
+		sandboxDiff.text = `diff --git a/other.ts b/other.ts
+--- a/other.ts
++++ b/other.ts
+@@ -7 +7 @@
+-old
++new
+`;
+		const finding = {
+			severity: "high",
+			title: "A real problem",
+			failingCase: "The new line is wrong.",
+		};
+		const requests = fakeModel(
 			(call) =>
 				call === 0
 					? anthropicToolCall("submit_review", {
 							findings: [
-								{
-									path: "app.ts",
-									line: 1,
-									side: "RIGHT",
-									severity: "high",
-									title: "A real problem",
-									failingCase: "The new line is wrong.",
-								},
+								{ ...finding, path: "app.ts", line: 1, side: "RIGHT" },
+								{ ...finding, path: "other.ts", line: 7, side: "RIGHT" },
 							],
 						})
 					: anthropicStream("Reported."),
@@ -540,9 +550,12 @@ describe("a review turn", () => {
 		await vi.waitFor(async () =>
 			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
 		);
-		// The line is in the hunk the model read (`REVIEW_DIFF`), and the diff the findings are checked
-		// against is that same diff: it is on the diff, not off it.
-		expect((await registry.listPullRequestReviews())[0]).toMatchObject({ found: 1, shown: 1 });
+		// What submit_review returned to the model: the finding on the line the model read is inline
+		// (offDiff false), and the one on a line only a recomputed patch has is off the diff.
+		const outcome = JSON.stringify(requests[1]?.body.messages);
+		const flags = [...outcome.matchAll(/offDiff[^a-z]+(true|false)/g)].map((match) => match[1]);
+		// The findings come back in the order they were submitted: app.ts, then other.ts.
+		expect(flags).toEqual(["false", "true"]);
 	});
 });
 

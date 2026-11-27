@@ -33,6 +33,8 @@ export interface ReviewTurnOf {
 	head: string;
 	/** The commit id the review's diff is made against. */
 	base?: string;
+	/** The diff the model reads, which the findings are checked against: read once, never again. */
+	diff?: string;
 	draft?: boolean;
 	draftReason?: string | null;
 }

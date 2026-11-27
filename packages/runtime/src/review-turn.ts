@@ -112,11 +112,11 @@ export function reviewCriteria(title: string, body: string): string[] {
 
 /**
  * A review's message, and what the turn needs to know of the pull request besides: `base`, the
- * commit the message's diff was made against, from which the findings are checked against that
- * same diff, and whether GitHub says it is a draft.
+ * commit the message's diff was made against, `diff`, that very text, which the findings are
+ * checked against as it is and never made again, and whether GitHub says it is a draft.
  */
 export type PreparedReview =
-	| { message: string; base: string; draft: boolean }
+	| { message: string; base: string; diff: string; draft: boolean }
 	| { skipped: string };
 
 /**
@@ -131,8 +131,8 @@ export async function prepareReview(
 	if (!pull) return { skipped: REVIEW_SKIPPED.notFound };
 	if (pull.state !== "open") return { skipped: REVIEW_SKIPPED.closed };
 	if (pull.head !== head) return { skipped: REVIEW_SKIPPED.headGone };
-	// The diff is pinned to two commits, so the findings can be checked against the very diff the
-	// model reads, whatever the pull request's base branch does after: the sandbox diffs the same two.
+	// The diff is pinned to two commits and read once. `submit_review` is given this very text to
+	// check the findings against, so the base branch advancing after cannot change what counts as inline.
 	const mergeBase = await source.mergeBase(pull.base, head);
 	if (!mergeBase) return { skipped: REVIEW_SKIPPED.notFound };
 	const read = await source.diff(mergeBase, head, REVIEW_LIMITS.diffBytes);
@@ -142,7 +142,7 @@ export async function prepareReview(
 	// The limit holds all that a diff within `REVIEW_LIMITS.diffBytes` and a pull request's words
 	// can make; one over it is a message the registry would refuse.
 	if (message.length > REVIEW_MESSAGE_LIMIT) return { skipped: REVIEW_SKIPPED.tooLarge };
-	return { message, base: mergeBase, draft: pull.draft };
+	return { message, base: mergeBase, diff: read.diff, draft: pull.draft };
 }
 
 /** What a review found, as the registry keeps it: counts only. */

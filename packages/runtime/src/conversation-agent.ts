@@ -749,6 +749,7 @@ ${runPageNote(runs, turn.runId)}`
 				head: delivery.head,
 				...turn.review,
 				base: prepared.base,
+				diff: prepared.diff,
 				draft: prepared.draft,
 				draftReason: delivery.draftReason,
 			},
@@ -1025,6 +1026,8 @@ ${runPageNote(runs, turn.runId)}`
 									sandbox,
 									// The commit the diff the model read was made against, not a branch that may move.
 									base: review.base ?? `origin/${repository.defaultBranch}`,
+									// The text the model read: the findings are checked against it, not a second diff.
+									diff: review.diff,
 									head: review.head,
 									run,
 									record: (outcome) => this.#recordReview(registry, runId, outcome),
