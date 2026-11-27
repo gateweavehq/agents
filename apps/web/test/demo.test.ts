@@ -360,6 +360,17 @@ describe("on the demo deployment", () => {
 			userId,
 		);
 		expect(trigger).toEqual(refused);
+		// A review trigger holds no secret, and the demo has none the more.
+		expect(
+			await registry.createReviewTrigger(
+				{
+					name: "Reviews",
+					prompt: "Review it",
+					target: { kind: "team", teamId: team?.team.id ?? "" },
+				},
+				userId,
+			),
+		).toEqual(refused);
 		const track = {
 			trackUrl: "https://track.example.net",
 			agentKey: `gwt_${"a".repeat(43)}`,

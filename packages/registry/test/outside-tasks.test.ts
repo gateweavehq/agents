@@ -24,14 +24,15 @@ const task = (agent: string, requestId: string, text = "Review the change.") => 
 });
 
 describe("outside tasks (AGT-155)", () => {
-	it("refuse an agent whose owner did not allow them, and admit one that did", async () => {
+	it("refuses an agent without outside tasks allowed, and admits one that has them", async () => {
 		const stub = registry();
 		const closed = await stub.createAgent(reviewer());
 		const open = await stub.createAgent(reviewer({ name: "Builder", outsideTasks: true }));
 
-		expect(await stub.admitOutsideTask(task(closed.id, "r1"))).toMatchObject({
+		expect(await stub.admitOutsideTask(task(closed.id, "r1"))).toEqual({
 			status: "refused",
-			message: expect.stringContaining("does not allow tasks from outside"),
+			message:
+				"That agent does not allow tasks from outside; a workspace owner or admin can turn it on",
 		});
 
 		const admitted = await stub.admitOutsideTask(task("Builder", "r1"));

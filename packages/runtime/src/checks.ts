@@ -340,6 +340,62 @@ function oracleLines(review: OracleReview | null): string[] {
 	];
 }
 
+/** The most files a draft's reason names. */
+const REASON_FILES = 5;
+
+/**
+ * Why the checks made a pull request a draft, for the registry and the pages that show it: made
+ * of the round's status, which check ended how, and whether the checkout was left different, and
+ * of nothing else. No command, no output and no file's name is in it, so it may be kept and
+ * shown. Null for a round that passed.
+ */
+export function checksDraftReason(round: CheckRound): string | null {
+	if (round.status === "passed") return null;
+	if (round.status === "not-run") {
+		return "The repository's checks were not run: the time a run has for them was used up.";
+	}
+	const at = round.results.findIndex(
+		(result) => !checkPassed(result) && result.outcome.kind !== "not-run",
+	);
+	const failed = round.results[at];
+	if (failed) {
+		const how = (() => {
+			switch (failed.outcome.kind) {
+				case "exited":
+					return `exited with code ${failed.outcome.exitCode}`;
+				case "timed-out":
+					return `timed out after ${failed.outcome.limitSeconds} seconds`;
+				default:
+					return "could not be run by the sandbox";
+			}
+		})();
+		return `The repository's checks did not pass: check ${at + 1} of ${round.results.length} ${how}.`;
+	}
+	if (round.changed !== undefined) {
+		return "A check left the repository's files different from the commit, so the checks did not all run on it.";
+	}
+	if (round.unverified !== undefined) {
+		return "Whether the repository's files were still the commit's after a check could not be told.";
+	}
+	return "The repository's checks did not pass.";
+}
+
+/**
+ * Why a branch's edits made its pull request a draft, from the list of changed files GitHub gave:
+ * which files and how they changed. Null when the branch edits nothing its checks rely on.
+ */
+export function editsDraftReason(review: OracleReview | null): string | null {
+	if (review === null || !reviewFlagged(review)) return null;
+	if ("unverified" in review) {
+		return "Whether the work edits the files its checks rely on could not be told.";
+	}
+	const listed = review.edits
+		.slice(0, REASON_FILES)
+		.map((edit: OracleEdit) => `${edit.path.slice(0, 200)} (${edit.change})`);
+	const more = review.edits.length - listed.length;
+	return `The work modifies or deletes files that decide whether its checks pass: ${listed.join(", ")}${more > 0 ? ` and ${more} more` : ""}.`;
+}
+
 /** What the model is told when a pull request is a draft for what it edited. */
 export function describeEdits(review: OracleReview | null): string | null {
 	if (review === null || !reviewFlagged(review)) return null;
@@ -547,6 +603,16 @@ const BODY_LIMIT = 65_536;
 export const SHORTENED =
 	"_The description above was shortened to fit GitHub's length limit for a pull request._";
 
+/** The body without the AI disclosure `pullRequestBody` writes: its comment and its byline. */
+export function withoutDisclosure(body: string): string {
+	return body
+		.replace(/<!--\s*AI-Disclosure:[\s\S]*?-->/gi, "")
+		.replace(
+			/^[ \t]*Written and opened by (?:[^\r\n]+, )?an AI agent in Gateweave Agents\.[ \t]*\r?(?:\n|$)/gm,
+			"",
+		);
+}
+
 /**
  * Keep the checks and disclosure whole, shortening only the model's part at a code point.
  */
@@ -559,12 +625,7 @@ export function pullRequestBody(body: string, section: string | null, agentName:
 	const byline = name ? `\`${name}\`, an AI agent` : "an AI agent";
 	const disclosure = `Written and opened by ${byline} in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->`;
 	const suffix = section === null ? disclosure : `${section}\n\n${disclosure}`;
-	const description = body
-		.replace(/<!--\s*AI-Disclosure:[\s\S]*?-->/gi, "")
-		.replace(
-			/^[ \t]*Written and opened by (?:[^\r\n]+, )?an AI agent in Gateweave Agents\.[ \t]*\r?(?:\n|$)/gm,
-			"",
-		);
+	const description = withoutDisclosure(body);
 	const model = withoutChecksSection(description === body ? description : description.trimEnd());
 	const before = closed(section === null ? model : model.trimEnd());
 	const full = before === "" ? suffix : `${before}\n\n${suffix}`;

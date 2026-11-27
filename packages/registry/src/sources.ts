@@ -11,6 +11,7 @@ import {
 	sharedApp,
 	updatePullRequest,
 } from "@gateweave/agents-github";
+import type { ReviewPullState, SandboxRepository } from "@gateweave/agents-model";
 import type { RepositoryWriter } from "./apply";
 import type { RepositoryRow } from "./db/schema";
 import type { RepositorySource } from "./scanner";
@@ -73,4 +74,27 @@ export function writerFor(
 		updatePullRequest: async (number, input) =>
 			updatePullRequest(await token(), name, number, input),
 	};
+}
+
+/**
+ * A pull request as GitHub has it now: its state, its head and whether it is a draft. "gone" when
+ * GitHub has no such pull request; null when this server cannot read GitHub. A failed read throws.
+ */
+export async function readPullState(
+	env: SourceEnv,
+	repository: SandboxRepository,
+	number: number,
+): Promise<ReviewPullState | "gone" | null> {
+	const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
+	if (!appId || !privateKey) return null;
+	const app = sharedApp({ appId, privateKey });
+	const token = await app.repositoryToken(repository.installationId, repository.externalId, {
+		pull_requests: "read",
+	});
+	const found = await pullRequest(
+		token,
+		{ owner: repository.owner, name: repository.name },
+		number,
+	);
+	return found ? { state: found.state, head: found.head, draft: found.draft === true } : "gone";
 }
