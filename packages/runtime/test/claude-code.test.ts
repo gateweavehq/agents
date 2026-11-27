@@ -912,7 +912,7 @@ describe("Claude Code's output", () => {
 	});
 });
 
-it("records a paused sandbox's next model request and ends its run as stopped", async () => {
+it("stops a paused sandbox's engine and records its next model request as refused", async () => {
 	const { registry, stub, machine, agentId } = await conversation();
 	await machine.scriptEngine({ lines: [INIT], untilStopped: true });
 	const socket = await connect(stub);
@@ -941,10 +941,10 @@ it("records a paused sandbox's next model request and ends its run as stopped", 
 		expect((await response.text()).trim()).toBe(reason);
 		await Promise.all(waits);
 	} finally {
-		await machine.stopEngine();
 		await turn;
 		socket.close();
 	}
+	expect((await machine.seen()).stops).toBe(1);
 	const [run] = await registry.listRuns();
 	expect(run).toMatchObject({ status: "stopped", error: reason });
 	expect(await stub.runTrace(run?.id ?? "")).toContainEqual(

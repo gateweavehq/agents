@@ -291,6 +291,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		signal: AbortSignal;
 		run: RunRecorder;
 		requests: Set<number>;
+		stop: () => void;
 	} | null = null;
 
 	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
@@ -833,6 +834,9 @@ ${runPageNote(runs, turn.runId)}`
 		if (!turn) return null;
 		const step = turn.run.meteredStarted();
 		turn.requests.add(step);
+		// The pause is noticed before this refusal is metered. Stop only once its span is
+		// in `requests`, or the turn's cleanup could drop this state before the trace has it.
+		if (turn.paused) turn.stop();
 		return step;
 	}
 
@@ -1329,6 +1333,13 @@ ${runPageNote(runs, turn.runId)}`
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
 				const requests = new Set<number>();
+				let stopped = false;
+				const stop = () => {
+					if (stopped) return;
+					stopped = true;
+					calls.abort();
+					sandbox.stopEngine().catch(() => {});
+				};
 				const state = {
 					agentId: agent.agentId,
 					paused: false,
@@ -1337,13 +1348,10 @@ ${runPageNote(runs, turn.runId)}`
 					signal: calls.signal,
 					run,
 					requests,
+					stop,
 				};
 				this.#engineTurnState = state;
 				const turn = engineTurn(engine, writer, run, agent);
-				const stop = () => {
-					calls.abort();
-					sandbox.stopEngine().catch(() => {});
-				};
 				signal?.addEventListener("abort", stop, { once: true });
 				try {
 					const note = engineNote(repository, branch, PULL_REQUEST_TOOL in tools);
