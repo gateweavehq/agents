@@ -6,6 +6,7 @@ import { LegalLinks } from "#/components/legal-links";
 import { Button } from "#/components/ui/button";
 import { authClient, inAuthorizationFlow } from "#/lib/auth-client";
 import { getConsentRequest } from "#/lib/oauth";
+import { scopeAccessText } from "#/lib/oauth-consent";
 import { getLegalLinks } from "#/lib/session";
 import { useDocumentTitle } from "#/lib/title";
 
@@ -85,9 +86,7 @@ function ConsentPage() {
 				It will act as you, <span className="text-foreground">{viewer.email}</span>: it can see the
 				names of the workspaces you belong to and read their repositories' wikis, which may describe
 				private code.
-				{canRun
-					? " It can also give your agents tasks and read their runs, only for agents whose owner allowed tasks from outside, and those tasks spend your workspace's budget."
-					: " It cannot change anything."}
+				{scopeAccessText(canRun)}
 			</p>
 			<p className="text-sm text-muted-foreground">
 				Then you go back to{" "}
