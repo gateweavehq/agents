@@ -153,15 +153,20 @@ describe("DeepWiki's answers", () => {
 
 	it("gives every page as read_wiki_contents does", () => {
 		const text = wikiContentsText([
-			{ title: "Overview", sources: [{ path: "README.md", lines: 4 }], body: "It syncs.\n" },
-			{ title: "Sync", sources: [], body: "Ops.\n\n**Sources:** [src/sync.ts:1-2]()" },
+			{
+				number: "1",
+				title: "Overview",
+				sources: [{ path: "README.md", lines: 4 }],
+				body: "It syncs.\n",
+			},
+			{ number: "2", title: "Sync", sources: [], body: "Ops.\n\n**Sources:** [src/sync.ts:1-2]()" },
 		]);
 		const pages = text.split("\n\n---\n\n");
 		expect(pages).toHaveLength(2);
 		expect(pages[0]).toBe(
-			"# Page: Overview\n\n<details>\n<summary>Relevant source files</summary>\n\nThe following files were used as context for generating this wiki page:\n\n- [README.md](README.md)\n\n</details>\n\n# Overview\n\nIt syncs.",
+			"# Page 1: Overview\n\n<details>\n<summary>Relevant source files</summary>\n\nThe following files were used as context for generating this wiki page:\n\n- [README.md](README.md)\n\n</details>\n\n# Overview\n\nIt syncs.",
 		);
-		expect(pages[1]).toBe("# Page: Sync\n\n# Sync\n\nOps.\n\n**Sources:** [src/sync.ts:1-2]()");
+		expect(pages[1]).toBe("# Page 2: Sync\n\n# Sync\n\nOps.\n\n**Sources:** [src/sync.ts:1-2]()");
 	});
 
 	it("says a repository has no wiki as DeepWiki does", () => {
