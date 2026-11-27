@@ -65,6 +65,11 @@ describe("MCP over OAuth, in the Workers runtime", () => {
 		const toConsent = await agents.fetch(authorize, { headers: { cookie } });
 		const consent = new URL(((await toConsent.json()) as { url: string }).url, origin);
 		expect(consent.pathname).toBe("/oauth/consent");
+		const consentPage = await agents.fetch(consent, { headers: { cookie } });
+		const consentHtml = await consentPage.text();
+		expect(consentHtml).toContain("Starting a task needs that agent");
+		expect(consentHtml).toContain("Reading a run follows workspace membership and run visibility");
+		expect(consentHtml).not.toContain("only for agents whose owner allowed tasks from outside");
 		const decision = await authApi("/oauth2/consent", cookie, {
 			accept: true,
 			oauth_query: consent.search.slice(1),
