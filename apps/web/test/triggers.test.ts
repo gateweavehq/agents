@@ -248,12 +248,32 @@ it("makes and manages a review trigger with no URL and no secret", async () => {
 			method,
 		});
 
+	// An agent with no sandbox cannot review, and the admin is told so as the trigger is made.
+	const refused = await call("createTrigger", {
+		trigger: {
+			name: "Review pull requests",
+			prompt: "Review it",
+			target: { kind: "agent", agentId },
+			pullRequest: true,
+		},
+	});
+	expect(refused.failed).toBe(true);
+	expect(refused.text).toContain("no sandbox");
+	const reviewer = await registry.createAgent({
+		name: "Reviewer",
+		description: null,
+		provider: "anthropic",
+		model: "claude-sonnet-5-5",
+		instructions: null,
+		sandbox: true,
+	});
+
 	// Made through the app: nothing in the answer is a URL or a secret.
 	const created = await call("createTrigger", {
 		trigger: {
 			name: "Review pull requests",
 			prompt: "Review it",
-			target: { kind: "agent", agentId },
+			target: { kind: "agent", agentId: reviewer.id },
 			pullRequest: true,
 		},
 	});
@@ -272,10 +292,9 @@ it("makes and manages a review trigger with no URL and no secret", async () => {
 	expect(listed.text).not.toContain(reviewUrl);
 
 	// It shows on the agent's page without a URL or a secret control.
-	const agent = await page(`/${slug}/agents/${agentId}`, owner.headers.cookie);
+	const agent = await page(`/${slug}/agents/${reviewer.id}`, owner.headers.cookie);
 	expect(agent).toContain("Review pull requests");
 	expect(agent).toContain("reviews each pull request an agent of the workspace opens");
-	expect(agent).toContain(url);
 	expect(agent).not.toContain(reviewUrl);
 	expect(agent).not.toContain(secret);
 

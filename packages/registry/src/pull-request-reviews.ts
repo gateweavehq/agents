@@ -140,8 +140,9 @@ export function dueReview(db: Db, id: string, now: number): PullRequestReviewRow
  * synchronous write, before any delivery is made for it: a pull request that was closed or merged
  * since the run left it, whose branch moved on, or that is gone ends the review as skipped, and no
  * delivery, conversation or run exists for it. The draft status is GitHub's. `null`, when GitHub
- * could not be read, leaves it to the review turn, which reads it again. True when the review may
- * be admitted.
+ * could not be read, makes no delivery either: only GitHub's word that the pull request is open
+ * at the reviewed head admits it, so the review stays queued and is read again on its next try
+ * (`retryReview`, six tries over a day, then failed). True when the review may be admitted.
  */
 export function holdToPull(
 	db: Db,
@@ -149,7 +150,10 @@ export function holdToPull(
 	live: ReviewPullState | "gone" | null,
 	now: number,
 ): boolean {
-	if (live === null) return true;
+	if (live === null) {
+		retryReview(db, review, now, "GitHub could not confirm that the pull request is open");
+		return false;
+	}
 	if (live === "gone") {
 		skipReview(db, review, REVIEW_SKIPPED.notFound, now);
 		return false;

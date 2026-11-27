@@ -2036,7 +2036,10 @@ reviewed.
 - **Admitted as a trigger's delivery.** The alarm first reads each due pull request from GitHub,
   outside the registry's synchronous write (`readReviewPull`), and ends as `skipped`, with no
   delivery, conversation or run, one that was closed or merged since the builder's run, whose head
-  moved on or that GitHub no longer has. It then admits the rest with `admitDelivery`,
+  moved on or that GitHub no longer has. A pull request GitHub cannot be read about makes no
+  delivery either: only GitHub's word that it is open at the reviewed head does, so the review
+  stays `queued` and is read again on its next try (the tries of "No delivery is lost"). The rest
+  are admitted with `admitDelivery`,
   under the id `review:<repository id>:<number>:<head>`, so the trigger's limits per minute and
   per day, its pause, "What came lately" and the ownership of its runs apply as to a webhook's.
   At most three are admitted by one alarm. A review whose run never reports is failed after the
@@ -2055,8 +2058,10 @@ reviewed.
   disclosure (`reviewCriteria`), both whole. The message is held to one limit that the registry
   shares (`REVIEW_MESSAGE_LIMIT`), the longest message a diff within `REVIEW_LIMITS.diffBytes`, its
   fences, and the longest title and description GitHub allows can make. The turn also reads the
-  branch the pull request is based on, and the findings are checked against that base and the
-  reviewed head, the same diff the model reads. It ends the review as `skipped`, with the reason and no run, when
+  commit where the head left the branch the pull request is based on, and reads the diff between
+  those two commits, so the diff is pinned to commits and does not change when the base branch
+  advances. The findings are checked against that same commit and the reviewed head, the very diff
+  the model reads. It ends the review as `skipped`, with the reason and no run, when
   the pull request is closed, when its head is no longer the one reviewed, or when the diff is
   over `REVIEW_LIMITS.diffBytes` ("The diff is too large to review"). Each review has a fresh
   conversation of its own; it holds no message of the builder's, no review thread and no memory.

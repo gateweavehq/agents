@@ -3768,12 +3768,14 @@ export class RegistryDO extends DurableObject {
 	/**
 	 * Reads a pull request as GitHub has it now, for a review about to be admitted: its state, the
 	 * commit its branch is at and whether it is a draft; "gone" when GitHub has no such pull
-	 * request; null when it cannot be read here, which leaves it to the review turn. The registry
-	 * reads it outside its synchronous writes, and only then makes the review's delivery.
+	 * request; null when it cannot be read here, which keeps the review queued to be read again:
+	 * only GitHub's word that the pull request is open at the reviewed head makes its delivery. The
+	 * registry reads it outside its synchronous writes, and only then makes the delivery.
 	 */
 	protected async readReviewPull(
 		repository: SandboxRepository,
 		number: number,
+		_head: string,
 	): Promise<ReviewPullState | "gone" | null> {
 		return readPullState(this.env as SourceEnv, repository, number);
 	}
@@ -3792,12 +3794,13 @@ export class RegistryDO extends DurableObject {
 			return dueReviews(this.#db, now, REVIEWS_PER_ALARM);
 		});
 		const live = await Promise.all(
-			due.map(async (review): Promise<ReviewPullState | "gone" | null> => {
+			due.map(async (review): Promise<ReviewPullState | "gone" | "unreachable" | null> => {
 				const repository = reviewRepository(this.#db, review);
-				// A repository that cannot be reached fails the review when it is admitted.
-				if ("problem" in repository) return null;
+				// A repository that cannot be reached fails the review when it is admitted, and there is
+				// no pull request to read.
+				if ("problem" in repository) return "unreachable";
 				try {
-					return await this.readReviewPull(repository, review.number);
+					return await this.readReviewPull(repository, review.number, review.head);
 				} catch (error) {
 					console.error(
 						"registry: a pull request to review was not read",
@@ -3811,7 +3814,10 @@ export class RegistryDO extends DurableObject {
 			due.flatMap((queued, at) => {
 				// As it is now: a write may have changed or settled it while GitHub was read.
 				const review = dueReview(this.#db, queued.id, now);
-				if (!review || !holdToPull(this.#db, review, live[at] ?? null, now)) return [];
+				if (!review) return [];
+				const read = live[at] ?? null;
+				// The repository's own problem is the review's to fail, when begun: GitHub is not asked.
+				if (read !== "unreachable" && !holdToPull(this.#db, review, read, now)) return [];
 				const admitted = admitReview(this.#db, review, now);
 				return admitted.status === "start" ? [admitted] : [];
 			}),

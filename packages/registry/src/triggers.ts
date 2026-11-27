@@ -166,6 +166,31 @@ export function targetRefusal(db: Db, target: TriggerTarget): string | null {
 	return runnable(db, target.agentId) ? null : "That agent was removed or is not run by Gateweave";
 }
 
+/**
+ * Why a pull request trigger could not start a review of `target`, if it could not: a review runs
+ * on Gateweave's own loop, in a sandbox, so an agent without one would fail every review it was
+ * given. Checked when the trigger is made; `beginReviewTurn` checks again, since an agent may change.
+ */
+export function reviewTargetRefusal(db: Db, target: TriggerTarget): string | null {
+	const agentId =
+		target.kind === "team" ? teamLead(db, target.teamId)?.leadAgentId : target.agentId;
+	if (agentId === undefined) return null;
+	const agent = db
+		.select({
+			name: agents.name,
+			sandbox: agentDefinitions.sandbox,
+			engine: agentDefinitions.engine,
+		})
+		.from(agents)
+		.innerJoin(agentDefinitions, eq(agentDefinitions.agentId, agents.id))
+		.where(eq(agents.id, agentId))
+		.get();
+	if (!agent || (agent.sandbox && agent.engine === "gateweave")) return null;
+	return agent.engine === "gateweave"
+		? `${agent.name} has no sandbox: turn its sandbox on, so it can review pull requests`
+		: `${agent.name} does not run on Gateweave's own loop, which a review agent must`;
+}
+
 /** Why the workspace cannot have another trigger, if it has as many as it may. */
 export function triggerCapRefusal(db: Db): string | null {
 	const existing = db.select({ n: count() }).from(triggers).get()?.n ?? 0;
@@ -198,7 +223,9 @@ export function insertTrigger(
 ): Trigger | { refused: string } {
 	const full = triggerCapRefusal(db);
 	if (full) return { refused: full };
-	const refusal = targetRefusal(db, row.target);
+	const refusal =
+		targetRefusal(db, row.target) ??
+		(row.pullRequest === true ? reviewTargetRefusal(db, row.target) : null);
 	if (refusal) return { refused: refusal };
 	const { target, ...rest } = row;
 	// A pull request trigger starts on pull requests alone, as a schedule's starts on its time.

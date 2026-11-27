@@ -340,6 +340,23 @@ describe("the trigger's limits, pause and ownership apply", () => {
 	});
 });
 
+describe("a review trigger's agent", () => {
+	it("must be able to review: an agent without a sandbox is refused, and told what to turn on", async () => {
+		const { stub, builder, sandboxed } = await workspace();
+		const made = (agentId: string) =>
+			stub.createReviewTrigger(
+				{ name: "Another", prompt: "Review it", target: { kind: "agent", agentId } },
+				ADA,
+			);
+		expect(await made(builder.id)).toMatchObject({
+			status: "refused",
+			message: expect.stringContaining("no sandbox"),
+		});
+		expect((await stub.listTriggers()).filter((entry) => entry.pullRequest)).toHaveLength(1);
+		expect(await made(sandboxed.id)).toHaveProperty("trigger");
+	});
+});
+
 describe("no delivery is lost (criterion 4)", () => {
 	it("tries a delivery again when every sandbox is in use, and begins it once one is free", async () => {
 		const { stub, builder, sandboxed } = await workspace();
@@ -671,13 +688,92 @@ describe("a pull request closed before its review is admitted (criterion 5)", ()
 		expect((await stub.listTriggers())[0]?.deliveries).toHaveLength(1);
 	});
 
-	it("leaves a pull request GitHub cannot be asked about to the review turn", async () => {
+	it("makes no delivery while GitHub cannot be read, and none for a pull request found closed after", async () => {
 		const { stub, builder } = await workspace();
 		await built(stub, builder);
+		// The preflight read fails: the review stays queued, with no delivery, conversation or run.
+		await controls(stub).livePull(12, null);
 		await alarm(stub);
-		expect((await stub.listPullRequestReviews())[0]).toMatchObject({ status: "running" });
+		const [waiting] = await stub.listPullRequestReviews();
+		expect(waiting).toMatchObject({ status: "queued", retries: 1, runId: null });
+		expect(waiting?.reason).toContain("could not confirm");
+		expect((await stub.listTriggers())[0]?.deliveries).toEqual([]);
+		expect((await stub.listRuns()).filter((run) => run.triggerId !== null)).toEqual([]);
+
+		// The next read answers that the pull request is closed: it is skipped, and still no delivery.
+		await controls(stub).livePull(12, { state: "closed", head: HEAD, draft: false });
+		await due(stub);
+		await alarm(stub);
+		expect(await stub.listPullRequestReviews()).toMatchObject([
+			{ status: "skipped", reason: "The pull request is closed", runId: null },
+		]);
+		expect((await stub.listTriggers())[0]?.deliveries).toEqual([]);
+		expect(await controls(stub).pullsRead()).toEqual([12, 12]);
+	});
+
+	it("admits it once GitHub answers that the pull request is open at its head", async () => {
+		const { stub, builder } = await workspace();
+		await built(stub, builder);
+		await controls(stub).livePull(12, null);
+		await alarm(stub);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({ status: "queued" });
+		await controls(stub).livePull(12, open());
+		await due(stub);
+		await alarm(stub);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({
+			status: "running",
+			retries: 1,
+		});
+		expect((await stub.listTriggers())[0]?.deliveries).toHaveLength(1);
+	});
+
+	it("fails the review, with no delivery, when GitHub is never read in its six tries", async () => {
+		const { stub, builder } = await workspace();
+		await built(stub, builder);
+		await controls(stub).livePull(12, null);
+		for (let tried = 1; tried <= 6; tried++) {
+			await due(stub);
+			await alarm(stub);
+			expect((await stub.listPullRequestReviews())[0]).toMatchObject({
+				status: "queued",
+				retries: tried,
+			});
+		}
+		await due(stub);
+		await alarm(stub);
+		expect((await stub.listPullRequestReviews())[0]).toMatchObject({
+			status: "failed",
+			retries: 6,
+		});
+		expect((await stub.listTriggers())[0]?.deliveries).toEqual([]);
 	});
 });
+
+/**
+ * A valid unified diff of exactly `bytes` bytes: one new file whose hunk header counts the lines it
+ * holds. `git apply --numstat` reads it, as it does any diff GitHub makes.
+ */
+function diffOfBytes(bytes: number): string {
+	const size = (text: string) => new TextEncoder().encode(text).length;
+	const row = `+${"é".repeat(39)}
+`;
+	const head = (lines: number) =>
+		`diff --git a/big.txt b/big.txt
+new file mode 100644
+--- /dev/null
++++ b/big.txt
+@@ -0,0 +1,${lines} @@
+`;
+	let lines = 0;
+	for (let again = 0; again < 3; again++) {
+		lines = Math.floor((bytes - size(head(lines))) / size(row));
+	}
+	const slack = bytes - size(head(lines)) - lines * size(row);
+	// The last line takes up what is left, so the diff is as long as the limit allows.
+	const last = `+${"é".repeat(39)}${"x".repeat(slack)}
+`;
+	return `${head(lines)}${row.repeat(lines - 1)}${last}`;
+}
 
 describe("a review whose run never reports (criterion 4)", () => {
 	it("is given up on by an alarm of its own, in a workspace with nothing else to do", async () => {
@@ -708,8 +804,8 @@ describe("the review's message (criterion 4)", () => {
 	it("begins with a valid diff's message at the published limit, over 100,000 characters", async () => {
 		const { stub, builder } = await workspace();
 		await built(stub, builder);
-		const body = "+é\n".repeat(Math.floor((REVIEW_LIMITS.diffBytes - 24) / 4));
-		const diff = `diff --git a/big b/big\n${body}`;
+		const diff = diffOfBytes(REVIEW_LIMITS.diffBytes);
+		expect(new TextEncoder().encode(diff).length).toBe(REVIEW_LIMITS.diffBytes);
 		const text = reviewMessage(diff, ["T".repeat(256), "b".repeat(65_536)]);
 		expect(text.length).toBeGreaterThan(100_000);
 		expect(text.length).toBeLessThanOrEqual(REVIEW_MESSAGE_LIMIT);

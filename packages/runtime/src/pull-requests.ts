@@ -347,6 +347,22 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		const entry = await memory.recall(memoKey(head));
 		return entry !== null && entry.title === title && entry.body === body ? entry.outcome : null;
 	};
+	/**
+	 * `recall` for a head that was just pushed: the push is on GitHub whatever the lookup comes to,
+	 * so a lookup that fails leaves the run holding the head it left, as a failed update does.
+	 */
+	const recallPushed = async (
+		head: string,
+		title: string,
+		body: string,
+	): Promise<PullRequestOutcome | null> => {
+		try {
+			return await recall(head, title, body);
+		} catch (error) {
+			await keepHead(head);
+			throw error;
+		}
+	};
 	const remember = async (
 		head: string,
 		title: string,
@@ -395,7 +411,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		if (commands.length === 0) {
 			pushed = await sandbox.push(branch, title, await author(), model);
 			// A retry's push is a no-op: the commit is there, so only the proposal is skipped.
-			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
+			const hit = "error" in pushed ? null : await recallPushed(pushed.head, title, body);
 			if (hit !== null) {
 				// Recorded again: the first call's record may have failed, and this sets the same
 				// pull request on the run, so recording twice changes nothing.
@@ -404,7 +420,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 			}
 		} else if (!checks?.sandbox) {
 			pushed = await sandbox.push(branch, title, await author(), model);
-			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
+			const hit = "error" in pushed ? null : await recallPushed(pushed.head, title, body);
 			if (hit !== null) {
 				await recorded(hit);
 				return hit;

@@ -8,8 +8,10 @@
  * is `skipped`, and no run begins for it.
  */
 import {
+	changedFiles,
+	commitDiff,
 	type GitHubApp,
-	pullRequestDiff,
+	GitHubError,
 	pullRequest as readPullRequest,
 } from "@gateweave/agents-github";
 import {
@@ -19,6 +21,7 @@ import {
 	REVIEW_SKIPPED,
 	type ReviewCounts,
 	type ReviewOutcome,
+	rankFindings,
 	reviewMessage,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
@@ -42,8 +45,20 @@ export interface ReviewedPullRequest {
 export interface ReviewSource {
 	/** Null when there is no such pull request. */
 	pullRequest(number: number): Promise<ReviewedPullRequest | null>;
-	/** The diff, up to `limit` bytes; `tooLarge` when it is longer; null when there is no such pull request. */
-	diff(number: number, limit: number): Promise<{ diff: string } | { tooLarge: true } | null>;
+	/**
+	 * The commit where `head` left the branch `base`, which the pull request is to be merged into:
+	 * the one commit its diff is made against. Null when GitHub has no such branch or commit.
+	 */
+	mergeBase(base: string, head: string): Promise<string | null>;
+	/**
+	 * What `head` changes since `mergeBase`, up to `limit` bytes; `tooLarge` when it is longer; null
+	 * when GitHub has neither commit. Both are commit ids, so it is the same diff whenever it is read.
+	 */
+	diff(
+		mergeBase: string,
+		head: string,
+		limit: number,
+	): Promise<{ diff: string } | { tooLarge: true } | null>;
 }
 
 /** Pull requests read with the workspace's GitHub App, as the tools that open them are. */
@@ -69,8 +84,16 @@ export function gitHubReviewSource(app: GitHubApp, repository: SandboxRepository
 				}
 			);
 		},
-		async diff(number, limit) {
-			return pullRequestDiff(await token(), name, number, limit);
+		async mergeBase(base, head) {
+			try {
+				return (await changedFiles(await token(), name, base, head)).mergeBase;
+			} catch (error) {
+				if (error instanceof GitHubError && error.status === 404) return null;
+				throw error;
+			}
+		},
+		async diff(mergeBase, head, limit) {
+			return commitDiff(await token(), name, mergeBase, head, limit);
 		},
 	};
 }
@@ -88,9 +111,9 @@ export function reviewCriteria(title: string, body: string): string[] {
 }
 
 /**
- * A review's message, and what the turn needs to know of the pull request besides: the branch it
- * is based on, from which the findings are checked against the same diff the model reads, and
- * whether GitHub says it is a draft.
+ * A review's message, and what the turn needs to know of the pull request besides: `base`, the
+ * commit the message's diff was made against, from which the findings are checked against that
+ * same diff, and whether GitHub says it is a draft.
  */
 export type PreparedReview =
 	| { message: string; base: string; draft: boolean }
@@ -105,25 +128,29 @@ export async function prepareReview(
 	{ number, head }: { number: number; head: string },
 ): Promise<PreparedReview> {
 	const pull = await source.pullRequest(number);
-	if (!pull) return { skipped: "The pull request was not found on GitHub" };
+	if (!pull) return { skipped: REVIEW_SKIPPED.notFound };
 	if (pull.state !== "open") return { skipped: REVIEW_SKIPPED.closed };
 	if (pull.head !== head) return { skipped: REVIEW_SKIPPED.headGone };
-	const read = await source.diff(number, REVIEW_LIMITS.diffBytes);
-	if (!read) return { skipped: "The pull request was not found on GitHub" };
+	// The diff is pinned to two commits, so the findings can be checked against the very diff the
+	// model reads, whatever the pull request's base branch does after: the sandbox diffs the same two.
+	const mergeBase = await source.mergeBase(pull.base, head);
+	if (!mergeBase) return { skipped: REVIEW_SKIPPED.notFound };
+	const read = await source.diff(mergeBase, head, REVIEW_LIMITS.diffBytes);
+	if (!read) return { skipped: REVIEW_SKIPPED.notFound };
 	if ("tooLarge" in read) return { skipped: REVIEW_SKIPPED.tooLarge };
 	const message = reviewMessage(read.diff, reviewCriteria(pull.title, pull.body));
 	// The limit holds all that a diff within `REVIEW_LIMITS.diffBytes` and a pull request's words
 	// can make; one over it is a message the registry would refuse.
 	if (message.length > REVIEW_MESSAGE_LIMIT) return { skipped: REVIEW_SKIPPED.tooLarge };
-	return { message, base: pull.base, draft: pull.draft };
+	return { message, base: mergeBase, draft: pull.draft };
 }
 
 /** What a review found, as the registry keeps it: counts only. */
 export function reviewCountsOf({ findings }: Pick<ReviewOutcome, "findings">): ReviewCounts {
 	return {
 		found: findings.length,
-		// Those a comment can sit on: a finding outside the diff is kept and not shown inline.
-		shown: findings.filter((finding) => !finding.offDiff).length,
+		// What the review shows: the findings ranked, the same one counted once, the first few kept.
+		shown: rankFindings(findings).shown.length,
 		proven: findings.filter((finding) => finding.proof.proven).length,
 	};
 }

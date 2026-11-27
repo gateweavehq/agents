@@ -1023,8 +1023,8 @@ ${runPageNote(runs, turn.runId)}`
 						...(review && sandbox && repository
 							? reviewTools({
 									sandbox,
-									// The branch the pull request is based on, as the diff the model reads is.
-									base: `origin/${review.base ?? repository.defaultBranch}`,
+									// The commit the diff the model read was made against, not a branch that may move.
+									base: review.base ?? `origin/${repository.defaultBranch}`,
 									head: review.head,
 									run,
 									record: (outcome) => this.#recordReview(registry, runId, outcome),

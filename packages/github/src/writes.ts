@@ -556,20 +556,23 @@ export async function pullRequest(
 }
 
 /**
- * A pull request's diff against its base, as text, read up to `limit` bytes. `tooLarge` when it
- * is longer, or when GitHub will not make one that big (it answers 406 or 422); null when there
- * is no such pull request.
+ * The diff between two commits, as text, read up to `limit` bytes: what `head` changes since
+ * `base`, which for a pull request is the commit where its branch left the one it is based on
+ * (`changedFiles` names it). Both are commit ids, so the answer does not move when a branch does.
+ * `tooLarge` when it is longer, or when GitHub will not make one that big (it answers 406 or 422);
+ * null when GitHub has no such commit.
  */
-export async function pullRequestDiff(
+export async function commitDiff(
 	token: string,
 	repository: RepositoryName,
-	number: number,
+	base: string,
+	head: string,
 	limit: number,
 ): Promise<{ diff: string } | { tooLarge: true } | null> {
 	let response: Response;
 	try {
 		response = await send(
-			`${repositoryPath(repository)}/pulls/${number}`,
+			`${repositoryPath(repository)}/compare/${objectId.parse(base)}...${objectId.parse(head)}`,
 			token,
 			{},
 			"application/vnd.github.v3.diff",

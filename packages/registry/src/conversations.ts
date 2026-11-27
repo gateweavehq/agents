@@ -24,12 +24,14 @@ import type { Db } from "./state";
 
 /**
  * What a review turn is of. The registry says the pull request and the head; the runtime adds the
- * rest from GitHub as it prepares the turn: the branch the pull request is based on, which is not
- * always the repository's default one, and whether it is a draft and why.
+ * rest from GitHub as it prepares the turn: the commit its diff is made against (where the head
+ * left the branch the pull request is based on, which is not always the repository's default one),
+ * and whether it is a draft and why.
  */
 export interface ReviewTurnOf {
 	number: number;
 	head: string;
+	/** The commit id the review's diff is made against. */
 	base?: string;
 	draft?: boolean;
 	draftReason?: string | null;

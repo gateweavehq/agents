@@ -59,25 +59,28 @@ export class RegistryDO extends Registry {
 	}
 
 	/**
-	 * The pull requests as GitHub has them, which a test sets with `livePull`: none is set, so a
-	 * pull request is unreadable, as on a server with no GitHub App.
+	 * The pull requests as GitHub has them, which a test sets with `livePull`. One it has not set is
+	 * open at the head the review is of, as the registry finds most of them; one set to null cannot
+	 * be read, as when GitHub does not answer.
 	 */
 	protected override async readReviewPull(
 		_repository: SandboxRepository,
 		number: number,
+		head: string,
 	): Promise<ReviewPullState | "gone" | null> {
 		const read = this.ctx.storage.kv.get<number[]>(PULLS_READ_KEY) ?? [];
 		this.ctx.storage.kv.put(PULLS_READ_KEY, [...read, number]);
-		const pulls = this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone">>(PULLS_KEY);
-		return pulls?.[String(number)] ?? null;
+		const pulls =
+			this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone" | null>>(PULLS_KEY) ?? {};
+		const set = pulls[String(number)];
+		return set === undefined ? { state: "open", head, draft: false } : set;
 	}
 
 	/** Sets what GitHub says of a pull request, for the reviews the alarm admits next. */
 	livePull(number: number, state: ReviewPullState | "gone" | null): void {
 		const pulls =
-			this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone">>(PULLS_KEY) ?? {};
-		if (state === null) delete pulls[String(number)];
-		else pulls[String(number)] = state;
+			this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone" | null>>(PULLS_KEY) ?? {};
+		pulls[String(number)] = state;
 		this.ctx.storage.kv.put(PULLS_KEY, pulls);
 	}
 

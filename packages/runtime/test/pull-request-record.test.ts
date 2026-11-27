@@ -30,7 +30,15 @@ const OUTPUT = "TOKEN-sk-live-4242 /home/runner/.npmrc leaked in the output";
 
 const red = (output = OUTPUT): CommandAnswer => ({ exitCode: 1, output, timedOut: false });
 
-function setup({ commands = [], review }: { commands?: string[]; review?: OracleReview } = {}) {
+function setup({
+	commands = [],
+	review,
+	memory,
+}: {
+	commands?: string[];
+	review?: OracleReview;
+	memory?: Parameters<typeof pullRequestTools>[0]["memory"];
+} = {}) {
 	const sandbox = new MemorySandbox();
 	const recorded: PullRequestOutcome[] = [];
 	const github = {
@@ -70,6 +78,7 @@ function setup({ commands = [], review }: { commands?: string[]; review?: Oracle
 			...(review ? { review: async () => review } : {}),
 		},
 		repository,
+		...(memory ? { memory } : {}),
 		branch: "gateweave/conversation-1",
 		runId: "run-1",
 		agentName: "Builder",
@@ -114,6 +123,26 @@ describe("the head a run leaves on a pull request it recorded", () => {
 		github.answers.push(new GitHubError(503, "Service Unavailable"));
 		await expect(call()).rejects.toThrow();
 		expect(recorded.map((outcome) => outcome.head)).toEqual([FIRST]);
+	});
+
+	it("is the second push's, though the lookup of the call's memory fails after the push", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		let failing = false;
+		const memory = {
+			recall: async () => {
+				if (failing) throw new Error("The memory could not be read");
+				return null;
+			},
+			remember: async () => {},
+		};
+		const { sandbox, recorded, call } = setup({ memory });
+		sandbox.pushAnswers.push({ head: FIRST, pushed: true }, { head: SECOND, pushed: true });
+		await call();
+		expect(recorded.map((outcome) => outcome.head)).toEqual([FIRST]);
+		// The push reaches GitHub, and the lookup fails before the pull request is updated.
+		failing = true;
+		await expect(call("Fix the cart, again")).rejects.toThrow("The memory could not be read");
+		expect(recorded.map((outcome) => outcome.head)).toEqual([FIRST, SECOND]);
 	});
 
 	it("is not recorded for a pull request the run has not recorded", async () => {

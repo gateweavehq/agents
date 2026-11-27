@@ -37,6 +37,7 @@ const SITE = {
 };
 const TITLE = "Fix the cart";
 const BODY = "Makes a quantity of zero count.";
+const MERGE_BASE = "e".repeat(40);
 
 /** GitHub as a review reads it: the pull request as JSON, and its diff for the diff media type. */
 function github({
@@ -46,6 +47,7 @@ function github({
 	body = BODY,
 	base = "main",
 	draft = false,
+	mergeBases = [MERGE_BASE],
 }: {
 	state?: string;
 	head?: string;
@@ -54,8 +56,14 @@ function github({
 	/** The branch the pull request is to be merged into. */
 	base?: string;
 	draft?: boolean;
+	/**
+	 * Where the head left the base, as GitHub answers each time it is asked: the base branch may
+	 * advance between two readings, so a later answer can differ from an earlier one.
+	 */
+	mergeBases?: string[];
 } = {}) {
 	const asked: string[] = [];
+	let comparisons = 0;
 	const handler = async (request: Request) => {
 		const url = new URL(request.url);
 		asked.push(`${request.method} ${url.pathname}`);
@@ -66,8 +74,18 @@ function github({
 		if (request.headers.get("authorization") !== "Bearer ghs_review") {
 			return Response.json({ message: "Bad credentials" }, { status: 401 });
 		}
+		const compare = /^\/repos\/acme\/site\/compare\/(.+)\.\.\.(.+)$/.exec(url.pathname);
+		if (compare) {
+			// A diff is made of two commits, which stay what they are whatever the branch does.
+			if (request.headers.get("accept")?.includes("diff")) {
+				return /^[0-9a-f]{40}$/.test(compare[1] ?? "")
+					? new Response(diff)
+					: Response.json({ message: "Not Found" }, { status: 404 });
+			}
+			const sha = mergeBases[Math.min(comparisons++, mergeBases.length - 1)];
+			return Response.json({ merge_base_commit: { sha }, files: [] });
+		}
 		if (url.pathname === "/repos/acme/site/pulls/12") {
-			if (request.headers.get("accept")?.includes("diff")) return new Response(diff);
 			return Response.json({
 				number: 12,
 				html_url: "https://github.com/acme/site/pull/12",
@@ -83,6 +101,32 @@ function github({
 		return Response.json({ message: "Not Found" }, { status: 404 });
 	};
 	return { asked, handler };
+}
+
+/**
+ * A valid unified diff of exactly `bytes` bytes: one new file whose hunk header counts the lines it
+ * holds. `git apply --numstat` reads it, as it does any diff GitHub makes.
+ */
+function diffOfBytes(bytes: number): string {
+	const size = (text: string) => new TextEncoder().encode(text).length;
+	const row = `+${"é".repeat(39)}
+`;
+	const head = (lines: number) =>
+		`diff --git a/big.txt b/big.txt
+new file mode 100644
+--- /dev/null
++++ b/big.txt
+@@ -0,0 +1,${lines} @@
+`;
+	let lines = 0;
+	for (let again = 0; again < 3; again++) {
+		lines = Math.floor((bytes - size(head(lines))) / size(row));
+	}
+	const slack = bytes - size(head(lines)) - lines * size(row);
+	// The last line takes up what is left, so the diff is as long as the limit allows.
+	const last = `+${"é".repeat(39)}${"x".repeat(slack)}
+`;
+	return `${head(lines)}${row.repeat(lines - 1)}${last}`;
 }
 
 /** A workspace whose builder left a pull request at `HEAD`, and a review agent to read it. */
@@ -409,11 +453,12 @@ describe("a review turn", () => {
 
 	it("begins a review of a valid diff at the published limit, with the longest description", async () => {
 		const { registry } = await reviewing();
-		const first = "diff --git a/big b/big\n--- a/big\n+++ b/big\n@@ -0,0 +1,60000 @@\n";
-		const diff = `${first}${"+é\n".repeat(Math.floor((REVIEW_LIMITS.diffBytes - first.length) / 4))}`;
+		// A valid diff of exactly the published limit: its hunk counts every line it holds.
+		const diff = diffOfBytes(REVIEW_LIMITS.diffBytes);
 		const bytes = new TextEncoder().encode(diff).length;
-		expect(bytes).toBeGreaterThan(REVIEW_LIMITS.diffBytes - 8);
-		expect(bytes).toBeLessThanOrEqual(REVIEW_LIMITS.diffBytes);
+		expect(bytes).toBe(REVIEW_LIMITS.diffBytes);
+		const added = diff.split("\n").filter((row) => row.startsWith("+") && !row.startsWith("+++"));
+		expect(diff).toContain(`@@ -0,0 +1,${added.length} @@\n`);
 		const body = "x".repeat(60_000);
 		const requests = fakeModel(
 			(call) =>
@@ -434,28 +479,70 @@ describe("a review turn", () => {
 		expect(text).toBe(reviewMessage(diff, [TITLE, body]));
 	});
 
-	it("checks the findings against the pull request's own base, not the default branch", async () => {
+	it("reads the diff between two commits and checks the findings against those same two", async () => {
 		const { registry, workspaceId } = await reviewing();
+		const later = "f".repeat(40);
+		// The base branch advances between GitHub's readings: the second answer would name another commit.
+		const pulls = github({ base: "release/1.x", mergeBases: [MERGE_BASE, later] });
 		fakeModel(
 			(call) =>
 				call === 0
 					? anthropicToolCall("submit_review", { findings: [] })
 					: anthropicStream("Nothing to report."),
-			{ "api.github.com": github({ base: "release/1.x" }).handler },
+			{ "api.github.com": pulls.handler },
 		);
 		await admitted(registry);
 		await vi.waitFor(async () =>
 			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
 		);
+		// The branch was asked once, for the commit where the head left it; the diff is of commits.
+		const compared = pulls.asked.filter((request) => request.includes("/compare/"));
+		expect(compared).toEqual([
+			`GET /repos/acme/site/compare/release%2F1.x...${HEAD}`,
+			`GET /repos/acme/site/compare/${MERGE_BASE}...${HEAD}`,
+		]);
 		const [review] = await registry.listPullRequestReviews();
 		const run = await registry.getRun(review?.runId ?? "");
 		const machine = (env.SANDBOX as unknown as DurableObjectNamespace<FakeSandbox>).getByName(
 			conversationName(workspaceId, run?.conversationId ?? ""),
 		);
 		const git = await machine.gitCalls();
-		// The common base is found against the base GitHub's diff was made against, at the same head.
-		expect(git).toContainEqual(["merge-base", "origin/release/1.x", HEAD]);
-		expect(git.some((args) => args.includes("origin/main"))).toBe(false);
+		// The sandbox diffs that commit and the head, and no branch: nothing it reads can move.
+		expect(git).toContainEqual(["merge-base", MERGE_BASE, HEAD]);
+		expect(git.flat().some((arg) => arg.startsWith("origin/"))).toBe(false);
+		expect(git.flat()).not.toContain(later);
+	});
+
+	it("counts a finding on a line the model read as on the diff, though the base branch advanced", async () => {
+		const { registry } = await reviewing();
+		const later = "f".repeat(40);
+		fakeModel(
+			(call) =>
+				call === 0
+					? anthropicToolCall("submit_review", {
+							findings: [
+								{
+									path: "app.ts",
+									line: 1,
+									side: "RIGHT",
+									severity: "high",
+									title: "A real problem",
+									failingCase: "The new line is wrong.",
+								},
+							],
+						})
+					: anthropicStream("Reported."),
+			{
+				"api.github.com": github({ base: "release/1.x", mergeBases: [MERGE_BASE, later] }).handler,
+			},
+		);
+		await admitted(registry);
+		await vi.waitFor(async () =>
+			expect((await registry.listPullRequestReviews())[0]).toMatchObject({ status: "posted" }),
+		);
+		// The line is in the hunk the model read (`REVIEW_DIFF`), and the diff the findings are checked
+		// against is that same diff: it is on the diff, not off it.
+		expect((await registry.listPullRequestReviews())[0]).toMatchObject({ found: 1, shown: 1 });
 	});
 });
 
