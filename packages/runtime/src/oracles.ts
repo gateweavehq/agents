@@ -11,7 +11,13 @@
  */
 
 /** What a path is for, in the words the pull request uses. */
-export type OracleKind = "test" | "package script" | "check script" | "CI" | "lint or type config";
+export type OracleKind =
+	| "test"
+	| "package script"
+	| "package config"
+	| "check script"
+	| "CI"
+	| "lint or type config";
 
 /** One edit to an oracle: the path, how it changed, and what it is. */
 export interface OracleEdit {
@@ -98,10 +104,11 @@ export function oracleKind(path: string): OracleKind | null {
 }
 
 /**
- * The top-level keys of a `package.json` that say what the package is or what it depends on, and
- * so do not change what its checks do. Every other key, `scripts` first, counts as check
- * configuration: `jest`, `eslintConfig`, `prettier`, `mocha`, `lint-staged` and any key that is
- * not here.
+ * The top-level keys of a `package.json` that say what the package is or what it depends on. They
+ * are not check configuration in themselves; the dependency ones are compared apart, since a
+ * runner swap or a moved spec can change what the checks run. Every other key, `scripts` first,
+ * counts as check configuration: `jest`, `eslintConfig`, `prettier`, `mocha`, `lint-staged` and
+ * any key that is not here.
  */
 const NON_CHECK_KEYS: ReadonlySet<string> = new Set([
 	"name",
@@ -148,20 +155,113 @@ function canonical(value: unknown): string {
 	return JSON.stringify(value) ?? "null";
 }
 
-/**
- * The check configuration of a package.json's text, as a string two manifests can be compared
- * by: every top-level key that is not in `NON_CHECK_KEYS`. Null when the text is not a JSON object.
- */
-function checkConfigOf(text: string): string | null {
+type PackageObject = Record<string, unknown>;
+
+/** A package.json's object, or null when its text is not one. */
+function packageObjectOf(text: string): PackageObject | null {
 	try {
 		const parsed: unknown = JSON.parse(text);
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-		return canonical(
-			Object.fromEntries(Object.entries(parsed).filter(([key]) => !NON_CHECK_KEYS.has(key))),
-		);
+		return parsed as PackageObject;
 	} catch {
 		return null;
 	}
+}
+
+/** The dependency-list keys whose specs decide which package a script's command really runs. */
+const DEPENDENCY_KEYS = [
+	"dependencies",
+	"devDependencies",
+	"peerDependencies",
+	"optionalDependencies",
+	"overrides",
+	"resolutions",
+] as const;
+
+/** The string specs of one dependency-list key; nested override objects are not followed. */
+function specsOf(value: unknown): Map<string, string> {
+	const specs = new Map<string, string>();
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return specs;
+	for (const [name, spec] of Object.entries(value)) {
+		if (typeof spec === "string") specs.set(name, spec);
+	}
+	return specs;
+}
+
+/** Names scripts use, with the last part of a path as well as the word itself. */
+function dependencyNamesOf(text: string): Set<string> {
+	const names = new Set<string>();
+	for (const command of commandsOf(text)) {
+		for (const word of wordsOf(command)) {
+			names.add(word);
+			const parts = word.split("/");
+			const last = parts[parts.length - 1];
+			if (last) names.add(last);
+		}
+	}
+	return names;
+}
+
+/**
+ * Whether a spec can point outside the registry version it names: an alias, a local path or link,
+ * or a git or tarball address. Such a swap can change what a check runs without looking like one.
+ */
+function movableSpec(spec: string): boolean {
+	const value = spec.trim().toLowerCase();
+	if (value.startsWith("git+") || value.startsWith("git@")) return true;
+	if (/^(?:npm|file|link|git|github|gitlab|bitbucket|https?|ssh):/.test(value)) return true;
+	// npm reads `owner/repo` as GitHub shorthand; a scoped package's name starts with `@`.
+	return !value.startsWith("@") && /^[a-z0-9_.-]+\/[a-z0-9_.-]+(?:#.*)?$/.test(value);
+}
+
+/** The package a resolution key pins, with yarn's globstar prefix taken out. */
+function dependencyKeyName(key: string): string {
+	let name = key;
+	while (name.startsWith("**/")) name = name.slice(3);
+	return name;
+}
+
+/** Whether a dependency spec changed in a way that can change what the checks run. */
+function dependencySwap(before: PackageObject, after: PackageObject, beforeText: string): boolean {
+	const named = dependencyNamesOf(beforeText);
+	for (const key of DEPENDENCY_KEYS) {
+		const oldSpecs = specsOf(before[key]);
+		const newSpecs = specsOf(after[key]);
+		for (const name of new Set([...oldSpecs.keys(), ...newSpecs.keys()])) {
+			const oldSpec = oldSpecs.get(name);
+			const newSpec = newSpecs.get(name);
+			if (oldSpec === newSpec) continue;
+			if ((newSpec !== undefined && movableSpec(newSpec)) || named.has(dependencyKeyName(name))) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * How two package.json objects differ for the checks, or null when they do not. Dependency keys
+ * still allow ordinary version changes, but a swap of the runner a script names, or of any spec
+ * to an alias, path, link or git address, counts as configuration.
+ */
+function manifestDifference(
+	beforeText: string,
+	afterText: string,
+): "package script" | "package config" | "invalid" | null {
+	const before = packageObjectOf(beforeText);
+	const after = packageObjectOf(afterText);
+	if (before === null || after === null) return "invalid";
+	if (canonical(before.scripts) !== canonical(after.scripts)) return "package script";
+	const configOf = (manifest: PackageObject) =>
+		canonical(
+			Object.fromEntries(
+				Object.entries(manifest).filter(([key]) => key !== "scripts" && !NON_CHECK_KEYS.has(key)),
+			),
+		);
+	if (configOf(before) !== configOf(after) || dependencySwap(before, after, beforeText)) {
+		return "package config";
+	}
+	return null;
 }
 
 /** The commands of a package.json's `scripts`; none when it is not JSON or has no scripts. */
@@ -292,14 +392,15 @@ export async function reviewOracles(
 				text(path, "head").catch(() => null),
 			]);
 			if (before !== null && after !== null) {
-				const config = [checkConfigOf(before), checkConfigOf(after)];
+				const difference = manifestDifference(before, after);
 				// A text that is not JSON cannot be compared, so the review cannot tell.
-				if (config[0] === null || config[1] === null) {
-					const side = config[0] === null ? "base" : "branch";
+				if (difference === "invalid") {
+					const side = packageObjectOf(before) === null ? "base" : "branch";
 					unverified ??= `${path} could not be parsed at the ${side}`;
 					continue;
 				}
-				if (config[0] === config[1]) continue;
+				if (difference === null) continue;
+				kind = difference;
 			}
 		}
 		edits.push({ path, change, kind });
