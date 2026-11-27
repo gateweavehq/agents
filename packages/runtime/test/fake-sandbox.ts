@@ -5,7 +5,11 @@
  * engine writes what a test scripted for it.
  */
 import { DurableObject, env } from "cloudflare:workers";
-import type { ChangesPartData, SandboxRepository } from "@gateweave/agents-model";
+import {
+	type ChangesPartData,
+	SANDBOX_REPOSITORY_PATH,
+	type SandboxRepository,
+} from "@gateweave/agents-model";
 import type { ChangesPort } from "../src/changes";
 import type { CheckoutPort, CheckoutResult } from "../src/checkout";
 import type { Comparison } from "../src/checks";
@@ -70,6 +74,12 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
 	readonly gitCalls: string[][] = [];
+	/** Files `createFile` made that a `git clean` has not removed yet, as `git status` lists them. */
+	readonly untracked = new Set<string>();
+	/** What `createFile` made, in order, whether or not a `git clean` removed it since. */
+	readonly created: { path: string; content: string }[] = [];
+	/** Why `createFile` refuses, for a test of a path that exists or goes through a symlink. */
+	createError: string | undefined;
 	gitAnswer: ((args: string[]) => CommandAnswer | undefined) | undefined;
 	readonly checkouts: Checkout[] = [];
 	/**
@@ -136,9 +146,19 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 	): Promise<CommandResult> {
 		this.log.push(`git ${args.join(" ")}`);
 		this.gitCalls.push(args);
+		if (args[0] === "clean") {
+			for (const path of this.untracked) this.files.delete(`${SANDBOX_REPOSITORY_PATH}/${path}`);
+			this.untracked.clear();
+		}
 		const answer = this.gitAnswer?.(args);
 		if (answer instanceof Error) throw answer;
-		return answer ?? { exitCode: 0, output: "", timedOut: false };
+		if (answer) return answer;
+		const listed = args[0] === "status" && args.includes("-z");
+		return {
+			exitCode: 0,
+			output: listed ? [...this.untracked].map((path) => `?? ${path}\0`).join("") : "",
+			timedOut: false,
+		};
 	}
 
 	async changedSince(head: string): Promise<Comparison> {
@@ -171,6 +191,17 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 
 	async writeFile(path: string, content: string): Promise<WriteResult> {
 		this.files.set(path, content);
+		return { written: new TextEncoder().encode(content).length };
+	}
+
+	/** Creates a file that is new, as `createProofFile` does; `createError` refuses it. */
+	async createFile(path: string, content: string): Promise<WriteResult> {
+		this.log.push(`create ${path}`);
+		if (this.createError) return { error: this.createError };
+		if (this.files.has(path)) return { error: `${path} already exists` };
+		this.files.set(path, content);
+		this.created.push({ path, content });
+		this.untracked.add(path.slice(`${SANDBOX_REPOSITORY_PATH}/`.length));
 		return { written: new TextEncoder().encode(content).length };
 	}
 
@@ -328,6 +359,10 @@ export class FakeSandbox
 
 	writeFile(path: string, content: string) {
 		return this.#memory.writeFile(path, content);
+	}
+
+	createFile(path: string, content: string) {
+		return this.#memory.createFile(path, content);
 	}
 
 	checkout(repository: SandboxRepository, branch: string) {

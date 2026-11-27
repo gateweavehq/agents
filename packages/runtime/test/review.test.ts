@@ -6,7 +6,11 @@ const failed = answer("first".repeat(200) + "tail".repeat(1000), 1);
 const reset = `git reset --hard --quiet ${HEAD}`;
 const compare = `compare ${HEAD.slice(0, 7)}`;
 const runCommand = `run ${finding.test.command}`;
-const earlier = "the checkout could not be put back at the reviewed head after an earlier proof";
+const created = `create ${SANDBOX_REPOSITORY_PATH}/${finding.test.path}`;
+const status = "git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none";
+const notPutBack = "the checkout could not be put back at the reviewed head";
+const later = `no further proof ran: ${notPutBack}`;
+const HUNG = "a proof command did not return in time and may still be running in the checkout";
 
 describe("submitting a review", () => {
 	it.each([0, 1])("strips a submitted proof claim and uses exit code %i", async (exitCode) => {
@@ -19,9 +23,9 @@ describe("submitting a review", () => {
 			exitCode,
 			output: "tail".repeat(1000),
 		});
-		expect(sandbox.files.get(`${SANDBOX_REPOSITORY_PATH}/${finding.test.path}`)).toBe(
-			finding.test.content,
-		);
+		expect(sandbox.created).toEqual([
+			{ path: `${SANDBOX_REPOSITORY_PATH}/${finding.test.path}`, content: finding.test.content },
+		]);
 	});
 	it("rejects invalid direct calls before reading the checkout", async () => {
 		const { sandbox, record, call } = setup();
@@ -61,21 +65,27 @@ describe("submitting a review", () => {
 			],
 		});
 	});
-	it("stops waiting for a sandbox that never answers", async () => {
+	it("stops waiting at the proof's own deadline and runs no further proof", async () => {
 		vi.useFakeTimers();
 		try {
 			const { sandbox, call, record } = setup();
-			vi.spyOn(sandbox, "run").mockImplementation(() => new Promise(() => {}));
-			const pending = call();
-			await vi.advanceTimersByTimeAsync(309_999);
+			const hung = vi.spyOn(sandbox, "run").mockImplementation(() => new Promise(() => {}));
+			const pending = call(Array(3).fill(finding));
+			await vi.advanceTimersByTimeAsync(299_999);
 			expect(record).not.toHaveBeenCalled();
-			sandbox.clock += 310_000;
+			sandbox.clock += 300_000;
 			await vi.advanceTimersByTimeAsync(1);
-			expect((await pending).proofSeconds).toBe(310);
-			expect((await pending).findings[0]?.proof).toEqual({
-				proven: false,
-				reason: "the command was stopped after 300 seconds",
-			});
+			const outcome = await pending;
+			expect(outcome.proofSeconds).toBe(300);
+			expect(outcome.checkoutProblem).toBe(HUNG);
+			expect(outcome.findings.map((f) => f.proof)).toEqual([
+				{ proven: false, reason: "the command was stopped after 300 seconds" },
+				{ proven: false, reason: `no further proof ran: ${HUNG}` },
+				{ proven: false, reason: `no further proof ran: ${HUNG}` },
+			]);
+			expect(hung).toHaveBeenCalledTimes(1);
+			// The command may still be running: nothing cleans the checkout under it.
+			expect(sandbox.log.at(-1)).toBe(status);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -102,7 +112,7 @@ describe("submitting a review", () => {
 				proven: false,
 				reason: "the test's path is not a test file",
 			});
-			expect(sandbox.files.size).toBe(0);
+			expect(sandbox.created).toEqual([]);
 		},
 	);
 	it.each(["exit 1", "false", "pnpm test", "pnpm vitest run test/b.test.ts"])(
@@ -141,18 +151,82 @@ describe("submitting a review", () => {
 		expect(
 			(await call([{ ...finding, test: { ...finding.test, path } }])).findings[0]?.proof,
 		).toEqual({ proven: false, reason: "the test's path is not a path inside the repository" });
-		expect(sandbox.files.size).toBe(0);
+		expect(sandbox.created).toEqual([]);
 		expect(sandbox.commands).toEqual([]);
 	});
-	it("counts a write error and cleans up without running the command", async () => {
+	it("counts a create error and cleans up without running the command", async () => {
 		const { call, sandbox } = setup();
-		vi.spyOn(sandbox, "writeFile").mockResolvedValue({ error: "read only" });
+		sandbox.createError = "read only";
 		expect(await call()).toMatchObject({
 			proofsRun: 1,
-			findings: [{ proof: { proven: false, reason: "the test file could not be written" } }],
+			findings: [
+				{ proof: { proven: false, reason: "the test file could not be created: read only" } },
+			],
 		});
 		expect(sandbox.commands).toEqual([]);
 		expect(sandbox.log.slice(-3)).toEqual([reset, "git clean -fdq", compare]);
+	});
+	it("never writes over a file that exists, and runs nothing", async () => {
+		const { call, sandbox } = setup();
+		const path = `${SANDBOX_REPOSITORY_PATH}/${finding.test.path}`;
+		sandbox.files.set(path, "tracked application code");
+		const { findings } = await call();
+		expect(findings[0]?.proof).toEqual({
+			proven: false,
+			reason: `the test file could not be created: ${path} already exists`,
+		});
+		expect(sandbox.files.get(path)).toBe("tracked application code");
+		expect(sandbox.commands).toEqual([]);
+	});
+	it("does not run a test when the new file is not the only change in the checkout", async () => {
+		const { call, sandbox } = setup();
+		const normal = sandbox.gitAnswer;
+		sandbox.gitAnswer = (args) =>
+			args[0] === "status" ? answer(` M app.ts\0?? ${finding.test.path}\0`) : normal?.(args);
+		const { findings } = await call();
+		expect(findings[0]?.proof).toEqual({
+			proven: false,
+			reason: "the test file was not the only change in the checkout, so it was not run",
+		});
+		expect(sandbox.commands).toEqual([]);
+		expect(sandbox.log.slice(-3)).toEqual([reset, "git clean -fdq", compare]);
+	});
+	it("does not run a test whose file git does not list, such as one in an ignored folder", async () => {
+		const { call, sandbox } = setup();
+		const normal = sandbox.gitAnswer;
+		sandbox.gitAnswer = (args) => (args[0] === "status" ? answer("") : normal?.(args));
+		expect((await call()).findings[0]?.proof.proven).toBe(false);
+		expect(sandbox.commands).toEqual([]);
+	});
+	it("does not count a launch failure as a proof", async () => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push({
+			...answer("/workspace/repo could not be reached.", 1),
+			notStarted: true,
+		});
+		expect((await call()).findings[0]?.proof).toEqual({
+			proven: false,
+			reason: "the command did not start: /workspace/repo could not be reached.",
+		});
+	});
+	it.each([Number.NaN, 1.5])("does not count exit code %s as a proof", async (exitCode) => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push(answer("", exitCode));
+		expect((await call()).findings[0]?.proof.proven).toBe(false);
+	});
+	it("keeps the valid findings when one omits its test or its criterion", async () => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push(failed);
+		const { test: _test, criterion: _criterion, ...incomplete } = finding;
+		const { findings } = await call([incomplete, finding]);
+		expect(findings.map((f) => [f.test === null, f.criterion, f.proof.proven])).toEqual([
+			[true, null, false],
+			[false, null, true],
+		]);
+		expect(findings[0]?.proof).toEqual({
+			proven: false,
+			reason: "the finding proposes no test",
+		});
 	});
 	it("runs only eight proofs", async () => {
 		const { call, sandbox } = setup();
@@ -185,16 +259,26 @@ describe("submitting a review", () => {
 	it("restores before and after each proof and compares after each cleanup", async () => {
 		const { call, sandbox } = setup();
 		await call([finding, finding]);
-		const one = [reset, "git clean -fdq", runCommand, reset, "git clean -fdq", compare];
+		const one = [
+			reset,
+			"git clean -fdq",
+			compare,
+			created,
+			status,
+			runCommand,
+			reset,
+			"git clean -fdq",
+			compare,
+		];
 		expect(sandbox.log.slice(2)).toEqual([...one, ...one]);
 	});
 	it.each(["changed", "compare throws", "reset fails", "clean fails"])(
-		"preserves the first proof and refuses the next when cleanup fails: %s",
+		"shows a failed cleanup on this submission and refuses the next proof: %s",
 		async (mode) => {
 			const { call, sandbox } = setup();
 			sandbox.answers.push(failed);
-			if (mode === "changed") sandbox.changes.push({ changed: "dirty" });
-			else if (mode === "compare throws") sandbox.changes.push(new Error("unavailable"));
+			if (mode === "changed") sandbox.changes.push(null, { changed: "dirty" });
+			else if (mode === "compare throws") sandbox.changes.push(null, new Error("unavailable"));
 			else {
 				const normal = sandbox.gitAnswer;
 				sandbox.gitAnswer = (args) =>
@@ -202,13 +286,30 @@ describe("submitting a review", () => {
 						? answer("", 1)
 						: normal?.(args);
 			}
-			const { findings } = await call([finding, finding]);
-			expect(findings[0]?.proof.proven).toBe(true);
-			expect(findings[1]?.proof).toEqual({ proven: false, reason: earlier });
+			const outcome = await call([finding, finding]);
+			expect(outcome.checkoutProblem).toBe(notPutBack);
+			expect(outcome.findings[0]?.proof).toEqual({
+				proven: false,
+				reason: `${notPutBack} after this proof`,
+				exitCode: 1,
+				output: failed.output.slice(-4000),
+			});
+			expect(outcome.findings[1]?.proof).toEqual({ proven: false, reason: later });
 			expect(sandbox.commands).toHaveLength(1);
-			expect(sandbox.log.at(-1)).toBe(compare);
 		},
 	);
+	it("does not start a proof on a checkout that differs from the head", async () => {
+		const { call, sandbox } = setup();
+		sandbox.changes.push({ changed: "M app.ts" });
+		const outcome = await call([finding, finding]);
+		expect(outcome.checkoutProblem).toBe(notPutBack);
+		expect(outcome.findings.map((f) => f.proof)).toEqual([
+			{ proven: false, reason: `${notPutBack}, so the test was not run` },
+			{ proven: false, reason: later },
+		]);
+		expect(sandbox.commands).toEqual([]);
+		expect(sandbox.created).toEqual([]);
+	});
 	it("refuses subsequent proofs if restoring before a command failed", async () => {
 		const { call, sandbox } = setup();
 		const normal = sandbox.gitAnswer;
@@ -216,11 +317,16 @@ describe("submitting a review", () => {
 			args[0] === "reset" ? new Error("lost checkout") : normal?.(args);
 		const result = await call([finding, finding]);
 		expect(result.proofsRun).toBe(1);
+		expect(result.checkoutProblem).toBe(notPutBack);
 		expect(result.findings.map((f) => f.proof)).toEqual([
-			{ proven: false, reason: "the checkout could not be put back at the reviewed head" },
-			{ proven: false, reason: earlier },
+			{ proven: false, reason: `${notPutBack}, so the test was not run` },
+			{ proven: false, reason: later },
 		]);
 		expect(sandbox.commands).toEqual([]);
+	});
+	it("records no checkout problem when every proof left the checkout clean", async () => {
+		const { call } = setup();
+		expect(await call()).not.toHaveProperty("checkoutProblem");
 	});
 	it("reads the diff from the common base and reviewed commit", async () => {
 		const { call, sandbox } = setup();
@@ -234,6 +340,8 @@ describe("submitting a review", () => {
 				"--no-color",
 				"--no-ext-diff",
 				"--find-renames",
+				"--src-prefix=a/",
+				"--dst-prefix=b/",
 				"--unified=3",
 				MERGE_BASE,
 				HEAD,
@@ -280,6 +388,19 @@ describe("submitting a review", () => {
 		await expect(call([{ ...finding, line: 0 }])).rejects.toThrow(/line/);
 		expect((await call()).findings).toHaveLength(1);
 		expect(record).toHaveBeenCalledOnce();
+	});
+	it("lets a call whose record failed be recorded again without running the proofs again", async () => {
+		const { call, record, sandbox } = setup();
+		record.mockRejectedValueOnce(new Error("storage unavailable"));
+		await expect(call()).rejects.toThrow("storage unavailable");
+		const commands = sandbox.commands.length;
+		const retried = await call([]);
+		expect(retried.findings).toHaveLength(1);
+		expect(retried.proofsRun).toBe(1);
+		expect(sandbox.commands).toHaveLength(commands);
+		expect(record).toHaveBeenCalledTimes(2);
+		expect(record.mock.calls[1]?.[0]).toBe(record.mock.calls[0]?.[0]);
+		await expect(call([])).rejects.toThrow("The review was already submitted");
 	});
 	it("refuses a second submission", async () => {
 		const { call } = setup();

@@ -106,6 +106,9 @@ export async function readReviewDiff(
 				"--no-color",
 				"--no-ext-diff",
 				"--find-renames",
+				// The parser strips a/ and b/: a configured diff.noprefix or mnemonic prefix must not change them.
+				"--src-prefix=a/",
+				"--dst-prefix=b/",
 				"--unified=3",
 				mergeBase,
 				head,
@@ -136,4 +139,50 @@ export async function restoreHead(git: Git, head: string): Promise<string | null
 		// A lost sandbox leaves the checkout unverified too.
 	}
 	return "the checkout could not be put back at the reviewed head";
+}
+
+/** What `createProofFile` needs of a file system: native calls, nothing that follows a symlink. */
+export interface ProofFiles {
+	/** The kind of thing at the path without following a symlink, or null when nothing is there. */
+	lstat(path: string): Promise<{ type: string } | null>;
+	/** Makes the directory and its missing parents. */
+	mkdir(path: string): Promise<void>;
+	writeFile(path: string, content: string): Promise<void>;
+}
+
+/**
+ * Creates the file of a proposed test, which must be new: a path that exists already, whatever it
+ * is, or that goes through a symlink or anything but a directory, is refused, so a proposed test
+ * can never replace a tracked file or write outside the checkout. `relative` is a plain path
+ * inside `root`.
+ */
+export async function createProofFile(
+	files: ProofFiles,
+	root: string,
+	relative: string,
+	content: string,
+): Promise<{ written: number } | { error: string }> {
+	try {
+		const parts = relative.split("/");
+		let seen = root;
+		for (const [index, part] of parts.entries()) {
+			seen = `${seen}/${part}`;
+			const found = await files.lstat(seen);
+			// Nothing here, so nothing below it either.
+			if (!found) break;
+			const shown = parts.slice(0, index + 1).join("/");
+			if (index === parts.length - 1) return { error: `${shown} already exists` };
+			if (found.type !== "directory")
+				return {
+					error: `${shown} is ${found.type === "symlink" ? "a symlink" : "not a directory"}`,
+				};
+		}
+		const target = `${root}/${relative}`;
+		const directory = target.slice(0, target.lastIndexOf("/"));
+		if (directory !== root) await files.mkdir(directory);
+		await files.writeFile(target, content);
+		return { written: new TextEncoder().encode(content).length };
+	} catch {
+		return { error: "the file could not be created" };
+	}
 }

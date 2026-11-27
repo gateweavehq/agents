@@ -87,6 +87,7 @@ import {
 import { boundedSearchOutput, clipCommandOutput, clipOutput, readPrefix } from "./output";
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
 import type { ReviewPort } from "./review";
+import { createProofFile } from "./review-git";
 import {
 	type CommandResult,
 	type ReadResult,
@@ -231,7 +232,7 @@ export class RunnerSandbox
 		const container = await this.#ready();
 		if (cwd !== SANDBOX_ROOT) {
 			const missing = await this.#directoryProblem(container, cwd);
-			if (missing) return { exitCode: 1, output: missing, timedOut: false };
+			if (missing) return { exitCode: 1, output: missing, timedOut: false, notStarted: true };
 		}
 		if (captureOutput) return this.#runCaptured(container, command, cwd, timeoutSeconds);
 		return this.#exec(
@@ -563,6 +564,33 @@ export class RunnerSandbox
 		} catch (error) {
 			return { error: describeFileFailure(error, path) };
 		}
+	}
+
+	/**
+	 * Creates a file that does not exist yet, making the directories it needs (`createProofFile`
+	 * in `./review-git.ts`). It never replaces a file and never writes through a symlink.
+	 */
+	async createFile(path: string, content: string): Promise<WriteResult> {
+		if (!path.startsWith(`${SANDBOX_REPOSITORY_PATH}/`))
+			return { error: `${path} is not in the repository.` };
+		const files = new Files(await this.#ready());
+		return createProofFile(
+			{
+				lstat: async (target) => {
+					try {
+						return { type: (await files.lstat(target)).type };
+					} catch (error) {
+						if (SandboxFileError.is(error) && error.code === "ENOENT") return null;
+						throw error;
+					}
+				},
+				mkdir: (directory) => files.mkdir(directory, { recursive: true }),
+				writeFile: (target, text) => files.writeFile(target, text),
+			},
+			SANDBOX_REPOSITORY_PATH,
+			path.slice(SANDBOX_REPOSITORY_PATH.length + 1),
+			content,
+		);
 	}
 
 	/**

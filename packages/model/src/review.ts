@@ -34,8 +34,9 @@ export const reviewFinding = z
 		side: z.enum(["LEFT", "RIGHT"]).default("RIGHT"),
 		title: z.string().trim().min(1).max(REVIEW_LIMITS.title),
 		failingCase: z.string().trim().min(1).max(REVIEW_LIMITS.failingCase),
-		criterion: z.string().max(REVIEW_LIMITS.criterion).nullable(),
-		test: reviewTest.nullable(),
+		// An omitted value is the same as null, so one incomplete finding does not refuse the rest.
+		criterion: z.string().max(REVIEW_LIMITS.criterion).nullable().default(null),
+		test: reviewTest.nullable().default(null),
 	})
 	// An empty schema accepts extra keys in the MCP catalog. Zod strips them on input.
 	.meta({ additionalProperties: {} });
@@ -56,6 +57,12 @@ export interface ReviewOutcome {
 	findings: ReviewedFinding[];
 	proofsRun: number;
 	proofSeconds: number;
+	/**
+	 * Set when the checkout could not be put back at the reviewed head, or a proof's command did
+	 * not return in time and may still run in it. No later proof ran; whoever holds the checkout
+	 * must discard it rather than reuse it.
+	 */
+	checkoutProblem?: string;
 }
 
 export const REVIEW_INSTRUCTIONS = `Review the branch diff against the acceptance criteria and for correctness.
@@ -81,9 +88,19 @@ export function reviewMessage(diff: string, criteria: readonly string[]): string
 		);
 		patch += `[${bytes.length - end} bytes left out]`;
 	}
-	let length = 3;
-	for (const [ticks] of diff.matchAll(/`+/g)) length = Math.max(length, ticks.length + 1);
-	const fence = "`".repeat(length);
+	// Sized from the text that is sent, not from what was left out. Only a long run of backticks
+	// is met with tildes, so the fence stays about as short as the patch's longest run.
+	const fenceOf = (mark: "`" | "~") => {
+		let length = 3;
+		for (const [run] of patch.matchAll(mark === "`" ? /`+/g : /~+/g))
+			length = Math.max(length, run.length + 1);
+		return mark.repeat(length);
+	};
+	let fence = fenceOf("`");
+	if (fence.length > 16) {
+		const tildes = fenceOf("~");
+		if (tildes.length < fence.length) fence = tildes;
+	}
 	const list = criteria.length
 		? criteria.map((item, i) => `${i + 1}. ${item}`).join("\n")
 		: "None. Review for correctness only.";

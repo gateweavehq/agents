@@ -12,13 +12,14 @@ import { type Comparison, lastBytes } from "./checks";
 import type { Git } from "./git-work";
 import { namesFile, oracleKind } from "./oracles";
 import { lineOnDiff, parseDiff, readReviewDiff, restoreHead } from "./review-git";
-import { SANDBOX_SERVER, type SandboxPort } from "./sandbox-tools";
+import { SANDBOX_SERVER, type SandboxPort, type WriteResult } from "./sandbox-tools";
 import { traced } from "./tools";
 import type { RunRecorder } from "./trace";
 
 export interface ReviewPort {
 	run: SandboxPort["run"];
-	writeFile: SandboxPort["writeFile"];
+	/** Creates a file that does not exist yet; it never replaces a file or follows a symlink. */
+	createFile(path: string, content: string): Promise<WriteResult>;
 	changedSince(head: string): Promise<Comparison>;
 	git: Git;
 }
@@ -32,33 +33,66 @@ export interface ReviewToolOptions {
 	now?: () => number;
 }
 
+interface Attempt {
+	proof: ReviewProof;
+	/** The command's call did not return: it may still be running in the checkout. */
+	hung: boolean;
+}
+
 function unproven(reason: string): ReviewProof {
 	return { proven: false, reason };
 }
 
-async function runTest(
-	sandbox: ReviewPort,
-	command: string,
-	seconds: number,
-): Promise<ReviewProof> {
+const NOT_PUT_BACK = "the checkout could not be put back at the reviewed head";
+const HUNG = "a proof command did not return in time and may still be running in the checkout";
+
+/** Resets, cleans and checks that nothing differs: why the checkout is not the head, or null. */
+async function putBack(sandbox: ReviewPort, head: string): Promise<string | null> {
+	if (await restoreHead((...args) => sandbox.git(...args), head)) return NOT_PUT_BACK;
+	try {
+		if ((await sandbox.changedSince(head)) !== null) return NOT_PUT_BACK;
+	} catch {
+		return NOT_PUT_BACK;
+	}
+	return null;
+}
+
+/**
+ * Runs the command for at most `seconds`. The sandbox stops it then, and this stops waiting at the
+ * same moment, so a call that never returns costs no more than the proof's own time.
+ */
+async function runTest(sandbox: ReviewPort, command: string, seconds: number): Promise<Attempt> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		const result = await Promise.race([
 			sandbox.run(command, SANDBOX_REPOSITORY_PATH, seconds),
 			new Promise<null>((resolve) => {
-				timer = setTimeout(() => resolve(null), (seconds + 10) * 1000);
+				timer = setTimeout(() => resolve(null), seconds * 1000);
 			}),
 		]);
-		if (!result) return unproven(`the command was stopped after ${seconds} seconds`);
+		if (!result)
+			return { proof: unproven(`the command was stopped after ${seconds} seconds`), hung: true };
 		const output = lastBytes(result.output, REVIEW_LIMITS.outputBytes);
 		const { exitCode } = result;
+		// A launch failure carries the sandbox's own exit code, which says nothing of the test.
+		if (result.notStarted || !Number.isInteger(exitCode))
+			return {
+				proof: unproven(`the command did not start: ${output.trim() || "no reason given"}`),
+				hung: false,
+			};
 		if (result.timedOut)
-			return { proven: false, reason: `the command timed out after ${seconds} seconds`, output };
+			return {
+				proof: { proven: false, reason: `the command timed out after ${seconds} seconds`, output },
+				hung: false,
+			};
 		if (exitCode === 0)
-			return { proven: false, reason: "the test passed at the reviewed head", exitCode, output };
-		return { proven: true, exitCode, output };
+			return {
+				proof: { proven: false, reason: "the test passed at the reviewed head", exitCode, output },
+				hung: false,
+			};
+		return { proof: { proven: true, exitCode, output }, hung: false };
 	} catch {
-		return unproven("the sandbox could not run the command");
+		return { proof: unproven("the sandbox could not run the command"), hung: false };
 	} finally {
 		clearTimeout(timer);
 	}
@@ -73,87 +107,136 @@ export function reviewTools({
 	now = Date.now,
 }: ReviewToolOptions): ToolSet {
 	const git: Git = (...args) => sandbox.git(...args);
-	let submitted = false;
+	// idle: nothing is recorded and no call runs; busy: a call runs; done: the outcome is recorded.
+	// A call that fails before the outcome is recorded goes back to idle and keeps the outcome it
+	// had finished, so a retry only records it again and never runs the proofs, or their budgets,
+	// a second time.
+	let state: "idle" | "busy" | "done" = "idle";
+	let finished: ReviewOutcome | null = null;
+
+	async function review(findings: ReviewFinding[]): Promise<ReviewOutcome> {
+		const read = await readReviewDiff(git, base, head);
+		if ("error" in read) throw new Error(`${read.error}; nothing was recorded; try again`);
+		const diff = parseDiff(read.diff);
+		const outcome: ReviewOutcome = { findings: [], proofsRun: 0, proofSeconds: 0 };
+		/** Why no further proof may run: the checkout is not the head, or a command may still use it. */
+		let unusable: string | null = null;
+
+		async function attempt(
+			relative: string,
+			content: string,
+			command: string,
+			seconds: number,
+		): Promise<Attempt> {
+			const created = await sandbox
+				.createFile(`${SANDBOX_REPOSITORY_PATH}/${relative}`, content)
+				.catch(() => ({ error: "the file could not be created" }));
+			if ("error" in created)
+				return {
+					proof: unproven(`the test file could not be created: ${created.error}`),
+					hung: false,
+				};
+			// The new file must be the only difference, whatever the path held before.
+			const status = await git([
+				"status",
+				"--porcelain=v1",
+				"-z",
+				"--untracked-files=all",
+				"--ignore-submodules=none",
+			]);
+			if (status.exitCode !== 0 || status.timedOut || status.output !== `?? ${relative}\0`)
+				return {
+					proof: unproven(
+						"the test file was not the only change in the checkout, so it was not run",
+					),
+					hung: false,
+				};
+			const started = now();
+			const result = await runTest(sandbox, command, seconds);
+			const elapsed = Math.max(0, (now() - started) / 1000);
+			outcome.proofSeconds += result.hung ? Math.max(elapsed, seconds) : elapsed;
+			return result;
+		}
+
+		async function prove(test: ReviewFinding["test"]): Promise<ReviewProof> {
+			if (!test) return unproven("the finding proposes no test");
+			if (outcome.proofsRun >= REVIEW_LIMITS.proofs)
+				return unproven(`the review's limit of ${REVIEW_LIMITS.proofs} proofs was reached`);
+			const timeLeft = REVIEW_LIMITS.totalProofSeconds - outcome.proofSeconds;
+			if (timeLeft < 1) return unproven("the review's proof time was used up");
+			if (unusable) return unproven(`no further proof ran: ${unusable}`);
+			const { path, content, command } = test;
+			const parts = path.split("/");
+			if (
+				/^\/|^[a-z]:|\\|[\p{Cc}\p{Zl}\p{Zp}]/iu.test(path) ||
+				parts.includes("..") ||
+				parts.includes(".git")
+			)
+				return unproven("the test's path is not a path inside the repository");
+			const relative = parts.filter((part) => part !== "" && part !== ".").join("/");
+			if (oracleKind(relative) !== "test") return unproven("the test's path is not a test file");
+			if (!namesFile(command, relative)) return unproven("the command does not run the test file");
+
+			outcome.proofsRun++;
+			// A proof starts on a checkout that is the head, and ends with one.
+			const before = await putBack(sandbox, head);
+			if (before) {
+				unusable = before;
+				return unproven(`${before}, so the test was not run`);
+			}
+			let result: Attempt;
+			try {
+				result = await attempt(
+					relative,
+					content,
+					command,
+					Math.floor(Math.min(REVIEW_LIMITS.proofSeconds, timeLeft)),
+				);
+			} catch {
+				result = { proof: unproven("the proof could not be run"), hung: false };
+			}
+			// A command that never returned may be using the checkout, and cleaning would race it.
+			if (result.hung) {
+				unusable = HUNG;
+				return result.proof;
+			}
+			const after = await putBack(sandbox, head);
+			if (!after) return result.proof;
+			unusable = after;
+			return { ...result.proof, proven: false, reason: `${after} after this proof` };
+		}
+
+		for (const finding of findings) {
+			outcome.findings.push({
+				...finding,
+				offDiff: !lineOnDiff(diff, finding),
+				proof: await prove(finding.test),
+			});
+		}
+		outcome.proofSeconds = Math.round(outcome.proofSeconds);
+		if (unusable) outcome.checkoutProblem = unusable;
+		return outcome;
+	}
+
 	const submit = tool({
 		description:
 			"Submit the review once. The tool runs each proposed test itself and decides whether the finding is proven. Supply a test file and a command that names it.",
 		inputSchema: reviewInput,
 		execute: async (input) => {
-			// Parsed before the flag is set, so a call the model must correct does not use up the
-			// review; the flag is still set before the first `await`, so two calls cannot both run.
+			// Parsed before the state changes, so a call the model must correct does not use up the
+			// review; the state changes before the first `await`, so two calls cannot both run.
 			const { findings } = reviewInput.parse(input);
-			if (submitted) throw new Error("The review was already submitted");
-			submitted = true;
-			const read = await readReviewDiff(git, base, head);
-			if ("error" in read) {
-				submitted = false;
-				throw new Error(`${read.error}; nothing was recorded; try again`);
+			if (state !== "idle") throw new Error("The review was already submitted");
+			state = "busy";
+			try {
+				finished ??= await review(findings);
+				await record(finished);
+				state = "done";
+				return finished;
+			} catch (error) {
+				state = "idle";
+				throw error;
 			}
-			const diff = parseDiff(read.diff);
-			const outcome: ReviewOutcome = { findings: [], proofsRun: 0, proofSeconds: 0 };
-			let restoreFailed = false;
-			async function prove(test: ReviewFinding["test"]): Promise<ReviewProof> {
-				if (!test) return unproven("the finding proposes no test");
-				if (outcome.proofsRun >= REVIEW_LIMITS.proofs)
-					return unproven(`the review's limit of ${REVIEW_LIMITS.proofs} proofs was reached`);
-				const timeLeft = REVIEW_LIMITS.totalProofSeconds - outcome.proofSeconds;
-				if (timeLeft < 1) return unproven("the review's proof time was used up");
-				if (restoreFailed)
-					return unproven(
-						"the checkout could not be put back at the reviewed head after an earlier proof",
-					);
-				const { path, content, command } = test;
-				const parts = path.split("/");
-				if (
-					/^\/|^[a-z]:|\\|[\p{Cc}\p{Zl}\p{Zp}]/iu.test(path) ||
-					parts.includes("..") ||
-					parts.includes(".git")
-				)
-					return unproven("the test's path is not a path inside the repository");
-				const relative = parts.filter((part) => part !== "" && part !== ".").join("/");
-				if (oracleKind(relative) !== "test") return unproven("the test's path is not a test file");
-				if (!namesFile(command, relative))
-					return unproven("the command does not run the test file");
-
-				outcome.proofsRun++;
-				const reason = await restoreHead(git, head);
-				if (reason) {
-					restoreFailed = true;
-					return unproven(reason);
-				}
-				try {
-					const written = await sandbox
-						.writeFile(`${SANDBOX_REPOSITORY_PATH}/${path}`, content)
-						.catch(() => ({ error: "write failed" }));
-					if ("error" in written) return unproven("the test file could not be written");
-					const started = now();
-					const proof = await runTest(
-						sandbox,
-						command,
-						Math.floor(Math.min(REVIEW_LIMITS.proofSeconds, timeLeft)),
-					);
-					outcome.proofSeconds += Math.max(0, (now() - started) / 1000);
-					return proof;
-				} finally {
-					const reason = await restoreHead(git, head);
-					try {
-						const changes = await sandbox.changedSince(head);
-						restoreFailed = reason !== null || changes !== null;
-					} catch {
-						restoreFailed = true;
-					}
-				}
-			}
-			for (const finding of findings) {
-				outcome.findings.push({
-					...finding,
-					offDiff: !lineOnDiff(diff, finding),
-					proof: await prove(finding.test),
-				});
-			}
-			outcome.proofSeconds = Math.round(outcome.proofSeconds);
-			await record(outcome);
-			return outcome;
 		},
 	});
 	return {

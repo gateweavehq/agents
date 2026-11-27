@@ -49,6 +49,15 @@ describe("a review submission", () => {
 			expect(acceptsCommand(command)).toBe(false);
 		},
 	);
+	it("reads an omitted test or criterion as null and keeps its sibling findings", () => {
+		const { test: _test, criterion: _criterion, ...incomplete } = finding;
+		expect(reviewFinding.parse(incomplete)).toMatchObject({ test: null, criterion: null });
+		const { findings } = reviewInput.parse({ findings: [incomplete, finding] });
+		expect(findings.map((f) => f.test)).toEqual([null, finding.test]);
+	});
+	it("still refuses a test that is present but incomplete", () => {
+		expect(() => reviewFinding.parse({ ...finding, test: { path: "test/a.test.ts" } })).toThrow();
+	});
 	it("strips a submitted proof claim", () => {
 		expect(reviewFinding.parse({ ...finding, proven: true })).not.toHaveProperty("proven");
 	});
@@ -60,6 +69,19 @@ describe("the review message", () => {
 		expect(reviewMessage(diff, ["First", "Second"])).toContain(
 			["1. First", "2. Second", "", "Diff", "``````diff", diff, "``````"].join("\n"),
 		);
+	});
+	it("sizes the fence from the patch that is sent, not from what was left out", () => {
+		const kept = "a".repeat(REVIEW_LIMITS.diffBytes - 2);
+		const omitted = `+${"`".repeat(2_000_000)}\n`;
+		const message = reviewMessage(`${kept}\n${omitted}`, []);
+		expect(message).toContain("```diff\n");
+		expect(message.length).toBeLessThan(REVIEW_LIMITS.diffBytes + 1_000);
+	});
+	it("meets a long run of backticks in the patch with tildes", () => {
+		const diff = `+${"`".repeat(40)}\n`;
+		const message = reviewMessage(diff, []);
+		expect(message).toContain(`~~~diff\n${diff}~~~`);
+		expect(message).not.toContain("~~~~");
 	});
 	it("asks for correctness only when there are no criteria", () => {
 		expect(reviewMessage("", [])).toContain("None. Review for correctness only.");
