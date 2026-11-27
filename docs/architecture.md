@@ -849,6 +849,15 @@ with no repository and its own id as its key, and a row in `agent_definitions` b
 - **The model** is a provider and the provider's id for it. The form lists the models the
   workspace's key can use (`listModels`), and takes any id, so an agent can be defined before the
   key is added.
+- **Spending caps.** An owner or admin with a fresh session can set the workspace's daily and
+  monthly caps in US dollars on model use with its own keys. Empty means no cap; a value that is
+  not a non-negative number is kept but reads as zero, so a typo never lifts a cap, and zero
+  refuses every new turn. Runs with every keyed provider are summed at list prices for the UTC day
+  or month. Once a cap is reached the next turn is refused with the cap and its reset, as a
+  `budget-limit` to Track; with either cap set, an unpriced model is refused because its cost
+  cannot count. When a finished run passes 80% or 100% of a positive cap, owners and admins are
+  emailed once for that share in that period. A cap covers only runs through Agents, not other use
+  of the same provider account, and the settings page says so.
 - **Instructions** are a library asset of kind instructions or prompt, pinned to a version as a
   setup's assets are, and all text. The agent reads it through `agent_assets`, so the asset's
   page lists the agent. A new version in the library changes nothing until someone moves the pin.

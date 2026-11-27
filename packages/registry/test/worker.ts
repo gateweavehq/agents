@@ -1,5 +1,6 @@
 import type {
 	MemoryAgentEvent,
+	ModelKeyCapPassed,
 	ReviewPullState,
 	SandboxBudgetPassed,
 	SandboxMinutesPassed,
@@ -19,6 +20,7 @@ export interface StartedTurn {
 const STARTED_KEY = "test:started-turns";
 const BUDGET_KEY = "test:budget-passed";
 const MINUTES_KEY = "test:minutes-passed";
+const MODEL_KEY_CAP_KEY = "test:model-key-cap-passed";
 const USAGE_KEY = "test:usage";
 const DESTROYED_KEY = "test:destroyed";
 const REFUSED_KEY = "test:refused";
@@ -161,6 +163,15 @@ export class RegistryDO extends Registry {
 
 	protected override async sandboxMinutesPassed(passed: SandboxMinutesPassed): Promise<void> {
 		this.ctx.storage.kv.put(MINUTES_KEY, [...this.minutesPassed(), passed]);
+	}
+
+	protected override async modelKeyCapPassed(passed: ModelKeyCapPassed): Promise<void> {
+		this.ctx.storage.kv.put(MODEL_KEY_CAP_KEY, [...this.modelKeyCapsPassed(), passed]);
+	}
+
+	/** What owners and admins would have been emailed about model-key spending caps. */
+	modelKeyCapsPassed(): ModelKeyCapPassed[] {
+		return this.ctx.storage.kv.get<ModelKeyCapPassed[]>(MODEL_KEY_CAP_KEY) ?? [];
 	}
 
 	protected override recordUsage(point: AnalyticsEngineDataPoint): void {

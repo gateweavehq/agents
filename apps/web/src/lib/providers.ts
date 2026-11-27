@@ -5,6 +5,8 @@
  */
 import {
 	KEYED_PROVIDERS,
+	type ModelKeyCaps,
+	modelKeyCapsInput,
 	type ProviderKey,
 	type ProviderModel,
 	providerKeyInput,
@@ -66,6 +68,7 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 			configured: boolean;
 			problem: SecretsProblem | null;
 			keys: ProviderKey[];
+			caps: ModelKeyCaps;
 			/** Whether this workspace may use Workers AI now. */
 			workersAi: boolean;
 			workersAiOffer: WorkersAiOffer;
@@ -86,9 +89,10 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 			const { workspaceId } = found.member.membership;
 			const sandbox = sandboxOfferTo(env, workspaceId);
 			const offer = workersAiOffer(workspaceId);
-			const [problem, keys, seconds, monthSeconds, dollars] = await Promise.all([
+			const [problem, keys, caps, seconds, monthSeconds, dollars] = await Promise.all([
 				found.registry.secretsState(),
 				found.registry.listProviderKeys(),
+				found.registry.getModelKeyCaps(),
 				sandbox === "offered" ? found.registry.sandboxSecondsToday() : null,
 				sandbox === "offered" ? found.registry.sandboxSecondsThisMonth() : null,
 				offer === "offered" ? found.registry.workersAiSpentToday() : null,
@@ -98,6 +102,7 @@ export const getProviderKeys = createServerFn({ method: "GET" })
 				configured: problem === null,
 				problem,
 				keys,
+				caps,
 				workersAi: offer === "offered",
 				workersAiOffer: offer,
 				workersAiSpend: dollars === null ? null : { dollars, limit: workersAiDailyLimit(env) },
@@ -150,6 +155,22 @@ export const saveProviderKey = createServerFn({ method: "POST" })
 			target: { type: "providerKey", id: provider, label: provider },
 		});
 		return saved;
+	});
+
+/** Saves the model-key spending caps. A fresh session is required, as for other sensitive settings. */
+export const saveModelKeyCaps = createServerFn({ method: "POST" })
+	.validator(z.object({ slug: z.string().min(1), caps: modelKeyCapsInput }))
+	.handler(async ({ data }): Promise<boolean> => {
+		const found = await memberOf(data.slug, true);
+		if (!found) throw new Error("Workspace not found");
+		const { requireFreshSession } = await import("#/server/access");
+		await requireFreshSession(found.member.sessionCreatedAt, "change these spending caps");
+		await found.registry.setModelKeyCaps(data.caps);
+		await found.audit({
+			action: "modelKeyCaps.saved",
+			target: { type: "modelKeyCaps", id: "workspace", label: "model keys" },
+		});
+		return true;
 	});
 
 /** Tries the key by listing the provider's models, which costs nothing. */

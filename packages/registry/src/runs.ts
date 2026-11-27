@@ -6,6 +6,7 @@
  */
 import {
 	type AgentSnapshot,
+	KEYED_PROVIDERS,
 	RUN_TIMEOUT_MS,
 	RUNS_PER_PAGE,
 	type Run,
@@ -112,6 +113,25 @@ export function providerCost(db: Db, provider: string, from: number, to: number)
 		.where(
 			and(
 				eq(runs.provider, provider as Run["provider"]),
+				gte(runs.startedAt, from),
+				lt(runs.startedAt, to),
+			),
+		)
+		.get();
+	return Number(row?.cost ?? 0);
+}
+
+/**
+ * What all runs with a workspace's own provider keys cost in millionths of a dollar, at list
+ * prices, in the same period `providerCost` reads.
+ */
+export function keyedProviderCost(db: Db, from: number, to: number): number {
+	const row = db
+		.select({ cost: sum(runs.cost) })
+		.from(runs)
+		.where(
+			and(
+				inArray(runs.provider, KEYED_PROVIDERS),
 				gte(runs.startedAt, from),
 				lt(runs.startedAt, to),
 			),

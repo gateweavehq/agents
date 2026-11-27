@@ -16,6 +16,7 @@ export const AUDIT_ACTIONS = [
 	"member.roleChanged",
 	// Keys and secrets. Never their values.
 	"providerKey.saved",
+	"modelKeyCaps.saved",
 	"providerKey.removed",
 	"envSet.created",
 	"envSet.edited",
@@ -75,6 +76,7 @@ export const AUDIT_TARGET_TYPES = [
 	"invitation",
 	"member",
 	"providerKey",
+	"modelKeyCaps",
 	"envSet",
 	"telemetry",
 	"github",

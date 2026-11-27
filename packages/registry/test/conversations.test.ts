@@ -142,6 +142,90 @@ describe("conversations", () => {
 	});
 });
 
+describe("workspace model-key spending caps", () => {
+	const finish = async (stub: ReturnType<typeof registry>, runId: string, cost: number) => {
+		await stub.finishRun(runId, {
+			status: "succeeded",
+			error: null,
+			steps: 1,
+			inputTokens: 10,
+			outputTokens: 5,
+			cachedInputTokens: 0,
+			cost,
+			endedAt: Date.now(),
+		});
+	};
+
+	it("refuse new turns past a cap, and never read zero or a typo as unset", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "2" });
+
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		await finish(stub, first.runId, 2_000_000);
+		const monthly = await stub.beginTurn(id, "Again");
+		expect(monthly).toMatchObject({ status: "refused" });
+		if (!("status" in monthly)) throw new Error("expected a refusal");
+		expect(monthly.message).toContain("monthly cap, $2");
+		expect(monthly.message).toContain("resets on");
+		await stub.setModelKeyCaps({ daily: "0", monthly: "" });
+		const zero = await stub.beginTurn(id, "Again");
+		expect(zero).toMatchObject({ status: "refused" });
+		if (!("status" in zero)) throw new Error("expected a refusal");
+		expect(zero.message).toContain("daily cap, $0");
+
+		await stub.setModelKeyCaps({ daily: "twenty", monthly: "" });
+		expect(await stub.beginTurn(id, "Again")).toMatchObject({ status: "refused" });
+
+		await stub.setModelKeyCaps({ daily: "", monthly: "" });
+		expect(await stub.beginTurn(id, "Again")).toHaveProperty("runId");
+	});
+
+	it("refuse an unpriced model while any cap is set", async () => {
+		const stub = registry();
+		const agent = await stub.createAgent({
+			name: "Ghost",
+			description: null,
+			provider: "anthropic",
+			model: "made-up-model",
+			instructions: null,
+		});
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		expect(await stub.beginTurn(id, "Hello")).toHaveProperty("runId");
+		await stub.setModelKeyCaps({ daily: "1", monthly: "" });
+		const refusedTurn = await stub.beginTurn(id, "Again");
+		expect(refusedTurn).toMatchObject({ status: "refused" });
+		if (!("status" in refusedTurn)) throw new Error("expected a refusal");
+		expect(refusedTurn.message).toContain("made-up-model has no prices");
+	});
+
+	it("pass 80 and 100 percent of a monthly cap once in a period", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "2" });
+		const turn = async () => {
+			const begun = await stub.beginTurn(id, "Hello");
+			if ("status" in begun) throw new Error(begun.message);
+			return begun.runId;
+		};
+		await finish(stub, await turn(), 1_600_000);
+		await finish(stub, await turn(), 400_000);
+		const heard = await runInDurableObject(stub, async (instance: RegistryDO) =>
+			(instance as unknown as TestRegistry).modelKeyCapsPassed(),
+		);
+		expect(heard).toEqual([
+			expect.objectContaining({ kind: "month", share: 80, cap: 2, spent: 1.6 }),
+			expect.objectContaining({ kind: "month", share: 100, cap: 2, spent: 2 }),
+		]);
+	});
+});
+
 describe("turns with Workers AI", () => {
 	const TOKEN = "workers-ai-test-token-not-a-real-one";
 	const SCOUT = "@cf/meta/llama-4-scout-17b-16e-instruct";

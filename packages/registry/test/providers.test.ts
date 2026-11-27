@@ -418,6 +418,15 @@ describe("provider keys", () => {
 		expect((await stub.listProviderKeys()).map((key) => key.provider)).toEqual(["openai"]);
 	});
 
+	it("keep model-key caps independently of any provider key", async () => {
+		const stub = registry();
+		expect(await stub.getModelKeyCaps()).toEqual({ dailyCap: null, monthlyCap: null });
+		await stub.setModelKeyCaps({ daily: "1", monthly: "20" });
+		expect(await stub.getModelKeyCaps()).toEqual({ dailyCap: "1", monthlyCap: "20" });
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		expect(await stub.getModelKeyCaps()).toEqual({ dailyCap: "1", monthlyCap: "20" });
+	});
+
 	/** Puts a key sealed under the key derived from `authSecret` where the workspace keeps OpenAI's. */
 	async function storeSealedByDerivedKey(stub: ReturnType<typeof registry>, authSecret: string) {
 		await stub.saveProviderKey({ provider: "openai", key: "sk-proj-placeholder" }, "Ada");

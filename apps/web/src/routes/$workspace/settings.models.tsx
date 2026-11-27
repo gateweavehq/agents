@@ -3,6 +3,7 @@ import {
 	type KeyedProvider,
 	MAX_WORKSPACE_SANDBOXES,
 	MODEL_PROVIDER_NAMES,
+	type ModelKeyCaps,
 	type ProviderKey,
 	type ProviderModel,
 	SANDBOX_IDLE_MINUTES,
@@ -33,6 +34,7 @@ import {
 	getWorkersAiModels,
 	removeProviderKey,
 	type SandboxTime,
+	saveModelKeyCaps,
 	saveProviderKey,
 	type WorkersAiSpend,
 } from "#/lib/providers";
@@ -94,6 +96,7 @@ function ModelsPage() {
 					stored with it, here and in the workspace's other settings, and enter it anew.
 				</p>
 			)}
+			<ModelKeyCapsSection caps={data.caps} admin={admin} />
 			{data.problem?.kind === "server" ? (
 				<Notice title="Model keys are not set up on this server">
 					{data.problem.message}. Whoever runs this server can change that; docs/self-hosting.md in
@@ -390,6 +393,117 @@ function CheckResult({ saved }: { saved: ProviderKey }) {
 		<p className="text-xs text-destructive">
 			Failed {when}: {check.message}
 		</p>
+	);
+}
+
+function capText(value: string | null): string {
+	if (value === null) return "none";
+	const cap = Number(value);
+	return Number.isFinite(cap) && cap >= 0 ? `$${cap}` : `${value} (allows nothing)`;
+}
+
+function ModelKeyCapsSection({ caps, admin }: { caps: ModelKeyCaps; admin: boolean }) {
+	const [editing, setEditing] = useState(false);
+	return (
+		<section aria-labelledby="model-key-caps-heading" className="space-y-3">
+			<div className="space-y-1">
+				<h2 id="model-key-caps-heading" className="text-base font-semibold">
+					Model-key spending caps
+				</h2>
+				<p className="text-sm text-muted-foreground">
+					Estimated spending by agents in this workspace on its own provider keys, per UTC day and
+					month. A cap covers only runs through Agents, not other use of the same provider account.
+				</p>
+				<p className="text-sm">
+					Daily cap {capText(caps.dailyCap)}; monthly cap {capText(caps.monthlyCap)}
+				</p>
+			</div>
+			{admin ? (
+				<Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+					Change caps
+				</Button>
+			) : (
+				<p className="text-sm text-muted-foreground">An owner or admin can change the caps.</p>
+			)}
+			{editing && <CapsDialog saved={caps} onClose={() => setEditing(false)} />}
+		</section>
+	);
+}
+
+function CapsDialog({ saved, onClose }: { saved: ModelKeyCaps; onClose: () => void }) {
+	const router = useRouter();
+	const { workspace: slug } = Route.useParams();
+	const [daily, setDaily] = useState(saved.dailyCap ?? "");
+	const [monthly, setMonthly] = useState(saved.monthlyCap ?? "");
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	async function onSubmit(event: FormEvent) {
+		event.preventDefault();
+		setPending(true);
+		setError(null);
+		try {
+			await saveModelKeyCaps({
+				data: { slug, caps: { daily: daily.trim(), monthly: monthly.trim() } },
+			});
+			toast.success("The model-key spending caps were saved");
+			await router.invalidate();
+			onClose();
+		} catch (failure) {
+			setError(message(failure));
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+			<DialogContent className="max-w-md">
+				<form onSubmit={onSubmit} className="space-y-4">
+					<DialogHeader>
+						<DialogTitle>Model-key spending caps</DialogTitle>
+						<DialogDescription>
+							Estimated model spending in US dollars, per UTC day and month. Leave a cap empty for
+							none. A value that is not a number allows nothing, so a mistake cannot lift a cap; 0
+							refuses every new turn.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="space-y-2">
+						<Label htmlFor="model-key-daily-cap">Daily cap</Label>
+						<Input
+							id="model-key-daily-cap"
+							value={daily}
+							onChange={(event) => setDaily(event.target.value)}
+							placeholder="No daily cap"
+							inputMode="decimal"
+						/>
+					</div>
+					<div className="space-y-2">
+						<Label htmlFor="model-key-monthly-cap">Monthly cap</Label>
+						<Input
+							id="model-key-monthly-cap"
+							value={monthly}
+							onChange={(event) => setMonthly(event.target.value)}
+							placeholder="No monthly cap"
+							inputMode="decimal"
+						/>
+					</div>
+					{error && (
+						<p role="alert" className="text-sm text-destructive">
+							{error}
+						</p>
+					)}
+					<DialogFooter>
+						<Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+							Cancel
+						</Button>
+						<Button type="submit" disabled={pending}>
+							{pending ? "Saving…" : "Save caps"}
+						</Button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

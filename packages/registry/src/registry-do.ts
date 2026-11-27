@@ -55,12 +55,16 @@ import {
 	type MemoryPage,
 	type MemoryRefusal,
 	MODEL_PROVIDER_NAMES,
+	type ModelKeyCapPassed,
+	type ModelKeyCaps,
+	type ModelKeyCapsInput,
 	mcpCheckResult,
 	mcpServerEditInput,
 	mcpServerInput,
 	memoryEditInput,
 	memoryFilter,
 	memoryInput,
+	modelKeyCapsInput,
 	type NewTeamInput,
 	newTeamInput,
 	OUTSIDE_TASK_TEXT_MAX,
@@ -350,8 +354,11 @@ import {
 	keyPlace,
 	listProviderKeys,
 	listProviderModels,
+	modelKeyCap,
+	modelKeyCapsOf,
 	recordProviderCheck,
 	removeProviderKey,
+	saveModelKeyCaps,
 	saveProviderKey,
 	sealedKeyOf,
 } from "./providers";
@@ -402,6 +409,7 @@ import {
 	finishRun,
 	getRun,
 	hasRuns,
+	keyedProviderCost,
 	listNestedRuns,
 	listReplays,
 	listRuns,
@@ -2158,6 +2166,43 @@ export class RegistryDO extends DurableObject {
 		};
 	}
 
+	/** Why the workspace's model-key daily or monthly cap refuses the turn, or null. */
+	#modelKeyCapRefusal(provider: KeyedProvider, agent: AgentSnapshot): TurnRefusal | null {
+		const row = modelKeyCapsOf(this.#db);
+		const now = Date.now();
+		const daily = modelKeyCap(row.dailyCap);
+		const monthly = modelKeyCap(row.monthlyCap);
+		const anyCap = daily !== null || monthly !== null;
+		if (anyCap && priceOf(provider, agent.model, now) === null) {
+			return refused(
+				`${agent.model} has no prices here, so its cost cannot count toward this workspace's model-key cap and ${agent.name} cannot answer. Choose a model with prices in the agent's settings.`,
+				"budget-limit",
+			);
+		}
+		const month = utcMonth(now);
+		if (monthly !== null) {
+			const spent = keyedProviderCost(this.#db, month.start, month.end) / 1_000_000;
+			if (spent >= monthly) {
+				return refused(
+					`This workspace has used its model-key monthly cap, $${monthly}, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
+					"budget-limit",
+				);
+			}
+		}
+		if (daily !== null) {
+			const today = utcDay(now);
+			const spent = keyedProviderCost(this.#db, today.start, today.end) / 1_000_000;
+			if (spent >= daily) {
+				const resetsOn = new Date(today.end).toISOString().slice(0, 10);
+				return refused(
+					`This workspace has used its model-key daily cap, $${daily}, so ${agent.name} cannot answer until the day ends (UTC). It resets on ${resetsOn} at 00:00 UTC.`,
+					"budget-limit",
+				);
+			}
+		}
+		return null;
+	}
+
 	/** Why no model of `agent`'s provider can answer here, or null when one can. */
 	#providerRefusal(agent: AgentSnapshot): TurnRefusal | null {
 		const { provider } = agent;
@@ -2168,7 +2213,7 @@ export class RegistryDO extends DurableObject {
 					"provider",
 				);
 			}
-			return null;
+			return this.#modelKeyCapRefusal(provider, agent);
 		}
 		if (!workersAiOffered(this.env as WorkersAiSettings)) {
 			return refused(
@@ -2273,6 +2318,7 @@ export class RegistryDO extends DurableObject {
 		let report: PendingTrackReport | undefined;
 		let hadSandbox = false;
 		let minutesPassed: SandboxMinutesPassed[] = [];
+		let capPassed: ModelKeyCapPassed[] = [];
 		let reviewsQueued = false;
 		const closed = this.#write(() => {
 			if (!finishRun(this.#db, run, data)) return false;
@@ -2294,6 +2340,14 @@ export class RegistryDO extends DurableObject {
 			}
 			hadSandbox = (monthlyBudget !== null || cap > 0) && runHadSandbox(this.#db, run);
 			if (hadSandbox && cap > 0) minutesPassed = this.#sandboxMinutesAlerts(cap);
+			const finished = this.#db
+				.select({ provider: schema.runs.provider })
+				.from(schema.runs)
+				.where(eq(schema.runs.id, run))
+				.get();
+			if (finished && isKeyedProvider(finished.provider)) {
+				capPassed = this.#modelKeyCapAlerts();
+			}
 			return true;
 		});
 		this.#publishTrackReports(report);
@@ -2306,6 +2360,7 @@ export class RegistryDO extends DurableObject {
 				this.recordUsage(usagePoint(this.ctx.id.name ?? this.ctx.id.toString(), done, counts));
 		}
 		if (minutesPassed.length > 0) this.ctx.waitUntil(this.#notifySandboxMinutes(minutesPassed));
+		if (capPassed.length > 0) this.ctx.waitUntil(this.#notifyModelKeyCapPassed(capPassed));
 		if (hadSandbox && monthlyBudget !== null) {
 			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
 			this.ctx.waitUntil(
@@ -2885,6 +2940,17 @@ export class RegistryDO extends DurableObject {
 	removeProviderKey(provider: string): boolean {
 		const which = keyedProvider.parse(provider);
 		return this.#write(() => removeProviderKey(this.#db, which));
+	}
+
+	/** The workspace's model-key spending caps, as typed. */
+	getModelKeyCaps(): ModelKeyCaps {
+		return modelKeyCapsOf(this.#db);
+	}
+
+	/** Saves the workspace's model-key spending caps, exactly as typed. */
+	setModelKeyCaps(input: ModelKeyCapsInput): void {
+		const data = modelKeyCapsInput.parse(input);
+		this.#write(() => saveModelKeyCaps(this.#db, { daily: data.daily, monthly: data.monthly }));
 	}
 
 	/** Tries the provider's key by listing its models, and records how that went. */
@@ -3871,6 +3937,80 @@ export class RegistryDO extends DurableObject {
 	protected async sandboxMinutesPassed(passed: SandboxMinutesPassed): Promise<void> {
 		console.warn(
 			`registry: workspace ${this.ctx.id.name ?? this.ctx.id.toString()} has used ${passed.share}% of its sandbox minutes for ${passed.month}`,
+		);
+	}
+
+	/** Claims each model-key cap email in the same write that closes the run. */
+	#modelKeyCapAlerts(): ModelKeyCapPassed[] {
+		const row = modelKeyCapsOf(this.#db);
+		const now = Date.now();
+		const today = utcDay(now);
+		const month = utcMonth(now);
+		const periods = [
+			{
+				kind: "day" as const,
+				period: new Date(today.start).toISOString().slice(0, 10),
+				cap: modelKeyCap(row.dailyCap),
+				from: today.start,
+				to: today.end,
+				resetsOn: new Date(today.end).toISOString().slice(0, 10),
+			},
+			{
+				kind: "month" as const,
+				period: month.name,
+				cap: modelKeyCap(row.monthlyCap),
+				from: month.start,
+				to: month.end,
+				resetsOn: sandboxMonthResetsOn(month),
+			},
+		];
+		const passed: ModelKeyCapPassed[] = [];
+		for (const period of periods) {
+			if (period.cap === null || period.cap <= 0) continue;
+			const spent = keyedProviderCost(this.#db, period.from, period.to) / 1_000_000;
+			for (const share of [80, 100] as const) {
+				if (spent < period.cap * (share / 100)) continue;
+				const existing = this.#db
+					.select({ share: schema.modelKeyCapAlerts.share })
+					.from(schema.modelKeyCapAlerts)
+					.where(
+						and(
+							eq(schema.modelKeyCapAlerts.kind, period.kind),
+							eq(schema.modelKeyCapAlerts.period, period.period),
+							eq(schema.modelKeyCapAlerts.share, share),
+						),
+					)
+					.get();
+				if (existing) continue;
+				this.#db
+					.insert(schema.modelKeyCapAlerts)
+					.values({ kind: period.kind, period: period.period, share, createdAt: now })
+					.run();
+				passed.push({
+					kind: period.kind,
+					period: period.period,
+					share,
+					spent,
+					cap: period.cap,
+					resetsOn: period.resetsOn,
+				});
+			}
+		}
+		return passed;
+	}
+
+	async #notifyModelKeyCapPassed(passed: ModelKeyCapPassed[]): Promise<void> {
+		for (const alert of passed) {
+			await this.modelKeyCapPassed(alert).catch((error: unknown) => {
+				console.error("registry: telling of a model-key cap failed", error);
+			});
+		}
+	}
+
+	/** The app's Worker emails owners and admins when model-key use passes a cap share. */
+	protected async modelKeyCapPassed(passed: ModelKeyCapPassed): Promise<void> {
+		console.warn(
+			`registry: workspace ${this.ctx.id.name ?? this.ctx.id.toString()} has used ${passed.share}% of its model-key ${passed.kind} cap`,
 		);
 	}
 
