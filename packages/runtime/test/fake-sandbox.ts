@@ -69,6 +69,8 @@ export type CommandAnswer = (CommandResult & { seconds?: number }) | Error;
 export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, ChangesPort {
 	readonly files = new Map<string, string>();
 	readonly commands: RanCommand[] = [];
+	readonly gitCalls: string[][] = [];
+	gitAnswer: ((args: string[]) => CommandAnswer | undefined) | undefined;
 	readonly checkouts: Checkout[] = [];
 	/**
 	 * What the next commands answer, in order; then each exits 0 and prints its command line. An
@@ -124,6 +126,19 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		this.log.push("commit");
 		const head = String(this.commits.length).repeat(40).slice(0, 40);
 		return this.commitAnswers.shift() ?? { head };
+	}
+
+	async git(
+		args: string[],
+		_seconds?: number,
+		_env?: Record<string, string>,
+		_outputLimit?: number,
+	): Promise<CommandResult> {
+		this.log.push(`git ${args.join(" ")}`);
+		this.gitCalls.push(args);
+		const answer = this.gitAnswer?.(args);
+		if (answer instanceof Error) throw answer;
+		return answer ?? { exitCode: 0, output: "", timedOut: false };
 	}
 
 	async changedSince(head: string): Promise<Comparison> {
@@ -328,6 +343,15 @@ export class FakeSandbox
 
 	commit(message: string, author: CommitAuthor, model: string) {
 		return this.#memory.commit(message, author, model);
+	}
+
+	git(args: string[], seconds?: number, env?: Record<string, string>, outputLimit?: number) {
+		return this.#memory.git(args, seconds, env, outputLimit);
+	}
+
+	answerGit(answers: { match: string[]; answer: CommandResult }[]) {
+		this.#memory.gitAnswer = (args) =>
+			answers.find(({ match }) => match.every((word, i) => word === args[i]))?.answer;
 	}
 
 	changedSince(head: string) {

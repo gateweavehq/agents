@@ -86,6 +86,7 @@ import {
 } from "./outbound";
 import { boundedSearchOutput, clipCommandOutput, clipOutput, readPrefix } from "./output";
 import type { CommitAuthor, CommitResult, PushResult } from "./pull-requests";
+import type { ReviewPort } from "./review";
 import {
 	type CommandResult,
 	type ReadResult,
@@ -174,7 +175,7 @@ interface SandboxState extends DurableObjectState {
 
 export class RunnerSandbox
 	extends DurableObject
-	implements SandboxPort, EnginePort, LocalServerPort
+	implements SandboxPort, EnginePort, LocalServerPort, ReviewPort
 {
 	readonly #container: Container | undefined;
 	readonly #outbound: Fetcher;
@@ -452,6 +453,15 @@ export class RunnerSandbox
 				false,
 				outputLimit,
 			);
+	}
+
+	async git(
+		args: string[],
+		seconds?: number,
+		env?: Record<string, string>,
+		outputLimit?: number,
+	): Promise<CommandResult> {
+		return this.#git(await this.#ready())(args, seconds, env, outputLimit);
 	}
 
 	/**
