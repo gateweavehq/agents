@@ -157,7 +157,7 @@ function pathOf(section: string): string | null {
  * The path a `---`/`+++` header names: Git's quoting undone first, since a quoted path carries
  * its `a/` or `b/` prefix inside the quotes, and only then the prefix dropped.
  */
-function headerPath(text: string, prefix: string): string {
+export function headerPath(text: string, prefix: string): string {
 	// Git ends a header's path with a TAB when the path holds a space; a quoted path never does.
 	const path = unquote(text.replace(/\t$/, ""));
 	return path.startsWith(prefix) ? path.slice(prefix.length) : path;
