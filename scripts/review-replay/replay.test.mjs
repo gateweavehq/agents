@@ -1739,6 +1739,28 @@ test("a reviewer's own text cannot pose as an event", async () => {
 	assert.deepEqual(events.calls, []);
 });
 
+test("a canary written with JSON escapes is found once the strings are decoded", () => {
+	const escaped = SECRETS.beside.replace("c", "\\u0063");
+	const hidden = `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I saw ${escaped}"}]}}`;
+	// The raw text does not hold the canary's start, the decoded string does.
+	assert.equal(hidden.includes(SECRETS.beside.slice(0, 24)), false);
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					insideRead,
+					denial("t2", FILES.answer_file),
+					denial("t3", FILES.cache),
+					denial("t4", FILES.beside),
+					hidden,
+					RESULT,
+				),
+			),
+		refused(/not confined to its checkout.*a file beside the checkout/),
+	);
+});
+
 for (const [which, field] of [
 	["the replay set's stand-in", "answer_file"],
 	["the judge's cache folder", "cache"],
