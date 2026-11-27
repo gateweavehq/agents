@@ -187,15 +187,25 @@ interface Verdict {
 async function prove(command: string, seconds: number, cwd: string): Promise<Verdict> {
 	const nonce = crypto.randomUUID();
 	const started = Date.now();
-	const child = spawn("python3", ["-I", "-c", RUN_PROOF_SCRIPT, String(seconds), command, nonce], {
-		cwd,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	// One pipe for both streams, as the sandbox's "combined" output is, so the verdict the program
+	// prints last is also last here whatever the command wrote to stderr.
+	const child = spawn(
+		"sh",
+		[
+			"-c",
+			'exec python3 "$@" 2>&1',
+			"sh",
+			"-I",
+			"-c",
+			RUN_PROOF_SCRIPT,
+			String(seconds),
+			command,
+			nonce,
+		],
+		{ cwd, stdio: ["ignore", "pipe", "ignore"] },
+	);
 	let output = "";
 	child.stdout.on("data", (chunk) => {
-		output += chunk;
-	});
-	child.stderr.on("data", (chunk) => {
 		output += chunk;
 	});
 	const exitCode = await new Promise<number>((resolve) =>
@@ -217,6 +227,25 @@ function alive(pid: number): boolean {
 		return stat[stat.lastIndexOf(")") + 2] !== "Z";
 	} catch {
 		return false;
+	}
+}
+
+/** The pids a command wrote to `file`, one per line; none if it wrote nothing. */
+function pidsIn(file: string): number[] {
+	try {
+		return readFileSync(file, "utf8").split("\n").filter(Boolean).map(Number);
+	} catch {
+		return [];
+	}
+}
+
+function killAll(pids: number[]): void {
+	for (const pid of pids) {
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch {
+			// Already gone.
+		}
 	}
 }
 
@@ -247,7 +276,7 @@ describe.skipIf(!linux)("RUN_PROOF_SCRIPT in the sandbox's image", () => {
 		const cwd = scratch();
 		const pids = join(cwd, "pids");
 		const done = await prove(
-			`trap '' TERM; (trap '' TERM; echo $BASHPID >> ${pids}; while :; do sleep 0.2; done) & echo $! >> ${pids}; while :; do sleep 0.2; done`,
+			`trap '' TERM; (trap '' TERM; echo $BASHPID >> "${pids}"; while :; do sleep 0.2; done) & echo $! >> "${pids}"; while :; do sleep 0.2; done`,
 			6,
 			cwd,
 		);
@@ -259,27 +288,70 @@ describe.skipIf(!linux)("RUN_PROOF_SCRIPT in the sandbox's image", () => {
 	it("ends a background process the command left behind, and reports none left", async () => {
 		const cwd = scratch();
 		const pids = join(cwd, "pids");
-		const done = await prove(`sleep 300 & echo $! > ${pids}; exit 1`, 20, cwd);
+		const done = await prove(`sleep 300 & echo $! > "${pids}"; exit 1`, 20, cwd);
 		expect(done).toMatchObject({ exitCode: 1, timedOut: false, left: 0 });
 		expect(alive(Number(readFileSync(pids, "utf8")))).toBe(false);
 	});
-	it("counts a process that left the session as still alive", async () => {
+	it("finds and kills a daemon that called setsid, and reports none left", async () => {
 		const cwd = scratch();
 		const pids = join(cwd, "pids");
-		const done = await prove(
-			`setsid sleep 300 > /dev/null 2>&1 & echo $! > ${pids}; sleep 0.3; exit 1`,
-			5,
-			cwd,
-		);
-		const survivor = Number(readFileSync(pids, "utf8"));
+		// The first daemon is the command's own child that left the session; the second double-forks,
+		// so its parent is gone and it is reparented to the supervisor, the subreaper.
 		try {
-			expect(done.left).toBeGreaterThanOrEqual(1);
-			expect(done.seconds).toBeLessThan(5.5);
+			const done = await prove(
+				`setsid sleep 300 > /dev/null 2>&1 & echo $! >> "${pids}"; (setsid sleep 301 > /dev/null 2>&1 & echo $! >> "${pids}"); sleep 0.3; exit 1`,
+				8,
+				cwd,
+			);
+			expect(pidsIn(pids)).toHaveLength(2);
+			expect(done).toMatchObject({ exitCode: 1, timedOut: false, left: 0 });
+			expect(done.seconds).toBeLessThan(8);
+			for (const pid of pidsIn(pids)) expect(alive(pid)).toBe(false);
 		} finally {
-			try {
-				process.kill(survivor, "SIGKILL");
-			} catch {
-				// Already gone.
+			killAll(pidsIn(pids));
+		}
+	});
+	it("finds a daemon whose parent was killed with the command", async () => {
+		const cwd = scratch();
+		const pids = join(cwd, "pids");
+		try {
+			const done = await prove(
+				`setsid bash -c 'sleep 302 & echo $! >> "${pids}"; echo $$ >> "${pids}"; wait' > /dev/null 2>&1 & sleep 0.5; sleep 300`,
+				5,
+				cwd,
+			);
+			expect(pidsIn(pids)).toHaveLength(2);
+			expect(done).toMatchObject({ timedOut: true, left: 0 });
+			for (const pid of pidsIn(pids)) expect(alive(pid)).toBe(false);
+		} finally {
+			killAll(pidsIn(pids));
+		}
+	});
+	it("counts only the proof's own processes: an unrelated one started during it is not left", async () => {
+		const cwd = scratch();
+		const unrelated: number[] = [];
+		const noise = setInterval(() => {
+			// Short-lived processes, as other test workers start them.
+			spawn("sleep", ["0.3"], { stdio: "ignore" }).unref();
+		}, 50);
+		try {
+			const running = prove("sleep 300", 4, cwd);
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			// Started outside the proof's session, while the proof runs, and still alive when it ends.
+			const other = spawn("sleep", ["300"], { stdio: "ignore", detached: true });
+			if (other.pid !== undefined) unrelated.push(other.pid);
+			const done = await running;
+			expect(done).toMatchObject({ timedOut: true, left: 0 });
+			expect(unrelated).toHaveLength(1);
+			expect(alive(unrelated[0] ?? 0)).toBe(true);
+		} finally {
+			clearInterval(noise);
+			for (const pid of unrelated) {
+				try {
+					process.kill(pid, "SIGKILL");
+				} catch {
+					// Already gone.
+				}
 			}
 		}
 	});

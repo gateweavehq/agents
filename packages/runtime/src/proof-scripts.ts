@@ -73,19 +73,29 @@ export async function createProofFile(
 
 /**
  * Runs a proof's command in a session of its own and keeps it to its deadline. argv: the seconds
- * it may take in all, the command, a nonce. It ends the command's whole process group, first
- * with SIGTERM and then SIGKILL, when the command returns or runs out of time, so that its own
- * kill and its grace period are over by the deadline. Then it compares the process ids with those
- * from before the command, ignoring zombies, and reports what is still alive. The last line of
- * its output carries the nonce and a JSON verdict.
+ * it may take in all, the command, a nonce.
+ *
+ * It makes itself a child subreaper (prctl PR_SET_CHILD_SUBREAPER) before it starts the command
+ * with setsid, so a process the command leaves behind, even one that called setsid itself or
+ * double-forked, is reparented to the supervisor and not to the container's init. When the command
+ * returns or runs out of time it ends the command's process group, first with SIGTERM and then
+ * SIGKILL, so that its own kill and its grace period are over by the deadline. Then it kills the
+ * proof's own remaining processes, waits, and counts what is still alive. Those candidates are only
+ * the processes whose session id (field 6 of /proc/PID/stat) is the command's pid and those whose
+ * parent is the supervisor: no other process in the container is looked at, however it started.
+ * Zombies are not counted. The last line of its output carries the nonce and a JSON verdict.
  */
 export const RUN_PROOF_SCRIPT = `
-import json, os, signal, subprocess, sys, time
+import ctypes, json, os, signal, subprocess, sys, time
 seconds, command, nonce = float(sys.argv[1]), sys.argv[2], sys.argv[3]
 deadline = time.monotonic() + seconds
 grace = min(1.5, seconds / 3)
 me = os.getpid()
-def alive():
+try:
+    ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)
+except Exception:
+    pass
+def owned(session):
     found = set()
     for name in os.listdir("/proc"):
         if not name.isdigit():
@@ -93,11 +103,20 @@ def alive():
         try:
             with open("/proc/" + name + "/stat") as stat:
                 text = stat.read()
-        except OSError:
+            fields = text[text.rindex(")") + 2:].split()
+            state, parent, group = fields[0], int(fields[1]), int(fields[3])
+        except (OSError, ValueError, IndexError):
             continue
-        if text[text.rindex(")") + 2] != "Z":
+        if state != "Z" and int(name) != me and (group == session or parent == me):
             found.add(int(name))
     return found
+def reap():
+    while True:
+        try:
+            if os.waitpid(-1, os.WNOHANG)[0] == 0:
+                return
+        except ChildProcessError:
+            return
 def end(group, number):
     try:
         os.killpg(group, number)
@@ -108,21 +127,31 @@ def wait(child, until):
         return child.wait(timeout=max(0.0, until - time.monotonic()))
     except subprocess.TimeoutExpired:
         return None
-before = alive()
 child = subprocess.Popen(["bash", "-c", command], start_new_session=True, stdin=subprocess.DEVNULL)
+session = child.pid
 code = wait(child, deadline - 2 * grace)
 timed_out = code is None
 if timed_out:
-    end(child.pid, signal.SIGTERM)
+    end(session, signal.SIGTERM)
     code = wait(child, deadline - grace)
-end(child.pid, signal.SIGKILL)
+end(session, signal.SIGKILL)
 if code is None:
     code = wait(child, deadline - grace / 2)
-left = set()
 settle = min(deadline, time.monotonic() + 1.0)
+left = set()
 while True:
-    left = alive() - before - {me}
-    if not left or time.monotonic() >= settle:
+    reap()
+    left = owned(session)
+    for pid in left:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if not left:
+        break
+    if time.monotonic() >= settle:
+        reap()
+        left = owned(session)
         break
     time.sleep(0.05)
 if code is None:

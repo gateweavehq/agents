@@ -621,6 +621,8 @@ export class RunnerSandbox
 		const missing = await this.#directoryProblem(container, SANDBOX_REPOSITORY_PATH);
 		if (missing)
 			return { exitCode: 1, output: missing, timedOut: false, notStarted: true, left: 0 };
+		// The checkout may have been condemned while the directory check was pending.
+		await this.#disposal.assertReusable(container);
 		const nonce = crypto.randomUUID();
 		const process = await container.exec(
 			["python3", "-I", "-c", RUN_PROOF_SCRIPT, String(seconds), command, nonce],
