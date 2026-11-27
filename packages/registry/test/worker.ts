@@ -1,7 +1,9 @@
 import type {
 	MemoryAgentEvent,
+	ReviewPullState,
 	SandboxBudgetPassed,
 	SandboxMinutesPassed,
+	SandboxRepository,
 	TriggerTurnOutcome,
 } from "@gateweave/agents-model";
 import { RegistryDO as Registry } from "../src";
@@ -22,6 +24,11 @@ const DESTROYED_KEY = "test:destroyed";
 const REFUSED_KEY = "test:refused";
 const BATCHES_KEY = "test:batches";
 const MEMORY_KEY = "test:memory-events";
+const HELD_KEY = "test:alarms-held";
+const REVIEWS_KEY = "test:started-reviews";
+const PULLS_KEY = "test:live-pulls";
+const MESSAGE_KEY = "test:review-message";
+const PULLS_READ_KEY = "test:live-pulls-read";
 
 /**
  * The registry, beginning scheduled runs as the app's does, but with no runtime: the run begins in
@@ -40,6 +47,58 @@ export class RegistryDO extends Registry {
 		return "status" in turn ? { runId: null, error: turn.message } : { runId: turn.runId };
 	}
 
+	protected override async startReviewTurn(
+		conversationId: string,
+		attemptId: string,
+	): Promise<TriggerTurnOutcome> {
+		const started = this.ctx.storage.kv.get<string[]>(REVIEWS_KEY) ?? [];
+		this.ctx.storage.kv.put(REVIEWS_KEY, [...started, conversationId]);
+		const message = this.ctx.storage.kv.get<string>(MESSAGE_KEY) ?? "The review's message";
+		const turn = await this.beginReviewTurn(conversationId, message, attemptId);
+		return "status" in turn ? { runId: null, error: turn.message } : { runId: turn.runId };
+	}
+
+	/**
+	 * The pull requests as GitHub has them, which a test sets with `livePull`. One it has not set is
+	 * open at the head the review is of, as the registry finds most of them; one set to null cannot
+	 * be read, as when GitHub does not answer.
+	 */
+	protected override async readReviewPull(
+		_repository: SandboxRepository,
+		number: number,
+		head: string,
+	): Promise<ReviewPullState | "gone" | null> {
+		const read = this.ctx.storage.kv.get<number[]>(PULLS_READ_KEY) ?? [];
+		this.ctx.storage.kv.put(PULLS_READ_KEY, [...read, number]);
+		const pulls =
+			this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone" | null>>(PULLS_KEY) ?? {};
+		const set = pulls[String(number)];
+		return set === undefined ? { state: "open", head, draft: false } : set;
+	}
+
+	/** Sets what GitHub says of a pull request, for the reviews the alarm admits next. */
+	livePull(number: number, state: ReviewPullState | "gone" | null): void {
+		const pulls =
+			this.ctx.storage.kv.get<Record<string, ReviewPullState | "gone" | null>>(PULLS_KEY) ?? {};
+		pulls[String(number)] = state;
+		this.ctx.storage.kv.put(PULLS_KEY, pulls);
+	}
+
+	/** The message the registry begins the next reviews with, in place of a short one. */
+	reviewMessageIs(text: string): void {
+		this.ctx.storage.kv.put(MESSAGE_KEY, text);
+	}
+
+	/** The pull requests the registry read from GitHub before admitting their reviews. */
+	pullsRead(): number[] {
+		return this.ctx.storage.kv.get<number[]>(PULLS_READ_KEY) ?? [];
+	}
+
+	/** The conversations the registry began reviews in. */
+	startedReviews(): string[] {
+		return this.ctx.storage.kv.get<string[]>(REVIEWS_KEY) ?? [];
+	}
+
 	protected override async destroyConversation(conversationId: string): Promise<void> {
 		if (this.ctx.storage.kv.get<string[]>(REFUSED_KEY)?.includes(conversationId)) {
 			throw new Error("That conversation cannot be reached");
@@ -49,6 +108,8 @@ export class RegistryDO extends Registry {
 	}
 
 	override async alarm(): Promise<void> {
+		// A test that holds alarms runs them itself (`alarmNow`), so one never fires between its steps.
+		if (this.ctx.storage.kv.get(HELD_KEY)) return;
 		const before = this.destroyedConversations().length;
 		await super.alarm();
 		const batches = this.ctx.storage.kv.get<number[]>(BATCHES_KEY) ?? [];
@@ -56,6 +117,22 @@ export class RegistryDO extends Registry {
 			...batches,
 			this.destroyedConversations().length - before,
 		]);
+	}
+
+	/** Has the alarms that fire on their own do nothing, until the test runs one with `alarmNow`. */
+	holdAlarms(): void {
+		this.ctx.storage.kv.put(HELD_KEY, true);
+	}
+
+	/** Runs the alarm's work now, though alarms are held. */
+	async alarmNow(): Promise<void> {
+		const held = this.ctx.storage.kv.get(HELD_KEY);
+		this.ctx.storage.kv.delete(HELD_KEY);
+		try {
+			await this.alarm();
+		} finally {
+			if (held) this.ctx.storage.kv.put(HELD_KEY, true);
+		}
 	}
 
 	/** How many conversations each alarm destroyed. */

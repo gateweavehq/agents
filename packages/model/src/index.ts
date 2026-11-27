@@ -9,6 +9,7 @@ export * from "./memory";
 export * from "./outside-tasks";
 export * from "./paths";
 export * from "./prices";
+export * from "./pull-request-review";
 export * from "./review";
 export * from "./run-part";
 export * from "./sandbox";

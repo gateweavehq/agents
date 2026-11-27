@@ -113,6 +113,12 @@ export interface Trigger {
 	schedule: TriggerSchedule | null;
 	/** When its schedule starts the next run, while it is active; null otherwise. */
 	nextRunAt: number | null;
+	/**
+	 * Whether it starts a review of each pull request a run of the workspace's agents opened, when
+	 * that run ends. It takes no webhooks and has no schedule, like a scheduled trigger, and its
+	 * deliveries are made by the registry (`pull-request-review.ts`).
+	 */
+	pullRequest: boolean;
 	/** The start of its secret, to tell secrets apart. */
 	secretStart: string;
 	createdAt: number;
@@ -300,8 +306,23 @@ export const triggerInput = z
 		assigneeName: triggerAssigneeName.default(null),
 		perIssue: z.boolean().default(false),
 		schedule: triggerSchedule.nullable().default(null),
+		pullRequest: z.boolean().default(false),
 	})
 	.refine((input) => input.assignee !== null || input.assigneeName === null, NAME_NEEDS_ASSIGNEE)
+	.refine(
+		(input) =>
+			!input.pullRequest ||
+			(input.schedule === null &&
+				input.events === null &&
+				input.label === null &&
+				input.assignee === null &&
+				!input.perIssue),
+		{
+			message:
+				"A pull request trigger starts on pull requests, not on a schedule, event types, labels or assignees",
+			path: ["pullRequest"],
+		},
+	)
 	.refine((input) => input.schedule === null || input.events === null, ONE_KIND)
 	.refine((input) => input.schedule === null || input.label === null, NO_LABEL)
 	.refine((input) => input.schedule === null || input.assignee === null, NO_ASSIGNEE)

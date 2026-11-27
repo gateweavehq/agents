@@ -126,6 +126,10 @@ export class RegistryDO extends Registry {
 		return demoEnabled() ? offInDemo() : super.createTrigger(...args);
 	}
 
+	override async createReviewTrigger(...args: Parameters<Registry["createReviewTrigger"]>) {
+		return demoEnabled() ? offInDemo() : super.createReviewTrigger(...args);
+	}
+
 	override async setUpTrackTriage(...args: Parameters<Registry["setUpTrackTriage"]>) {
 		return demoEnabled() ? offInDemo() : super.setUpTrackTriage(...args);
 	}
@@ -259,6 +263,22 @@ export class RegistryDO extends Registry {
 			.where(eq(schema.organization.id, workspaceId))
 			.get();
 		return conversation.triggerTurn(text, workspace ? runsPage(workspace.slug) : null, attemptId);
+	}
+
+	/** Begins a review's run in the conversation the alarm opened for it. */
+	protected override async startReviewTurn(
+		conversationId: string,
+		attemptId: string,
+	): Promise<TriggerTurnOutcome> {
+		// Each registry is named for its workspace (`registryFor`).
+		const workspaceId = this.ctx.id.name;
+		if (!workspaceId) return { runId: null, error: "This registry does not know its workspace" };
+		// The workspace's conversations are where its registry is.
+		const conversation = await getAgentByName(
+			objectsIn(this.env.CONVERSATIONS, this.ctx.id.jurisdiction),
+			conversationName(workspaceId, conversationId),
+		);
+		return conversation.reviewTurn(attemptId);
 	}
 
 	/**

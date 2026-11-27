@@ -43,7 +43,7 @@ rename to new
 +after
 `;
 
-export function setup(port?: ReviewPort) {
+export function setup(port?: ReviewPort, supplied?: string) {
 	const sandbox = new MemorySandbox();
 	sandbox.gitAnswer = (args) =>
 		args[0] === "merge-base"
@@ -56,6 +56,7 @@ export function setup(port?: ReviewPort) {
 	const tools = reviewTools({
 		sandbox: port ?? sandbox,
 		base: "origin/main",
+		diff: supplied,
 		head: HEAD,
 		run: run as unknown as RunRecorder,
 		record,

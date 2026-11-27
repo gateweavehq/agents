@@ -196,6 +196,10 @@ export interface RegistryStub {
 		input: TriggerInput,
 		createdBy: string,
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal>;
+	createReviewTrigger(
+		input: Omit<TriggerInput, "pullRequest">,
+		createdBy: string,
+	): Promise<{ trigger: Trigger } | TriggerRefusal>;
 	updateTrigger(triggerId: string, patch: TriggerPatch): Promise<Trigger | null>;
 	listTriggers(target?: TriggerTarget): Promise<TriggerEntry[]>;
 	replaceTriggerSecret(

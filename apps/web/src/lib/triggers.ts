@@ -14,13 +14,22 @@ import {
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-/** A trigger, with the URL its sender posts to. */
-export type TriggerView = TriggerEntry & { url: string };
+/**
+ * A trigger, with the URL its sender posts to. A review trigger has no sender, so it has no URL
+ * (null): it is started by the pull requests the workspace's agents open.
+ */
+export type TriggerView = TriggerEntry & { url: string | null };
 
 /** A trigger just made or given a new secret, with that secret, which is not shown again. */
 export interface TriggerSecretShown {
 	trigger: Trigger & { url: string };
 	secret: string;
+}
+
+/** A review trigger just made: it has no URL and no secret, and nothing to show once. */
+export interface ReviewTriggerMade {
+	trigger: Trigger & { url: null };
+	secret: null;
 }
 
 const id = z.string().min(1).max(64);
@@ -64,13 +73,29 @@ export const getTriggers = createServerFn({ method: "GET" })
 		const found = await adminOf(data.slug);
 		if (!found?.admin) return null;
 		const triggers = await found.registry.listTriggers(data.target);
-		return triggers.map((trigger) => ({ ...trigger, url: found.urlOf(trigger.id) }));
+		return triggers.map((trigger) => ({
+			...trigger,
+			url: trigger.pullRequest ? null : found.urlOf(trigger.id),
+		}));
 	});
 
 export const createTrigger = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), trigger: triggerInput }))
-	.handler(async ({ data }): Promise<TriggerSecretShown> => {
+	.handler(async ({ data }): Promise<TriggerSecretShown | ReviewTriggerMade> => {
 		const found = await requireAdmin(data.slug);
+		// A review trigger has no URL and no secret: it is made apart from the webhooks, which hand
+		// both out once.
+		if (data.trigger.pullRequest) {
+			const { pullRequest: _, ...input } = data.trigger;
+			const review = await found.registry.createReviewTrigger(input, found.member.user.id);
+			if ("status" in review) throw new Error(review.message);
+			await found.audit({
+				action: "trigger.created",
+				target: triggerTarget(review.trigger),
+				detail: { for: review.trigger.targetName, kind: "pull_request" },
+			});
+			return { trigger: { ...review.trigger, url: null }, secret: null };
+		}
 		const made = await found.registry.createTrigger(data.trigger, found.member.user.id);
 		if ("status" in made) throw new Error(made.message);
 		await found.audit({

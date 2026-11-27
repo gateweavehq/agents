@@ -13,7 +13,7 @@ Gateweave Agents, naming the wiki pages and the source files they were written f
 
 - Your client is connected to Agents with the `agents` scope. [MCP reference](../mcp.md#how-to-connect) says
   how, for Gateweave Cloud and for a self-hosted copy.
-- The repository has a wiki. An owner or admin of the workspace has it written on the workspace's **Wiki**
+- The repository has a wiki. A workspace owner or admin has it written on the workspace's **Wiki**
   page. Without one, the tools say that the repository has no wiki yet.
 
 ## 1. Find the repositories that have a wiki
