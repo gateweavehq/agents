@@ -1,5 +1,5 @@
 /**
- * The data part that sums up what a turn changed in its sandbox's repository (AGT-139). The chat
+ * The data part that sums up what a turn changed in its sandbox's repository. The chat
  * draws the files under the reply, each with its diff. Like a reply's run part it is not
  * transient, so the conversation keeps it and history replays it.
  */

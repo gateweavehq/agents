@@ -1,5 +1,5 @@
 /**
- * The OAuth client side of an MCP server connected for a workspace (AGT-78), for `@ai-sdk/mcp`:
+ * The OAuth client side of an MCP server connected for a workspace, for `@ai-sdk/mcp`:
  * its `auth()` runs the flow (discovery, dynamic client registration, PKCE, the token exchange)
  * and its transports send and refresh the token, and both keep what they need through this
  * provider, in the registry, sealed (`packages/registry/src/mcp-oauth.ts`). The app uses it to

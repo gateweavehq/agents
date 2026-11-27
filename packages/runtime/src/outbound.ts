@@ -10,7 +10,7 @@
  *
  * A request for the model is the one way out that carries what the sandbox chooses, with the
  * workspace's key added, so its contents are checked too (`checkModelRequest`), before the key is
- * (AGT-62). The providers run tools of their own on a request's behalf: Anthropic's MCP connector,
+ *. The providers run tools of their own on a request's behalf: Anthropic's MCP connector,
  * web search and fetch, code execution; OpenAI's MCP, web search, file search, code interpreter;
  * Google's search, URL context and code execution. Any of them would send what the request holds
  * to an address the request names, or run it elsewhere. So a request names only tools the CLI
