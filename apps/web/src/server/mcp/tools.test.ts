@@ -207,9 +207,11 @@ describe("asking a wiki", () => {
 		expect(answer.isError).toBe(false);
 		expect(answer.text).toMatch(/^From the wiki of acme\/app, the pages that bear on the question/);
 		// "sync" is in the Sync page's title and the Overview's text: Sync comes first, then Overview.
-		expect(answer.text.indexOf("# Page 1.1: Sync")).toBeLessThan(
-			answer.text.indexOf("# Page 1: Overview"),
-		);
+		const sync = answer.text.indexOf("# Page 1.1: Sync");
+		const overview = answer.text.indexOf("# Page 1: Overview");
+		expect(sync).toBeGreaterThan(-1);
+		expect(overview).toBeGreaterThan(-1);
+		expect(sync).toBeLessThan(overview);
 		expect(answer.text).toContain("[src/sync.ts:1-3]()");
 	});
 
