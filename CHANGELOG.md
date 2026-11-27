@@ -12,8 +12,8 @@ notes. Publishing a release deploys it to Gateweave Cloud.
 
 A server can now cap each workspace's sandbox minutes per UTC month with an optional
 `SANDBOX_MONTHLY_MINUTES`, and the docs gain a quickstart, an MCP reference and two recipes for
-using Agents from an AI client. This release has no migration and changes nothing in the
-workspace registry's storage. Gateweave Cloud does not set the new limit yet.
+using Agents from an AI client. This release has no migration. Gateweave Cloud does not set the
+new limit yet.
 
 ### Added
 
@@ -23,9 +23,11 @@ workspace registry's storage. Gateweave Cloud does not set the new limit yet.
   - When the month's minutes are used up, a new turn that needs a sandbox is refused, and the
     message names the date the count resets. A turn under way is never cut: the check runs only
     when a turn begins.
-  - The workspace's owners get an email once at 80% and once at 100% of the cap each month, on a
-    server that sends email.
-  - Settings > Models shows the month's usage, the cap and the reset date.
+  - When a turn that used a sandbox ends, the server checks the month's minutes. The first time
+    in a month they reach 80% of the cap, and again at 100%, it emails the workspace's owners, on
+    a server that sends email.
+  - For a workspace that may use sandboxes, Settings > Models shows the month's sandbox minutes
+    and, when a cap is set, the cap and the date it resets.
   - Unset or empty, there is no monthly cap. `SANDBOX_DAILY_MINUTES` and `SANDBOX_MONTHLY_BUDGET`
     work as before.
 - **A quickstart** that goes from a fresh clone to a first agent on your own Cloudflare account.
@@ -39,8 +41,7 @@ workspace registry's storage. Gateweave Cloud does not set the new limit yet.
 
 ### Internal
 
-- The CLI is published from the `npm` environment, whose deployments accept only `cli-v*` tags,
-  so an edited copy of the publish workflow on a branch cannot publish.
+- The CLI is published from the `npm` environment, whose deployments accept only `cli-v*` tags.
   ([#337](https://github.com/gateweavehq/agents/pull/337))
 - The contributing guide links the community rules and says how to claim an issue, and the pull
   request template asks which agent helped, for disclosure only.
@@ -48,10 +49,13 @@ workspace registry's storage. Gateweave Cloud does not set the new limit yet.
 
 ### If you run your own
 
-- **Update.** There is no D1 migration and no change to the workspace registry's storage.
+- **Update.** There is no migration, in D1 or in the workspace registry. The registry records
+  each sandbox-minutes alert it sends in its Durable Object's key-value storage, so that each
+  goes out once a month.
 - **`SANDBOX_MONTHLY_MINUTES`** is optional. Unset or empty, a workspace has no monthly cap. A
-  number sets the minutes; a value that is not a number allows none. "Sandboxes" in
-  `docs/self-hosting.md` describes it, and the Settings table in the same file lists it.
+  number of zero or more sets the minutes; any other value, such as a negative number or a word,
+  allows none. "Sandboxes" in `docs/self-hosting.md` describes it, and the Settings table in the
+  same file lists it.
 
 ## [0.35.1] - 2026-11-26
 
