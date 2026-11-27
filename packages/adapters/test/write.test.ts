@@ -404,6 +404,22 @@ describe("MCP servers", () => {
 			expect(result.problems).toEqual([{ asset: name, message: expect.stringContaining(problem) }]);
 			expect(fileMap(result)[".mcp.json"]).not.toContain(url);
 		}
+		// `URL` drops an empty userinfo, so these parse with no username or password.
+		for (const [name, url] of [
+			["empty-userinfo", "https://@mcp.acme.dev/mcp"],
+			["empty-password", "https://:@mcp.acme.dev/mcp"],
+			["backslash", "https:\\\\@mcp.acme.dev/mcp"],
+			["tab", "https://\t@mcp.acme.dev/mcp"],
+		] as const) {
+			const result = write([server(name, { type: "http", url }), github], "claude-code");
+			expect(result.problems).toEqual([
+				{ asset: name, message: expect.stringContaining("must not carry credentials") },
+			]);
+			expect(fileMap(result)[".mcp.json"]).not.toContain("@mcp.acme.dev");
+		}
+		// An at sign after the authority is not userinfo.
+		const atInPath = server("at-in-path", { type: "http", url: "https://mcp.acme.dev/a@b?c=@d" });
+		expect(write([atInPath], "claude-code").problems).toEqual([]);
 		const defaultPort = server("default-port", {
 			type: "http",
 			url: "https://mcp.acme.dev:443/mcp",

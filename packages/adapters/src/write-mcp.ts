@@ -92,6 +92,14 @@ export interface McpHeader {
 	value: string | { variable: string; prefix: string };
 }
 
+/** Whether the authority of an address as written holds a userinfo delimiter, empty or not. */
+function authorityHasUserinfo(value: string): boolean {
+	// The URL parser ignores tabs and line breaks and reads a backslash as a slash in https.
+	const text = value.replace(/[\t\n\r]/g, "").trim();
+	const authority = /^[a-z][a-z0-9+.-]*:[/\\]*([^/\\?#]*)/i.exec(text)?.[1] ?? "";
+	return authority.includes("@");
+}
+
 /**
  * Why a remote MCP server address cannot be written, or null. Every runtime sends these from the
  * repository owner's machine or a sandbox, so the writer does not broaden their reach beyond HTTPS.
@@ -104,7 +112,10 @@ export function remoteMcpUrlProblem(value: string): string | null {
 		return "is not a valid URL";
 	}
 	if (url.protocol !== "https:") return "must use https";
-	if (url.username !== "" || url.password !== "") return "must not carry credentials";
+	// `URL` drops an empty userinfo (`https://@host`, `https://:@host`), so read the text as written.
+	if (url.username !== "" || url.password !== "" || authorityHasUserinfo(value)) {
+		return "must not carry credentials";
+	}
 	if (url.port !== "") return "must use the default https port";
 	return null;
 }
