@@ -75,6 +75,32 @@ export function commandLine(file, args, platform = process.platform, env = proce
 	};
 }
 
+// What is running right now, so that an interrupt of the replay can end it: a model process is
+// detached into a group of its own on POSIX, which a Ctrl-C at the terminal does not reach.
+const running = new Set();
+let stopping = false;
+
+/** Registers a way to end something that runs; returns the call that forgets it again. */
+export function trackKill(kill) {
+	running.add(kill);
+	return () => running.delete(kill);
+}
+
+/** Ends every command that runs, and refuses to start another. Used when the replay is interrupted. */
+export function terminateAll() {
+	stopping = true;
+	for (const kill of [...running]) {
+		try {
+			kill();
+		} catch {}
+	}
+}
+
+/** Lets commands start again (a new run in the same process, a test). */
+export function resumeStarting() {
+	stopping = false;
+}
+
 /**
  * Runs a command with `input` on stdin and resolves to its stdout. Rejects on a non-zero exit or
  * when `timeoutMs` passes. A timeout kills the whole process tree (a process group on POSIX,
@@ -94,6 +120,10 @@ export function runCommand(
 	},
 ) {
 	return new Promise((resolve, reject) => {
+		if (stopping) {
+			reject(new Error(`${command} was not started: the replay was interrupted`));
+			return;
+		}
 		let line;
 		try {
 			line = commandLine(resolveExecutable(command, env, platform), args, platform, env);
@@ -122,6 +152,7 @@ export function runCommand(
 		const settle = (fn, value) => {
 			if (settled) return;
 			settled = true;
+			running.delete(killTree);
 			clearTimeout(timer);
 			clearTimeout(giveUp);
 			fn(value);
@@ -142,6 +173,7 @@ export function runCommand(
 				child.kill("SIGKILL");
 			}
 		};
+		running.add(killTree);
 		const failure = () =>
 			new Error(`${command} timed out after ${timeoutMs} ms: ${err.trim().slice(-500)}`);
 		const timer = setTimeout(() => {

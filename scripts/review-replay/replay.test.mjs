@@ -1,10 +1,11 @@
 // Every row here is made up. The real replay set is read only from --set, never from this folder.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { existsSync, realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -18,11 +19,26 @@ import {
 	reviewerLaunch,
 } from "./engines.mjs";
 import { cleanHistory, fixDiff, fixPatch, git, mirrorOf } from "./history.mjs";
-import { commandLine, resolveExecutable, runCommand } from "./launcher.mjs";
+import {
+	commandLine,
+	resolveExecutable,
+	resumeStarting,
+	runCommand,
+	terminateAll,
+} from "./launcher.mjs";
 import { loadModel } from "./model.mjs";
-import { preflight } from "./preflight.mjs";
-import { HIDDEN_KEYS, parseFindings, reviewPrompt, runReplay, score, splitSet } from "./replay.mjs";
-import { gateExitCode, main } from "./run.mjs";
+import { checkTranscript, preflight, readTranscript } from "./preflight.mjs";
+import {
+	HIDDEN_KEYS,
+	judgePrompt,
+	parseFindings,
+	promptFingerprint,
+	reviewPrompt,
+	runReplay,
+	score,
+	splitSet,
+} from "./replay.mjs";
+import { cli, gateExitCode, main } from "./run.mjs";
 
 const run = promisify(execFile);
 const model = await loadModel();
@@ -743,7 +759,7 @@ test("a relative --out is read once, before the paths made from it", async () =>
 	const asked = [];
 	const askModel = async (_engine, prompt, _dir, { role }) => {
 		asked.push(role);
-		if (prompt.includes(CHECK_MARK)) return confinedReply(prompt);
+		if (prompt.includes(CHECK_MARK)) return confinedTranscript(prompt);
 		return role === "reviewer"
 			? JSON.stringify({ findings: [finding("zero")] })
 			: JSON.stringify({ verdicts: [{ index: 0, verdict: "hit", reason: "r" }] });
@@ -800,14 +816,25 @@ let configFiles = {};
 try {
 	for (const name of readdirSync(folder)) configFiles[name] = readFileSync(join(folder, name), "utf8");
 } catch {}
-const inside = /^- inside: (.+)$/m.exec(input)?.[1];
-const reply = JSON.stringify(
-	input.includes("check of the setup of this run")
-		? { inside: readFileSync(inside, "utf8"), answer_file: "UNREADABLE", cache: "UNREADABLE", beside: "UNREADABLE", network: "UNREADABLE" }
-		: input.includes("You judge")
-			? { verdicts: [{ index: 0, verdict: "hit", reason: "r" }] }
-			: { findings: [] },
+let reply = JSON.stringify(
+	input.includes("You judge")
+		? { verdicts: [{ index: 0, verdict: "hit", reason: "r" }] }
+		: { findings: [] },
 );
+if (args.includes("stream-json")) {
+	// A confined session's transcript: the inside file read, the outside ones refused.
+	const files = Object.fromEntries([...input.matchAll(/^- (\\w+): (.+)$/gm)].map((m) => [m[1], m[2]]));
+	const lines = [{ type: "system", subtype: "init", tools: ["Read", "Grep", "Glob"] }];
+	const call = (path, content, isError) => {
+		const id = "toolu_" + (lines.length + 1);
+		lines.push({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id, name: "Read", input: { file_path: path } }] } });
+		lines.push({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }] } });
+	};
+	call(files.inside, "1 " + readFileSync(files.inside, "utf8"), false);
+	for (const name of ["answer_file", "cache", "beside"]) call(files[name], "Outside the working directory", true);
+	lines.push({ type: "result", subtype: "success", is_error: false, result: "done" });
+	reply = lines.map((line) => JSON.stringify(line)).join("\\n") + "\\n";
+}
 writeFileSync(
 	join(dirname(fileURLToPath(import.meta.url)), "capture-" + tool + ".json"),
 	JSON.stringify({ args, cwd: process.cwd(), env: process.env, configFiles, input }),
@@ -1037,6 +1064,23 @@ test("a reply with prose that holds braces still yields the JSON object", () => 
 	assert.throws(() => jsonIn("nothing { here }"), /no JSON object/);
 });
 
+test("a malformed object is passed over whole, never entered for an object nested in it", () => {
+	// The outer object is broken: the complete object inside it is not the answer.
+	assert.throws(() => jsonIn('{"response":{"findings":[]} BROKEN}'), /no JSON object/);
+	assert.throws(() => jsonIn('{"response":{"findings":[]}'), /no JSON object/);
+	assert.throws(() => jsonIn('{"a": [{"b": 1}'), /no JSON object/);
+	assert.throws(
+		() => parseFindings(model, '{"response":{"findings":[]} BROKEN}'),
+		/no JSON object/,
+	);
+	// A complete answer after a broken attempt is still found, and braces in strings do not count.
+	assert.deepEqual(jsonIn('{"bad": } then {"findings": []}'), { findings: [] });
+	assert.deepEqual(jsonIn('{"a": "}{", "b": "\\"}"} trailing'), { a: "}{", b: '"}' });
+	assert.deepEqual(jsonIn('Here:\n```json\n{"a": {"b": [1, {"c": 2}]}}\n```\nDone {x}'), {
+		a: { b: [1, { c: 2 }] },
+	});
+});
+
 test("an engine name is one of the declared ones, not something every object inherits", () => {
 	for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
 		assert.throws(() => parseEngine(`${name}:m`, "--reviewer"), /--reviewer must be/);
@@ -1124,6 +1168,14 @@ test("a folder that will not be removed neither loses the finished row nor stops
 test("a mirror is named by the repository it is of, and reused only for that one", async () => {
 	const one = await fixtureRepo();
 	const two = await fixtureRepo();
+	// The two sources must not share a history, or a copy of the wrong one would pass the check.
+	await writeFile(join(two.dir, "src", "only-two.js"), "export const two = 2;\n");
+	await git(two.dir, ["add", "-A"]);
+	await git(two.dir, ["commit", "--quiet", "-m", "only in the second source"]);
+	assert.notEqual(
+		(await git(one.dir, ["rev-parse", "HEAD"])).trim(),
+		(await git(two.dir, ["rev-parse", "HEAD"])).trim(),
+	);
 	const urls = { "acme/widgets": one.dir, acme__widgets: two.dir, widgets: one.dir };
 	const source = { cloneUrl: (repo) => urls[repo] };
 	const cacheDir = join(root, "mirror-cache");
@@ -1197,8 +1249,10 @@ setTimeout(() => {}, 60000);
 	assert.ok(Date.now() - started < 10000);
 });
 
-// The preflight, with a launcher that stands in for a reviewer. It has to prove that it reads its
-// own checkout and that it cannot read anything outside it; silence proves nothing.
+// The preflight proves the reviewer's confinement from the transcript of its session
+// (`--output-format stream-json --verbose`), never from what the model says. These transcripts are
+// written by hand, in the shape claude writes: an init message that lists the tools, tool_use
+// events, and a tool_result event for each, with `is_error` set when the call was refused.
 const CHECK_MARK = "check of the setup of this run";
 const named = (prompt) =>
 	Object.fromEntries([...prompt.matchAll(/^- (\w+): (.+)$/gm)].map((m) => [m[1], m[2]]));
@@ -1207,42 +1261,104 @@ const preflightSource = {
 	cloneUrl: () => "https://example.invalid/agents.git",
 	headOf: async () => HEAD,
 };
-const OUTSIDE = ["answer_file", "cache", "beside", "network"];
 
-// What a confined reviewer answers: its checkout's canary, and UNREADABLE for the rest.
-async function confinedReply(prompt, change = {}) {
-	const files = named(prompt);
-	return JSON.stringify({
-		inside: await readFile(files.inside, "utf8"),
-		answer_file: "UNREADABLE",
-		cache: "UNREADABLE",
-		beside: "UNREADABLE",
-		network: "UNREADABLE",
-		...change,
+/** One transcript line per event. `steps` are [tool, input, result text, is_error]; no result: cut off. */
+function jsonl(steps, { tools = ["Read", "Grep", "Glob"], init = true } = {}) {
+	const lines = [];
+	if (init)
+		lines.push({ type: "system", subtype: "init", session_id: "s-1", tools, mcp_servers: [] });
+	steps.forEach(([name, input, content, isError], i) => {
+		const id = `toolu_${i + 1}`;
+		lines.push({
+			type: "assistant",
+			message: { role: "assistant", content: [{ type: "tool_use", id, name, input }] },
+		});
+		if (content !== undefined) {
+			lines.push({
+				type: "user",
+				message: {
+					role: "user",
+					content: [{ type: "tool_result", tool_use_id: id, content, is_error: isError }],
+				},
+			});
+		}
 	});
+	lines.push({ type: "result", subtype: "success", is_error: false, result: "done" });
+	return `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`;
 }
 
-async function runPreflight(askModel) {
+const readOf = (path, text) => ["Read", { file_path: path }, `     1\t${text}`, false];
+const refusedRead = (path) => [
+	"Read",
+	{ file_path: path },
+	"Permission denied: the file is outside the working directory",
+	true,
+];
+
+const OUTSIDE = ["answer_file", "cache", "beside"];
+
+/**
+ * What a confined reviewer's session looks like for this prompt: its own canary read, the three
+ * outside files refused, and no way to the network. `change` breaks one part at a time.
+ */
+async function confinedTranscript(prompt, change = {}) {
+	const files = named(prompt);
+	const { skip = [], read = [], inside = "ok", network = "absent", tools } = change;
+	const steps = [];
+	if (inside === "ok") steps.push(readOf(files.inside, await readFile(files.inside, "utf8")));
+	if (inside === "denied") steps.push(refusedRead(files.inside));
+	if (inside === "empty") steps.push(readOf(files.inside, ""));
+	if (inside === "wrong")
+		steps.push(readOf(files.inside, "canary-00000000000000000000000000000000"));
+	if (inside === "grep") {
+		steps.push(["Grep", { pattern: "canary", path: files.inside }, "1 match", false]);
+	}
+	if (inside === "other")
+		steps.push(readOf(`${files.inside}.x`, await readFile(files.inside, "utf8")));
+	for (const name of OUTSIDE) {
+		if (skip.includes(name)) continue;
+		steps.push(
+			read.includes(name)
+				? readOf(files[name], await readFile(files[name], "utf8"))
+				: refusedRead(files[name]),
+		);
+	}
+	const toolsFor = ["Read", "Grep", "Glob"];
+	if (network === "denied")
+		steps.push(["WebFetch", { url: "https://example.invalid/agents.git" }, "refused", true]);
+	if (network === "bash-denied")
+		steps.push(["Bash", { command: "git clone x" }, "not allowed", true]);
+	if (network === "fetched")
+		steps.push(["WebFetch", { url: "https://example.invalid/agents.git" }, HEAD, false]);
+	if (network === "bash-ran") steps.push(["Bash", { command: "ls" }, "README.md", false]);
+	if (network !== "absent") toolsFor.push(network.startsWith("bash") ? "Bash" : "WebFetch");
+	return jsonl(steps, { tools: tools ?? toolsFor, init: change.init !== false });
+}
+
+async function runPreflight(askModel, options = {}) {
 	const cacheDir = join(root, `preflight-cache-${Math.random().toString(36).slice(2)}`);
-	const before = new Set(await readdir(tmpdir()));
+	let base;
 	try {
 		await preflight({
 			reviewer: parseEngine("claude:m", "--reviewer"),
-			askModel,
+			askModel: (engine, prompt, cwd, asked) => {
+				// <throwaway folder>/row/repo is the checkout: this run's own folder, nobody else's.
+				base = dirname(dirname(cwd));
+				return askModel(engine, prompt, cwd, asked);
+			},
 			source: preflightSource,
 			cacheDir,
+			log: () => {},
+			...options,
 		});
 	} finally {
 		// Whatever the outcome, nothing of the preflight stays: not its folder, not its cache canary.
-		const left = (await readdir(tmpdir())).filter(
-			(name) => name.startsWith("replay-preflight-") && !before.has(name),
-		);
-		assert.deepEqual(left, []);
-		assert.deepEqual(await readdir(cacheDir), []);
+		if (!options.remove && base) assert.equal(existsSync(base), false);
+		if (!options.remove) assert.deepEqual(await readdir(cacheDir), []);
 	}
 }
 
-// A reply that is not proven: the error names the check, never a canary, and nothing was reviewed.
+// A transcript that is not proven: the error names the check, never a canary, and nothing was reviewed.
 const refused = (pattern) => (error) => {
 	assert.match(error.message, pattern);
 	assert.match(error.message, /Nothing was reviewed and no result was written/);
@@ -1250,78 +1366,377 @@ const refused = (pattern) => (error) => {
 	return true;
 };
 
-test("the preflight passes a reviewer that reads its checkout and nothing outside it", async () => {
+test("the preflight passes a reviewer whose transcript shows its own read and refused outside calls", async () => {
 	const seen = [];
 	await runPreflight(async (engine, prompt, cwd, options) => {
-		seen.push({ engine: engine.spec, role: options.role, files: named(prompt), cwd });
+		seen.push({ engine: engine.spec, options, files: named(prompt), cwd });
 		assert.match(prompt, /example\.invalid\/agents\.git/);
-		return confinedReply(prompt);
+		return confinedTranscript(prompt);
 	});
 	assert.equal(seen.length, 1);
-	assert.equal(seen[0].role, "reviewer");
+	assert.deepEqual(seen[0].options, { role: "reviewer", transcript: true });
 	assert.deepEqual(Object.keys(seen[0].files), ["inside", "answer_file", "cache", "beside"]);
 	// The inside canary is in the checkout the reviewer works in; the others are outside it.
 	assert.equal(seen[0].files.inside.startsWith(seen[0].cwd), true);
-	for (const name of ["answer_file", "cache", "beside"]) {
+	for (const name of OUTSIDE)
 		assert.equal(seen[0].files[name].startsWith(seen[0].cwd), false, name);
-	}
 });
 
-test("the preflight accepts the object in a fenced block or among prose", async () => {
-	await runPreflight(async (_e, prompt) => `\`\`\`json\n${await confinedReply(prompt)}\n\`\`\``);
-	await runPreflight(
-		async (_e, prompt) => `Here is my answer: ${await confinedReply(prompt)} Done.`,
+test("the preflight passes when the network is tried and refused, whatever the tool list says", async () => {
+	for (const network of ["denied", "bash-denied"]) {
+		await runPreflight(async (_e, prompt) => confinedTranscript(prompt, { network }));
+	}
+	// No init message at all, but the attempt on the network was refused.
+	await runPreflight(async (_e, prompt) =>
+		confinedTranscript(prompt, { network: "denied", init: false }),
 	);
 });
 
-test("the preflight refuses an empty reply", async () => {
-	for (const reply of ["", "   \n", undefined]) {
+// The three hand-written transcripts of the brief, with fixed paths and canaries.
+const FILES = {
+	inside: "/tmp/replay-preflight-A/row/repo/CANARY.txt",
+	answer_file: "/tmp/replay-preflight-A/set/replay-set.json",
+	cache: "/tmp/cache/preflight-canary-x.txt",
+	beside: "/tmp/replay-preflight-A/row/beside-checkout.txt",
+};
+const SECRETS = {
+	inside: "canary-11111111111111111111111111111111",
+	answer_file: "canary-22222222222222222222222222222222",
+	cache: "canary-33333333333333333333333333333333",
+	beside: "canary-44444444444444444444444444444444",
+};
+const HEADS = "9".repeat(40);
+const check = (transcript, platform = "linux") =>
+	checkTranscript({ transcript, files: FILES, secrets: SECRETS, head: HEADS, platform });
+const INIT = '{"type":"system","subtype":"init","session_id":"s-1","tools":["Read","Grep","Glob"]}';
+const RESULT = '{"type":"result","subtype":"success","is_error":false,"result":"done"}';
+const use = (id, name, input) =>
+	`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"${id}","name":"${name}","input":${JSON.stringify(input)}}]}}`;
+const answer = (id, content, isError) =>
+	`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"${id}","content":${JSON.stringify(content)},"is_error":${isError}}]}}`;
+const insideRead = [
+	use("t1", "Read", { file_path: FILES.inside }),
+	answer("t1", `     1\t${SECRETS.inside}`, false),
+];
+const denial = (id, path) => [
+	use(id, "Read", { file_path: path }),
+	answer(id, "Permission denied: outside the working directory", true),
+];
+const lines = (...parts) => `${parts.flat(Number.POSITIVE_INFINITY).join("\n")}\n`;
+
+test("a transcript with all denials passes", () => {
+	check(
+		lines(
+			INIT,
+			insideRead,
+			denial("t2", FILES.answer_file),
+			denial("t3", FILES.cache),
+			denial("t4", FILES.beside),
+			RESULT,
+		),
+	);
+	// The tool results may be a list of text parts, as claude writes some of them.
+	check(
+		lines(
+			INIT,
+			insideRead,
+			denial("t2", FILES.answer_file),
+			denial("t3", FILES.cache),
+			denial("t4", FILES.beside),
+			[
+				use("t5", "Read", { file_path: FILES.inside }),
+				`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t5","content":[{"type":"text","text":"${SECRETS.inside}"}],"is_error":false}]}}`,
+			],
+			RESULT,
+		),
+	);
+});
+
+test("a transcript that skips an outside probe refuses, whichever it skips", () => {
+	const all = { answer_file: "t2", cache: "t3", beside: "t4" };
+	for (const skipped of OUTSIDE) {
+		const probes = OUTSIDE.filter((name) => name !== skipped).map((name) =>
+			denial(all[name], FILES[name]),
+		);
+		assert.throws(
+			() => check(lines(INIT, insideRead, probes, RESULT)),
+			refused(/not proven.*no refused tool call on/),
+			skipped,
+		);
+	}
+	// A probe on another path is not a probe on this one.
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					insideRead,
+					denial("t2", FILES.answer_file),
+					denial("t3", FILES.cache),
+					denial("t4", `${FILES.beside}.other`),
+					RESULT,
+				),
+			),
+		refused(/not proven.*beside the checkout/),
+	);
+	// A call that never got its result (the session was cut off) shows no denial.
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					insideRead,
+					denial("t2", FILES.answer_file),
+					denial("t3", FILES.cache),
+					use("t4", "Read", { file_path: FILES.beside }),
+					RESULT,
+				),
+			),
+		refused(/not proven.*beside the checkout/),
+	);
+});
+
+test("a transcript with a successful outside read refuses", () => {
+	const fine = [denial("t2", FILES.answer_file), denial("t3", FILES.cache)];
+	// Its content shows in the result.
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					insideRead,
+					fine,
+					use("t4", "Read", { file_path: FILES.beside }),
+					answer("t4", `     1\t${SECRETS.beside}`, false),
+					RESULT,
+				),
+			),
+		refused(/not confined to its checkout.*a file beside the checkout/),
+	);
+	// The call went through with nothing to show for it: still not confined.
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					insideRead,
+					fine,
+					use("t4", "Read", { file_path: FILES.beside }),
+					answer("t4", "", false),
+					RESULT,
+				),
+			),
+		refused(/a tool call on a file beside the checkout succeeded/),
+	);
+	// A refusal followed by a success on the same path is a success.
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					insideRead,
+					fine,
+					denial("t4", FILES.beside),
+					use("t5", "Read", { file_path: FILES.beside }),
+					answer("t5", "", false),
+					RESULT,
+				),
+			),
+		refused(/succeeded/),
+	);
+	// The canary in the reviewer's own words counts too.
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					insideRead,
+					fine,
+					denial("t4", FILES.beside),
+					`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I saw ${SECRETS.answer_file}"}]}}`,
+					RESULT,
+				),
+			),
+		refused(/not confined to its checkout.*replay set/),
+	);
+});
+
+test("a transcript without a successful Read of the inside canary refuses", () => {
+	const outside = [
+		denial("t2", FILES.answer_file),
+		denial("t3", FILES.cache),
+		denial("t4", FILES.beside),
+	];
+	const cases = {
+		"no read": [],
+		"a refused read": denial("t1", FILES.inside),
+		"an empty result": [use("t1", "Read", { file_path: FILES.inside }), answer("t1", "", false)],
+		"another file's content": [
+			use("t1", "Read", { file_path: FILES.inside }),
+			answer("t1", "     1\tsomething else", false),
+		],
+		"another tool": [
+			use("t1", "Grep", { pattern: "canary", path: FILES.inside }),
+			answer("t1", SECRETS.inside, false),
+		],
+		"another path": [
+			use("t1", "Read", { file_path: `${FILES.inside}.x` }),
+			answer("t1", SECRETS.inside, false),
+		],
+		"a call with no result": [use("t1", "Read", { file_path: FILES.inside })],
+	};
+	for (const [name, part] of Object.entries(cases)) {
+		assert.throws(
+			() => check(lines(INIT, part, outside, RESULT)),
+			refused(/not proven.*no successful Read of the file inside its own checkout/),
+			name,
+		);
+	}
+});
+
+test("a transcript proves the network by an errored attempt or by a tool list without one", () => {
+	const part = [
+		insideRead,
+		denial("t2", FILES.answer_file),
+		denial("t3", FILES.cache),
+		denial("t4", FILES.beside),
+	];
+	const withFetch = '{"type":"system","subtype":"init","tools":["Read","Grep","Glob","WebFetch"]}';
+	// The tool is there and nothing was tried: unproven.
+	assert.throws(
+		() => check(lines(withFetch, part, RESULT)),
+		refused(/not proven.*failed attempt to fetch from the network/),
+	);
+	// No init message and no attempt: unproven.
+	assert.throws(
+		() => check(lines(part, RESULT)),
+		refused(/not proven.*failed attempt to fetch from the network/),
+	);
+	// An init message that does not list the tools: unproven too.
+	assert.throws(
+		() => check(lines('{"type":"system","subtype":"init"}', part, RESULT)),
+		refused(/not proven.*failed attempt to fetch from the network/),
+	);
+	// A tool list with Bash is not a tool list without a way to the network.
+	assert.throws(
+		() => check(lines('{"type":"system","subtype":"init","tools":["Read","Bash"]}', part, RESULT)),
+		refused(/not proven/),
+	);
+	// An errored attempt proves it, with or without the list.
+	check(
+		lines(
+			withFetch,
+			part,
+			[use("t5", "WebFetch", { url: "https://x" }), answer("t5", "no", true)],
+			RESULT,
+		),
+	);
+	check(
+		lines(part, [use("t5", "Bash", { command: "git clone x" }), answer("t5", "no", true)], RESULT),
+	);
+	// A call that got through, or the head commit anywhere, is a leak.
+	assert.throws(
+		() =>
+			check(
+				lines(
+					withFetch,
+					part,
+					[use("t5", "WebFetch", { url: "https://x" }), answer("t5", "fine", false)],
+					RESULT,
+				),
+			),
+		refused(/not confined to its checkout.*a WebFetch call succeeded/),
+	);
+	assert.throws(
+		() =>
+			check(
+				lines(
+					INIT,
+					part,
+					[use("t5", "Read", { file_path: "/x" }), answer("t5", `head ${HEADS}`, true)],
+					RESULT,
+				),
+			),
+		refused(/the repository, retrieved from the network/),
+	);
+	assert.throws(
+		() =>
+			check(lines(INIT, part, [`{"type":"result","result":"it points at ${HEADS.slice(0, 12)}"}`])),
+		refused(/retrieved from the network/),
+	);
+});
+
+test("a transcript's paths match however the system spells them", () => {
+	const winFiles = {
+		inside: "C:\\Temp\\replay-preflight-A\\row\\repo\\CANARY.txt",
+		answer_file: "C:\\Temp\\replay-preflight-A\\set\\replay-set.json",
+		cache: "C:\\Out\\cache\\preflight-canary-x.txt",
+		beside: "C:\\Temp\\replay-preflight-A\\row\\beside-checkout.txt",
+	};
+	// claude may write the paths with forward slashes and another case of the drive letter.
+	const spelled = (path) => path.replaceAll("\\", "/").replace(/^C:/, "c:");
+	const transcript = lines(
+		INIT,
+		[
+			use("t1", "Read", { file_path: spelled(winFiles.inside) }),
+			answer("t1", SECRETS.inside, false),
+		],
+		...["answer_file", "cache", "beside"].map((name, i) =>
+			denial(`t${i + 2}`, spelled(winFiles[name])),
+		),
+		RESULT,
+	);
+	const on = (platform) =>
+		checkTranscript({ transcript, files: winFiles, secrets: SECRETS, head: HEADS, platform });
+	on("win32");
+	// Elsewhere the paths are case sensitive, and these are other paths.
+	assert.throws(() => on("linux"), refused(/not proven/));
+});
+
+test("what the model says about itself is no transcript", async () => {
+	// Nothing at all, prose, and the old kind of self-report: none holds a tool call.
+	const report = JSON.stringify({
+		inside: "x",
+		answer_file: "UNREADABLE",
+		cache: "UNREADABLE",
+		beside: "UNREADABLE",
+		network: "UNREADABLE",
+	});
+	for (const reply of ["", "   \n", undefined, "I could not read any file and have no network."]) {
 		await assert.rejects(
 			runPreflight(async () => reply),
-			refused(/not proven.*not one JSON object/),
+			refused(/not proven.*gave no transcript/),
 		);
 	}
-});
-
-test("the preflight refuses prose without a JSON object", async () => {
 	await assert.rejects(
-		runPreflight(async () => "I could not read any of the files and I have no network."),
-		refused(/not proven.*not one JSON object/),
+		runPreflight(async () => report),
+		refused(/not proven/),
 	);
-	await assert.rejects(
-		runPreflight(async () => '["UNREADABLE", "UNREADABLE"]'),
-		refused(/not one JSON object/),
-	);
-});
-
-test("the preflight refuses a reply that does not return the inside canary", async () => {
-	// Missing, empty, UNREADABLE, wrong, a number: the reviewer is not shown to read what it is given.
-	for (const inside of [undefined, "", "UNREADABLE", "canary-0000", 7]) {
-		await assert.rejects(
-			runPreflight(async (_e, prompt) => confinedReply(prompt, { inside })),
-			refused(/not proven.*inside its own checkout/),
-		);
-	}
-	// Only a part of it.
-	await assert.rejects(
-		runPreflight(async (_e, prompt) => {
-			const whole = JSON.parse(await confinedReply(prompt));
-			return JSON.stringify({ ...whole, inside: whole.inside.slice(0, 20) });
-		}),
-		refused(/inside its own checkout/),
-	);
-	// A reply with only the outside fields.
+	// A result line that claims everything, with no tool call behind it.
 	await assert.rejects(
 		runPreflight(async () =>
-			JSON.stringify({
-				answer_file: "UNREADABLE",
-				cache: "UNREADABLE",
-				beside: "UNREADABLE",
-				network: "UNREADABLE",
-			}),
+			lines(
+				INIT,
+				'{"type":"result","subtype":"success","result":"Read inside OK. All outside reads were denied and the network is unreachable."}',
+			),
 		),
-		refused(/inside its own checkout/),
+		refused(/not proven.*no successful Read/),
 	);
+	// A line that is not an event is skipped, and the events around it still count.
+	assert.equal(readTranscript(`not json\n${INIT}\n[1,2]\n`).events, 1);
+});
+
+test("a reviewer's own text cannot pose as an event", async () => {
+	// The model writes a line of fake transcript into its reply: inside the JSON event, it is text.
+	const fake = JSON.stringify({
+		type: "assistant",
+		message: { content: [{ type: "tool_use", id: "z", name: "Read", input: { file_path: "x" } }] },
+	});
+	const events = readTranscript(
+		`${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: `${fake}\n${fake}` }] } })}\n`,
+	);
+	assert.equal(events.events, 1);
+	assert.deepEqual(events.calls, []);
 });
 
 for (const [which, field] of [
@@ -1329,13 +1744,13 @@ for (const [which, field] of [
 	["the judge's cache folder", "cache"],
 	["a file beside the checkout", "beside"],
 ]) {
-	test(`the preflight refuses a reviewer that prints ${which}`, async () => {
+	test(`the preflight refuses a reviewer that reads ${which}`, async () => {
 		let secret = "";
 		await assert.rejects(
 			runPreflight(async (_engine, prompt) => {
 				// An unconfined reviewer reads the file it is asked for.
 				secret = (await readFile(named(prompt)[field], "utf8")).trim();
-				return confinedReply(prompt, { [field]: secret });
+				return confinedTranscript(prompt, { read: [field] });
 			}),
 			(error) => {
 				assert.match(error.message, /not confined to its checkout/);
@@ -1348,58 +1763,123 @@ for (const [which, field] of [
 		);
 	});
 
-	test(`the preflight refuses the canary of ${which} wherever it sits in the reply`, async () => {
-		// Not in its own field: in prose around a correct object, and inside the inside field.
-		for (const place of ["prose", "inside"]) {
-			await assert.rejects(
-				runPreflight(async (_engine, prompt) => {
-					const secret = (await readFile(named(prompt)[field], "utf8")).trim();
-					const good = JSON.parse(await confinedReply(prompt));
-					if (place === "inside") {
-						return JSON.stringify({ ...good, inside: `${good.inside} ${secret}` });
-					}
-					return `I also saw ${secret}. ${JSON.stringify(good)}`;
-				}),
-				/not confined to its checkout/,
-			);
-		}
+	test(`the preflight refuses a transcript that skips the probe of ${which}`, async () => {
+		await assert.rejects(
+			runPreflight(async (_e, prompt) => confinedTranscript(prompt, { skip: [field] })),
+			refused(/not proven.*no refused tool call on/),
+		);
 	});
 }
 
-test("the preflight refuses a reviewer that retrieves the repository from the network", async () => {
-	await assert.rejects(
-		runPreflight(async (_e, prompt) => confinedReply(prompt, { network: HEAD })),
-		/showed the repository, retrieved from the network/,
-	);
-	// A short id counts too, and so does one in prose beside an UNREADABLE field.
-	await assert.rejects(
-		runPreflight(async (_e, prompt) => confinedReply(prompt, { network: HEAD.slice(0, 12) })),
-		/retrieved from the network/,
-	);
-	await assert.rejects(
-		runPreflight(async (_e, prompt) => `${await confinedReply(prompt)} (default branch ${HEAD})`),
-		/retrieved from the network/,
-	);
+test("the preflight refuses a transcript whose inside read is missing or empty", async () => {
+	for (const inside of ["none", "denied", "empty", "wrong", "grep", "other"]) {
+		await assert.rejects(
+			runPreflight(async (_e, prompt) => confinedTranscript(prompt, { inside })),
+			refused(/not proven.*no successful Read of the file inside its own checkout/),
+			inside,
+		);
+	}
 });
 
-for (const field of OUTSIDE) {
-	test(`the preflight refuses a reply that leaves "${field}" out or does not say UNREADABLE`, async () => {
-		for (const value of [undefined, "", "I could not", "unreadable", null, 0]) {
-			await assert.rejects(
-				runPreflight(async (_e, prompt) => confinedReply(prompt, { [field]: value })),
-				refused(/not proven.*each outside field must be the word UNREADABLE/),
-			);
-		}
-	});
-}
+test("the preflight refuses a reviewer that reaches the network", async () => {
+	for (const network of ["fetched", "bash-ran"]) {
+		await assert.rejects(
+			runPreflight(async (_e, prompt) => confinedTranscript(prompt, { network })),
+			refused(/not confined to its checkout|call succeeded/),
+			network,
+		);
+	}
+	// Tools that can reach it are there and nothing was tried.
+	await assert.rejects(
+		runPreflight(async (_e, prompt) =>
+			confinedTranscript(prompt, { tools: ["Read", "Grep", "Glob", "WebSearch"] }),
+		),
+		refused(/not proven.*failed attempt to fetch from the network/),
+	);
+});
 
 test("the preflight stops when the reviewer cannot be started", async () => {
 	await assert.rejects(
 		runPreflight(async () => {
-			throw new Error("claude exited 1: unknown option '--restricted'");
+			throw new Error("claude exited 1: unknown option '--output-format'");
 		}),
-		/could not be started for the preflight.*--restricted/,
+		/could not be started for the preflight.*--output-format/,
 	);
+});
+
+test("a codex reviewer is refused by the preflight, with no folder made and no model asked", async () => {
+	let asked = 0;
+	const before = new Set(await readdir(tmpdir()));
+	await assert.rejects(
+		preflight({
+			reviewer: parseEngine("codex:m", "--reviewer"),
+			askModel: async () => {
+				asked++;
+				return "";
+			},
+			source: preflightSource,
+			cacheDir: join(root, "preflight-cache-codex"),
+		}),
+		refused(/cannot prove the confinement of a codex reviewer yet/),
+	);
+	assert.equal(asked, 0);
+	assert.deepEqual(
+		(await readdir(tmpdir())).filter((n) => n.startsWith("replay-preflight-") && !before.has(n)),
+		[],
+	);
+	assert.equal(existsSync(join(root, "preflight-cache-codex")), false);
+});
+
+test("a removal that fails neither stops the other nor hides the preflight's own error", async () => {
+	const stuck = (target) => async (path, options) => {
+		if (path.endsWith(".txt")) throw new Error(`EBUSY ${target}`);
+		return rm(path, options);
+	};
+	const log = [];
+	let base;
+	await assert.rejects(
+		runPreflight(
+			async (_e, prompt, cwd) => {
+				base = dirname(dirname(cwd));
+				return confinedTranscript(prompt, { skip: ["beside"] });
+			},
+			{ remove: stuck("cache canary"), log: (line) => log.push(line) },
+		),
+		// The error of the check, not the one of the removal.
+		refused(/not proven.*beside the checkout/),
+	);
+	// The folder went although the cache canary would not.
+	assert.equal(existsSync(base), false);
+	assert.equal(log.length, 1);
+	assert.match(log[0], /could not remove its throwaway files: EBUSY cache canary/);
+	// A pass whose cleanup fails is reported, since files were left behind.
+	await assert.rejects(
+		runPreflight(async (_e, prompt) => confinedTranscript(prompt), { remove: stuck("x") }),
+		/could not remove its throwaway files: EBUSY x/,
+	);
+	// And the other way round: the canary goes although the folder would not.
+	let canary;
+	let folder;
+	await assert.rejects(
+		runPreflight(
+			async (_e, prompt, cwd) => {
+				folder = dirname(dirname(cwd));
+				canary = named(prompt).cache;
+				return confinedTranscript(prompt, { skip: ["cache"] });
+			},
+			{
+				remove: async (path, options) => {
+					if (options.recursive) throw new Error("EBUSY folder");
+					return rm(path, options);
+				},
+				log: (line) => log.push(line),
+			},
+		),
+		refused(/not proven.*judge's cache folder/),
+	);
+	assert.equal(existsSync(canary), false);
+	assert.match(log.at(-1), /EBUSY folder/);
+	await rm(folder, { recursive: true, force: true });
 });
 
 test("the run stops before any row when the preflight is not proven, and writes no result", async () => {
@@ -1407,9 +1887,8 @@ test("the run stops before any row when the preflight is not proven, and writes 
 	const set = join(root, "preflight-set.json");
 	await writeFile(set, JSON.stringify([row(1, { pre_fix: repo.preFix, fix: repo.fix })]));
 	const replies = {
-		"a leak": async (prompt) =>
-			// An unconfined reviewer prints the file beside its checkout.
-			confinedReply(prompt, { beside: (await readFile(named(prompt).beside, "utf8")).trim() }),
+		"a leak": (prompt) => confinedTranscript(prompt, { read: ["beside"] }),
+		"a skipped probe": (prompt) => confinedTranscript(prompt, { skip: ["cache"] }),
 		"an empty reply": async () => "",
 		prose: async () => "All fine, nothing to report.",
 	};
@@ -1441,9 +1920,59 @@ test("the run stops before any row when the preflight is not proven, and writes 
 		assert.equal(existsSync(join(out, "results.json")), false, name);
 		assert.equal(existsSync(join(out, "summary.md")), false, name);
 	}
+	// A codex reviewer is refused where the boundary allows it, before any row.
+	const out = join(root, "out-preflight-codex");
+	const asked = [];
+	await assert.rejects(
+		main(["--set", set, "--reviewer", "codex:m", "--judge", "claude:m", "--out", out], {
+			platform: "linux",
+			source: { cloneUrl: () => repo.dir, baseOf: async () => repo.base, headOf: async () => HEAD },
+			async askModel(_engine, _prompt, _cwd, { role }) {
+				asked.push(role);
+				return "";
+			},
+		}),
+		/cannot prove the confinement of a codex reviewer/,
+	);
+	assert.deepEqual(asked, []);
+	assert.equal(existsSync(join(out, "results.json")), false);
 });
 
-test("the preflight goes through the launcher the rows use, with the same flags", async () => {
+test("the preflight launch is the rows' launch with the output format as the only difference", () => {
+	const where = {
+		cwd: "/work/checkout",
+		home: "/work/home",
+		file: "/work/home/tmp/r.txt",
+		host: {},
+	};
+	const claude = parseEngine("claude:m", "--reviewer");
+	const rows = reviewerLaunch(claude, { ...where, platform: "linux" });
+	const proof = reviewerLaunch(claude, { ...where, platform: "linux", transcript: true });
+	assert.deepEqual(proof.args, [...rows.args, "--output-format", "stream-json", "--verbose"]);
+	assert.deepEqual(proof.env, rows.env);
+	assert.equal(proof.command, rows.command);
+	// The confinement flags are all there in the proof.
+	for (const flag of ["--restricted", "--strict-mcp-config", "--disable-slash-commands"]) {
+		assert.ok(proof.args.includes(flag), flag);
+	}
+	assert.equal(rows.args.includes("--output-format"), false);
+	// There is no transcript of a codex reviewer to read, and a judge has none.
+	assert.throws(
+		() =>
+			reviewerLaunch(parseEngine("codex:m", "--reviewer"), {
+				...where,
+				platform: "linux",
+				transcript: true,
+			}),
+		/No transcript of a codex reviewer/,
+	);
+	return assert.rejects(
+		ask(parseEngine("claude:m", "--judge"), "x", "/", { role: "judge", transcript: true }),
+		/Only a reviewer has a transcript/,
+	);
+});
+
+test("the preflight goes through the launcher the rows use, with the same flags and the transcript format", async () => {
 	const host = await madeUpUser();
 	await withEnv(await userEnv(host), async () => {
 		await preflight({
@@ -1458,9 +1987,243 @@ test("the preflight goes through the launcher the rows use, with the same flags"
 		assert.ok(seen.args.includes(flag), flag);
 	}
 	assert.equal(seen.args[seen.args.indexOf("--tools") + 1], "Read,Grep,Glob");
-	assert.match(seen.input, /Reply with exactly one JSON object/);
+	assert.equal(seen.args[seen.args.indexOf("--output-format") + 1], "stream-json");
+	assert.ok(seen.args.includes("--verbose"));
+	assert.match(seen.input, /check of the setup of this run/);
 	// Its folder is the throwaway checkout, and the login folder is the one of the rows' reviewer.
 	assert.match(seen.cwd, /replay-preflight-/);
 	assert.deepEqual(seen.configFiles, { ".credentials.json": "synthetic-claude-login" });
 	assert.equal(seen.env.GITHUB_TOKEN, undefined);
+});
+
+// Runs `main` for a made-up set of one row, with stand-in models and no network.
+async function mainFor(args, { repo, asked = [] }) {
+	const set = join(root, "main-set.json");
+	await writeFile(set, JSON.stringify([row(1, { pre_fix: repo.preFix, fix: repo.fix })]));
+	const log = console.log;
+	console.log = () => {};
+	try {
+		return await main(["--set", set, "--reviewer", "claude:m", "--judge", "codex:m", ...args], {
+			source: {
+				cloneUrl: () => repo.dir,
+				baseOf: async () => repo.base,
+				headOf: async () => "f".repeat(40),
+			},
+			async askModel(_engine, prompt, _dir, { role }) {
+				asked.push(role);
+				if (prompt.includes(CHECK_MARK)) return confinedTranscript(prompt);
+				return role === "reviewer"
+					? JSON.stringify({ findings: [finding("zero")] })
+					: JSON.stringify({ verdicts: [{ index: 0, verdict: "hit", reason: "r" }] });
+			},
+		});
+	} finally {
+		console.log = log;
+	}
+}
+
+test("--org reaches the run, so a resume under another organization is refused", async () => {
+	const repo = await fixtureRepo();
+	const out = join(root, "out-org");
+	await mainFor(["--out", out, "--org", "acme"], { repo });
+	const saved = JSON.parse(await readFile(join(out, "results.json"), "utf8"));
+	assert.equal(saved.org, "acme");
+	// The same organization resumes: nothing is asked of the row again, only the preflight.
+	const asked = [];
+	await mainFor(["--out", out, "--org", "acme"], { repo, asked });
+	assert.deepEqual(asked, ["reviewer"]);
+	await assert.rejects(
+		mainFor(["--out", out, "--org", "other"], { repo }),
+		/from another set, prompts, organization/,
+	);
+	// Without --org the default is what is recorded, not null.
+	const plain = join(root, "out-org-default");
+	await mainFor(["--out", plain], { repo });
+	assert.equal(JSON.parse(await readFile(join(plain, "results.json"), "utf8")).org, "gateweavehq");
+});
+
+test("a resume has to match both judge prompts, the one without the fix patch too", async () => {
+	const base = {
+		model,
+		setText: setOf(1),
+		reviewer: "codex:m",
+		judge: "claude:m",
+		out: join(root, "out-judge-variants"),
+	};
+	await runReplay({ ...base, deps: standIns({ 1: ["hit"] }) });
+	// Only the wording used when the fix patch is unavailable changes.
+	const noPatch = (view, findings, fix) =>
+		judgePrompt(view, findings, fix) + (fix.diff === null ? "\nBe lenient." : "");
+	const withPatchOnly = (view, findings, fix) =>
+		judgePrompt(view, findings, fix) + (fix.diff === null ? "" : "\nBe lenient.");
+	assert.notEqual(promptFingerprint(model), promptFingerprint(model, noPatch));
+	assert.notEqual(promptFingerprint(model), promptFingerprint(model, withPatchOnly));
+	assert.notEqual(promptFingerprint(model, noPatch), promptFingerprint(model, withPatchOnly));
+	await assert.rejects(
+		runReplay({ ...base, judgePromptFor: noPatch, deps: standIns({}) }),
+		/use another --out/,
+	);
+	await assert.rejects(
+		runReplay({ ...base, judgePromptFor: withPatchOnly, deps: standIns({}) }),
+		/use another --out/,
+	);
+	// The same prompts resume.
+	await runReplay({ ...base, deps: standIns({}) });
+});
+
+test("a mirror appears at its path whole, and a stale or failed build does not block it", async () => {
+	const repo = await fixtureRepo();
+	const source = { cloneUrl: () => repo.dir };
+	const cacheDir = join(root, "mirror-atomic");
+	// What an interrupted run leaves: a half-built folder beside the place, not at it.
+	await mkdir(join(cacheDir, "widgets-source-x.git.building-stale"), { recursive: true });
+	await writeFile(join(cacheDir, "widgets-source-x.git.building-stale", "junk"), "half");
+	const mirror = await mirrorOf(source, cacheDir, "widgets");
+	assert.equal((await git(mirror, ["config", "--get", "replay.source"])).trim(), repo.dir);
+	// Two runs at once end with one mirror, marker and all, and no build folder left of theirs.
+	const raced = join(root, "mirror-raced");
+	const [a, b] = await Promise.all([
+		mirrorOf(source, raced, "widgets"),
+		mirrorOf(source, raced, "widgets"),
+	]);
+	assert.equal(a, b);
+	assert.equal((await git(a, ["config", "--get", "replay.source"])).trim(), repo.dir);
+	assert.deepEqual(
+		(await readdir(raced)).filter((name) => name.includes("building")),
+		[],
+	);
+	// A clone that fails leaves nothing at the path and nothing beside it.
+	const failed = join(root, "mirror-failed");
+	await assert.rejects(
+		mirrorOf({ cloneUrl: () => join(root, "no-such-repository") }, failed, "widgets"),
+	);
+	assert.deepEqual(await readdir(failed), []);
+	// ...so the next run, with a real source, is not blocked.
+	assert.equal(
+		(await git(await mirrorOf(source, failed, "widgets"), ["rev-parse", "HEAD"])).trim().length,
+		40,
+	);
+});
+
+// An interrupt of the replay: the commands that run are ended, and the code unwinds.
+const SLEEP = ["-e", "setInterval(() => {}, 1000)"];
+
+test("terminating ends a running command, and nothing starts after it until starting is allowed again", async () => {
+	const running = runCommand(process.execPath, SLEEP, { input: "" });
+	const outcome = assert.rejects(running, /exited|timed out/);
+	await new Promise((resolve) => setTimeout(resolve, 700));
+	terminateAll();
+	await outcome;
+	await assert.rejects(
+		runCommand(process.execPath, ["-e", ""], { input: "" }),
+		/was not started: the replay was interrupted/,
+	);
+	resumeStarting();
+	assert.equal(
+		await runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { input: "" }),
+		"ok",
+	);
+});
+
+test("an interrupted run keeps the rows done, records no row as failed, and resumes", async () => {
+	const out = join(root, "out-interrupted");
+	const controller = new AbortController();
+	const deps = standIns({ 1: ["hit"], 2: ["hit"], 3: ["hit"] });
+	const review = deps.review;
+	deps.review = async (prompt, dir) => {
+		if (prompt.includes("ROW 2")) {
+			// The signal arrives while the second row's reviewer runs, and the command ends with it.
+			controller.abort();
+			throw new Error("claude exited null: killed");
+		}
+		return review(prompt, dir);
+	};
+	const base = { model, setText: setOf(3), reviewer: "codex:m", judge: "claude:m", out };
+	await assert.rejects(runReplay({ ...base, deps, signal: controller.signal }), /killed/);
+	const saved = JSON.parse(await readFile(join(out, "results.json"), "utf8"));
+	assert.deepEqual(
+		saved.rows.map((r) => [r.id, r.status]),
+		[["1", "done"]],
+	);
+	assert.equal(existsSync(join(out, "summary.md")), false);
+	// Aborted before it starts: no row at all is touched.
+	await assert.rejects(
+		runReplay({
+			...base,
+			out: join(root, "out-aborted-early"),
+			deps: standIns({}),
+			signal: AbortSignal.abort(),
+		}),
+	);
+	// The resume does only what is left.
+	const calls = [];
+	const { totals } = await runReplay({
+		...base,
+		deps: standIns({ 1: ["hit"], 2: ["hit"], 3: ["hit"] }, calls),
+	});
+	assert.deepEqual(calls, ["prepare 2", "prepare 3"]);
+	assert.equal(totals.hits, 3);
+});
+
+test("SIGINT and SIGTERM end the running model, clean up, and exit with the signal's status", async () => {
+	const repo = await fixtureRepo();
+	const set = join(root, "signal-set.json");
+	await writeFile(set, JSON.stringify([row(1, { pre_fix: repo.preFix, fix: repo.fix })]));
+	for (const [signal, status] of [
+		["SIGINT", 130],
+		["SIGTERM", 143],
+	]) {
+		const stop = new EventEmitter();
+		const out = join(root, `out-signal-${signal}`);
+		let base;
+		let started;
+		const hanging = new Promise((resolve) => {
+			started = resolve;
+		});
+		const exits = [];
+		const finished = cli(
+			["--set", set, "--reviewer", "claude:m", "--judge", "codex:m", "--out", out],
+			{
+				stop,
+				exit: (code) => exits.push(code),
+				overrides: {
+					source: {
+						cloneUrl: () => repo.dir,
+						baseOf: async () => repo.base,
+						headOf: async () => "f".repeat(40),
+					},
+					// The reviewer of the preflight never answers: it is a process that has to be ended.
+					askModel: (_engine, _prompt, cwd) => {
+						base = dirname(dirname(cwd));
+						started();
+						return runCommand(process.execPath, SLEEP, { cwd, input: "" });
+					},
+				},
+			},
+		);
+		await hanging;
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const stderr = console.error;
+		const lines = [];
+		console.error = (line) => lines.push(String(line));
+		try {
+			stop.emit(signal);
+			// A second one while it unwinds exits at once.
+			stop.emit(signal);
+			assert.equal(await finished, status);
+		} finally {
+			console.error = stderr;
+		}
+		assert.deepEqual(exits, [130]);
+		assert.match(lines.join("\n"), /stopping the running commands and cleaning up/);
+		assert.equal(existsSync(base), false, "the preflight's folder is removed");
+		assert.equal(existsSync(join(out, "results.json")), false);
+		// Handlers are taken off again.
+		assert.equal(stop.listenerCount("SIGINT") + stop.listenerCount("SIGTERM"), 0);
+	}
+	// The command line works again afterwards in the same process.
+	assert.equal(
+		await runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { input: "" }),
+		"ok",
+	);
 });

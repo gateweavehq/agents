@@ -1,11 +1,11 @@
 // Builds the clean history the reviewer works in: two commits, the pull request's merge base and
 // its `pre_fix` head. Nothing after `pre_fix` is ever fetched into it, so the fix cannot be read.
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
-import { access, mkdir, rm } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { access, mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { runCommand } from "./launcher.mjs";
+import { runCommand, trackKill } from "./launcher.mjs";
 
 const run = promisify(execFile);
 const GIT_ENV = {
@@ -18,23 +18,37 @@ const GIT_ENV = {
 	GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
 };
 
+// An interrupt of the replay ends a git command that is running too.
+async function tracked(promise) {
+	const forget = trackKill(() => promise.child.kill());
+	try {
+		return await promise;
+	} finally {
+		forget();
+	}
+}
+
 export async function git(cwd, args) {
-	const { stdout } = await run("git", args, {
-		cwd,
-		env: GIT_ENV,
-		maxBuffer: 256 * 1024 * 1024,
-	});
+	const { stdout } = await tracked(
+		run("git", args, {
+			cwd,
+			env: GIT_ENV,
+			maxBuffer: 256 * 1024 * 1024,
+		}),
+	);
 	return stdout;
 }
 
 /** The same as `git`, but the bytes as git wrote them. */
 async function gitBytes(cwd, args) {
-	const { stdout } = await run("git", args, {
-		cwd,
-		env: GIT_ENV,
-		maxBuffer: 256 * 1024 * 1024,
-		encoding: "buffer",
-	});
+	const { stdout } = await tracked(
+		run("git", args, {
+			cwd,
+			env: GIT_ENV,
+			maxBuffer: 256 * 1024 * 1024,
+			encoding: "buffer",
+		}),
+	);
 	return stdout;
 }
 
@@ -158,9 +172,20 @@ export async function mirrorOf(source, cacheDir, repo) {
 	const mirror = resolve(cacheDir, `${slug}-${key}.git`);
 	if (!(await exists(mirror))) {
 		await mkdir(resolve(cacheDir), { recursive: true });
-		await git(resolve(cacheDir), ["clone", "--bare", "--quiet", url, mirror]);
-		await git(mirror, ["config", "uploadpack.allowAnySHA1InWant", "true"]);
-		await git(mirror, ["config", "replay.source", url]);
+		// Made beside its place, marker and all, and moved there whole: a run that stops half way
+		// leaves a folder of its own name, not a copy at the cache path that has no marker.
+		const building = `${mirror}.building-${randomBytes(6).toString("hex")}`;
+		try {
+			await git(resolve(cacheDir), ["clone", "--bare", "--quiet", url, building]);
+			await git(building, ["config", "uploadpack.allowAnySHA1InWant", "true"]);
+			await git(building, ["config", "replay.source", url]);
+			await rename(building, mirror).catch(async (error) => {
+				// Another run put its copy there first: that one is the copy, and the marker check follows.
+				if (!(await exists(mirror))) throw error;
+			});
+		} finally {
+			await rm(building, { recursive: true, force: true, maxRetries: 3 });
+		}
 	}
 	// What the copy was made from, as it was written down then: the clone's own `origin` may be
 	// spelled differently by git.

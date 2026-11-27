@@ -8,16 +8,20 @@
 // Needs git, gh (signed in, for private repositories), and the codex and claude command lines.
 // The reviewer reads only the replay checkout (see reviewerLaunch in engines.mjs). Codex cannot
 // enforce that on Windows, so there the reviewer is claude and the judge is codex. Before any row,
-// a preflight asks the reviewer, started the way the rows start it, for a JSON object that shows it
-// reads a canary inside its checkout and cannot read canaries outside it or fetch the repository;
-// a leak, or a reply that does not prove it, stops the run with nothing written.
-// The exit status is 0 for a pass, 1 for a failed gate, 2 for an error that stopped the run.
+// a preflight runs the reviewer, started the way the rows start it (plus --output-format
+// stream-json --verbose), and reads its transcript: a successful Read of a canary inside its
+// checkout, refused calls on canaries outside it, and a refused or absent way to the network. A
+// leak, or a transcript that does not prove it all, stops the run with nothing written. Only a
+// claude reviewer can be proven for now: a codex reviewer is refused.
+// The exit status is 0 for a pass, 1 for a failed gate, 2 for an error that stopped the run, and
+// 130 or 143 when SIGINT or SIGTERM stopped it (rows done are kept; run it again to resume).
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { ask, checkFamilies, checkReviewerBoundary, parseEngine } from "./engines.mjs";
 import { cleanHistory, fixPatch, githubSource } from "./history.mjs";
+import { resumeStarting, terminateAll } from "./launcher.mjs";
 import { loadModel } from "./model.mjs";
 import { preflight } from "./preflight.mjs";
 import { runReplay, splitSet } from "./replay.mjs";
@@ -86,8 +90,10 @@ export async function main(argv, overrides = {}) {
 		setText,
 		reviewer: reviewer.spec,
 		judge: judge.spec,
+		org: values.org,
 		out,
 		deps,
+		signal: overrides.signal,
 		log: (line) => console.error(line),
 	});
 	console.log(
@@ -99,13 +105,43 @@ export async function main(argv, overrides = {}) {
 /** A failed gate is a failed command: 0 for a pass, 1 for a fail. */
 export const gateExitCode = (totals) => (totals.pass ? 0 : 1);
 
+/**
+ * Runs `main` for the command line. An interrupt (SIGINT, SIGTERM) ends the model and git commands
+ * that run, lets the code unwind so the reviewer's home folder and the scratch folders are removed,
+ * and exits with the signal's status after that. A second one exits at once.
+ */
+export async function cli(argv, { exit = process.exit, stop = process, overrides = {} } = {}) {
+	const controller = new AbortController();
+	let interrupted = null;
+	const handlers = ["SIGINT", "SIGTERM"].map((name) => {
+		const handler = () => {
+			if (interrupted) return exit(130);
+			interrupted = name;
+			console.error(`${name}: stopping the running commands and cleaning up`);
+			controller.abort();
+			terminateAll();
+		};
+		stop.on(name, handler);
+		return [name, handler];
+	});
+	try {
+		const { totals } = await main(argv, { ...overrides, signal: controller.signal });
+		return gateExitCode(totals);
+	} catch (error) {
+		if (interrupted) {
+			console.error("The replay was interrupted. Done rows are kept: run it again to resume.");
+			return interrupted === "SIGINT" ? 130 : 143;
+		}
+		console.error(error instanceof Error ? error.message : error);
+		return 2;
+	} finally {
+		for (const [name, handler] of handlers) stop.off(name, handler);
+		resumeStarting();
+	}
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-	main(process.argv.slice(2))
-		.then(({ totals }) => {
-			process.exitCode = gateExitCode(totals);
-		})
-		.catch((error) => {
-			console.error(error instanceof Error ? error.message : error);
-			process.exit(2);
-		});
+	cli(process.argv.slice(2)).then((code) => {
+		process.exitCode = code;
+	});
 }

@@ -148,12 +148,20 @@ const tomlPath = (path) => {
 
 /**
  * The command, arguments and environment that run `engine` as the reviewer in `cwd`. Pure: nothing
- * is started or written. `file` is where codex writes its reply.
+ * is started or written. `file` is where codex writes its reply. With `transcript` the reply is the
+ * session's transcript, one JSON event per line (claude only): the confinement flags stay the same
+ * and only the output format differs.
  */
-export function reviewerLaunch(engine, { cwd, home, file, host = process.env, platform }) {
+export function reviewerLaunch(
+	engine,
+	{ cwd, home, file, host = process.env, platform, transcript = false },
+) {
 	const system = platform ?? process.platform;
 	checkReviewerBoundary(engine, system);
 	const env = reviewerEnv(engine.engine, host, home, system);
+	if (transcript && engine.engine !== "claude") {
+		throw new Error(`No transcript of a ${engine.engine} reviewer's tool calls can be read yet`);
+	}
 	if (engine.engine === "codex") {
 		return {
 			command: "codex",
@@ -199,18 +207,24 @@ export function reviewerLaunch(engine, { cwd, home, file, host = process.env, pl
 			"Read,Grep,Glob",
 			"--allowedTools",
 			"Read,Grep,Glob",
+			// The one difference of the preflight's launch: the session's events, not only its reply.
+			...(transcript ? ["--output-format", "stream-json", "--verbose"] : []),
 		],
 	};
 }
 
-/** Asks one model for a reply to `prompt`, working in `cwd`, and returns the reply's text. */
+/**
+ * Asks one model for a reply to `prompt`, working in `cwd`, and returns the reply's text. With
+ * `transcript` (a claude reviewer) it returns the session's transcript instead, one event a line.
+ */
 export async function ask(
 	engine,
 	prompt,
 	cwd,
-	{ role = "judge", host = process.env, platform } = {},
+	{ role = "judge", host = process.env, platform, transcript = false } = {},
 ) {
-	if (role === "reviewer") return askReviewer(engine, prompt, cwd, host, platform);
+	if (transcript && role !== "reviewer") throw new Error("Only a reviewer has a transcript");
+	if (role === "reviewer") return askReviewer(engine, prompt, cwd, host, platform, transcript);
 	if (engine.engine === "codex") {
 		const dir = await mkdtemp(join(tmpdir(), "replay-reply-"));
 		const file = join(dir, "reply.txt");
@@ -241,7 +255,7 @@ export async function ask(
 	);
 }
 
-async function askReviewer(engine, prompt, cwd, host, platform) {
+async function askReviewer(engine, prompt, cwd, host, platform, transcript) {
 	const system = platform ?? process.platform;
 	checkReviewerBoundary(engine, system);
 	// A folder of its own, outside the replay checkout, that holds the login and nothing else.
@@ -255,7 +269,14 @@ async function askReviewer(engine, prompt, cwd, host, platform) {
 			if (error?.code !== "ENOENT") throw error;
 		});
 		const file = join(home, "tmp", "reply.txt");
-		const launch = reviewerLaunch(engine, { cwd, home, file, host, platform: system });
+		const launch = reviewerLaunch(engine, {
+			cwd,
+			home,
+			file,
+			host,
+			platform: system,
+			transcript,
+		});
 		const out = await runCommand(launch.command, launch.args, {
 			cwd,
 			input: prompt,
@@ -269,17 +290,49 @@ async function askReviewer(engine, prompt, cwd, host, platform) {
 	}
 }
 
-/** The first JSON object in a reply, however much prose or fencing surrounds it. */
+/**
+ * Where the object that opens at `start` closes, tracking quoted strings and escapes, or -1 when
+ * it never closes (or closes with the wrong bracket).
+ */
+function closingBrace(text, start) {
+	const open = [];
+	let inString = false;
+	let escaped = false;
+	for (let i = start; i < text.length; i++) {
+		const char = text[i];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') inString = true;
+		else if (char === "{" || char === "[") open.push(char);
+		else if (char === "}" || char === "]") {
+			if (open.pop() !== (char === "}" ? "{" : "[")) return -1;
+			if (open.length === 0) return i;
+		}
+	}
+	return -1;
+}
+
+/**
+ * The first complete JSON object in a reply, however much prose or fencing surrounds it. Each
+ * candidate is read whole: one that is malformed is passed over as a whole, never entered, so an
+ * object nested inside a broken one is not taken for the answer.
+ */
 export function jsonIn(text) {
-	// Every `{` followed by a quoted key is a place the object may start: prose before it may hold
-	// braces of its own, as in "foo() {} first".
-	for (const open of text.matchAll(/\{(?=\s*")/g)) {
-		for (let end = text.lastIndexOf("}"); end > open.index; end = text.lastIndexOf("}", end - 1)) {
-			try {
-				return JSON.parse(text.slice(open.index, end + 1));
-			} catch {
-				// Try a shorter slice: the reply may hold a second brace after the object.
-			}
+	// A `{` followed by a quoted key is a place an object may start: prose before it may hold braces
+	// of its own, as in "foo() {} first".
+	const start = /\{(?=\s*")/g;
+	for (let match = start.exec(text); match; match = start.exec(text)) {
+		const end = closingBrace(text, match.index);
+		// A candidate that never closes is cut off: what sits inside it is not the answer either.
+		if (end < 0) break;
+		try {
+			return JSON.parse(text.slice(match.index, end + 1));
+		} catch {
+			start.lastIndex = end + 1;
 		}
 	}
 	throw new Error("The reply holds no JSON object");

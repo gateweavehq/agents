@@ -126,6 +126,18 @@ Reply with one JSON object and nothing else:
 Give one verdict for every index from 0 to ${findings.length - 1}.`;
 }
 
+/**
+ * What the models are told, as one hash: the reviewer's prompt and both judge prompts (the one
+ * with the fix patch and the one without it). A change to any of them changes the hash.
+ */
+export function promptFingerprint(model, judgePromptFor = judgePrompt) {
+	return createHash("sha256")
+		.update(reviewPrompt(model, { pr: 0, repo: "", pre_fix: "", criteria: [] }, ""))
+		.update(judgePromptFor({ defect: "" }, [], { diff: "", reason: null }))
+		.update(judgePromptFor({ defect: "" }, [], { diff: null, reason: "" }))
+		.digest("hex");
+}
+
 /** A finding with no verdict, or an unknown one, is unsure, which counts as not real. */
 export function parseVerdicts(reply, count) {
 	const list = jsonIn(reply).verdicts;
@@ -306,14 +318,13 @@ export async function runReplay({
 	deps,
 	log = () => {},
 	remove = rm,
+	signal,
+	judgePromptFor = judgePrompt,
 }) {
 	const entries = splitSet(JSON.parse(setText));
 	const setHash = createHash("sha256").update(setText).digest("hex");
 	// What the models are told: a result from other prompts is not a result of this run.
-	const promptHash = createHash("sha256")
-		.update(reviewPrompt(model, { pr: 0, repo: "", pre_fix: "", criteria: [] }, ""))
-		.update(judgePrompt({ defect: "" }, [], { diff: "", reason: null }))
-		.digest("hex");
+	const promptHash = promptFingerprint(model, judgePromptFor);
 	await mkdir(out, { recursive: true });
 	const file = join(out, "results.json");
 
@@ -345,6 +356,8 @@ export async function runReplay({
 	const scratch = await mkdtemp(join(tmpdir(), "replay-"));
 	try {
 		for (const entry of entries) {
+			// An interrupt stops the run here: the rows done are kept, and a resume does the rest.
+			signal?.throwIfAborted();
 			if (done.get(entry.id)?.status === "done") {
 				log(`row ${entry.id}: done already`);
 				continue;
@@ -373,7 +386,7 @@ export async function runReplay({
 					const fix = asFix(await history.fixDiff(entry.judge));
 					fixPatch = { available: fix.diff !== null, reason: fix.reason ?? null };
 					verdicts = parseVerdicts(
-						await deps.judge(judgePrompt(entry.judge, findings, fix), dir),
+						await deps.judge(judgePromptFor(entry.judge, findings, fix), dir),
 						findings.length,
 					);
 				}
@@ -384,6 +397,8 @@ export async function runReplay({
 					findings: findings.map((f, i) => ({ ...f, ...verdicts[i] })),
 				});
 			} catch (error) {
+				// A row that stopped because the run was interrupted is not a failed row.
+				if (signal?.aborted) throw error;
 				done.set(entry.id, {
 					...base,
 					status: error instanceof SkippedByProduct ? "skipped" : "failed",
