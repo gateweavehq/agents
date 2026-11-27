@@ -252,6 +252,11 @@ function shellSegments(command: string): string[][] {
 			endWord();
 			continue;
 		}
+		if (char === "#" && !started) {
+			endSegment();
+			while (at + 1 < command.length && command.charAt(at + 1) !== "\n") at += 1;
+			continue;
+		}
 		if (";&|<>()".includes(char)) {
 			endSegment();
 			continue;

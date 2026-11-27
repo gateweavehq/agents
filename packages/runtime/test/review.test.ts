@@ -166,6 +166,7 @@ describe("submitting a review", () => {
 		"echo test/a.test.ts && exit 1",
 		"echo test/a.test.ts || exit 1",
 		"true && test/a.test.ts",
+		"vitest run # test/a.test.ts",
 	])("refuses a command that does not run the file: %s", async (command) => {
 		const { call, sandbox } = setup();
 		sandbox.answers.push(failed);
