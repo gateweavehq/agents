@@ -1,6 +1,7 @@
 // Builds the clean history the reviewer works in: two commits, the pull request's merge base and
 // its `pre_fix` head. Nothing after `pre_fix` is ever fetched into it, so the fix cannot be read.
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -64,6 +65,15 @@ export function githubSource(org) {
 			]);
 			const sha = out.split(/\r?\n/).find((line) => /^[0-9a-f]{40}$/.test(line));
 			if (!sha) throw new Error(`No base revision found for ${repo}#${pr}`);
+			return sha;
+		},
+		/** The commit the repository's default branch points to, read from the network. */
+		async headOf(repo) {
+			const out = await runCommand("git", ["ls-remote", this.cloneUrl(repo), "HEAD"], {
+				env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+			});
+			const sha = /^([0-9a-f]{40})\s+HEAD$/m.exec(out)?.[1];
+			if (!sha) throw new Error(`No head found for ${repo}`);
 			return sha;
 		},
 		/** The refs of the pull requests that hold a commit: a squash-merged one is only on those. */
@@ -131,14 +141,32 @@ export async function fetchMissing({ source, mirror, repo, pr, shas }) {
 	return missing;
 }
 
-/** A bare copy of the repository, kept between rows. Its path is absolute, whatever `cacheDir` is. */
+/**
+ * A bare copy of the repository, kept between rows. Its path is absolute, whatever `cacheDir` is.
+ * It is named by where the repository is cloned from, so `agents` and `<org>/agents` share one,
+ * and two names that only look alike (`acme/widgets`, `acme__widgets`) never do.
+ */
 export async function mirrorOf(source, cacheDir, repo) {
-	const mirror = resolve(cacheDir, `${repo.replace(/[^\w.-]/g, "__")}.git`);
+	const url = source.cloneUrl(repo);
+	const slug = (
+		url
+			.replace(/\.git$/, "")
+			.split(/[\\/]/)
+			.pop() ?? "repo"
+	).replace(/[^\w.-]/g, "_");
+	const key = createHash("sha256").update(url).digest("hex").slice(0, 12);
+	const mirror = resolve(cacheDir, `${slug}-${key}.git`);
 	if (!(await exists(mirror))) {
 		await mkdir(resolve(cacheDir), { recursive: true });
-		await git(resolve(cacheDir), ["clone", "--bare", "--quiet", source.cloneUrl(repo), mirror]);
+		await git(resolve(cacheDir), ["clone", "--bare", "--quiet", url, mirror]);
 		await git(mirror, ["config", "uploadpack.allowAnySHA1InWant", "true"]);
+		await git(mirror, ["config", "replay.source", url]);
 	}
+	// What the copy was made from, as it was written down then: the clone's own `origin` may be
+	// spelled differently by git.
+	const made = (await git(mirror, ["config", "--get", "replay.source"]).catch(() => "")).trim();
+	if (made !== url)
+		throw new Error(`The cached copy ${mirror} is of ${made || "unknown"}, not of ${url}`);
 	return mirror;
 }
 

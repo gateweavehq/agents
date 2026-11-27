@@ -3,7 +3,7 @@
 // a space, so nothing here goes through one.
 import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join, resolve as resolvePath } from "node:path";
 
 /** An environment variable by name, ignoring case on Windows, where the names are. */
 export function envGet(env, name, platform = process.platform) {
@@ -24,7 +24,8 @@ const isFile = (path) => {
 export function resolveExecutable(name, env = process.env, platform = process.platform) {
 	const win = platform === "win32";
 	if (isAbsolute(name) || /[\\/]/.test(name)) return name;
-	const dirs = (envGet(env, "PATH", platform) ?? "").split(delimiter).filter(Boolean);
+	// Only absolute entries: a relative one would be read against whatever folder is current.
+	const dirs = (envGet(env, "PATH", platform) ?? "").split(delimiter).filter(isAbsolute);
 	const extensions = win
 		? (envGet(env, "PATHEXT", platform) ?? ".COM;.EXE;.BAT;.CMD")
 				.split(";")
@@ -43,7 +44,7 @@ export function resolveExecutable(name, env = process.env, platform = process.pl
 					continue;
 				}
 			}
-			return file;
+			return resolvePath(file);
 		}
 	}
 	throw new Error(`${name} was not found on PATH`);
@@ -76,12 +77,21 @@ export function commandLine(file, args, platform = process.platform, env = proce
 
 /**
  * Runs a command with `input` on stdin and resolves to its stdout. Rejects on a non-zero exit or
- * when `timeoutMs` passes, and kills the whole process tree then.
+ * when `timeoutMs` passes. A timeout kills the whole process tree (a process group on POSIX,
+ * taskkill /T on Windows) and rejects within `killGraceMs` even if a descendant that outlived the
+ * kill keeps the output pipes open, so the caller always gets to clean up.
  */
 export function runCommand(
 	command,
 	args,
-	{ cwd, input, timeoutMs = 10 * 60 * 1000, env = process.env, platform = process.platform },
+	{
+		cwd,
+		input,
+		timeoutMs = 10 * 60 * 1000,
+		killGraceMs = 5000,
+		env = process.env,
+		platform = process.platform,
+	},
 ) {
 	return new Promise((resolve, reject) => {
 		let line;
@@ -91,24 +101,58 @@ export function runCommand(
 			reject(error);
 			return;
 		}
+		const win = platform === "win32";
 		const child = spawn(line.file, line.args, {
 			cwd,
 			env,
 			stdio: ["pipe", "pipe", "pipe"],
 			windowsHide: true,
+			// Its own process group, so a timeout can signal the descendants too.
+			detached: !win,
 			...line.options,
 		});
+		// A stream decoder keeps a character that arrives in two chunks whole.
+		child.stdout.setEncoding("utf8");
+		child.stderr.setEncoding("utf8");
 		let out = "";
 		let err = "";
 		let timedOut = false;
+		let settled = false;
+		let giveUp;
+		const settle = (fn, value) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			clearTimeout(giveUp);
+			fn(value);
+		};
+		const killTree = () => {
+			if (win) {
+				if (!child.pid) return child.kill();
+				spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" })
+					.on("error", () => child.kill())
+					.on("exit", (code) => {
+						if (code !== 0) child.kill();
+					});
+				return;
+			}
+			try {
+				process.kill(-child.pid, "SIGKILL");
+			} catch {
+				child.kill("SIGKILL");
+			}
+		};
+		const failure = () =>
+			new Error(`${command} timed out after ${timeoutMs} ms: ${err.trim().slice(-500)}`);
 		const timer = setTimeout(() => {
 			timedOut = true;
-			if (platform === "win32" && child.pid) {
-				spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" }).on(
-					"error",
-					() => child.kill(),
-				);
-			} else child.kill();
+			killTree();
+			// The pipes may stay open if something outlived the kill: stop waiting for them.
+			giveUp = setTimeout(() => {
+				child.stdout.destroy();
+				child.stderr.destroy();
+				settle(reject, failure());
+			}, killGraceMs);
 		}, timeoutMs);
 		child.stdout.on("data", (chunk) => {
 			out += chunk;
@@ -116,19 +160,17 @@ export function runCommand(
 		child.stderr.on("data", (chunk) => {
 			err += chunk;
 		});
-		child.on("error", (error) => {
-			clearTimeout(timer);
-			reject(error);
-		});
+		child.on("error", (error) => settle(reject, error));
 		child.on("close", (code, signal) => {
-			clearTimeout(timer);
-			if (code === 0 && !timedOut) resolve(out);
-			else
-				reject(
-					new Error(
-						`${command} ${timedOut ? "timed out" : `exited ${code ?? signal}`}: ${err.trim().slice(-500)}`,
-					),
+			if (code === 0 && !timedOut) settle(resolve, out);
+			else {
+				settle(
+					reject,
+					timedOut
+						? failure()
+						: new Error(`${command} exited ${code ?? signal}: ${err.trim().slice(-500)}`),
 				);
+			}
 		});
 		child.stdin.on("error", () => {});
 		child.stdin.end(input);

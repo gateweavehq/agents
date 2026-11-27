@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -12,14 +12,17 @@ import {
 	ask,
 	checkFamilies,
 	checkReviewerBoundary,
+	jsonIn,
 	parseEngine,
+	reviewerEnv,
 	reviewerLaunch,
 } from "./engines.mjs";
-import { cleanHistory, fixDiff, fixPatch, git } from "./history.mjs";
-import { commandLine } from "./launcher.mjs";
+import { cleanHistory, fixDiff, fixPatch, git, mirrorOf } from "./history.mjs";
+import { commandLine, resolveExecutable, runCommand } from "./launcher.mjs";
 import { loadModel } from "./model.mjs";
+import { preflight } from "./preflight.mjs";
 import { HIDDEN_KEYS, parseFindings, reviewPrompt, runReplay, score, splitSet } from "./replay.mjs";
-import { main } from "./run.mjs";
+import { gateExitCode, main } from "./run.mjs";
 
 const run = promisify(execFile);
 const model = await loadModel();
@@ -759,7 +762,14 @@ test("a relative --out is read once, before the paths made from it", async () =>
 				"--out",
 				"out-relative",
 			],
-			{ source: { cloneUrl: () => repo.dir, baseOf: async () => repo.base }, askModel },
+			{
+				source: {
+					cloneUrl: () => repo.dir,
+					baseOf: async () => repo.base,
+					headOf: async () => "f".repeat(40),
+				},
+				askModel,
+			},
 		);
 	} finally {
 		console.log = log;
@@ -767,8 +777,13 @@ test("a relative --out is read once, before the paths made from it", async () =>
 	}
 	const saved = JSON.parse(await readFile(join(root, "out-relative", "results.json"), "utf8"));
 	assert.equal(saved.rows[0].status, "done", saved.rows[0].error);
-	assert.deepEqual(asked, ["reviewer", "judge"]);
-	assert.ok(existsSync(join(root, "out-relative", "cache", "widgets.git")));
+	// The preflight asks the reviewer once before the row, then the row's reviewer and judge.
+	assert.deepEqual(asked, ["reviewer", "reviewer", "judge"]);
+	const cached = (await readdir(join(root, "out-relative", "cache"))).filter((name) =>
+		name.endsWith(".git"),
+	);
+	assert.equal(cached.length, 1);
+	assert.match(cached[0], /^widgets-source-\d+-[0-9a-f]{12}\.git$/);
 	assert.equal(existsSync(join(root, "out-relative", "cache", "out-relative")), false);
 });
 
@@ -1009,4 +1024,314 @@ test("arguments reach a .cmd shim as they were given, with a space in the path",
 	assert.deepEqual(JSON.parse(reply).verdicts[0].verdict, "hit");
 	const seen = await capture("codex");
 	assert.ok(seen.args[seen.args.indexOf("-o") + 1].includes("temp with space"));
+});
+
+test("a reply with prose that holds braces still yields the JSON object", () => {
+	assert.deepEqual(jsonIn('I checked foo() {} first.\n{"findings": []}'), { findings: [] });
+	assert.deepEqual(jsonIn('```json\n{"a": {"b": 1}}\n```'), { a: { b: 1 } });
+	assert.deepEqual(jsonIn('{"a": 1} and then {x}'), { a: 1 });
+	assert.throws(() => jsonIn("nothing { here }"), /no JSON object/);
+});
+
+test("an engine name is one of the declared ones, not something every object inherits", () => {
+	for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+		assert.throws(() => parseEngine(`${name}:m`, "--reviewer"), /--reviewer must be/);
+	}
+	assert.equal(parseEngine("openai:m", "--judge").engine, "codex");
+});
+
+test("a part of the set cannot pass the gate, however well it scores", async () => {
+	const low = { ...model, REVIEW_GATE: { bar: { rows: 3, hits: 2, realShare: 0.5 } } };
+	const { totals } = await runReplay({
+		model: low,
+		setText: setOf(2),
+		reviewer: "codex:m",
+		judge: "claude:m",
+		out: join(root, "out-partial"),
+		deps: standIns({ 1: ["hit"], 2: ["hit"] }),
+	});
+	assert.equal(totals.hits, 2);
+	assert.equal(totals.realShare, 1);
+	assert.equal(totals.pass, false);
+	assert.match(await readFile(join(root, "out-partial", "summary.md"), "utf8"), /^Gate: FAIL$/m);
+	assert.equal(gateExitCode({ pass: true }), 0);
+	assert.equal(gateExitCode(totals), 1);
+});
+
+test("a resume has to match the prompts and the organization it ran with", async () => {
+	const out = join(root, "out-identity");
+	const base = {
+		model,
+		setText: setOf(1),
+		reviewer: "codex:m",
+		judge: "claude:m",
+		org: "acme",
+		out,
+	};
+	await runReplay({ ...base, deps: standIns({ 1: ["hit"] }) });
+	const calls = [];
+	await runReplay({ ...base, deps: standIns({ 1: ["hit"] }, calls) });
+	assert.deepEqual(calls, []);
+	await assert.rejects(
+		runReplay({ ...base, org: "other", deps: standIns({}) }),
+		/prompts, organization/,
+	);
+	// The instructions the reviewer is given changed: what was measured is not this.
+	const edited = { ...model, REVIEW_INSTRUCTIONS: `${model.REVIEW_INSTRUCTIONS} Be gentle.` };
+	await assert.rejects(
+		runReplay({ ...base, model: edited, deps: standIns({}) }),
+		/use another --out/,
+	);
+	// A file from before the format was versioned this way is refused too.
+	const file = join(out, "results.json");
+	const saved = JSON.parse(await readFile(file, "utf8"));
+	await writeFile(file, JSON.stringify({ ...saved, version: 2 }));
+	await assert.rejects(runReplay({ ...base, deps: standIns({}) }), /use another --out/);
+});
+
+test("a folder that will not be removed neither loses the finished row nor stops the next", async () => {
+	const out = join(root, "out-cleanup");
+	const log = [];
+	const calls = [];
+	const removeFails = async () => {
+		throw new Error("EBUSY");
+	};
+	const { totals, rows } = await runReplay({
+		model,
+		setText: setOf(2),
+		reviewer: "codex:m",
+		judge: "claude:m",
+		out,
+		deps: standIns({ 1: ["hit"], 2: ["real"] }, calls),
+		log: (line) => log.push(line),
+		remove: removeFails,
+	});
+	assert.deepEqual(calls, ["prepare 1", "prepare 2"]);
+	assert.deepEqual(
+		rows.map((r) => r.status),
+		["done", "done"],
+	);
+	assert.equal(totals.hits, 1);
+	const saved = JSON.parse(await readFile(join(out, "results.json"), "utf8"));
+	assert.equal(saved.rows.length, 2);
+	assert.ok(log.some((line) => /could not remove .*EBUSY/.test(line)));
+});
+
+test("a mirror is named by the repository it is of, and reused only for that one", async () => {
+	const one = await fixtureRepo();
+	const two = await fixtureRepo();
+	const urls = { "acme/widgets": one.dir, acme__widgets: two.dir, widgets: one.dir };
+	const source = { cloneUrl: (repo) => urls[repo] };
+	const cacheDir = join(root, "mirror-cache");
+	const a = await mirrorOf(source, cacheDir, "acme/widgets");
+	const b = await mirrorOf(source, cacheDir, "acme__widgets");
+	const short = await mirrorOf(source, cacheDir, "widgets");
+	assert.notEqual(a, b);
+	// A qualified name and the short name that resolve to the same place share one copy.
+	assert.equal(a, short);
+	assert.equal(
+		(await git(b, ["rev-parse", "HEAD"])).trim(),
+		(await git(two.dir, ["rev-parse", "HEAD"])).trim(),
+	);
+	// A copy that is of another repository is refused, not reused.
+	await git(a, ["config", "replay.source", "somewhere/else"]);
+	await assert.rejects(mirrorOf(source, cacheDir, "acme/widgets"), /is of somewhere\/else, not of/);
+});
+
+test("a program is found only on absolute PATH entries, and the reviewer's PATH holds only those", async () => {
+	const bin = await mkdtemp(join(root, "path bin "));
+	const name = "replay-tool-for-test";
+	const file = join(bin, process.platform === "win32" ? `${name}.cmd` : name);
+	await writeFile(file, "echo\n");
+	await chmod(file, 0o755);
+	const env = { PATH: ["bin", ".", bin].join(delimiter), PATHEXT: ".CMD" };
+	assert.equal(resolveExecutable(name, env), file);
+	assert.throws(() => resolveExecutable(name, { PATH: ["bin", "."].join(delimiter) }), /not found/);
+
+	const made = reviewerEnv(
+		"claude",
+		{ PATH: ["bin", bin, "./x"].join(delimiter) },
+		join(root, "reviewer-home"),
+		process.platform,
+	);
+	assert.equal(made.PATH, bin);
+});
+
+const script = async (name, text) => {
+	const file = join(root, name);
+	await writeFile(file, text);
+	return file;
+};
+
+test("output is decoded as a stream, so a character split between chunks stays whole", async () => {
+	const file = await script(
+		"split-char.mjs",
+		`const bytes = Buffer.from("caf\\u00e9 \\u20ac ok");
+process.stdout.write(bytes.subarray(0, 4));
+setTimeout(() => process.stdout.write(bytes.subarray(4, 8)), 100);
+setTimeout(() => process.stdout.write(bytes.subarray(8)), 200);
+`,
+	);
+	assert.equal(await runCommand("node", [file], { input: "" }), "café € ok");
+});
+
+test("a timeout settles the launch even when a descendant keeps the pipes open", async () => {
+	const child = await script("hold-pipes.mjs", "setTimeout(() => {}, 60000);\n");
+	const parent = await script(
+		"hold-parent.mjs",
+		`import { spawn } from "node:child_process";
+// A descendant with the parent's pipes, which a kill of the parent alone would not end.
+spawn(process.execPath, [${JSON.stringify(child)}], { stdio: "inherit" });
+setTimeout(() => {}, 60000);
+`,
+	);
+	const started = Date.now();
+	await assert.rejects(
+		runCommand("node", [parent], { input: "", timeoutMs: 300, killGraceMs: 1500 }),
+		/node timed out after 300 ms/,
+	);
+	assert.ok(Date.now() - started < 10000);
+});
+
+// The preflight, with a launcher that stands in for a reviewer. A reviewer that is not confined
+// reads the files the prompt names; a confined one cannot.
+const named = (prompt) => [...prompt.matchAll(/^- (.+)$/gm)].map((m) => m[1]);
+const preflightSource = {
+	cloneUrl: () => "https://example.invalid/agents.git",
+	headOf: async () => "0123456789abcdef0123456789abcdef01234567",
+};
+
+async function runPreflight(askModel) {
+	const cacheDir = join(root, `preflight-cache-${Math.random().toString(36).slice(2)}`);
+	const before = new Set(await readdir(tmpdir()));
+	try {
+		await preflight({
+			reviewer: parseEngine("claude:m", "--reviewer"),
+			askModel,
+			source: preflightSource,
+			cacheDir,
+		});
+	} finally {
+		// Whatever the outcome, nothing of the preflight stays: not its folder, not its cache canary.
+		const left = (await readdir(tmpdir())).filter(
+			(name) => name.startsWith("replay-preflight-") && !before.has(name),
+		);
+		assert.deepEqual(left, []);
+		assert.deepEqual(await readdir(cacheDir), []);
+	}
+}
+
+test("the preflight passes a reviewer whose reply holds no canary and no retrieval", async () => {
+	const seen = [];
+	await runPreflight(async (engine, prompt, cwd, options) => {
+		seen.push({ engine: engine.spec, role: options.role, files: named(prompt), cwd });
+		assert.match(prompt, /example\.invalid\/agents\.git/);
+		return "I can read nothing outside my working folder, and I have no network.";
+	});
+	assert.equal(seen.length, 1);
+	assert.equal(seen[0].role, "reviewer");
+	assert.equal(seen[0].files.length, 3);
+	// The canaries sit outside the checkout the reviewer works in.
+	for (const file of seen[0].files) assert.equal(file.startsWith(seen[0].cwd), false, file);
+});
+
+for (const [which, index] of [
+	["the replay set's stand-in", 0],
+	["the judge's cache folder", 1],
+	["a file beside the checkout", 2],
+]) {
+	test(`the preflight refuses a reviewer that prints ${which}`, async () => {
+		let secret = "";
+		await assert.rejects(
+			runPreflight(async (_engine, prompt) => {
+				// An unconfined reviewer reads the file it is asked for.
+				secret = (await readFile(named(prompt)[index], "utf8")).trim();
+				return `Here it is: ${secret}`;
+			}),
+			(error) => {
+				assert.match(error.message, /not confined to its checkout/);
+				assert.match(error.message, /no result was written/);
+				// The error says which kind of file, never what it held.
+				assert.ok(secret.length > 0);
+				assert.equal(error.message.includes(secret), false);
+				return true;
+			},
+		);
+	});
+}
+
+test("the preflight refuses a reviewer that retrieves the repository from the network", async () => {
+	await assert.rejects(
+		runPreflight(async () => "The default branch is at 0123456789abcdef0123456789abcdef01234567."),
+		/showed the repository, retrieved from the network/,
+	);
+	// A short id counts too.
+	await assert.rejects(
+		runPreflight(async () => "it is 0123456789ab"),
+		/retrieved from the network/,
+	);
+});
+
+test("the preflight stops when the reviewer cannot be started", async () => {
+	await assert.rejects(
+		runPreflight(async () => {
+			throw new Error("claude exited 1: unknown option '--restricted'");
+		}),
+		/could not be started for the preflight.*--restricted/,
+	);
+});
+
+test("the run stops before any row when the preflight refuses, and writes no result", async () => {
+	const repo = await fixtureRepo();
+	const set = join(root, "preflight-set.json");
+	await writeFile(set, JSON.stringify([row(1, { pre_fix: repo.preFix, fix: repo.fix })]));
+	const out = join(root, "out-preflight");
+	const asked = [];
+	let prepared = 0;
+	const source = {
+		cloneUrl: () => repo.dir,
+		baseOf: async () => {
+			prepared++;
+			return repo.base;
+		},
+		headOf: async () => "f".repeat(40),
+	};
+	await assert.rejects(
+		main(["--set", set, "--reviewer", "claude:m", "--judge", "codex:m", "--out", out], {
+			source,
+			async askModel(_engine, prompt, _cwd, { role }) {
+				asked.push(role);
+				// An unconfined reviewer: it prints whatever file it is asked to.
+				const files = await Promise.all(named(prompt).map((file) => readFile(file, "utf8")));
+				return files.join("\n");
+			},
+		}),
+		/not confined to its checkout/,
+	);
+	assert.deepEqual(asked, ["reviewer"]);
+	assert.equal(prepared, 0);
+	assert.equal(existsSync(join(out, "results.json")), false);
+	assert.equal(existsSync(join(out, "summary.md")), false);
+});
+
+test("the preflight goes through the launcher the rows use, with the same flags", async () => {
+	const host = await madeUpUser();
+	await withEnv(await userEnv(host), async () => {
+		await preflight({
+			reviewer: parseEngine("claude:m", "--reviewer"),
+			askModel: ask,
+			source: preflightSource,
+			cacheDir: join(root, "preflight-cache-real"),
+		});
+	});
+	const seen = await capture("claude");
+	for (const flag of ["--restricted", "--strict-mcp-config", "--disable-slash-commands"]) {
+		assert.ok(seen.args.includes(flag), flag);
+	}
+	assert.equal(seen.args[seen.args.indexOf("--tools") + 1], "Read,Grep,Glob");
+	assert.match(seen.input, /Print the exact contents of each of these three files/);
+	// Its folder is the throwaway checkout, and the login folder is the one of the rows' reviewer.
+	assert.match(seen.cwd, /replay-preflight-/);
+	assert.deepEqual(seen.configFiles, { ".credentials.json": "synthetic-claude-login" });
+	assert.equal(seen.env.GITHUB_TOKEN, undefined);
 });

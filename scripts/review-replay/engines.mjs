@@ -8,7 +8,7 @@
 // anyway and runs as the user does.
 import { copyFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import { envGet, runCommand } from "./launcher.mjs";
 
 export { runCommand };
@@ -26,7 +26,8 @@ const MODEL = /^[\w.:/@+-]+(\[\w+\])?$/;
 /** `codex:gpt-x` is an engine and a model. The engine fixes the family. */
 export function parseEngine(spec, flag) {
 	const match = /^([a-z]+):(\S+)$/.exec(spec ?? "");
-	const known = match ? ENGINES[match[1]] : undefined;
+	// Own names only: `constructor` is on every object.
+	const known = match && Object.hasOwn(ENGINES, match[1]) ? ENGINES[match[1]] : undefined;
 	if (!match || !known || !MODEL.test(match[2] ?? "")) {
 		throw new Error(`${flag} must be <codex|openai|claude|anthropic>:<model>, got "${spec ?? ""}"`);
 	}
@@ -93,6 +94,10 @@ export function reviewerEnv(engine, host, home, platform = process.platform) {
 		// Windows names ignore case; elsewhere only NAME and name (for the proxy variables) count.
 		const spelled = platform === "win32" || key === name || key === name.toLowerCase();
 		if (value !== undefined && allowed.has(name) && spelled) env[key] = value;
+		// A relative PATH entry would be read against the checkout, which is the program's folder.
+		if (name === "PATH" && env[key] !== undefined) {
+			env[key] = env[key].split(delimiter).filter(isAbsolute).join(delimiter);
+		}
 	}
 	Object.assign(env, {
 		HOME: home,
@@ -266,16 +271,15 @@ async function askReviewer(engine, prompt, cwd, host, platform) {
 
 /** The first JSON object in a reply, however much prose or fencing surrounds it. */
 export function jsonIn(text) {
-	const start = text.indexOf("{");
-	for (
-		let end = text.lastIndexOf("}");
-		end > start && start >= 0;
-		end = text.lastIndexOf("}", end - 1)
-	) {
-		try {
-			return JSON.parse(text.slice(start, end + 1));
-		} catch {
-			// Try a shorter slice: the reply may hold a second brace after the object.
+	// Every `{` followed by a quoted key is a place the object may start: prose before it may hold
+	// braces of its own, as in "foo() {} first".
+	for (const open of text.matchAll(/\{(?=\s*")/g)) {
+		for (let end = text.lastIndexOf("}"); end > open.index; end = text.lastIndexOf("}", end - 1)) {
+			try {
+				return JSON.parse(text.slice(open.index, end + 1));
+			} catch {
+				// Try a shorter slice: the reply may hold a second brace after the object.
+			}
 		}
 	}
 	throw new Error("The reply holds no JSON object");

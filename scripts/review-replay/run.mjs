@@ -7,7 +7,10 @@
 //
 // Needs git, gh (signed in, for private repositories), and the codex and claude command lines.
 // The reviewer reads only the replay checkout (see reviewerLaunch in engines.mjs). Codex cannot
-// enforce that on Windows, so there the reviewer is claude and the judge is codex.
+// enforce that on Windows, so there the reviewer is claude and the judge is codex. Before any row,
+// a preflight asks the reviewer, started the way the rows start it, to read canary files outside
+// its checkout and to fetch the repository; if it can, the run stops with nothing written.
+// The exit status is 0 for a pass, 1 for a failed gate, 2 for an error that stopped the run.
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,7 +18,8 @@ import { parseArgs } from "node:util";
 import { ask, checkFamilies, checkReviewerBoundary, parseEngine } from "./engines.mjs";
 import { cleanHistory, fixPatch, githubSource } from "./history.mjs";
 import { loadModel } from "./model.mjs";
-import { runReplay } from "./replay.mjs";
+import { preflight } from "./preflight.mjs";
+import { runReplay, splitSet } from "./replay.mjs";
 
 const USAGE =
 	"Usage: node scripts/review-replay/run.mjs --set <replay-set.json> --reviewer <codex|claude>:<model> --judge <claude|codex>:<model> --out <dir> [--org <github org>]";
@@ -44,12 +48,16 @@ export async function main(argv, overrides = {}) {
 
 	const model = await loadModel();
 	const setText = await readFile(values.set, "utf8");
+	// A set that cannot be used is found before a model is asked anything.
+	splitSet(JSON.parse(setText));
 	const source = overrides.source ?? githubSource(values.org);
 	const askModel = overrides.askModel ?? ask;
 	// Once, before any path is made from it: a relative --out is read against the folder the run
 	// started in, and every git command runs in some other folder.
 	const out = resolve(values.out);
 	const cacheDir = join(out, "cache");
+
+	await preflight({ reviewer, askModel: (...args) => askModel(...args), source, cacheDir });
 
 	const deps = {
 		async prepare(view, dir) {
@@ -84,11 +92,19 @@ export async function main(argv, overrides = {}) {
 	console.log(
 		`Gate: ${totals.pass ? "PASS" : "FAIL"}: ${totals.hits} hits of ${totals.rows} rows, real share ${(totals.realShare * 100).toFixed(1)}%. Wrote results.json and summary.md to ${out}`,
 	);
+	return { totals };
 }
 
+/** A failed gate is a failed command: 0 for a pass, 1 for a fail. */
+export const gateExitCode = (totals) => (totals.pass ? 0 : 1);
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-	main(process.argv.slice(2)).catch((error) => {
-		console.error(error instanceof Error ? error.message : error);
-		process.exit(2);
-	});
+	main(process.argv.slice(2))
+		.then(({ totals }) => {
+			process.exitCode = gateExitCode(totals);
+		})
+		.catch((error) => {
+			console.error(error instanceof Error ? error.message : error);
+			process.exit(2);
+		});
 }

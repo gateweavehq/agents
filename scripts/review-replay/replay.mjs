@@ -178,7 +178,8 @@ export function score(model, rows) {
 		topPrecision: share(topReal, top),
 		topFindings: top,
 		bar,
-		pass: hits >= bar.hits && realShare >= bar.realShare,
+		// The bar is defined on all of the rows: a part of the set cannot pass it.
+		pass: rows.length === bar.rows && hits >= bar.hits && realShare >= bar.realShare,
 	};
 }
 
@@ -256,7 +257,9 @@ async function readResults(file) {
 	}
 }
 
-const RESULTS_VERSION = 2;
+// 3: a diff the product skips is a skipped row (an older file may hold such a row as done), and the
+// prompts and the organization are part of what a resume has to match.
+const RESULTS_VERSION = 3;
 
 /** The product does not review this pull request, so the row is a miss with no findings. */
 class SkippedByProduct extends Error {}
@@ -293,9 +296,24 @@ const asFix = (fix) => (typeof fix === "string" ? { diff: fix, reason: null } : 
  * A row's id is only a label the set gives it. The rows are kept in a Map and saved as a list, and
  * every row works in a folder the system names, so no id decides a path or a property.
  */
-export async function runReplay({ model, setText, reviewer, judge, out, deps, log = () => {} }) {
+export async function runReplay({
+	model,
+	setText,
+	reviewer,
+	judge,
+	org = null,
+	out,
+	deps,
+	log = () => {},
+	remove = rm,
+}) {
 	const entries = splitSet(JSON.parse(setText));
 	const setHash = createHash("sha256").update(setText).digest("hex");
+	// What the models are told: a result from other prompts is not a result of this run.
+	const promptHash = createHash("sha256")
+		.update(reviewPrompt(model, { pr: 0, repo: "", pre_fix: "", criteria: [] }, ""))
+		.update(judgePrompt({ defect: "" }, [], { diff: "", reason: null }))
+		.digest("hex");
 	await mkdir(out, { recursive: true });
 	const file = join(out, "results.json");
 
@@ -304,18 +322,26 @@ export async function runReplay({ model, setText, reviewer, judge, out, deps, lo
 		previous &&
 		(previous.version !== RESULTS_VERSION ||
 			previous.set !== setHash ||
+			previous.prompts !== promptHash ||
+			previous.org !== org ||
 			previous.reviewer !== reviewer ||
 			previous.judge !== judge)
 	) {
-		throw new Error(`${file} is from another set, reviewer, judge or format: use another --out`);
+		throw new Error(
+			`${file} is from another set, prompts, organization, reviewer, judge or format: use another --out`,
+		);
 	}
 	const done = new Map((previous?.rows ?? []).map((row) => [row.id, row]));
 	const save = () =>
 		writeAtomic(
 			file,
-			`${JSON.stringify({ version: RESULTS_VERSION, set: setHash, reviewer, judge, rows: [...done.values()] }, null, 2)}\n`,
+			`${JSON.stringify({ version: RESULTS_VERSION, set: setHash, prompts: promptHash, org, reviewer, judge, rows: [...done.values()] }, null, 2)}\n`,
 		);
 
+	const cleanUp = (folder) =>
+		remove(folder, { recursive: true, force: true, maxRetries: 3 }).catch((error) =>
+			log(`could not remove ${folder}: ${error instanceof Error ? error.message : error}`),
+		);
 	const scratch = await mkdtemp(join(tmpdir(), "replay-"));
 	try {
 		for (const entry of entries) {
@@ -364,21 +390,25 @@ export async function runReplay({ model, setText, reviewer, judge, out, deps, lo
 					error: error instanceof Error ? error.message : String(error),
 					findings: [],
 				});
-			} finally {
-				await rm(rowDir, { recursive: true, force: true, maxRetries: 3 });
 			}
 			log(`row ${entry.id}: ${done.get(entry.id)?.status}`);
-			await save();
+			// The outcome is kept before the folder is cleaned up: a folder that will not go away
+			// must not cost a finished row, nor stop the rows after it.
+			try {
+				await save();
+			} finally {
+				await cleanUp(rowDir);
+			}
 		}
 	} finally {
-		await rm(scratch, { recursive: true, force: true, maxRetries: 3 });
+		await cleanUp(scratch);
 	}
 
 	const rows = entries.map((entry) => done.get(entry.id));
 	const totals = score(model, rows);
 	await writeAtomic(
 		file,
-		`${JSON.stringify({ version: RESULTS_VERSION, set: setHash, reviewer, judge, rows, totals }, null, 2)}\n`,
+		`${JSON.stringify({ version: RESULTS_VERSION, set: setHash, prompts: promptHash, org, reviewer, judge, rows, totals }, null, 2)}\n`,
 	);
 	await writeAtomic(join(out, "summary.md"), summaryOf(rows, totals, { reviewer, judge }));
 	return { totals, rows };
