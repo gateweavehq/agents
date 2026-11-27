@@ -861,6 +861,67 @@ describe("sandbox time", () => {
 		}
 	});
 
+	it("checks the closing month's minutes when a run ends after midnight", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const start = Date.UTC(2026, 11, 31, 23, 12);
+		const close = Date.UTC(2027, 0, 1, 0, 1);
+		const cap = 60;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, conversation);
+					clock.mockReturnValue(close);
+					expect(instance.finishRun(run, { ...done, endedAt: close })).toBe(true);
+					const heard = () => (instance as unknown as TestRegistry).minutesPassed();
+					await vi.waitFor(() =>
+						expect(heard()).toEqual([
+							{ share: 80, minutes: 48, cap, month: "2026-12", resetsOn: "2027-01-01" },
+						]),
+					);
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("checks the closing month's deployment budget when a run ends after midnight", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const start = Date.UTC(2026, 11, 31, 23, 12);
+		const close = Date.UTC(2027, 0, 1, 0, 1);
+		const budget = 60 * 60 * SANDBOX_SECOND_PRICE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, conversation);
+					clock.mockReturnValue(close);
+					expect(instance.finishRun(run, { ...done, endedAt: close })).toBe(true);
+					const heard = () => (instance as unknown as TestRegistry).budgetPassed();
+					await vi.waitFor(() =>
+						expect(heard()).toEqual([
+							{
+								share: 80,
+								spent: expect.closeTo(48 * 60 * SANDBOX_SECOND_PRICE, 10),
+								budget,
+								month: "2026-12",
+							},
+						]),
+					);
+				},
+				{ limits: { SANDBOX_MONTHLY_BUDGET: String(budget) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
 	it("are refused once the server has spent the month's budget, which its operator hears of", async () => {
 		const stub = registry();
 		const [first = "", second = "", third = ""] = await builderConversations(stub, 3);

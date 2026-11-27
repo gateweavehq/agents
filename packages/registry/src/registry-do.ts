@@ -2273,6 +2273,7 @@ export class RegistryDO extends DurableObject {
 		let report: PendingTrackReport | undefined;
 		let hadSandbox = false;
 		let minutesPassed: SandboxMinutesPassed[] = [];
+		let usageChecks: { month: UtcMonth; now: number }[] = [];
 		let reviewsQueued = false;
 		const closed = this.#write(() => {
 			if (!finishRun(this.#db, run, data)) return false;
@@ -2293,7 +2294,14 @@ export class RegistryDO extends DurableObject {
 				);
 			}
 			hadSandbox = (monthlyBudget !== null || cap > 0) && runHadSandbox(this.#db, run);
-			if (hadSandbox && cap > 0) minutesPassed = this.#sandboxMinutesAlerts(cap);
+			if (hadSandbox) {
+				usageChecks = this.#sandboxUsageChecks(reporting?.startedAt ?? ended, ended);
+				if (cap > 0) {
+					minutesPassed = usageChecks.flatMap(({ month, now }) =>
+						this.#sandboxMinutesAlerts(cap, month, now),
+					);
+				}
+			}
 			return true;
 		});
 		this.#publishTrackReports(report);
@@ -2308,11 +2316,13 @@ export class RegistryDO extends DurableObject {
 		if (minutesPassed.length > 0) this.ctx.waitUntil(this.#notifySandboxMinutes(minutesPassed));
 		if (hadSandbox && monthlyBudget !== null) {
 			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
-			this.ctx.waitUntil(
-				this.#meterSandboxes(monthlyBudget).catch((error: unknown) => {
-					console.error("registry: the sandbox meter did not answer", error);
-				}),
-			);
+			for (const check of usageChecks) {
+				this.ctx.waitUntil(
+					this.#meterSandboxes(monthlyBudget, check).catch((error: unknown) => {
+						console.error("registry: the sandbox meter did not answer", error);
+					}),
+				);
+			}
 		}
 		return closed;
 	}
@@ -3874,10 +3884,18 @@ export class RegistryDO extends DurableObject {
 		);
 	}
 
+	/** The months a closing run can still put over a threshold: its own, and the one that just ended. */
+	#sandboxUsageChecks(startedAt: number, now: number): { month: UtcMonth; now: number }[] {
+		const current = utcMonth(now);
+		if (startedAt >= current.start) return [{ month: current, now }];
+		return [
+			{ month: utcMonth(current.start - 1), now: current.start },
+			{ month: current, now },
+		];
+	}
+
 	/** Claims each alert in the same write that closes the run. */
-	#sandboxMinutesAlerts(cap: number): SandboxMinutesPassed[] {
-		const now = Date.now();
-		const month = utcMonth(now);
+	#sandboxMinutesAlerts(cap: number, month: UtcMonth, now: number): SandboxMinutesPassed[] {
 		const minutes = this.#sandboxSecondsInMonth(month, now) / 60;
 		const { kv } = this.ctx.storage;
 		const passed: SandboxMinutesPassed[] = [];
@@ -3924,13 +3942,16 @@ export class RegistryDO extends DurableObject {
 	 * Reports the workspace's sandbox time this month to the deployment's meter, and reads what the
 	 * deployment has spent. Null when there is no meter.
 	 */
-	async #meterSandboxes(budget: number): Promise<MeterReading | null> {
+	async #meterSandboxes(
+		budget: number,
+		check?: { month: UtcMonth; now: number },
+	): Promise<MeterReading | null> {
 		const meter = (this.env as SandboxSettings).SANDBOX_METER as
 			| DurableObjectNamespace<SandboxMeterDO>
 			| undefined;
 		if (!meter) return null;
-		const now = Date.now();
-		const month = utcMonth(now);
+		const now = check?.now ?? Date.now();
+		const month = check?.month ?? utcMonth(now);
 		const seconds = this.#sandboxSecondsInMonth(month, now);
 		// Each registry is named for its workspace (`registryFor` in the app).
 		const workspace = this.ctx.id.name ?? this.ctx.id.toString();
