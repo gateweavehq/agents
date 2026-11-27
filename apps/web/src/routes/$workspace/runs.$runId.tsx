@@ -324,7 +324,7 @@ const SPAN_COLORS: Record<RunSpan["status"], string> = {
 	refused: "bg-destructive",
 };
 
-function Trace({
+export function Trace({
 	run,
 	trace,
 	nested,
