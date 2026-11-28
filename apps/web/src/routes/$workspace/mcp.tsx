@@ -198,7 +198,7 @@ function ServerCard({
 }
 
 /**
- * The workspace's OAuth connection to a remote server (AGT-78): who made it, and Connect or
+ * The workspace's OAuth connection to a remote server: who made it, and Connect or
  * Disconnect for owners and admins. Connecting sends them through the server's own sign-in.
  */
 function OAuthConnection({

@@ -1,5 +1,5 @@
 /**
- * Connecting Gateweave Track in one step, for owners and admins (AGT-119): the server function
+ * Connecting Gateweave Track in one step, for owners and admins: the server function
  * that checks what can be checked before the browser leaves, and answers with Track's approval
  * page. The flow's other half is `/api/track/connected` (`server/track-connect.ts`).
  */

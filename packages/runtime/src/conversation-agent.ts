@@ -568,7 +568,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 
 	/**
-	 * The answer a run gave, for an MCP client's get_run (AGT-155): the text of the reply whose
+	 * The answer a run gave, for an MCP client's get_run: the text of the reply whose
 	 * run part names it. Null when the run has no reply here yet, or never will.
 	 */
 	runAnswer(runId: string): string | null {
@@ -781,7 +781,7 @@ ${runPageNote(runs, turn.runId)}`
 
 	/**
 	 * Takes the one turn an outside task's admission opened this conversation for, with the task
-	 * as its message (AGT-155). The registry checks the conversation and begins the run. Nobody
+	 * as its message. The registry checks the conversation and begins the run. Nobody
 	 * waits for the answer, so the conversation stays awake until the turn ends.
 	 */
 	async outsideTurn(text: string): Promise<TriggerTurnOutcome> {
@@ -908,12 +908,12 @@ ${runPageNote(runs, turn.runId)}`
 		}
 		// The reply's stream opens before the turn's slow parts — connecting the servers, the
 		// repository's checkout on the first tool call, the model's first token — so the chat can
-		// say what it is doing instead of "thinking…" (AGT-139). Progress parts are transient:
+		// say what it is doing instead of "thinking…". Progress parts are transient:
 		// the conversation never stores them.
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
-				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				// The reply's run, so the chat can sum up what it used and link to its page.
 				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
@@ -964,7 +964,7 @@ ${runPageNote(runs, turn.runId)}`
 							return;
 						}
 					}
-					// What the turn changes in the checkout, summed under the reply (AGT-139). The
+					// What the turn changes in the checkout, summed under the reply. The
 					// checkout is lazy here, so its state is noted as the first tool call starts,
 					// before that call can change anything. Concurrent tools share the one capture:
 					// a tool that starts while it is still running waits for it, so its change
@@ -1162,7 +1162,7 @@ ${runPageNote(runs, turn.runId)}`
 								: end("failed", describeFailure(agent, error)),
 					});
 					// The finish is written here, not by `toUIMessageStream`, so the turn's changes
-					// can be summed into the reply first (AGT-139).
+					// can be summed into the reply first.
 					const ui = toUIMessageStream({
 						stream: result.stream,
 						tools,
@@ -1251,7 +1251,7 @@ ${runPageNote(runs, turn.runId)}`
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
-				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				// The reply's run, so the chat can sum up what it used and link to its page.
 				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
@@ -1284,7 +1284,7 @@ ${runPageNote(runs, turn.runId)}`
 					return;
 				}
 				progress(null);
-				// What the turn changes in the checkout, summed under the reply (AGT-139). The
+				// What the turn changes in the checkout, summed under the reply. The
 				// checkout is done by now, before the CLI runs.
 				const changesFrom = repository ? await sandbox.changesBase().catch(() => null) : null;
 				// The capture awaited above is a window a stop can land in, before the listener
@@ -1486,7 +1486,7 @@ ${runPageNote(runs, turn.runId)}`
 	}
 
 	/**
-	 * The repository's checks for `open_pull_request` (AGT-142): the commands as the registry holds
+	 * The repository's checks for `open_pull_request`: the commands as the registry holds
 	 * them when the tool is called, asked by the id GitHub gave the repository the turn began with,
 	 * and the sandbox they run in. The registry is the only place they are read from.
 	 */
@@ -1523,7 +1523,7 @@ ${runPageNote(runs, turn.runId)}`
 	/**
 	 * What this conversation's `open_pull_request` calls proposed, kept in the conversation's own
 	 * store so it outlives the turn: a call retried after an eviction returns the first outcome
-	 * instead of running the checks and opening the pull request again (AGT-147). Only this tool
+	 * instead of running the checks and opening the pull request again. Only this tool
 	 * writes under the prefix, so what comes back is what it wrote.
 	 */
 	#pullRequestMemory(): PullRequestMemory {
@@ -1610,7 +1610,7 @@ ${runPageNote(runs, turn.runId)}`
 	}
 
 	/**
-	 * The OAuth clients of the turn's servers connected through OAuth (AGT-78): their tokens live
+	 * The OAuth clients of the turn's servers connected through OAuth: their tokens live
 	 * in the registry, sealed, and are refreshed there.
 	 */
 	#oauth(registry: DurableObjectStub<RegistryDO>): OAuthProviders {

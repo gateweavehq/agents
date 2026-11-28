@@ -1,5 +1,5 @@
 /**
- * A repository's wiki (AGT-108): pages a model writes about the code, which members read in the
+ * A repository's wiki: pages a model writes about the code, which members read in the
  * app and agents read over MCP with the tools DeepWiki's server has. The text formats here are
  * DeepWiki's, as its server answers (checked 2026-11-11, "DeepWiki" 4.0.2), so an agent that reads
  * DeepWiki reads this wiki the same way.

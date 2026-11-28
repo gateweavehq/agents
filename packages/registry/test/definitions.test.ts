@@ -154,7 +154,7 @@ describe("agents run by Gateweave", () => {
 		expect((await stub.getAsset(rules))?.agents).toEqual([]);
 	});
 
-	it("keep whether an MCP client may hand them tasks, off unless someone turns it on (AGT-155)", async () => {
+	it("keep whether an MCP client may hand them tasks, off unless someone turns it on", async () => {
 		const stub = registry();
 		const agent = await stub.createAgent(reviewer(null));
 		expect((await stub.getAgent(agent.id))?.definition?.outsideTasks).toBe(false);

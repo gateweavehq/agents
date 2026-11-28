@@ -1,5 +1,5 @@
 /**
- * The data part that ties a call over a team's edge to the run it started (AGT-139). The chat
+ * The data part that ties a call over a team's edge to the run it started. The chat
  * reads the run's page from it and links there. Like a reply's own run part it is not transient,
  * so the conversation keeps it and history replays it.
  */

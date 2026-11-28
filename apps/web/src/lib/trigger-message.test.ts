@@ -19,9 +19,9 @@ function event(type: string, extra: Record<string, unknown> = {}) {
 			actor: { id: "u1", name: "Maya", type: "person" },
 			issue: {
 				id: "i1",
-				key: "TRK-137",
+				key: "TST-137",
 				title: "Roadmap: list feature flags",
-				url: "https://track.example.com/gateweave/issue/TRK-137",
+				url: "https://track.example.com/gateweave/issue/TST-137",
 				description: "A `code` span\n\n```ts\nconst a = 1;\n```\n",
 			},
 			...extra,
@@ -37,7 +37,7 @@ it("reads the message a delivery makes, with the note the runtime adds after it"
 	const text = `${triggerMessage(PROMPT, body)}\n\n${NOTE}`;
 	const read = readTriggerMessage(text);
 	expect(read?.body).toBe(body);
-	expect(read?.prompt).toContain("Track sent issue.created for the issue TRK-137");
+	expect(read?.prompt).toContain("Track sent issue.created for the issue TST-137");
 	expect(read?.after).toBe(NOTE);
 });
 
@@ -81,9 +81,9 @@ it("says each Track event in words, with the issue, the actor and the time", () 
 		title: "Track: issue created",
 		type: "issue.created",
 		issue: {
-			key: "TRK-137",
+			key: "TST-137",
 			title: "Roadmap: list feature flags",
-			url: "https://track.example.com/gateweave/issue/TRK-137",
+			url: "https://track.example.com/gateweave/issue/TST-137",
 		},
 		actor: "Maya",
 		at: Date.parse("2026-11-14T21:18:42.897Z"),
