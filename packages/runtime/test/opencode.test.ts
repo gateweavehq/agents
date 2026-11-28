@@ -269,11 +269,11 @@ describe("an agent whose engine is OpenCode", () => {
 					"toolu_1",
 					"gateweave_acme__search",
 					{ query: "flaky" },
-					{ output: JSON.stringify({ issues: ["TRK-1"] }) },
+					{ output: JSON.stringify({ issues: ["TST-1"] }) },
 				),
 				finish("tool-calls", { input: 100, output: 5 }),
 				start,
-				text("TRK-1 is flaky."),
+				text("TST-1 is flaky."),
 				finish("stop", { input: 120, output: 5 }),
 			],
 		});
@@ -281,13 +281,13 @@ describe("an agent whose engine is OpenCode", () => {
 		const turn = await ask(socket, "Which issues are flaky?");
 		socket.close();
 
-		expect(turn).toMatchObject({ text: "TRK-1 is flaky.", error: null });
+		expect(turn).toMatchObject({ text: "TST-1 is flaky.", error: null });
 		const chunks = chunksOf(turn);
 		expect(chunks).toContainEqual(
 			expect.objectContaining({ type: "tool-input-available", toolName: "acme__search" }),
 		);
 		expect(chunks).toContainEqual(
-			expect.objectContaining({ type: "tool-output-available", output: { issues: ["TRK-1"] } }),
+			expect.objectContaining({ type: "tool-output-available", output: { issues: ["TST-1"] } }),
 		);
 		expect(turn.raw.join("\n")).not.toContain("opencode__");
 		const [run] = await registry.listRuns();

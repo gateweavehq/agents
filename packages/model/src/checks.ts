@@ -1,5 +1,5 @@
 /**
- * A repository's checks (AGT-142): shell commands an owner or admin sets on the repository's page,
+ * A repository's checks: shell commands an owner or admin sets on the repository's page,
  * such as `pnpm check` and `pnpm test`. When an agent proposes its work on that repository,
  * `open_pull_request` runs them in the sandbox on the work as committed, before it pushes anything,
  * and writes what ran at the end of the pull request. These are the pure parts the registry, the
