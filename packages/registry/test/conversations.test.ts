@@ -11,6 +11,7 @@ import {
 } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
 import { METER_NAME, type RegistryDO } from "../src";
+import { RUN_TIMEOUT } from "../src/runs";
 import { saveAgent } from "./agent-update";
 import type { RegistryDO as TestRegistry } from "./worker";
 
@@ -290,6 +291,28 @@ describe("workspace model-key spending caps", () => {
 				(instance as unknown as TestRegistry).reservationOf(first.runId),
 			)) as { costMicros: number | null } | null,
 		).toMatchObject({ costMicros: 10_000 });
+	});
+
+	it("keeps an unswept stale run's reservation against the cap until its cost is swept", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.015" });
+		const first = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		const second = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		const begun = await stub.beginTurn(first, "Hello");
+		if ("status" in begun) throw new Error(begun.message);
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"UPDATE runs SET started_at = ? WHERE id = ?",
+				Date.now() - RUN_TIMEOUT - 1,
+				begun.runId,
+			);
+		});
+
+		// No read has swept the stale run yet. Its reservation must still hold the budget it
+		// reserved: after the sweep the same budget becomes its cost estimate, so there is no gap.
+		expect(await stub.beginTurn(second, "Meanwhile")).toMatchObject({ status: "refused" });
 	});
 
 	it("pass 80 and 100 percent of a monthly cap once in a period", async () => {

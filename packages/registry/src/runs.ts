@@ -197,7 +197,6 @@ export function providerReserved(
 				inArray(runs.provider, providers as Run["provider"][]),
 				eq(runs.status, "running"),
 				isNull(runs.endedAt),
-				gt(runs.startedAt, Date.now() - RUN_TIMEOUT),
 				lt(runs.startedAt, to),
 			),
 		)
