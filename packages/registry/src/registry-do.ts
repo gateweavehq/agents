@@ -116,6 +116,7 @@ import {
 	SANDBOX_MONTH_USED,
 	SANDBOX_NOT_INVITED,
 	SANDBOX_NOT_OFFERED,
+	SANDBOX_SECOND_PRICE,
 	type SandboxBudgetPassed,
 	type SandboxMinutesPassed,
 	type SandboxRepository,
@@ -411,10 +412,12 @@ import {
 	getRun,
 	hasRuns,
 	keyedProviderCost,
+	keyedProviderReserved,
 	listNestedRuns,
 	listReplays,
 	listRuns,
 	providerCost,
+	providerReserved,
 	recordRunPullRequest,
 	refuseRun,
 	runHadSandbox,
@@ -422,6 +425,7 @@ import {
 	runUsage,
 	sandboxesInUse,
 	sandboxSeconds,
+	sandboxSecondsReserved,
 } from "./runs";
 import { importSample, type SampleInput } from "./sample";
 import {
@@ -1700,6 +1704,7 @@ export class RegistryDO extends DurableObject {
 					teamPath: position?.path ?? null,
 					sandbox: prepared.sandbox,
 					replayOf,
+					reservation: this.#turnReservation(),
 				},
 				Date.now(),
 			);
@@ -1791,6 +1796,7 @@ export class RegistryDO extends DurableObject {
 					sandbox: prepared.sandbox,
 					runId: reservation?.key,
 					trackReport,
+					reservation: this.#turnReservation(),
 				},
 				now,
 			);
@@ -1955,6 +1961,7 @@ export class RegistryDO extends DurableObject {
 					startedBy: parties.startedBy,
 					sandbox: prepared.sandbox,
 					trackReport,
+					reservation: this.#turnReservation(),
 				},
 				now,
 			);
@@ -2041,6 +2048,7 @@ export class RegistryDO extends DurableObject {
 					startedBy,
 					teamPath: plan.position?.path ?? null,
 					sandbox: prepared.sandbox,
+					reservation: this.#turnReservation(),
 				},
 				now,
 			);
@@ -2116,6 +2124,7 @@ export class RegistryDO extends DurableObject {
 					teamPath: now.position.path,
 					parent: now.parent,
 					sandbox: prepared.sandbox,
+					reservation: this.#turnReservation(),
 				},
 				at,
 			);
@@ -2208,6 +2217,17 @@ export class RegistryDO extends DurableObject {
 					"budget-limit",
 				);
 			}
+			// The meter counts what sandboxes have used; the workspace's running turns count at
+			// the seconds they reserved, priced the same, plus the ceiling this turn asks for.
+			const month = utcMonth(Date.now());
+			const reserved = sandboxSecondsReserved(this.#db, month.start, month.end);
+			const ceiling = this.#turnReservation().seconds ?? 0;
+			if (reading.spent + (reserved + ceiling) * SANDBOX_SECOND_PRICE > limits.monthlyBudget) {
+				return refused(
+					`${SANDBOX_BUDGET_SPENT}, so ${agent.name} cannot answer until the month ends (UTC). Whoever runs this server can raise it.`,
+					"budget-limit",
+				);
+			}
 		}
 		const [opened, environment] = await Promise.all([
 			// Workers AI has no key of the workspace's: the runtime uses the deployment's token, which
@@ -2245,9 +2265,13 @@ export class RegistryDO extends DurableObject {
 		const monthly = modelKeyCap(row.monthlyCap);
 		const anyCap = daily !== null || monthly !== null;
 		const month = utcMonth(now);
+		// A running turn counts at the ceiling it reserved, and the turn asking counts its own:
+		// the reservation decides here, in the same write that begins the run.
+		const ceiling = (this.#turnReservation().costMicros ?? 0) / 1_000_000;
 		if (monthly !== null) {
 			const spent = keyedProviderCost(this.#db, month.start, month.end) / 1_000_000;
-			if (spent >= monthly) {
+			const reserved = keyedProviderReserved(this.#db, month.start, month.end) / 1_000_000;
+			if (spent + reserved >= monthly || spent + reserved + ceiling > monthly) {
 				return refused(
 					`This workspace has used its model-key monthly cap, $${monthly}, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
 					"budget-limit",
@@ -2257,7 +2281,8 @@ export class RegistryDO extends DurableObject {
 		if (daily !== null) {
 			const today = utcDay(now);
 			const spent = keyedProviderCost(this.#db, today.start, today.end) / 1_000_000;
-			if (spent >= daily) {
+			const reserved = keyedProviderReserved(this.#db, today.start, today.end) / 1_000_000;
+			if (spent + reserved >= daily || spent + reserved + ceiling > daily) {
 				const resetsOn = new Date(today.end).toISOString().slice(0, 10);
 				return refused(
 					`This workspace has used its model-key daily cap, $${daily}, so ${agent.name} cannot answer until the day ends (UTC). It resets on ${resetsOn} at 00:00 UTC.`,
@@ -2304,11 +2329,18 @@ export class RegistryDO extends DurableObject {
 			return refused(`${WORKERS_AI_NOT_INVITED}, so ${agent.name} cannot answer.`, "provider");
 		}
 		const limit = workersAiDailyLimit(settings);
-		if (limit !== null && this.workersAiSpentToday() >= limit) {
-			return refused(
-				`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
-				"budget-limit",
-			);
+		if (limit !== null) {
+			const today = utcDay(Date.now());
+			const reserved =
+				providerReserved(this.#db, ["workers-ai"], today.start, today.end) / 1_000_000;
+			const ceiling = this.#turnReservation().costMicros ?? 0;
+			const spent = this.workersAiSpentToday() + reserved;
+			if (spent >= limit || spent + ceiling / 1_000_000 > limit) {
+				return refused(
+					`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
+					"budget-limit",
+				);
+			}
 		}
 		// An unpriced model costs null and would never count toward the limit, so it cannot run
 		// where a limit applies.
@@ -2351,6 +2383,19 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
+	 * The per-turn ceiling the deployment sets (`SANDBOX_TURN_COST`, `SANDBOX_TURN_SECONDS`): cost
+	 * in millionths of a dollar and sandbox seconds, null where it sets none. A turn reserves them
+	 * as it begins, so two turns admitted at once cannot both fit the last budget.
+	 */
+	#turnReservation(): { costMicros: number | null; seconds: number | null } {
+		const { turnCost, turnSeconds } = sandboxLimits(this.env as SandboxSettings);
+		return {
+			costMicros: turnCost === null ? null : Math.round(turnCost * 1_000_000),
+			seconds: turnSeconds === null ? null : Math.round(turnSeconds),
+		};
+	}
+
+	/**
 	 * Why a turn of `agent` in `conversation` may not have a sandbox now, or null when it may: the
 	 * workspace's sandboxes are all in use, or it has used its minutes for the day or month.
 	 * Synchronous, so it can decide again in the `#write` that begins the run: a turn awaits as it
@@ -2358,22 +2403,31 @@ export class RegistryDO extends DurableObject {
 	 */
 	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): TurnRefusal | null {
 		const { dailyMinutes, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
+		const ceiling = this.#turnReservation().seconds ?? 0;
 		// The month first: when both are used up, the refusal that names the later reset is the true one.
 		if (monthlyMinutes !== null) {
 			const now = Date.now();
 			const month = utcMonth(now);
-			if (this.#sandboxSecondsInMonth(month, now) >= monthlyMinutes * 60) {
+			const reserved = sandboxSecondsReserved(this.#db, month.start, month.end);
+			const used = this.#sandboxSecondsInMonth(month, now) + reserved;
+			if (used >= monthlyMinutes * 60 || used + ceiling > monthlyMinutes * 60) {
 				return refused(
 					`${SANDBOX_MONTH_USED}, ${monthlyMinutes} minutes, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
 					"budget-limit",
 				);
 			}
 		}
-		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
-			return refused(
-				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
-				"budget-limit",
-			);
+		if (dailyMinutes !== null) {
+			const now = Date.now();
+			const today = utcDay(now);
+			const reserved = sandboxSecondsReserved(this.#db, today.start, today.end);
+			const usedToday = this.sandboxSecondsToday() + reserved;
+			if (usedToday >= dailyMinutes * 60 || usedToday + ceiling > dailyMinutes * 60) {
+				return refused(
+					`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
+					"budget-limit",
+				);
+			}
 		}
 		const idle = this.#idleMinutes();
 		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {

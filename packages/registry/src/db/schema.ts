@@ -627,6 +627,14 @@ export const runs = sqliteTable(
 		replayOf: text("replay_of"),
 		/** The approved Track issue and report timing captured when the webhook run began. */
 		trackReport: text("track_report", { mode: "json" }).$type<TrackRunAssociation>(),
+		/**
+		 * The cost in millionths of a dollar the run reserved as it began: while it runs, a cap
+		 * counts this instead of what the run has spent so far. Null for a run from before
+		 * reservations, which a cap counts only once it ends.
+		 */
+		reservedCost: integer("reserved_cost"),
+		/** The sandbox seconds the run reserved as it began, counted like `reservedCost`. */
+		reservedSeconds: integer("reserved_seconds"),
 	},
 	(table) => [
 		index("runs_started_at_idx").on(table.startedAt),

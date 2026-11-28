@@ -80,5 +80,10 @@ BETTER_AUTH_SECRET=
 # SANDBOX_MONTHLY_MINUTES=
 # Minutes without a request after which a sandbox stops (5 when unset).
 # SANDBOX_IDLE_MINUTES=
+# What one turn may cost at most, in US dollars, and the sandbox seconds it may use at most: a
+# turn reserves them against every budget as it begins, so two turns admitted at once cannot
+# both fit the last of one. No reservation when unset.
+# SANDBOX_TURN_COST=
+# SANDBOX_TURN_SECONDS=
 # SANDBOX_MONTHLY_BUDGET=
 # SANDBOX_ALERT_EMAIL=

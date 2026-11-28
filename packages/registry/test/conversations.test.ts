@@ -237,6 +237,55 @@ describe("workspace model-key spending caps", () => {
 		expect(second.message).toContain("monthly cap, $2");
 	});
 
+	it("admits exactly one of two concurrent turns competing for the last budget", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		// The deployment reserves $0.01 a turn (the test server's SANDBOX_TURN_COST); a cap of
+		// $0.015 fits one reservation but never two.
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.015" });
+		const first = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		const second = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+
+		const [one, two] = await Promise.all([
+			stub.beginTurn(first, "Hello"),
+			stub.beginTurn(second, "Hello"),
+		]);
+		const begun = [one, two].filter((turn) => !("status" in turn));
+		const refusedTurns = [one, two].filter((turn) => "status" in turn);
+		expect(begun).toHaveLength(1);
+		expect(refusedTurns).toHaveLength(1);
+		const loser = refusedTurns[0];
+		if (!loser || !("status" in loser)) throw new Error("expected a refusal");
+		expect(loser.message).toContain("monthly cap, $0.015");
+
+		// While the winner runs, no other turn starts: it counts at its ceiling, not what it
+		// has spent so far.
+		const winner = begun[0];
+		if (!winner || "status" in winner) throw new Error("expected a run");
+		expect(await stub.beginTurn(second, "Meanwhile")).toMatchObject({ status: "refused" });
+
+		// Once it settles under its ceiling, the estimate is what it cost, and a turn that fits
+		// the rest may begin.
+		await finish(stub, winner.runId, 4_000);
+		const after = await stub.beginTurn(second, "Again");
+		expect(after).toHaveProperty("runId");
+	});
+
+	it("writes the turn's ceiling on the run row as it begins", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		expect(
+			(await runInDurableObject(stub, async (instance: RegistryDO) =>
+				(instance as unknown as TestRegistry).reservationOf(first.runId),
+			)) as { costMicros: number | null } | null,
+		).toMatchObject({ costMicros: 10_000 });
+	});
+
 	it("pass 80 and 100 percent of a monthly cap once in a period", async () => {
 		const stub = registry();
 		const agent = await withAgent(stub);
