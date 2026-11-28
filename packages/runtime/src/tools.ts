@@ -81,7 +81,7 @@ export async function connectTools(
 export const NO_SANDBOX_FOR_LOCAL_SERVER =
 	"It runs as a local command, and this turn has no sandbox to start it in";
 
-/** The OAuth client of a library server connected through OAuth, by its id (AGT-78). */
+/** The OAuth client of a library server connected through OAuth, by its id. */
 export type OAuthProviders = (assetId: string) => RegistryOAuthProvider;
 
 async function connect(

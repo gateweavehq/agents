@@ -73,7 +73,7 @@ async function workspace(slug: string) {
 	return { owner, workspaceId, registry, rules, agent };
 }
 
-it("keeps an agent's engine and memory when a page saves it whole to change one thing (AGT-135)", async () => {
+it("keeps an agent's engine and memory when a page saves it whole to change one thing", async () => {
 	const { owner, workspaceId, registry, rules, agent } = await workspace("pin-whole");
 	const shown = await registry.getAgent(agent.id);
 	if (!shown?.definition) throw new Error("No definition");

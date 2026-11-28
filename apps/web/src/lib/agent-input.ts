@@ -9,7 +9,7 @@ import type { z } from "zod";
 /**
  * An agent's definition with every field given, as the schema leaves it once its defaults are
  * filled. A save that sends less has the missing fields set to their defaults, which is how moving
- * a pin once turned an agent's engine and memory back (AGT-135).
+ * a pin once turned an agent's engine and memory back.
  */
 export type WholeAgentInput = z.output<typeof agentDefinitionInput>;
 
@@ -42,7 +42,7 @@ export function inputOf(agent: Agent, definition: AgentDefinition): WholeAgentIn
 	};
 }
 
-/** What the agent form's controls choose. It has none for `files` (AGT-122). */
+/** What the agent form's controls choose. It has none for `files`. */
 export type AgentFormChoices = Pick<
 	WholeAgentInput,
 	| "name"
@@ -65,7 +65,7 @@ export type AgentFormChoices = Pick<
 
 /**
  * What the agent form saves: the agent as it is, with what the form's controls chose. A field
- * the form has no control for goes back as it was, so an edit never resets it (AGT-135).
+ * the form has no control for goes back as it was, so an edit never resets it.
  *
  * The form cannot turn `files` on. It stays on an agent that has it, with the repository, which
  * goes with a sandbox or with `files`; giving the agent a sandbox turns it off, since an agent

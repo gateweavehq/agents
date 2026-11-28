@@ -1,5 +1,5 @@
 /**
- * Connecting a library MCP server through OAuth (AGT-78).
+ * Connecting a library MCP server through OAuth.
  *
  * 1. An owner or admin opens /api/mcp-oauth/connect from the MCP page. The registry makes a
  *    single-use state bound to them, and `@ai-sdk/mcp`'s OAuth client discovers the server's

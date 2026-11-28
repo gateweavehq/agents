@@ -92,6 +92,23 @@ export class SandboxMeterDO extends DurableObject {
 	}
 
 	/**
+	 * Takes back a share whose alert could not be sent, so the next report tries it again.
+	 */
+	unpass(month: string, share: SandboxBudgetShare): void {
+		const name = z
+			.string()
+			.regex(/^\d{4}-\d{2}$/)
+			.parse(month);
+		if (!SANDBOX_BUDGET_ALERTS.includes(share)) return;
+		const key = `alerts:${name}`;
+		const heard = this.ctx.storage.kv.get<SandboxBudgetShare[]>(key) ?? [];
+		this.ctx.storage.kv.put(
+			key,
+			heard.filter((each) => each !== share),
+		);
+	}
+
+	/**
 	 * Everything the meter holds, for the app to take to the meter of a jurisdiction the deployment
 	 * keeps its workspaces in ("Where a workspace lives" in docs/architecture.md).
 	 */

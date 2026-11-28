@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startAgents } from "./agents-worker";
 import { OIDC, OIDC_VARS, standInProvider } from "./oidc-provider";
 
-// Who may make an account (AGT-106): the server owner's list, invitations to a workspace, the first
+// Who may make an account: the server owner's list, invitations to a workspace, the first
 // account of a new server, and the sign-in provider where the owner trusts it. Every path that makes
 // an account must refuse an address with no way in, in the same words, and the database must refuse
 // it too when a path forgets to ask.
