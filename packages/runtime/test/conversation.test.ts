@@ -96,6 +96,20 @@ describe("a conversation", () => {
 		socket.close();
 	});
 
+	it("makes its first model request when an older registry omits the reservation", async () => {
+		const { registry, stub } = await conversation();
+		await runInDurableObject(registry, (_instance, state) => {
+			state.storage.kv.put("test:legacy-reservation", true);
+		});
+		const requests = fakeModel(() => anthropicStream("Looks good."));
+		const socket = await connect(stub);
+		const answer = await ask(socket, "Review this");
+		socket.close();
+		expect(answer).toMatchObject({ text: "Looks good.", error: null });
+		expect(requests).toHaveLength(1);
+		expect((await registry.listRuns())[0]).toMatchObject({ status: "succeeded", cost: 70 });
+	});
+
 	it("takes no message once its socket's session has run out, nor on a socket without one", async () => {
 		const { stub } = await conversation();
 		const requests = fakeModel(() => anthropicStream("Never sent"));

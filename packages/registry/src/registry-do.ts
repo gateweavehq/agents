@@ -2419,16 +2419,24 @@ export class RegistryDO extends DurableObject {
 	 */
 	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): TurnRefusal | null {
 		const { dailyMinutes, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
-		const ceiling = this.#turnReservation().seconds ?? 0;
+		const reservedSeconds = this.#turnReservation().seconds;
+		const now = Date.now();
+		const idle = this.#idleMinutes();
 		// The month first: when both are used up, the refusal that names the later reset is the true one.
 		if (monthlyMinutes !== null) {
-			const now = Date.now();
 			const month = utcMonth(now);
-			// A running turn counts at the ceiling it reserved: `sandboxSeconds` has what it
-			// has used, so only the remainder of its reservation is added.
-			const outstanding = sandboxSecondsOutstanding(this.#db, month.start, month.end, now);
-			const used = this.#sandboxSecondsInMonth(month, now) + outstanding;
-			if (used >= monthlyMinutes * 60 || used + ceiling > monthlyMinutes * 60) {
+			const measured = sandboxSeconds(this.#db, month.start, month.end, now, idle);
+			const projected =
+				reservedSeconds === null
+					? measured + sandboxSecondsOutstanding(this.#db, month.start, month.end, now)
+					: sandboxSeconds(this.#db, month.start, month.end, now, idle, {
+							conversationId: conversation,
+							seconds: reservedSeconds,
+						});
+			if (
+				(reservedSeconds === null ? projected : measured) >= monthlyMinutes * 60 ||
+				projected > monthlyMinutes * 60
+			) {
 				return refused(
 					`${SANDBOX_MONTH_USED}, ${monthlyMinutes} minutes, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
 					"budget-limit",
@@ -2437,11 +2445,19 @@ export class RegistryDO extends DurableObject {
 			}
 		}
 		if (dailyMinutes !== null) {
-			const now = Date.now();
 			const today = utcDay(now);
-			const outstandingToday = sandboxSecondsOutstanding(this.#db, today.start, today.end, now);
-			const usedToday = this.sandboxSecondsToday() + outstandingToday;
-			if (usedToday >= dailyMinutes * 60 || usedToday + ceiling > dailyMinutes * 60) {
+			const measured = sandboxSeconds(this.#db, today.start, today.end, now, idle);
+			const projected =
+				reservedSeconds === null
+					? measured + sandboxSecondsOutstanding(this.#db, today.start, today.end, now)
+					: sandboxSeconds(this.#db, today.start, today.end, now, idle, {
+							conversationId: conversation,
+							seconds: reservedSeconds,
+						});
+			if (
+				(reservedSeconds === null ? projected : measured) >= dailyMinutes * 60 ||
+				projected > dailyMinutes * 60
+			) {
 				return refused(
 					`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
 					"budget-limit",
@@ -2449,8 +2465,7 @@ export class RegistryDO extends DurableObject {
 				);
 			}
 		}
-		const idle = this.#idleMinutes();
-		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
+		if (sandboxesInUse(this.#db, conversation, now, idle) >= MAX_WORKSPACE_SANDBOXES) {
 			return refused(
 				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
 				"waiting-for-slot",

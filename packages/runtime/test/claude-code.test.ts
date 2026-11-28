@@ -180,6 +180,27 @@ const LISTING = [
 ];
 
 describe("an agent whose engine is Claude Code", () => {
+	it("continues through sandbox model requests when an older registry omits the reservation", async () => {
+		const { registry, stub, machine } = await conversation();
+		await machine.scriptEngine({ lines: LISTING });
+		await runInDurableObject(registry, (instance, state) => {
+			state.storage.kv.put("test:legacy-reservation", true);
+			const bindings = (instance as unknown as { env: object }).env;
+			Object.defineProperty(instance, "env", {
+				value: { ...bindings, SANDBOX_TURN_COST: "0.0005" },
+				configurable: true,
+			});
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "List the files");
+		socket.close();
+		expect(turn).toMatchObject({ text: "Let me look. There are two files.", error: null });
+		const [run] = await registry.listRuns();
+		expect(
+			(await stub.runTrace(run?.id ?? "")).filter((span) => span.kind === "model"),
+		).toHaveLength(2);
+	});
+
 	it("runs Claude Code in its sandbox, and passes on its text, tool calls and usage", async () => {
 		const { workspaceId, registry, stub, machine, conversationId, agentId } = await conversation({
 			repository: true,

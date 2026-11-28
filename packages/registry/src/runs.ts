@@ -282,6 +282,8 @@ export function sandboxesInUse(
  * as soon as it ends, since the sandbox runs them anyway; a run still going counts until `now`, or
  * until `RUN_TIMEOUT` cut it short. The runs of a deleted conversation lost their link to it, so
  * each counts as a sandbox of its own: more than ran, never less.
+ * With a proposed turn, live runs extend to their reserved ceiling and the proposed span joins
+ * its conversation's existing intervals, so warm reuse contributes only its new time.
  */
 export function sandboxSeconds(
 	db: Db,
@@ -289,6 +291,7 @@ export function sandboxSeconds(
 	to: number,
 	now: number,
 	idleMinutes = SANDBOX_IDLE_MINUTES,
+	projection?: { conversationId: string; seconds: number },
 ): number {
 	const idle = idleMinutes * 60_000;
 	const rows = db
@@ -297,6 +300,7 @@ export function sandboxSeconds(
 			conversationId: runs.conversationId,
 			startedAt: runs.startedAt,
 			endedAt: runs.endedAt,
+			reservedSeconds: runs.reservedSeconds,
 		})
 		.from(runs)
 		.where(
@@ -315,8 +319,15 @@ export function sandboxSeconds(
 	};
 	const sandboxes = new Map<string, { start: number; end: number }>();
 	for (const run of rows) {
-		const ended =
-			run.endedAt ?? Math.min(Math.max(now, run.startedAt), run.startedAt + RUN_TIMEOUT);
+		let ended = run.endedAt ?? Math.min(Math.max(now, run.startedAt), run.startedAt + RUN_TIMEOUT);
+		if (projection && run.endedAt === null && now < run.startedAt + RUN_TIMEOUT) {
+			if (run.reservedSeconds !== null) {
+				ended = Math.max(
+					ended,
+					Math.min(run.startedAt + run.reservedSeconds * 1000, run.startedAt + RUN_TIMEOUT),
+				);
+			}
+		}
 		const span = { start: run.startedAt, end: ended + idle };
 		const sandbox = run.conversationId ?? run.id;
 		const last = sandboxes.get(sandbox);
@@ -325,6 +336,15 @@ export function sandboxSeconds(
 		} else {
 			if (last) count(last);
 			sandboxes.set(sandbox, span);
+		}
+	}
+	if (projection) {
+		const last = sandboxes.get(projection.conversationId);
+		const end = now + Math.min(projection.seconds * 1000, RUN_TIMEOUT) + idle;
+		if (last && now <= last.end) last.end = Math.max(last.end, end);
+		else {
+			if (last) count(last);
+			sandboxes.set(projection.conversationId, { start: now, end });
 		}
 	}
 	for (const span of sandboxes.values()) count(span);
@@ -381,7 +401,10 @@ export function nestedRuns(
 export function finishRun(db: Db, id: string, finish: Required<RunFinish>): boolean {
 	const closed = db
 		.update(runs)
-		.set(finish)
+		.set({
+			...finish,
+			cost: finish.cost === null ? sql`coalesce(${runs.cost}, ${runs.reservedCost})` : finish.cost,
+		})
 		.where(
 			and(
 				eq(runs.id, id),

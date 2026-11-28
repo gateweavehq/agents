@@ -83,7 +83,7 @@ export interface ConversationTurn {
 	/** The configured template, before a delivery fills its placeholders. */
 	triggerPrompt?: string;
 	/** The ceiling the run reserved as it began: cost in millionths of a dollar, sandbox seconds. */
-	reservation: { costMicros: number | null; seconds: number | null };
+	reservation?: { costMicros: number | null; seconds: number | null };
 	runId: string;
 }
 

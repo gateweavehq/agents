@@ -1136,7 +1136,11 @@ ${runPageNote(runs, turn.runId)}`
 						} catch (error) {
 							console.error("Could not check whether the agent was paused", failureForLogs(error));
 						}
-						if (budget && !stopReason && this.#costReached(runId, turn.reservation.costMicros)) {
+						if (
+							budget &&
+							!stopReason &&
+							this.#costReached(runId, turn.reservation?.costMicros ?? null)
+						) {
 							stopReason = BUDGET_STOP;
 						}
 						return stopReason;
@@ -1391,7 +1395,7 @@ ${runPageNote(runs, turn.runId)}`
 				const state = {
 					agentId: agent.agentId,
 					stopReason: null as string | null,
-					costMicros: reservation.costMicros,
+					costMicros: reservation?.costMicros ?? null,
 					token,
 					tools: offered ? tools : null,
 					signal: calls.signal,

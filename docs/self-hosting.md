@@ -428,7 +428,8 @@ bill in hand:
 - `SANDBOX_TURN_COST` sets what one turn reserves in dollars against the workspace's model-key
   caps and the Workers AI daily limit for that workspace. Once metered model cost reaches that
   amount, the runtime refuses the next model request. `SANDBOX_TURN_SECONDS` sets what a turn
-  reserves against the workspace's sandbox minute limits.
+  reserves against the workspace's sandbox minute limits at admission. Admission includes projected
+  idle time within the current UTC period. Running turns can carry over into the next period.
 - Workspace admission checks account for outstanding reservations in the same write that starts
   the run. When metered use is reported, it replaces the reservation. If an interrupted turn's
   use is unknown, the reservation stays as its estimate.
