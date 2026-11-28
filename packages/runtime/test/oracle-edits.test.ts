@@ -252,7 +252,7 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 			"head:package.json": JSON.stringify({ name: "x", scripts: { test: "jest" }, ...after }),
 		});
 		expect((await call()).draft).toBe(true);
-		expect(proposed[0]?.body).toContain("- `package.json`: modified (package script)");
+		expect(proposed[0]?.body).toContain("- `package.json`: modified (package config)");
 	});
 	it("does not flag a package.json whose dependency version, other listed keys or key order changed", async () => {
 		const { call, proposed } = setup([{ path: "package.json", status: "modified" }], {
@@ -273,6 +273,95 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 		const outcome = await call();
 		expect(outcome.draft).toBeUndefined();
 		expect(proposed[0]?.draft).toBeUndefined();
+	});
+	it.each([
+		[
+			"the runner a script names",
+			{ scripts: { test: "jest" }, devDependencies: { jest: "^29.0.0" } },
+			{ scripts: { test: "jest" }, devDependencies: { jest: "^30.0.0" } },
+		],
+		[
+			"a dependency becomes an alias",
+			{ scripts: { test: "vitest run" }, dependencies: { zod: "1.0.0" } },
+			{ scripts: { test: "vitest run" }, dependencies: { zod: "npm:fake-zod@1.0.0" } },
+		],
+		[
+			"a dependency becomes a bare local path",
+			{ scripts: { test: "vitest run" }, dependencies: { zod: "1.0.0" } },
+			{ scripts: { test: "vitest run" }, dependencies: { zod: "./fixtures/fake-zod" } },
+		],
+		[
+			"an override becomes a local path",
+			{ scripts: { test: "vitest run" }, overrides: { vitest: "1.0.0" } },
+			{ scripts: { test: "vitest run" }, overrides: { vitest: "file:../vitest" } },
+		],
+		[
+			"a resolution becomes a git address",
+			{ scripts: { test: "jest" }, resolutions: { leftpad: "1.0.0" } },
+			{
+				scripts: { test: "jest" },
+				resolutions: { leftpad: "git+https://github.com/acme/leftpad.git" },
+			},
+		],
+		[
+			"a nested override becomes an alias",
+			{ scripts: { test: "vitest run" }, overrides: { "react-scripts": { jest: "27.0.0" } } },
+			{
+				scripts: { test: "vitest run" },
+				overrides: { "react-scripts": { jest: "npm:fake-jest@27.0.0" } },
+			},
+		],
+		[
+			"a version-qualified override key names the runner a script uses",
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts@^5.0.0": { jest: "27.0.0" } },
+			},
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts@^5.0.0": { jest: "28.0.0" } },
+			},
+		],
+		[
+			"the package behind an explicit runner path",
+			{
+				scripts: { test: "node --experimental-vm-modules node_modules/jest/bin/jest.js" },
+				devDependencies: { jest: "^29.6.0" },
+			},
+			{
+				scripts: { test: "node --experimental-vm-modules node_modules/jest/bin/jest.js" },
+				devDependencies: { jest: "^29.7.0" },
+			},
+		],
+		[
+			"a parent-qualified resolution for the runner a script names",
+			{
+				scripts: { test: "react-scripts test" },
+				resolutions: { "react-scripts/jest": "27.0.0" },
+			},
+			{
+				scripts: { test: "react-scripts test" },
+				resolutions: { "react-scripts/jest": "28.0.0" },
+			},
+		],
+		[
+			"a nested override of the runner a script names changes",
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts": { jest: "27.0.0" } },
+			},
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts": { jest: "28.0.0" } },
+			},
+		],
+	])("flags a package.json when %s changes", async (_name, before, after) => {
+		const { call, proposed } = setup([{ path: "package.json", status: "modified" }], {
+			"base:package.json": JSON.stringify({ name: "x", ...before }),
+			"head:package.json": JSON.stringify({ name: "x", ...after }),
+		});
+		expect((await call()).draft).toBe(true);
+		expect(proposed[0]?.body).toContain("- `package.json`: modified (package config)");
 	});
 	it("does not create, update or convert a pull request once the turn is stopped during the review", async () => {
 		const stopped = new AbortController();
