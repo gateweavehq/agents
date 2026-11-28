@@ -1,5 +1,5 @@
 /**
- * An engine's model requests, metered where they leave the sandbox (AGT-49). `SandboxOutbound`
+ * An engine's model requests, metered where they leave the sandbox. `SandboxOutbound`
  * sees every request a CLI makes for the model, since it adds the workspace's key to it. So the
  * run's trace takes its model spans from there, one per request, with the usage the provider's
  * answer reports, and not from the CLI's own events, which leave out what a CLI does not print:

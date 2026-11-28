@@ -28,7 +28,7 @@ it("offers list_workspaces, which returns what access gives it and nothing more"
 	await client.close();
 });
 
-it("offers run_agent only to a token with agents:run, and hands it the ask (AGT-155)", async () => {
+it("offers run_agent only to a token with agents:run, and hands it the ask", async () => {
 	const asked: unknown[] = [];
 	const access: AgentsAccess = {
 		workspaces: async () => [],

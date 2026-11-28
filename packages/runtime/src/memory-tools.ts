@@ -1,5 +1,5 @@
 /**
- * The workspace's memory as tools for one turn (AGT-107): `remember`, `recall` and `forget`, for
+ * The workspace's memory as tools for one turn: `remember`, `recall` and `forget`, for
  * an agent whose definition has memory on. The registry keeps the memories and decides everything
  * (`memory.ts` in the registry package): the tools name only the run they were called in, and the
  * registry reads from that run's row which agent asks and what started the run, and decides

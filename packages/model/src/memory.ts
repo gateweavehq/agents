@@ -1,5 +1,5 @@
 /**
- * Agent memory (AGT-107): what a workspace's agents and people have noted down to be recalled
+ * Agent memory: what a workspace's agents and people have noted down to be recalled
  * later. A memory is a short text of one kind, about the workspace, an agent, a repository or a
  * person, and says who or what wrote it and in which run. The registry stores them and decides
  * which are trusted; see "Memory" in docs/architecture.md.

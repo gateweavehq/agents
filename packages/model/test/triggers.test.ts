@@ -153,7 +153,7 @@ function about(type: string, labels: unknown[], rest: Record<string, unknown> = 
 	return JSON.stringify({
 		type,
 		timestamp: "2026-10-29T12:00:00.000Z",
-		data: { issue: { id: "TRK-1", title: "Login fails", labels }, ...rest },
+		data: { issue: { id: "TST-1", title: "Login fails", labels }, ...rest },
 	});
 }
 
@@ -258,7 +258,7 @@ it("starts again when a Track source reopens the member's issue, and on nothing 
 			timestamp: "2026-11-20T12:00:00.000Z",
 			data: {
 				actor,
-				issue: { id: "issue-1", key: "WEB-8", assigneeId: assignee, signal: { key: "k", state } },
+				issue: { id: "issue-1", key: "TST-8", assigneeId: assignee, signal: { key: "k", state } },
 				updatedFrom,
 			},
 		});

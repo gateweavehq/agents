@@ -201,7 +201,7 @@ export function AgentDialog({
 		const environmentPin = pinFor(environment, pinnedEnv, sets);
 		try {
 			// An edit starts from the agent as it is, so a field this form has no control for yet
-			// goes back as it was instead of to its default (AGT-135): `formInput`.
+			// goes back as it was instead of to its default: `formInput`.
 			const input = formInput(agent ?? null, {
 				name: name.trim(),
 				description: description.trim() || null,
