@@ -222,7 +222,7 @@ describe("one delivery per final head (criterion 1)", () => {
 	});
 
 	it("makes none outside the repository a repository-bound reviewer is for", async () => {
-		const { stub, builder, trigger } = await workspace();
+		const { stub, builder, trigger, repositoryId } = await workspace();
 		const [otherId = ""] = await stub.syncRepositories([github("8", "other")]);
 		await stub.deleteTrigger(trigger.id);
 		const reviewer = await stub.createAgent({
@@ -253,6 +253,22 @@ describe("one delivery per final head (criterion 1)", () => {
 		});
 		expect(await stub.listPullRequestReviews()).toEqual([
 			expect.objectContaining({ repository: "acme/other", triggerId: made.trigger.id }),
+		]);
+
+		// The scope is checked again as the queued review starts: the reviewer may have moved meanwhile.
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"UPDATE agent_definitions SET repository_id = ? WHERE agent_id = ?",
+				repositoryId,
+				reviewer.id,
+			);
+		});
+		await alarm(stub);
+		expect(await stub.listPullRequestReviews()).toEqual([
+			expect.objectContaining({
+				status: "failed",
+				reason: expect.stringContaining("another repository"),
+			}),
 		]);
 	});
 });

@@ -1950,6 +1950,16 @@ export class RegistryDO extends DurableObject {
 				),
 			);
 		}
+		const bound = this.#db
+			.select({ repositoryId: schema.agentDefinitions.repositoryId })
+			.from(schema.agentDefinitions)
+			.where(eq(schema.agentDefinitions.agentId, agent.agentId))
+			.get()?.repositoryId;
+		if (bound && bound !== review.repositoryId) {
+			return settle(
+				refused(`${agent.name} is for another repository, so it cannot review this pull request`),
+			);
+		}
 		const repository = reviewRepository(this.#db, review);
 		if ("problem" in repository) return settle(refused(repository.problem, "needs-mapping"));
 		const prepared = await this.#prepareTurn(conversation, agent, null, true, repository);
