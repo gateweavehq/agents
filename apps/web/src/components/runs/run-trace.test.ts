@@ -2,49 +2,7 @@ import type { RunSpan, ToolSpan } from "@gateweave/agents-model";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { RunEntry } from "#/lib/runs";
-import { Trace } from "./$workspace/runs.$runId";
-
-const run: RunEntry = {
-	id: "run",
-	agentId: "agent",
-	agentName: "Coder",
-	conversationId: "conversation",
-	startedBy: "user",
-	provider: "anthropic",
-	model: "claude-sonnet-5-5",
-	status: "succeeded",
-	error: null,
-	steps: 1,
-	inputTokens: 10,
-	outputTokens: 5,
-	cachedInputTokens: 0,
-	cost: 70,
-	sandboxSeconds: null,
-	startedAt: 0,
-	endedAt: 1_000,
-	parentRunId: null,
-	parentSpanId: null,
-	rootRunId: null,
-	edge: null,
-	depth: 0,
-	teamPath: null,
-	triggerId: null,
-	triggerName: null,
-	pullRequest: null,
-	replayOf: null,
-	total: {
-		runs: 1,
-		inputTokens: 10,
-		outputTokens: 5,
-		cost: 70,
-		unpriced: 0,
-		running: 0,
-		sandboxSeconds: 0,
-		sandboxCost: 0,
-	},
-	startedByName: "Ada",
-};
+import { RunTrace } from "./run-trace";
 
 function tool(span: Partial<ToolSpan> & Pick<ToolSpan, "id">): RunSpan {
 	return {
@@ -63,10 +21,7 @@ function tool(span: Partial<ToolSpan> & Pick<ToolSpan, "id">): RunSpan {
 }
 
 function render(trace: RunSpan[]) {
-	return renderToString(createElement(Trace, { run, trace, nested: [] })).replaceAll(
-		"<!-- -->",
-		"",
-	);
+	return renderToString(createElement(RunTrace, { trace })).replaceAll("<!-- -->", "");
 }
 
 describe("the run trace's target-rule banner", () => {
