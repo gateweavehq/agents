@@ -128,13 +128,27 @@ export async function readReviewDiff(
 	return { error: "The review diff could not be read" };
 }
 
-export async function restoreHead(git: Git, head: string): Promise<string | null> {
+export async function restoreHead(
+	git: Git,
+	head: string,
+	writtenFiles: string[] = [],
+): Promise<string | null> {
 	try {
 		if (isCommitId(head)) {
 			const reset = await git(["reset", "--hard", "--quiet", head]);
 			if (reset.exitCode === 0 && !reset.timedOut) {
 				const clean = await git(["clean", "-fdq"]);
-				if (clean.exitCode === 0 && !clean.timedOut) return null;
+				if (clean.exitCode !== 0 || clean.timedOut) throw new Error("clean failed");
+				if (writtenFiles.length > 0) {
+					const written = await git([
+						"clean",
+						"-fdqx",
+						"--",
+						...writtenFiles.map((path) => `:(literal)${path}`),
+					]);
+					if (written.exitCode !== 0 || written.timedOut) throw new Error("clean failed");
+				}
+				return null;
 			}
 		}
 	} catch {
