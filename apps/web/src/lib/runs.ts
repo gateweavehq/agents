@@ -152,7 +152,7 @@ export const getRun = createServerFn({ method: "GET" })
 	);
 
 /**
- * What a reply's run used, for the line under it in Chat (AGT-139); null when the caller may not
+ * What a reply's run used, for the line under it in Chat; null when the caller may not
  * see the run, as `getRun` decides.
  */
 export const runSummary = createServerFn({ method: "GET" })
@@ -172,7 +172,7 @@ export const runSummary = createServerFn({ method: "GET" })
 	});
 
 /**
- * Replays a run from its model request `step` (AGT-73): a new conversation of the caller's gets
+ * Replays a run from its model request `step`: a new conversation of the caller's gets
  * the run's conversation up to that request, and the agent, as it is now, answers from there.
  * The registry decides who may: whoever started the run, and owners and admins a trigger's run.
  * Returns the new run, whose page links back to this one.

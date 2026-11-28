@@ -50,7 +50,10 @@ export function readyMadeMcpProblems(
 	for (const asset of setup.assets) {
 		if (asset.kind !== "mcp-server") continue;
 		const read = readMcpConnection(asset.files);
-		if (!read.ok) continue;
+		if (!read.ok) {
+			problems.push(`${asset.name}: ${read.message}`);
+			continue;
+		}
 		const { connection } = read;
 		const [file] = asset.files;
 		const remoteKeys = file?.path.endsWith(".toml") ? REMOTE_TOML_KEYS : REMOTE_KEYS;

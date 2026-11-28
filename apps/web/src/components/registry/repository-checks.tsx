@@ -24,7 +24,7 @@ function keyed(checks: string[]): { key: string; command: string }[] {
 }
 
 /**
- * A repository's checks (AGT-142): the commands `open_pull_request` runs on an agent's work before
+ * A repository's checks: the commands `open_pull_request` runs on an agent's work before
  * it pushes it. Every member sees them; owners and admins set them, one to a line.
  */
 export function RepositoryChecks({

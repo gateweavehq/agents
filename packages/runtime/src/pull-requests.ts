@@ -3,13 +3,13 @@
  * in the repository, pushes the conversation's branch (`RunnerSandbox.push`), and opens a pull
  * request from it against the default branch, or pushes to the one the branch has open.
  *
- * When the repository has checks (AGT-142, `./checks.ts`), the tool runs them between the commit
+ * When the repository has checks (`./checks.ts`), the tool runs them between the commit
  * and the push. A round that fails pushes and opens nothing, and the model reads what failed; the
  * third failed round of a run pushes the work anyway and opens the pull request as a draft. The
  * body then ends with a section the tool writes, which says what ran. A repository without checks
  * gets none of this: its pull requests are made as before.
  *
- * A call that is retried or replayed (AGT-147) finds what the first one proposed in the
+ * A call that is retried or replayed finds what the first one proposed in the
  * conversation's memory and returns it, so the checks do not run twice and a pull request the
  * branch's open one cannot stand in for is not made again.
  *
@@ -245,7 +245,7 @@ export interface PullRequestMemoryEntry {
 
 /**
  * What a conversation's `open_pull_request` calls proposed, kept past the turn so a retried or
- * replayed call returns the first outcome instead of repeating the work (AGT-147).
+ * replayed call returns the first outcome instead of repeating the work.
  */
 export interface PullRequestMemory {
 	/** The proposal the latest call under this key recorded, if there was one. */

@@ -73,7 +73,7 @@ describe("Track triage", () => {
 		// A turn reaches Track's MCP server at its root, with the key in its header.
 		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
 		const conversation = await stub.startConversation(agent.id, ADA);
-		const turn = await stub.beginTurn(conversation?.id ?? "", "Triage TRK-1");
+		const turn = await stub.beginTurn(conversation?.id ?? "", "Triage TST-1");
 		if ("status" in turn) throw new Error(turn.message);
 		expect(turn.agent).toMatchObject({ provider: "anthropic", model: "claude-haiku-5-5" });
 		expect(turn.mcpServers).toEqual([
