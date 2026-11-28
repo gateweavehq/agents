@@ -200,6 +200,32 @@ it("reads a path Git quoted, octal escapes and all", async () => {
 	expect(changes?.files[0]?.path).toBe("é.ts");
 });
 
+it("decodes Git's quoted paths fully", async () => {
+	const cases: [string, string][] = [
+		[String.raw`a\tb.ts`, "a\tb.ts"],
+		[String.raw`x\"y`, 'x"y'],
+		[String.raw`x\\y`, "x\\y"],
+		[String.raw`\360\237\230\200.ts`, "😀.ts"],
+		["literal-😀.ts", "literal-😀.ts"],
+	];
+	for (const [shown, path] of cases) {
+		const patch = [
+			`diff --git "a/${shown}" "b/${shown}"`,
+			`--- "a/${shown}"`,
+			`+++ "b/${shown}"`,
+			"@@ -0,0 +1 @@",
+			"+x",
+			"",
+		].join("\n");
+		const { git } = fakeGit({
+			"add --all": { exitCode: 0, output: "", timedOut: false },
+			"diff --cached": { exitCode: 0, output: patch, timedOut: false },
+		});
+		const changes = await turnChanges(git, TREE);
+		expect(changes?.files[0]?.path).toBe(path);
+	}
+});
+
 it("takes a credential out when its key is quoted, as JSON writes it", async () => {
 	const patch = [
 		"diff --git a/config.json b/config.json",

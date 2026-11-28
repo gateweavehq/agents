@@ -1,5 +1,5 @@
 /**
- * Connecting Gateweave Track in one step (AGT-119), the Worker's half. Track's half is its
+ * Connecting Gateweave Track in one step, the Worker's half. Track's half is its
  * `/connect/agent` page and `/api/connect/*` routes.
  *
  * 1. An owner or admin presses "Connect Track". `beginConnect` checks what it can before they

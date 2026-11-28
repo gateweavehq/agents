@@ -1,5 +1,5 @@
 /**
- * GitLab connections (AGT-79): a GitLab the workspace reaches with an access token. Its projects
+ * GitLab connections: a GitLab the workspace reaches with an access token. Its projects
  * are repositories with `provider: "gitlab"`, whose `installationId` is the connection's id, so
  * reconciling and removing them works as for a GitHub App installation.
  */

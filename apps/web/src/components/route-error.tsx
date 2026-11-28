@@ -6,7 +6,7 @@ import { referenceIn } from "#/lib/error-reference";
 /**
  * What a page shows when it fails to load, with a retry. Never the error's own message: it comes
  * from the server, and what failed there may have put anything in it, as a failed database query
- * once put its statement and values (AGT-133). A reference, if the failure has one, is shown so
+ * once put its statement and values. A reference, if the failure has one, is shown so
  * that whoever runs the server can find it in the log.
  */
 export function RouteError({ error }: ErrorComponentProps) {

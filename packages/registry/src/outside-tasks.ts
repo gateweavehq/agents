@@ -1,6 +1,6 @@
 /**
  * Outside tasks: an MCP client with the `agents:run` scope hands an agent of the workspace a task
- * (`run_agent` on /mcp, AGT-155). The registry admits the task the way it admits a trigger's
+ * (`run_agent` on /mcp). The registry admits the task the way it admits a trigger's
  * delivery: the agent must exist and have tasks from outside allowed, the agent
  * must be runnable, and the agent is held to its runs per minute and per day. Each task opens a
  * conversation of its own, started by the person whose token asked, and the runtime begins its

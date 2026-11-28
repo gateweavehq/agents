@@ -54,9 +54,8 @@ async function expectStoppedRun(page: Page, slug: string) {
 }
 
 /**
- * The line a turn shows while nothing of its reply has come: its progress label when it has one
- * (AGT-139 — this agent's silent MCP server keeps it at "Connecting tools"), "is thinking…" when
- * it has none.
+ * The line a turn shows while nothing of its reply has come: its progress label when it has one,
+ * "is thinking…" when it has none. This agent's silent MCP server keeps it at "Connecting tools".
  */
 const WAITING = /is thinking…|Connecting tools/;
 
