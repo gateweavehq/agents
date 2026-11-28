@@ -6,7 +6,7 @@ import { ask } from "./chat-socket";
 import { anthropicToolCall, FakeModels } from "./fake-models";
 import { callServerFn } from "./server-fn";
 
-// The workspace's memory (AGT-107): the Memory page, who may change what, and the audit log,
+// The workspace's memory: the Memory page, who may change what, and the audit log,
 // which hears what people and agents did and never a memory's whole text.
 
 const origin = "https://agents.test";

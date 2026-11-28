@@ -23,7 +23,7 @@ const task = (agent: string, requestId: string, text = "Review the change.") => 
 	task: text,
 });
 
-describe("outside tasks (AGT-155)", () => {
+describe("outside tasks", () => {
 	it("refuses an agent without outside tasks allowed, and admits one that has them", async () => {
 		const stub = registry();
 		const closed = await stub.createAgent(reviewer());

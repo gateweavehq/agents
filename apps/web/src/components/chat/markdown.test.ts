@@ -66,9 +66,9 @@ describe("Markdown", () => {
 
 	it("makes a bare address a link that opens safely, and keeps only http(s) links", () => {
 		const html = render(
-			"Done: https://track.example.com/gateweave/issue/TRK-137 and [m](mailto:a@b.c)",
+			"Done: https://track.example.com/gateweave/issue/TST-137 and [m](mailto:a@b.c)",
 		);
-		expect(html).toContain('href="https://track.example.com/gateweave/issue/TRK-137"');
+		expect(html).toContain('href="https://track.example.com/gateweave/issue/TST-137"');
 		expect(html).toContain('target="_blank"');
 		expect(html).toContain("noopener noreferrer");
 		expect(html).not.toContain("mailto:");

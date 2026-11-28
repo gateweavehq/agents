@@ -1,5 +1,5 @@
 /**
- * The two server-to-server calls of connecting Track (AGT-119): trading the one-time code for the
+ * The two server-to-server calls of connecting Track: trading the one-time code for the
  * credentials and undoing what Track made when the rest failed. Neither follows a redirect, both
  * give up after ten seconds, and the answer is size-capped and checked against the approval's
  * schema before any of it is used. Nothing here logs or returns a

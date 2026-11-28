@@ -1,5 +1,5 @@
 /**
- * Coding agents as an agent's engine (AGT-44). A turn of an agent whose engine is not Gateweave's
+ * Coding agents as an agent's engine. A turn of an agent whose engine is not Gateweave's
  * own loop runs the coding agent's CLI in the conversation's sandbox: Claude Code
  * (`./claude-code.ts`), Codex (`./codex.ts`) or OpenCode (`./opencode.ts`). The CLI reads the
  * repository's own instructions and settings as it would on a laptop and works with its own tools,

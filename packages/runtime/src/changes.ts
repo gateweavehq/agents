@@ -1,5 +1,5 @@
 /**
- * What a turn changed in its sandbox's checkout, as a `CHANGES_PART` (AGT-139). The base is a tree
+ * What a turn changed in its sandbox's checkout, as a `CHANGES_PART`. The base is a tree
  * of the checkout's state before the turn's work: `changesBase` writes it, `turnChanges` diffs the
  * checkout against it once the turn is done. Both run git through `./git-work.ts`'s `Git`, so a
  * sandbox that is not a git checkout, or one whose diff cannot be read, answers null and the reply
@@ -9,7 +9,7 @@ import type { ChangesFile, ChangesPartData } from "@gateweave/agents-model";
 import type { Git } from "./git-work";
 
 /**
- * What a conversation reaches of its sandbox to sum up a turn's changes (AGT-139). A sandbox
+ * What a conversation reaches of its sandbox to sum up a turn's changes. A sandbox
  * without a repository checked out answers null to both.
  */
 export interface ChangesPort {

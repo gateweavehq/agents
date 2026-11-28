@@ -613,9 +613,9 @@ describe("an agent whose engine is Claude Code", () => {
 					},
 					usage,
 				),
-				toolResult("toolu_search", JSON.stringify({ issues: ["TRK-1"] })),
+				toolResult("toolu_search", JSON.stringify({ issues: ["TST-1"] })),
 				anthropicAnswer(),
-				assistant("msg_2", { type: "text", text: "TRK-1 is flaky." }, usage),
+				assistant("msg_2", { type: "text", text: "TST-1 is flaky." }, usage),
 				result(),
 			],
 		});
@@ -623,7 +623,7 @@ describe("an agent whose engine is Claude Code", () => {
 		const turn = await ask(socket, "Which issues are flaky?");
 		socket.close();
 
-		expect(turn).toMatchObject({ text: "TRK-1 is flaky.", error: null });
+		expect(turn).toMatchObject({ text: "TST-1 is flaky.", error: null });
 		const raw = turn.raw.join("\n");
 		expect(raw).toContain("acme__search");
 		expect(raw).not.toContain("mcp__gateweave");

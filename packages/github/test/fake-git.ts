@@ -13,7 +13,7 @@
  * (this fake says no, and `commitChanges` never asks); and which of the names `repositoryPathProblem` refuses GitHub would take
  * (this fake takes them all but `.git`).
  *
- * It began as the stand-in of the spike for runs without a container (AGT-122) and uses nothing
+ * It began as the stand-in of the spike for runs without a container and uses nothing
  * but `fetch`'s own types and `crypto.subtle`, so a suite in workerd can use it as one in Node
  * does: `vi.stubGlobal("fetch", fake.fetch)`.
  *
