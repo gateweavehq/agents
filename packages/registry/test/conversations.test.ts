@@ -472,7 +472,7 @@ describe("turns with Workers AI", () => {
 					"This workspace has used its Workers AI for today, $1.5, so Scout cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.",
 			});
 		});
-		// Workers AI's platform budget stays visible too, classified by its own message.
+		// The Workers AI refusal stays visible too, classified by its own message.
 		const afterRefusal = await stub.listRuns();
 		expect(afterRefusal).toHaveLength(beforeRefusal.length + 1);
 		expect(afterRefusal[0]).toMatchObject({

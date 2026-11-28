@@ -1651,7 +1651,7 @@ export class RegistryDO extends DurableObject {
 		const plan = this.#planTurn(parties, true);
 		if ("status" in plan) return plan;
 		const { agent, position } = plan;
-		// A pause or sandbox-limit refusal is a turn's outcome too: record it where the person looks
+		// A pause or limit refusal is a turn's outcome too: record it where the person looks
 		// for what became of their message. Other refusals still say why only in the conversation.
 		const decline = (refusal: TurnRefusal): ProviderRefusal => {
 			const record =
@@ -2283,7 +2283,7 @@ export class RegistryDO extends DurableObject {
 		return null;
 	}
 
-	/** The provider and its budget checks repeated as a run begins, after another run may have closed. */
+	/** Provider and budget checks repeated as a run begins, after another run may have closed. */
 	#providerAdmissionRefusal(agent: AgentSnapshot): TurnRefusal | null {
 		if (this.standInTurns()) return null;
 		return this.#providerRefusal(agent);
