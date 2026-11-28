@@ -10,6 +10,7 @@ const STATUSES: Record<RunStatus, { label: string; className: string }> = {
 	stopped: { label: "Stopped", className: "text-muted-foreground" },
 	interrupted: { label: "Interrupted", className: "text-amber-700 dark:text-amber-400" },
 	"step-limit": { label: "Step limit reached", className: "text-amber-700 dark:text-amber-400" },
+	refused: { label: "Refused", className: "text-destructive" },
 };
 
 /** How a run ended, or that it is still going. */
