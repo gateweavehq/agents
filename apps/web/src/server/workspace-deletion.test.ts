@@ -24,7 +24,10 @@ const world = vi.hoisted(() => {
 	const markedDeleted = new Set<string>();
 	const deleted: string[] = [];
 	/** Runs inside a registry's destroy, to change D1 while a deletion is under way. */
-	const meanwhile = { onDestroy: async (_place: string, _workspaceId: string) => {} };
+	const meanwhile = {
+		onDestroy: async (_place: string, _workspaceId: string) => {},
+		onDestroyed: (_place: string, _workspaceId: string, _ids: string[]) => {},
+	};
 	function placeOf(place: string) {
 		let workspaces = registries.get(place);
 		if (!workspaces) {
@@ -72,6 +75,7 @@ const world = vi.hoisted(() => {
 							.map(({ id }) => id),
 					noteConversationsDestroyed: async (ids: string[]) => {
 						for (const id of ids) forgottenIn(place, workspaceId).add(id);
+						meanwhile.onDestroyed(place, workspaceId, ids);
 					},
 					noteConversationDeletionFailed: async (ids: string[]) => {
 						for (const id of ids) {
@@ -164,6 +168,7 @@ beforeEach(async () => {
 	world.markedDeleted.clear();
 	world.deleted.length = 0;
 	world.meanwhile.onDestroy = async () => {};
+	world.meanwhile.onDestroyed = () => {};
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	vi.spyOn(console, "log").mockImplementation(() => {});
 	await db.delete(workspaceDeletion).run();
@@ -300,6 +305,7 @@ it("keeps the note when a move records a new place during the deletion, and dele
 	expect(world.placeOf("fr").has("racing-on")).toBe(true);
 
 	world.meanwhile.onDestroy = async () => {};
+	world.meanwhile.onDestroyed = () => {};
 	await retryWorkspaceDeletions(db);
 	for (const id of ["racing", "racing-on"]) {
 		expect(await note(id)).toBeUndefined();
@@ -393,4 +399,39 @@ it("deletes the deployment's place too when the workspace has no location row", 
 		expect.arrayContaining(["/unplaced:one", "/registry", "eu/unplaced:one", "eu/registry"]),
 	);
 	expect(await note("unplaced")).toBeUndefined();
+});
+
+it("shares the retry budget across places instead of starving an old copy", async () => {
+	await placed("moved", "eu", "");
+	await noted("moved");
+	world.placeOf("eu").set(
+		"moved",
+		Array.from({ length: 200 }, (_, index) => `conversation-${index}`),
+	);
+	world.placeOf("").set("moved", ["conversation-0"]);
+	for (let index = 0; index < 200; index++) world.failing.add(`eu/moved:conversation-${index}`);
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted).toContain("/moved:conversation-0");
+	expect(world.deleted.filter((name) => name.startsWith("eu/moved:"))).toHaveLength(0);
+	expect(world.placeOf("").has("moved")).toBe(false);
+	expect(world.placeOf("eu").has("moved")).toBe(true);
+});
+
+it("keeps a registry whose conversation appears after the first deletion list", async () => {
+	await placed("racing", "eu");
+	await noted("racing");
+	world.placeOf("eu").set("racing", ["one"]);
+	world.meanwhile.onDestroyed = (place, workspaceId) => {
+		if (place === "eu" && workspaceId === "racing") {
+			world.placeOf("eu").set("racing", ["one", "late"]);
+		}
+	};
+
+	await expect(finishWorkspaceDeletion(db, "racing")).rejects.toThrow(
+		"1 of the workspace's conversations are left for the next try",
+	);
+	expect(world.deleted).toContain("eu/racing:one");
+	expect(world.deleted).not.toContain("eu/registry");
+	expect(world.placeOf("eu").has("racing")).toBe(true);
 });

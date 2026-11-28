@@ -66,14 +66,27 @@ export async function deleteWorkspaceData(
 	if (target) places.add(target);
 	let left = 0;
 	const failures: unknown[] = [];
-	for (const place of places) {
+	const ordered = [...places];
+	for (const [index, place] of ordered.entries()) {
+		// Every place gets a share before the next one may use what it did not. Otherwise a copy
+		// with hundreds of failing conversations can spend the daily budget before an old copy's
+		// healthy ones are even tried.
+		let share = budget;
+		let allowed: { conversations: number } | undefined;
+		let allowance = 0;
+		if (budget) {
+			allowance = Math.ceil(budget.conversations / (ordered.length - index));
+			allowed = { conversations: allowance };
+			share = allowed;
+		}
 		try {
 			left += await deleteObjectsIn(
 				place,
 				workspaceId,
 				place === location?.movedFrom && place !== location.jurisdiction,
-				budget,
+				share,
 			);
+			if (budget && allowed) budget.conversations -= allowance - allowed.conversations;
 		} catch (error) {
 			failures.push(error);
 			console.error("A deleted workspace's registry cleanup failed", {
@@ -278,6 +291,10 @@ async function deleteObjectsIn(
 		if (failed.length > 0) await registry.noteConversationDeletionFailed(failed);
 	}
 	if (left > 0) return left;
+	// An admission that was already awaiting GitHub or a secret can have added a conversation after
+	// the first list. Do not destroy the registry while it still names one for the next retry.
+	const remaining = await registry.conversationsToDestroy();
+	if (remaining.length > 0) return remaining.length;
 	await registry.destroy();
 	return 0;
 }
