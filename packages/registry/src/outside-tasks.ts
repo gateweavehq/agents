@@ -95,7 +95,7 @@ export function admitOutsideTask(
 		return {
 			status: "refused",
 			message:
-				"That agent does not allow tasks from outside; a workspace owner or admin can turn it on",
+				'That agent does not allow tasks from outside. A workspace owner or admin can turn on "Tasks from MCP clients" in the agent\'s settings.',
 		};
 	}
 	const refusal = targetRefusal(db, { kind: "agent", agentId: agent.id });
