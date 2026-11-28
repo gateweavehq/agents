@@ -2275,11 +2275,13 @@ export class RegistryDO extends DurableObject {
 		const month = utcMonth(now);
 		// A running turn counts at the ceiling it reserved, and the turn asking counts its own:
 		// the reservation decides here, in the same write that begins the run.
-		const ceiling = (this.#turnReservation().costMicros ?? 0) / 1_000_000;
+		// Cost math stays in millionths of a dollar: floats would refuse a turn that fits exactly.
+		const ceiling = this.#turnReservation().costMicros ?? 0;
 		if (monthly !== null) {
-			const spent = keyedProviderCost(this.#db, month.start, month.end) / 1_000_000;
-			const reserved = keyedProviderReserved(this.#db, month.start, month.end) / 1_000_000;
-			if (spent + reserved >= monthly || spent + reserved + ceiling > monthly) {
+			const cap = Math.round(monthly * 1_000_000);
+			const spent = keyedProviderCost(this.#db, month.start, month.end);
+			const reserved = keyedProviderReserved(this.#db, month.start, month.end);
+			if (spent + reserved >= cap || spent + reserved + ceiling > cap) {
 				return refused(
 					`This workspace has used its model-key monthly cap, $${monthly}, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
 					"budget-limit",
@@ -2288,10 +2290,11 @@ export class RegistryDO extends DurableObject {
 			}
 		}
 		if (daily !== null) {
+			const cap = Math.round(daily * 1_000_000);
 			const today = utcDay(now);
-			const spent = keyedProviderCost(this.#db, today.start, today.end) / 1_000_000;
-			const reserved = keyedProviderReserved(this.#db, today.start, today.end) / 1_000_000;
-			if (spent + reserved >= daily || spent + reserved + ceiling > daily) {
+			const spent = keyedProviderCost(this.#db, today.start, today.end);
+			const reserved = keyedProviderReserved(this.#db, today.start, today.end);
+			if (spent + reserved >= cap || spent + reserved + ceiling > cap) {
 				const resetsOn = new Date(today.end).toISOString().slice(0, 10);
 				return refused(
 					`This workspace has used its model-key daily cap, $${daily}, so ${agent.name} cannot answer until the day ends (UTC). It resets on ${resetsOn} at 00:00 UTC.`,
@@ -2341,12 +2344,12 @@ export class RegistryDO extends DurableObject {
 		}
 		const limit = workersAiDailyLimit(settings);
 		if (limit !== null) {
+			const cap = Math.round(limit * 1_000_000);
 			const today = utcDay(Date.now());
-			const reserved =
-				providerReserved(this.#db, ["workers-ai"], today.start, today.end) / 1_000_000;
+			const reserved = providerReserved(this.#db, ["workers-ai"], today.start, today.end);
 			const ceiling = this.#turnReservation().costMicros ?? 0;
-			const spent = this.workersAiSpentToday() + reserved;
-			if (spent >= limit || spent + ceiling / 1_000_000 > limit) {
+			const spent = Math.round(this.workersAiSpentToday() * 1_000_000) + reserved;
+			if (spent >= cap || spent + ceiling > cap) {
 				return refused(
 					`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
 					"budget-limit",

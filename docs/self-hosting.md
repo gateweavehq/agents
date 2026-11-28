@@ -425,12 +425,14 @@ bill in hand:
   time before each sandbox stops. At the cap, new turns that need a sandbox are refused and the
   message names the reset date. Running turns can finish. With email configured, the workspace's
   owners hear at 80% and 100%, once per threshold each month.
-- `SANDBOX_TURN_COST` and `SANDBOX_TURN_SECONDS` set what one turn may cost at most, in dollars
-  and in sandbox seconds. A turn reserves them against every budget as it begins — its own
-  workspace's model-key caps, the server's Workers AI limit, the sandbox minutes and the monthly
-  budget — so two turns admitted at once cannot both fit the last of one. While the turn runs, a
-  cap counts it at its ceiling; when it ends, what it cost replaces the reservation, and when
-  nobody reports what an interrupted turn cost, the reservation stays as the estimate.
+- `SANDBOX_TURN_COST` sets what one turn reserves, in dollars, against the workspace's model-key
+  caps and the server's Workers AI limit, and `SANDBOX_TURN_SECONDS` what it reserves, in sandbox
+  seconds, against the sandbox minutes and the server's monthly budget — `SANDBOX_TURN_COST` does
+  not count toward the sandbox budget, which is priced in seconds. A turn reserves them as it
+  begins, so two turns admitted at once cannot both fit the last of a budget. While the turn runs,
+  a cap counts it at its ceiling; when it ends, what it cost replaces the reservation, and when
+  nobody reports what an interrupted turn cost, the reservation stays as the estimate. They reserve
+  at admission; they do not stop a turn that is already running.
 - `SANDBOX_MONTHLY_BUDGET` limits the server's spending per month. Agents prices sandbox time at
   the most it can cost, so Cloudflare's bill stays under the budget. Set `SANDBOX_ALERT_EMAIL` to
   hear at 80% and at 100%.

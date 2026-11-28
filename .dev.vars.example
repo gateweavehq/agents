@@ -80,9 +80,10 @@ BETTER_AUTH_SECRET=
 # SANDBOX_MONTHLY_MINUTES=
 # Minutes without a request after which a sandbox stops (5 when unset).
 # SANDBOX_IDLE_MINUTES=
-# What one turn may cost at most, in US dollars, and the sandbox seconds it may use at most: a
-# turn reserves them against every budget as it begins, so two turns admitted at once cannot
-# both fit the last of one. No reservation when unset.
+# What one turn reserves, in US dollars, against the model-key caps and the Workers AI limit, and
+# in sandbox seconds, against the sandbox minutes and the monthly sandbox budget: a turn reserves
+# them against every budget as it begins, so two turns admitted at once cannot both fit the last
+# of one. They do not stop a turn that is already running. No reservation when unset.
 # SANDBOX_TURN_COST=
 # SANDBOX_TURN_SECONDS=
 # SANDBOX_MONTHLY_BUDGET=
