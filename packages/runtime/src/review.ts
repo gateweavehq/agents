@@ -268,6 +268,10 @@ export function reviewTools({
 			)
 				return unproven("the test's path is not a path inside the repository");
 			const relative = parts.filter((part) => part !== "" && part !== ".").join("/");
+			// Vitest and the other runners do not run dependency files as tests, however the command
+			// names them: a failure there would be the runner's refusal, not proof of the finding.
+			if (parts.includes("node_modules"))
+				return unproven("the test's path is inside the repository's dependencies");
 			if (oracleKind(relative) !== "test") return unproven("the test's path is not a test file");
 			if (!namesFile(command, relative)) return unproven("the command does not run the test file");
 

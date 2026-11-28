@@ -337,6 +337,23 @@ describe("submitting a review", () => {
 		expect(sandbox.gitCalls).toContainEqual(["check-ignore", "-q", "--", test.path]);
 		expect(sandbox.gitCalls).toContainEqual(["clean", "-fdqx", "--", `:(literal)${test.path}`]);
 	});
+	it("does not mistake a dependency file the runner excludes for a failing proof", async () => {
+		const { call, sandbox } = setup();
+		sandbox.ignored.add("node_modules");
+		sandbox.answers.push(failed);
+		const test = {
+			path: "node_modules/pkg/a.test.ts",
+			content: finding.test.content,
+			command: "pnpm vitest run node_modules/pkg/a.test.ts",
+		};
+		const outcome = await call([{ ...finding, test }]);
+		expect(outcome.findings[0]?.proof).toEqual({
+			proven: false,
+			reason: "the test's path is inside the repository's dependencies",
+		});
+		expect(sandbox.created).toEqual([]);
+		expect(sandbox.commands).toEqual([]);
+	});
 	it.each(["changed", "compare throws", "reset fails", "clean fails"])(
 		"shows a failed cleanup on this submission and refuses the next proof: %s",
 		async (mode) => {
