@@ -87,10 +87,13 @@ class DeletingRegistry extends RegistryDO {
 }
 
 function deletionRegistry(ids: string[], destroy = vi.fn()) {
+	const forgotten = new Set<string>();
 	return {
 		conversationIds: async () => ids,
-		conversationsToDestroy: async () => ids,
-		noteConversationsDestroyed: async () => {},
+		conversationsToDestroy: async () => ids.filter((id) => !forgotten.has(id)),
+		noteConversationsDestroyed: async (destroyed: string[]) => {
+			for (const id of destroyed) forgotten.add(id);
+		},
 		noteConversationDeletionFailed: async () => {},
 		markWorkspaceDeleted: async () => {},
 		destroy,
@@ -209,10 +212,13 @@ it.each(["conversationsToDestroy", "destroy"] as const)(
 		const { db, statement, batch, deleted } = query(location);
 		const failure = new Error("registry unreachable");
 		const events: string[] = [];
+		const liveForgotten = new Set<string>();
 		const liveRegistry = {
 			conversationIds: vi.fn().mockResolvedValue(["one"]),
-			conversationsToDestroy: vi.fn().mockResolvedValue(["one"]),
-			noteConversationsDestroyed: vi.fn().mockResolvedValue(undefined),
+			conversationsToDestroy: vi.fn(async () => (liveForgotten.has("one") ? [] : ["one"])),
+			noteConversationsDestroyed: vi.fn(async (destroyed: string[]) => {
+				for (const id of destroyed) liveForgotten.add(id);
+			}),
 			noteConversationDeletionFailed: vi.fn().mockResolvedValue(undefined),
 			markWorkspaceDeleted: vi.fn().mockResolvedValue(undefined),
 			destroy: vi.fn().mockResolvedValue(undefined),
@@ -222,13 +228,16 @@ it.each(["conversationsToDestroy", "destroy"] as const)(
 			events.push("live registry rejected");
 			throw failure;
 		});
+		const forgotten = new Set<string>();
 		const oldRegistry = {
 			conversationIds: async () => ["one"],
 			conversationsToDestroy: async () => {
 				events.push("sealed registry listed");
-				return ["one"];
+				return forgotten.has("one") ? [] : ["one"];
 			},
-			noteConversationsDestroyed: async () => {},
+			noteConversationsDestroyed: async (destroyed: string[]) => {
+				for (const id of destroyed) forgotten.add(id);
+			},
 			noteConversationDeletionFailed: async () => {},
 			markWorkspaceDeleted: async () => {},
 			destroy: async () => {
@@ -253,6 +262,7 @@ it.each(["conversationsToDestroy", "destroy"] as const)(
 			"live registry rejected",
 			"sealed registry listed",
 			"sealed conversation forgotten",
+			"sealed registry listed",
 			"sealed registry destroy started",
 			"sealed registry destroyed",
 			"deletion rejected",
