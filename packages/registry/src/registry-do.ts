@@ -2648,10 +2648,17 @@ export class RegistryDO extends DurableObject {
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
 		const sealed = await sealer.seal(triggerPlace(trigger), next);
-		const replaced = this.#write(() =>
-			replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now()),
-		);
-		return replaced && { trigger: replaced, secret: next };
+		// The trigger can have been given a schedule while the secret was sealed. Only a row that
+		// still takes webhooks may gain the new credential.
+		return this.#write(() => {
+			const latest = triggerRow(this.#db, trigger);
+			if (!latest) return null;
+			if (latest.pullRequest || latest.schedule != null) {
+				return refused("This trigger has no secret: it takes no webhooks");
+			}
+			const replaced = replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now());
+			return replaced && { trigger: replaced, secret: next };
+		});
 	}
 
 	/**

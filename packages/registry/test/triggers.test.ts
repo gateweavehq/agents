@@ -891,6 +891,27 @@ describe("scheduled triggers", () => {
 		expect(again).toMatchObject({ events: null });
 		expect(new Date(again?.nextRunAt ?? 0).getUTCDay()).toBe(5);
 	});
+
+	it("refuse a rotation whose trigger was scheduled while its secret was sealed", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub);
+		const { trigger } = await create(stub, {
+			name: "New issues",
+			prompt: "Triage it",
+			target: { kind: "agent", agentId },
+		});
+		const rotated = await inside(stub, async (instance) => {
+			const rotating = instance.replaceTriggerSecret(trigger.id);
+			await instance.updateTrigger(trigger.id, { schedule: WEEKDAYS });
+			return rotating;
+		});
+		expect(rotated).toEqual({
+			status: "refused",
+			message: "This trigger has no secret: it takes no webhooks",
+		});
+		const [listed] = await stub.listTriggers();
+		expect(listed).toMatchObject({ id: trigger.id, secretStart: trigger.secretStart });
+	});
 });
 
 it("settles a paused agent's delivery and runs a new delivery after resume", async () => {
