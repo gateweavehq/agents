@@ -51,6 +51,7 @@ import {
 	type MovePage,
 	type MoveRows,
 	mayImport,
+	movedFrom,
 	moveStateAtStart,
 	moveStateNow,
 	objectsIn,
@@ -543,14 +544,21 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		return digestForMove(this.ctx.storage);
 	}
 
-	/**
-	 * Ends a move into this conversation, which holds it from now on, then restarts it: what the SDK
-	 * read into memory as it started was of the empty object this was. The restart can reach the
-	 * caller before the answer, as an error saying {@link MOVED_IN}.
-	 */
+	/** Ends a move into this conversation, which holds it from now on. */
 	async moveStart(from: string): Promise<void> {
 		await endImport(this.ctx.storage, from, Date.now());
-		setTimeout(() => this.ctx.abort(MOVED_IN), 0);
+	}
+
+	/**
+	 * Restarts this conversation after its move has committed: what the SDK read into memory as it
+	 * started was of the empty object this was. The restart reaches the caller as an error saying
+	 * {@link MOVED_IN}, which means it worked.
+	 */
+	async moveRestart(): Promise<void> {
+		if (movedFrom(this.ctx.storage) === null) {
+			throw new Error("This object doesn't hold a workspace that moved.");
+		}
+		this.ctx.abort(MOVED_IN);
 	}
 
 	/**

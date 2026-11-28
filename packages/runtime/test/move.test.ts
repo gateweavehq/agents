@@ -70,9 +70,11 @@ function movingTo(
 			moveWriteKeys: (token, entries) => target.moveWriteKeys(token, entries),
 			moveCheck: (token, manifest) => target.moveCheck(token, manifest),
 			moveDigest: () => target.moveDigest(),
-			async moveStart(place) {
+			moveStart: (place) => target.moveStart(place),
+			async moveRestart() {
+				if (!target.moveRestart) return;
 				try {
-					await target.moveStart(place);
+					await target.moveRestart();
 				} catch (error) {
 					if ((error instanceof Error ? error.message : String(error)) !== MOVED_IN) throw error;
 				}
