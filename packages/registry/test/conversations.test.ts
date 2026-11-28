@@ -171,6 +171,8 @@ describe("workspace model-key spending caps", () => {
 		if (!("status" in monthly)) throw new Error("expected a refusal");
 		expect(monthly.message).toContain("monthly cap, $2");
 		expect(monthly.message).toContain("resets on");
+		// A model-key cap refusal is not a sandbox limit, so it stays out of the run list.
+		expect(await stub.listRuns()).toHaveLength(1);
 		await stub.setModelKeyCaps({ daily: "0", monthly: "" });
 		const zero = await stub.beginTurn(id, "Again");
 		expect(zero).toMatchObject({ status: "refused" });
@@ -460,6 +462,7 @@ describe("turns with Workers AI", () => {
 		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "2" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Again")).toHaveProperty("runId");
 		});
+		const beforeRefusal = await stub.listRuns();
 		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "1.5" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Again")).toEqual({
 				status: "refused",
@@ -467,6 +470,9 @@ describe("turns with Workers AI", () => {
 					"This workspace has used its Workers AI for today, $1.5, so Scout cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.",
 			});
 		});
+		// Workers AI's provider budget is not a sandbox limit either: no zero-use run appears.
+		expect(await stub.listRuns()).toHaveLength(beforeRefusal.length);
+		expect((await stub.listRuns()).some((run) => run.status === "refused")).toBe(false);
 		// A limit that is not a number allows nothing.
 		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "twenty" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Again")).toHaveProperty("status", "refused");

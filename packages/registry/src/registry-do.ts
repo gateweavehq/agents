@@ -1651,13 +1651,13 @@ export class RegistryDO extends DurableObject {
 		const plan = this.#planTurn(parties, true);
 		if ("status" in plan) return plan;
 		const { agent, position } = plan;
-		// A pause or limit refusal is a turn's outcome too: record it where the person looks for
-		// what became of their message. Other refusals still say why only in the conversation.
+		// A pause or sandbox-limit refusal is a turn's outcome too: record it where the person looks
+		// for what became of their message. Other refusals still say why only in the conversation.
 		const decline = (refusal: TurnRefusal): ProviderRefusal => {
 			const record =
 				refusal.message === PAUSED_AGENT ||
 				refusal.trackReason === "waiting-for-slot" ||
-				refusal.trackReason === "budget-limit";
+				refusal.sandboxBudget === true;
 			if (!record) return refused(refusal.message);
 			const now = Date.now();
 			const replayOf =
@@ -2203,9 +2203,8 @@ export class RegistryDO extends DurableObject {
 				);
 			}
 			if (reading.spent >= limits.monthlyBudget) {
-				return refused(
+				return sandboxBudgetRefused(
 					`${SANDBOX_BUDGET_SPENT}, so ${agent.name} cannot answer until the month ends (UTC). Whoever runs this server can raise it.`,
-					"budget-limit",
 				);
 			}
 		}
@@ -2363,16 +2362,14 @@ export class RegistryDO extends DurableObject {
 			const now = Date.now();
 			const month = utcMonth(now);
 			if (this.#sandboxSecondsInMonth(month, now) >= monthlyMinutes * 60) {
-				return refused(
+				return sandboxBudgetRefused(
 					`${SANDBOX_MONTH_USED}, ${monthlyMinutes} minutes, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
-					"budget-limit",
 				);
 			}
 		}
 		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
-			return refused(
+			return sandboxBudgetRefused(
 				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
-				"budget-limit",
 			);
 		}
 		const idle = this.#idleMinutes();
@@ -4414,10 +4411,14 @@ const WORKSPACE_DELETED = "workspace-delete.deleted";
 // The registry records one-time passes on its first wake, even when there is nothing to migrate.
 const REGISTRY_STARTUP = { tables: ["registry_passes"] };
 
-type TurnRefusal = ProviderRefusal & { trackReason?: TrackRefusal };
+type TurnRefusal = ProviderRefusal & { trackReason?: TrackRefusal; sandboxBudget?: true };
 
 function refused(message: string, trackReason?: TrackRefusal): TurnRefusal {
 	return { status: "refused", message, ...(trackReason && { trackReason }) };
+}
+
+function sandboxBudgetRefused(message: string): TurnRefusal {
+	return { ...refused(message, "budget-limit"), sandboxBudget: true };
 }
 
 /** The part of GitLab's push event a scan needs. */
