@@ -7,7 +7,7 @@
  */
 import { MODEL_PROVIDER_NAMES } from "@gateweave/agents-model";
 import type { RunningEngine } from "./engines";
-import { type EngineMeter, meterModelRequest, recordRefusal } from "./meter";
+import { type EngineMeter, meterModelRequest, recordPausedRefusal, recordRefusal } from "./meter";
 import {
 	anthropicRequest,
 	failureForLogs,
@@ -61,14 +61,17 @@ export async function sendModelRequest(
 	if ("refused" in outgoing) return refuse(outgoing.refused, outgoing.status);
 	if (outgoing instanceof Response) return outgoing;
 	// A failed read fails closed: the engine retries, and the next read decides.
-	let pause: string | null;
+	let pause: { reason: string; step: number } | null;
 	try {
 		pause = await meter.engineRequestPause(turn.token);
 	} catch (error) {
 		console.error("Could not check whether the engine turn was paused", failureForLogs(error));
 		return refuse("The agent's pause could not be checked. Try the request again.", 503);
 	}
-	if (pause !== null) return refuse(pause, 403);
+	if (pause !== null) {
+		recordPausedRefusal(meter, turn.token, pause.step, pause.reason, waitUntil);
+		return new Response(`${pause.reason}\n`, { status: 403 });
+	}
 	if (!isMeteredRequest(url)) return fetch(outgoing);
 	return meterModelRequest(meter, turn.token, running.provider, () => fetch(outgoing), waitUntil);
 }
