@@ -96,6 +96,7 @@ import {
 	type ReviewCounts,
 	type ReviewDelivery,
 	type ReviewPullState,
+	type ReviewSetupPlan,
 	type Run,
 	type RunCursor,
 	type RunFinish,
@@ -107,6 +108,7 @@ import {
 	repositoryChecksInput,
 	repositoryInput,
 	reviewCounts,
+	reviewSetupPlan,
 	runCursor,
 	runFinish,
 	runPullRequest,
@@ -363,6 +365,10 @@ import {
 	saveProviderKey,
 	sealedKeyOf,
 } from "./providers";
+import {
+	type PullRequestReviewSetupMade,
+	setUpPullRequestReview,
+} from "./pull-request-review-setup";
 import {
 	admitReview,
 	dueReview,
@@ -872,9 +878,22 @@ export class RegistryDO extends DurableObject {
 	): Agent | null {
 		const data = agentDefinitionUpdate.parse(input);
 		const revision = z.number().int().nonnegative().parse(expectedRevision);
-		const updated = this.#write(() =>
-			updateAgent(this.#db, id.parse(agentId), data, revision, Date.now()),
-		);
+		const updated = this.#write(() => {
+			const agent = id.parse(agentId);
+			if (data.memory === true) {
+				const review = this.#db
+					.select({ id: schema.triggers.id })
+					.from(schema.triggers)
+					.where(and(eq(schema.triggers.agentId, agent), eq(schema.triggers.pullRequest, true)))
+					.get();
+				if (review) {
+					throw new AgentError(
+						"An agent with a pull request trigger cannot use memory: review runs stay confined to the pull request",
+					);
+				}
+			}
+			return updateAgent(this.#db, agent, data, revision, Date.now());
+		});
 		if (updated) this.#clearAllMcpHealth();
 		return updated;
 	}
@@ -2713,6 +2732,22 @@ export class RegistryDO extends DurableObject {
 				},
 				Date.now(),
 			),
+		);
+		return "refused" in made ? refused(made.refused) : made;
+	}
+
+	/**
+	 * Sets up the ready-made pull request reviewer in one write (`./pull-request-review-setup.ts`).
+	 * It needs no sealed secret: the trigger is internal and the provider key stays where every agent's does.
+	 */
+	setUpPullRequestReview(
+		input: ReviewSetupPlan,
+		createdBy: string,
+	): PullRequestReviewSetupMade | TriggerRefusal {
+		const plan = reviewSetupPlan.parse(input);
+		const member = id.parse(createdBy);
+		const made = this.#write(() =>
+			setUpPullRequestReview(this.#db, { ...plan, createdBy: member }, Date.now()),
 		);
 		return "refused" in made ? refused(made.refused) : made;
 	}

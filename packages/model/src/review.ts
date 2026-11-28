@@ -23,9 +23,34 @@ export const REVIEW_LIMITS = {
  * passes when it finds at least `hits` of the `rows` defects and at least `realShare` of all its
  * findings are real. The bar was set before anything was measured.
  */
+/** A passed replay-gate run, copied here so the product can say whether review may be offered. */
+export interface ReviewGatePass {
+	/** The day the run passed, as `YYYY-MM-DD`. */
+	date: string;
+	engine: string;
+	model: string;
+	hits: number;
+	realShare: number;
+}
+
 export const REVIEW_GATE = {
 	bar: { rows: 35, hits: 12, realShare: 0.5 },
+	/** Null until a real replay passes and its precision is checked; then its figures are copied here. */
+	passed: null as ReviewGatePass | null,
 } as const;
+
+/** Whether review may be offered: only a passed replay gate opens the ready-made setup. */
+export function reviewGatePassed(gate: Pick<typeof REVIEW_GATE, "passed"> = REVIEW_GATE): boolean {
+	return gate.passed !== null;
+}
+
+/** The gate's figures as the setup dialog shows them. */
+export function reviewGateLine(pass: ReviewGatePass): string {
+	const share = new Intl.NumberFormat("en", { style: "percent", maximumFractionDigits: 1 }).format(
+		pass.realShare,
+	);
+	return `The replay gate passed on ${pass.date}, with ${pass.engine} on ${pass.model}: ${pass.hits} of ${REVIEW_GATE.bar.rows} seeded defects found, and ${share} of the reviews real.`;
+}
 
 export const reviewTest = z.object({
 	path: z.string().trim().min(1).max(REVIEW_LIMITS.testPath),

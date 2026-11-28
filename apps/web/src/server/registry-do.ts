@@ -143,6 +143,10 @@ export class RegistryDO extends Registry {
 		return demoEnabled() ? offInDemo() : super.setUpTrackWork(...args);
 	}
 
+	override setUpPullRequestReview(...args: Parameters<Registry["setUpPullRequestReview"]>) {
+		return demoEnabled() ? offInDemo() : super.setUpPullRequestReview(...args);
+	}
+
 	override async trackConnectBegin(...args: Parameters<Registry["trackConnectBegin"]>) {
 		return demoEnabled() ? offInDemo() : super.trackConnectBegin(...args);
 	}

@@ -1,10 +1,11 @@
-import type { ModelProvider, SandboxOffer } from "@gateweave/agents-model";
+import { type ModelProvider, REVIEW_GATE, type SandboxOffer } from "@gateweave/agents-model";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { GitPullRequest, type LucideIcon, Plus, Tags } from "lucide-react";
+import { GitPullRequest, type LucideIcon, Plus, ScanSearch, Tags } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AgentDialog } from "#/components/registry/agent-dialogs";
 import { AgentList } from "#/components/registry/agent-list";
+import { PullRequestReviewDialog } from "#/components/registry/pull-request-review-dialog";
 import {
 	trackConnectSearch,
 	useTrackConnectNotice,
@@ -64,13 +65,14 @@ function AgentsPage() {
 function ReadyMade() {
 	const { slug } = useWorkspace();
 	const [open, setOpen] = useState<{
-		which: "triage" | "work";
+		which: "triage" | "work" | "review";
 		available: ModelProvider[];
 		sandbox: SandboxOffer;
 	} | null>(null);
 	const [loading, setLoading] = useState(false);
+	const reviewGate = REVIEW_GATE.passed;
 
-	async function choose(which: "triage" | "work") {
+	async function choose(which: "triage" | "work" | "review") {
 		setLoading(true);
 		try {
 			const keys = await getProviderKeys({ data: slug });
@@ -99,6 +101,15 @@ function ReadyMade() {
 				disabled={loading}
 				onSetUp={() => choose("work")}
 			/>
+			{reviewGate && (
+				<ReadyMadeCard
+					icon={ScanSearch}
+					title="Review pull requests"
+					description="Reviews pull requests this workspace's agents open in one repository, as a second reader, never the approval."
+					disabled={loading}
+					onSetUp={() => choose("review")}
+				/>
+			)}
 			{open?.which === "triage" && (
 				<TrackTriageDialog available={open.available} onClose={() => setOpen(null)} />
 			)}
@@ -106,6 +117,14 @@ function ReadyMade() {
 				<TrackWorkDialog
 					available={open.available}
 					sandboxOffer={open.sandbox}
+					onClose={() => setOpen(null)}
+				/>
+			)}
+			{open?.which === "review" && reviewGate && (
+				<PullRequestReviewDialog
+					available={open.available}
+					sandboxOffer={open.sandbox}
+					gate={reviewGate}
 					onClose={() => setOpen(null)}
 				/>
 			)}

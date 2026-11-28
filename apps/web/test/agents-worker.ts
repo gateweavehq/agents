@@ -43,6 +43,7 @@ import type {
 	Repository,
 	RepositoryDetail,
 	RepositoryInput,
+	ReviewSetupPlan,
 	RunCursor,
 	RunFinish,
 	RunUsage,
@@ -232,6 +233,10 @@ export interface RegistryStub {
 		createdBy: string,
 		setBy: string,
 	): Promise<{ agent: Agent; trigger: Trigger; mcpServerId: string } | TriggerRefusal>;
+	setUpPullRequestReview(
+		input: ReviewSetupPlan,
+		createdBy: string,
+	): Promise<{ agent: Agent; trigger: Trigger; instructionsId: string } | TriggerRefusal>;
 	saveTrackSource(id: string, input: TrackSourceSave): Promise<"saved" | "duplicate" | "refused">;
 	removeTrackSource(id: string): Promise<boolean>;
 	setTelemetry(input: TelemetryInput, setBy: string): Promise<unknown>;

@@ -160,7 +160,7 @@ async function reviewing(recorded: { draft?: boolean; draftReason?: string } = {
 			repositoryId: sandbox ? repositoryId : null,
 		});
 	const builder = await agent("Builder", false);
-	const reviewer = await agent("Reviewer", true, true);
+	const reviewer = await agent("Reviewer", true);
 	const made = await registry.createReviewTrigger(
 		{
 			name: "Review",
