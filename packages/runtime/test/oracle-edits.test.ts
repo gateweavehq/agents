@@ -280,6 +280,11 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 			{ scripts: { test: "vitest run" }, dependencies: { zod: "npm:fake-zod@1.0.0" } },
 		],
 		[
+			"a dependency becomes a bare local path",
+			{ scripts: { test: "vitest run" }, dependencies: { zod: "1.0.0" } },
+			{ scripts: { test: "vitest run" }, dependencies: { zod: "./fixtures/fake-zod" } },
+		],
+		[
 			"an override becomes a local path",
 			{ scripts: { test: "vitest run" }, overrides: { vitest: "1.0.0" } },
 			{ scripts: { test: "vitest run" }, overrides: { vitest: "file:../vitest" } },
@@ -290,6 +295,25 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 			{
 				scripts: { test: "jest" },
 				resolutions: { leftpad: "git+https://github.com/acme/leftpad.git" },
+			},
+		],
+		[
+			"a nested override becomes an alias",
+			{ scripts: { test: "vitest run" }, overrides: { "react-scripts": { jest: "27.0.0" } } },
+			{
+				scripts: { test: "vitest run" },
+				overrides: { "react-scripts": { jest: "npm:fake-jest@27.0.0" } },
+			},
+		],
+		[
+			"a nested override of the runner a script names changes",
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts": { jest: "27.0.0" } },
+			},
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts": { jest: "28.0.0" } },
 			},
 		],
 	])("flags a package.json when %s changes", async (_name, before, after) => {

@@ -178,13 +178,23 @@ const DEPENDENCY_KEYS = [
 	"resolutions",
 ] as const;
 
-/** The string specs of one dependency-list key; nested override objects are not followed. */
-function specsOf(value: unknown): Map<string, string> {
-	const specs = new Map<string, string>();
-	if (typeof value !== "object" || value === null || Array.isArray(value)) return specs;
-	for (const [name, spec] of Object.entries(value)) {
-		if (typeof spec === "string") specs.set(name, spec);
-	}
+interface DependencySpec {
+	path: string[];
+	spec: string;
+}
+
+/** The string specs of one dependency-list key, including nested override objects. */
+function specsOf(value: unknown): Map<string, DependencySpec> {
+	const specs = new Map<string, DependencySpec>();
+	const visit = (node: unknown, path: string[]) => {
+		if (typeof node !== "object" || node === null || Array.isArray(node)) return;
+		for (const [name, spec] of Object.entries(node)) {
+			const next = [...path, name];
+			if (typeof spec === "string") specs.set(JSON.stringify(next), { path: next, spec });
+			else visit(spec, next);
+		}
+	};
+	visit(value, []);
 	return specs;
 }
 
@@ -210,6 +220,7 @@ function movableSpec(spec: string): boolean {
 	const value = spec.trim().toLowerCase();
 	if (value.startsWith("git+") || value.startsWith("git@")) return true;
 	if (/^(?:npm|file|link|git|github|gitlab|bitbucket|https?|ssh):/.test(value)) return true;
+	if (/^(?:\.{1,2}\/|\/)/.test(value)) return true;
 	// npm reads `owner/repo` as GitHub shorthand; a scoped package's name starts with `@`.
 	return !value.startsWith("@") && /^[a-z0-9_.-]+\/[a-z0-9_.-]+(?:#.*)?$/.test(value);
 }
@@ -227,11 +238,15 @@ function dependencySwap(before: PackageObject, after: PackageObject, beforeText:
 	for (const key of DEPENDENCY_KEYS) {
 		const oldSpecs = specsOf(before[key]);
 		const newSpecs = specsOf(after[key]);
-		for (const name of new Set([...oldSpecs.keys(), ...newSpecs.keys()])) {
-			const oldSpec = oldSpecs.get(name);
-			const newSpec = newSpecs.get(name);
-			if (oldSpec === newSpec) continue;
-			if ((newSpec !== undefined && movableSpec(newSpec)) || named.has(dependencyKeyName(name))) {
+		for (const key of new Set([...oldSpecs.keys(), ...newSpecs.keys()])) {
+			const oldEntry = oldSpecs.get(key);
+			const newEntry = newSpecs.get(key);
+			if (oldEntry?.spec === newEntry?.spec) continue;
+			const path = newEntry?.path ?? oldEntry?.path ?? [];
+			if (
+				(newEntry !== undefined && movableSpec(newEntry.spec)) ||
+				path.some((part) => named.has(dependencyKeyName(part)))
+			) {
 				return true;
 			}
 		}
