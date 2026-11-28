@@ -3919,6 +3919,7 @@ export class RegistryDO extends DurableObject {
 		for (const alert of passed) {
 			await this.sandboxMinutesPassed(alert).catch((error: unknown) => {
 				console.error("registry: telling of the workspace's sandbox minutes failed", error);
+				this.ctx.storage.kv.delete(`sandbox-minutes-alert:${alert.month}:${alert.share}`);
 			});
 		}
 	}
@@ -3959,14 +3960,16 @@ export class RegistryDO extends DurableObject {
 		const jurisdiction = configuredJurisdiction(
 			(this.env as { DURABLE_OBJECT_JURISDICTION?: string }).DURABLE_OBJECT_JURISDICTION,
 		);
-		const reading = await objectsIn(meter, jurisdiction)
-			.getByName(METER_NAME)
-			.record(month.name, workspace, seconds, budget);
+		const object = objectsIn(meter, jurisdiction).getByName(METER_NAME);
+		const reading = await object.record(month.name, workspace, seconds, budget);
 		for (const share of reading.passed) {
 			this.ctx.waitUntil(
 				this.sandboxBudgetPassed({ share, spent: reading.spent, budget, month: month.name }).catch(
 					(error: unknown) => {
 						console.error("registry: telling of the sandbox budget failed", error);
+						return object.unpass(month.name, share).catch((unpassError: unknown) => {
+							console.error("registry: the sandbox budget alert could not be retried", unpassError);
+						});
 					},
 				),
 			);
