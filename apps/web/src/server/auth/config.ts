@@ -441,7 +441,7 @@ export const MCP_SCOPE = "agents";
 /**
  * Lets an MCP client hand the user's agents tasks and read their runs (`run_agent`, `get_run` on
  * /mcp), which spends the workspace's budget. Granted beside `agents`, never instead of it, and
- * only to agents whose owner allowed tasks from outside.
+ * only for agents with "Tasks from MCP clients" turned on by a workspace owner or admin.
  */
 export const MCP_RUN_SCOPE = "agents:run";
 
