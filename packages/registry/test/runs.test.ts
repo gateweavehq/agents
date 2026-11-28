@@ -1,8 +1,9 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { agentDefinitionInput } from "@gateweave/agents-model";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
+import { RUN_TIMEOUT } from "../src/runs";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
 
@@ -156,6 +157,36 @@ describe("runs", () => {
 			cost: late.cost,
 		});
 		expect(await stub.finishRun(runId, finished)).toBe(false);
+	});
+
+	it("close exactly at their expiry boundary while a newer run still counts", async () => {
+		const first = await turn();
+		const second = await turn(first.stub);
+		const now = Date.now();
+		const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+		try {
+			await runInDurableObject(first.stub, (_instance: RegistryDO, state) => {
+				state.storage.sql.exec(
+					"UPDATE runs SET started_at = ? WHERE id = ?",
+					now - RUN_TIMEOUT,
+					first.runId,
+				);
+				state.storage.sql.exec(
+					"UPDATE runs SET started_at = ? WHERE id = ?",
+					now - RUN_TIMEOUT + 1,
+					second.runId,
+				);
+			});
+			expect(await first.stub.getRun(first.runId)).toMatchObject({
+				status: "interrupted",
+				endedAt: null,
+			});
+			expect(await first.stub.getRun(second.runId)).toMatchObject({ status: "running" });
+			// A second sweep sees no running boundary run again.
+			expect(await first.stub.getRun(first.runId)).toMatchObject({ status: "interrupted" });
+		} finally {
+			clock.mockRestore();
+		}
 	});
 
 	it("refuse a report that is not one", async () => {

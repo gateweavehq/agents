@@ -29,11 +29,13 @@ import {
 	countDistinct,
 	desc,
 	eq,
+	gt,
 	gte,
 	inArray,
 	isNotNull,
 	isNull,
 	lt,
+	lte,
 	or,
 	sql,
 	sum,
@@ -202,7 +204,7 @@ export function sandboxesInUse(
 				eq(runs.sandbox, true),
 				sql`${runs.conversationId} IS NOT ${conversationId}`,
 				or(
-					and(isNull(runs.endedAt), gte(runs.startedAt, now - RUN_TIMEOUT)),
+					and(isNull(runs.endedAt), gt(runs.startedAt, now - RUN_TIMEOUT)),
 					gte(runs.endedAt, idle),
 				),
 			),
@@ -503,19 +505,19 @@ export function detachRuns(db: Db, conversationId: string): void {
 }
 
 /**
- * How many runs are under way, which a move of the workspace waits for: those older than any turn
- * lasts were cut short and don't count.
+ * How many runs are under way, which a move of the workspace waits for: those that reached any
+ * turn's time limit were cut short and don't count.
  */
 export function runningRuns(db: Db, now: number): number {
 	return db
 		.select({ id: runs.id })
 		.from(runs)
-		.where(and(eq(runs.status, "running"), gte(runs.startedAt, now - RUN_TIMEOUT)))
+		.where(and(eq(runs.status, "running"), gt(runs.startedAt, now - RUN_TIMEOUT)))
 		.all().length;
 }
 
 /**
- * Marks runs that have gone on for longer than any turn does as interrupted. The runtime closes
+ * Marks runs that reached the longest a turn can go on as interrupted. The runtime closes
  * the runs a restart cut short when its conversation wakes again, but a conversation nobody opens
  * again never wakes. If one does, its report still fills in what the run used (`finishRun`).
  */
@@ -526,7 +528,7 @@ export function expireRuns(
 	return db
 		.update(runs)
 		.set({ status: "interrupted" })
-		.where(and(eq(runs.status, "running"), lt(runs.startedAt, now - RUN_TIMEOUT)))
+		.where(and(eq(runs.status, "running"), lte(runs.startedAt, now - RUN_TIMEOUT)))
 		.returning({ id: runs.id, startedAt: runs.startedAt, trackReport: runs.trackReport })
 		.all();
 }
