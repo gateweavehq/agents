@@ -407,6 +407,7 @@ import {
 	listRuns,
 	providerCost,
 	recordRunPullRequest,
+	refuseRun,
 	runHadSandbox,
 	runningRuns,
 	runUsage,
@@ -1638,17 +1639,45 @@ export class RegistryDO extends DurableObject {
 			return refused("This conversation was started by a trigger, so it cannot go on");
 		}
 		this.#write(() => noteTurn(this.#db, conversation, message, Date.now()));
-		const plan = this.#planTurn(parties);
+		const plan = this.#planTurn(parties, true);
 		if ("status" in plan) return plan;
 		const { agent, position } = plan;
+		// A pause or limit refusal is a turn's outcome too: record it where the person looks for
+		// what became of their message. Other refusals still say why only in the conversation.
+		const decline = (refusal: TurnRefusal): ProviderRefusal => {
+			const record =
+				refusal.message === PAUSED_AGENT ||
+				refusal.trackReason === "waiting-for-slot" ||
+				refusal.trackReason === "budget-limit";
+			if (!record) return refused(refusal.message);
+			const now = Date.now();
+			const replayOf =
+				parties.replayOf !== null && !hasRuns(this.#db, conversation) ? parties.replayOf : null;
+			refuseRun(
+				this.#db,
+				{
+					agent,
+					conversationId: conversation,
+					startedBy: parties.startedBy,
+					teamPath: position?.path ?? null,
+					replayOf,
+				},
+				refusal.message,
+				now,
+			);
+			return refused(refusal.message);
+		};
+		if (agentPause(this.#db, agent.agentId)) {
+			return this.#write(() => decline(refused(PAUSED_AGENT)));
+		}
 		const prepared = await this.#prepareTurn(conversation, agent, position, true);
-		if ("status" in prepared) return refused(prepared.message);
+		if ("status" in prepared) return this.#write(() => decline(prepared));
 		// The limits decide again as the run begins: other turns may have begun while this one
 		// awaited.
 		return this.#write(() => {
-			if (agentPause(this.#db, agent.agentId)) return refused(PAUSED_AGENT);
+			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
-			if (over) return refused(over.message);
+			if (over) return decline(over);
 			const replayOf =
 				parties.replayOf !== null && !hasRuns(this.#db, conversation) ? parties.replayOf : null;
 			const runId = beginRun(
@@ -1976,17 +2005,20 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/** Who answers a conversation's turn: its agent, or its team's lead, as they are now. */
-	#planTurn(parties: {
-		agentId: string;
-		teamId: string | null;
-	}): { agent: AgentSnapshot; position: TeamPosition | null } | ProviderRefusal {
+	#planTurn(
+		parties: {
+			agentId: string;
+			teamId: string | null;
+		},
+		allowPaused = false,
+	): { agent: AgentSnapshot; position: TeamPosition | null } | ProviderRefusal {
 		const plan =
 			parties.teamId === null
 				? { agent: agentSnapshot(this.#db, parties.agentId), position: null }
 				: teamTurnPlan(this.#db, parties.teamId);
 		if ("refused" in plan) return refused(plan.refused);
 		if (!plan.agent) return refused("This agent was removed, so the conversation cannot go on");
-		if (agentPause(this.#db, plan.agent.agentId)) return refused(PAUSED_AGENT);
+		if (!allowPaused && agentPause(this.#db, plan.agent.agentId)) return refused(PAUSED_AGENT);
 		return { agent: plan.agent, position: plan.position };
 	}
 
@@ -2235,13 +2267,6 @@ export class RegistryDO extends DurableObject {
 	 * is prepared, and others may begin meanwhile.
 	 */
 	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): TurnRefusal | null {
-		const idle = this.#idleMinutes();
-		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
-			return refused(
-				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
-				"waiting-for-slot",
-			);
-		}
 		const { dailyMinutes, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
 		// The month first: when both are used up, the refusal that names the later reset is the true one.
 		if (monthlyMinutes !== null) {
@@ -2260,6 +2285,13 @@ export class RegistryDO extends DurableObject {
 				"budget-limit",
 			);
 		}
+		const idle = this.#idleMinutes();
+		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
+			return refused(
+				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
+				"waiting-for-slot",
+			);
+		}
 		return null;
 	}
 
@@ -2273,6 +2305,7 @@ export class RegistryDO extends DurableObject {
 		let report: PendingTrackReport | undefined;
 		let hadSandbox = false;
 		let minutesPassed: SandboxMinutesPassed[] = [];
+		let usageChecks: { month: UtcMonth; now: number }[] = [];
 		let reviewsQueued = false;
 		const closed = this.#write(() => {
 			if (!finishRun(this.#db, run, data)) return false;
@@ -2293,7 +2326,14 @@ export class RegistryDO extends DurableObject {
 				);
 			}
 			hadSandbox = (monthlyBudget !== null || cap > 0) && runHadSandbox(this.#db, run);
-			if (hadSandbox && cap > 0) minutesPassed = this.#sandboxMinutesAlerts(cap);
+			if (hadSandbox) {
+				usageChecks = this.#sandboxUsageChecks(reporting?.startedAt ?? ended, ended);
+				if (cap > 0) {
+					minutesPassed = usageChecks.flatMap(({ month, now }) =>
+						this.#sandboxMinutesAlerts(cap, month, now),
+					);
+				}
+			}
 			return true;
 		});
 		this.#publishTrackReports(report);
@@ -2308,11 +2348,13 @@ export class RegistryDO extends DurableObject {
 		if (minutesPassed.length > 0) this.ctx.waitUntil(this.#notifySandboxMinutes(minutesPassed));
 		if (hadSandbox && monthlyBudget !== null) {
 			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
-			this.ctx.waitUntil(
-				this.#meterSandboxes(monthlyBudget).catch((error: unknown) => {
-					console.error("registry: the sandbox meter did not answer", error);
-				}),
-			);
+			for (const check of usageChecks) {
+				this.ctx.waitUntil(
+					this.#meterSandboxes(monthlyBudget, check).catch((error: unknown) => {
+						console.error("registry: the sandbox meter did not answer", error);
+					}),
+				);
+			}
 		}
 		return closed;
 	}
@@ -2537,7 +2579,7 @@ export class RegistryDO extends DurableObject {
 		return "refused" in made ? refused(made.refused) : made;
 	}
 
-	/** Adds a trigger, and hands back its secret, which is not shown again. */
+	/** Adds a webhook trigger, and hands back its secret, which is not shown again. */
 	async createTrigger(
 		input: TriggerInput,
 		createdBy: string,
@@ -2545,6 +2587,9 @@ export class RegistryDO extends DurableObject {
 		const data = triggerInput.parse(input);
 		if (data.pullRequest) {
 			return refused("A pull request trigger is made with createReviewTrigger: it has no secret");
+		}
+		if (data.schedule !== null) {
+			return refused("A scheduled trigger is made with createScheduledTrigger: it has no secret");
 		}
 		const member = id.parse(createdBy);
 		const sealer = await this.#sealerOf();
@@ -2562,6 +2607,29 @@ export class RegistryDO extends DurableObject {
 		if ("refused" in made) return refused(made.refused);
 		await this.#scheduleAlarm();
 		return { trigger: made, secret };
+	}
+
+	/**
+	 * Adds a scheduled trigger. It takes no webhooks, so no secret is made, sealed or handed back,
+	 * and the sealing key need not be set up.
+	 */
+	async createScheduledTrigger(
+		input: Omit<TriggerInput, "pullRequest">,
+		createdBy: string,
+	): Promise<{ trigger: Trigger } | TriggerRefusal> {
+		const data = triggerInput.parse({ ...input, pullRequest: false });
+		if (data.schedule === null) return refused("A scheduled trigger needs a schedule");
+		const member = id.parse(createdBy);
+		const made = this.#write(() =>
+			insertTrigger(
+				this.#db,
+				{ id: crypto.randomUUID(), ...data, sealed: "", secretStart: "", createdBy: member },
+				Date.now(),
+			),
+		);
+		if ("refused" in made) return refused(made.refused);
+		await this.#scheduleAlarm();
+		return { trigger: made };
 	}
 
 	/**
@@ -2614,17 +2682,25 @@ export class RegistryDO extends DurableObject {
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal | null> {
 		const trigger = id.parse(triggerId);
 		const next = secret === undefined ? newTriggerSecret() : triggerSecret.parse(secret);
-		// A pull request trigger has no secret to give a new one to.
-		if (triggerRow(this.#db, trigger)?.pullRequest) {
-			return refused("A pull request trigger has no secret: it takes no webhooks");
+		// A trigger that takes no webhooks has no secret to give a new one to.
+		const current = triggerRow(this.#db, trigger);
+		if (current?.pullRequest || current?.schedule != null) {
+			return refused("This trigger has no secret: it takes no webhooks");
 		}
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
 		const sealed = await sealer.seal(triggerPlace(trigger), next);
-		const replaced = this.#write(() =>
-			replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now()),
-		);
-		return replaced && { trigger: replaced, secret: next };
+		// The trigger can have been given a schedule while the secret was sealed. Only a row that
+		// still takes webhooks may gain the new credential.
+		return this.#write(() => {
+			const latest = triggerRow(this.#db, trigger);
+			if (!latest) return null;
+			if (latest.pullRequest || latest.schedule != null) {
+				return refused("This trigger has no secret: it takes no webhooks");
+			}
+			const replaced = replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now());
+			return replaced && { trigger: replaced, secret: next };
+		});
 	}
 
 	/**
@@ -3874,10 +3950,18 @@ export class RegistryDO extends DurableObject {
 		);
 	}
 
+	/** The months a closing run can still put over a threshold: its own, and the one that just ended. */
+	#sandboxUsageChecks(startedAt: number, now: number): { month: UtcMonth; now: number }[] {
+		const current = utcMonth(now);
+		if (startedAt >= current.start) return [{ month: current, now }];
+		return [
+			{ month: utcMonth(current.start - 1), now: current.start },
+			{ month: current, now },
+		];
+	}
+
 	/** Claims each alert in the same write that closes the run. */
-	#sandboxMinutesAlerts(cap: number): SandboxMinutesPassed[] {
-		const now = Date.now();
-		const month = utcMonth(now);
+	#sandboxMinutesAlerts(cap: number, month: UtcMonth, now: number): SandboxMinutesPassed[] {
 		const minutes = this.#sandboxSecondsInMonth(month, now) / 60;
 		const { kv } = this.ctx.storage;
 		const passed: SandboxMinutesPassed[] = [];
@@ -3901,6 +3985,7 @@ export class RegistryDO extends DurableObject {
 		for (const alert of passed) {
 			await this.sandboxMinutesPassed(alert).catch((error: unknown) => {
 				console.error("registry: telling of the workspace's sandbox minutes failed", error);
+				this.ctx.storage.kv.delete(`sandbox-minutes-alert:${alert.month}:${alert.share}`);
 			});
 		}
 	}
@@ -3924,13 +4009,16 @@ export class RegistryDO extends DurableObject {
 	 * Reports the workspace's sandbox time this month to the deployment's meter, and reads what the
 	 * deployment has spent. Null when there is no meter.
 	 */
-	async #meterSandboxes(budget: number): Promise<MeterReading | null> {
+	async #meterSandboxes(
+		budget: number,
+		check?: { month: UtcMonth; now: number },
+	): Promise<MeterReading | null> {
 		const meter = (this.env as SandboxSettings).SANDBOX_METER as
 			| DurableObjectNamespace<SandboxMeterDO>
 			| undefined;
 		if (!meter) return null;
-		const now = Date.now();
-		const month = utcMonth(now);
+		const now = check?.now ?? Date.now();
+		const month = check?.month ?? utcMonth(now);
 		const seconds = this.#sandboxSecondsInMonth(month, now);
 		// Each registry is named for its workspace (`registryFor` in the app).
 		const workspace = this.ctx.id.name ?? this.ctx.id.toString();
@@ -3938,14 +4026,16 @@ export class RegistryDO extends DurableObject {
 		const jurisdiction = configuredJurisdiction(
 			(this.env as { DURABLE_OBJECT_JURISDICTION?: string }).DURABLE_OBJECT_JURISDICTION,
 		);
-		const reading = await objectsIn(meter, jurisdiction)
-			.getByName(METER_NAME)
-			.record(month.name, workspace, seconds, budget);
+		const object = objectsIn(meter, jurisdiction).getByName(METER_NAME);
+		const reading = await object.record(month.name, workspace, seconds, budget);
 		for (const share of reading.passed) {
 			this.ctx.waitUntil(
 				this.sandboxBudgetPassed({ share, spent: reading.spent, budget, month: month.name }).catch(
 					(error: unknown) => {
 						console.error("registry: telling of the sandbox budget failed", error);
+						return object.unpass(month.name, share).catch((unpassError: unknown) => {
+							console.error("registry: the sandbox budget alert could not be retried", unpassError);
+						});
 					},
 				),
 			);

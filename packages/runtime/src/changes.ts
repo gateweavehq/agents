@@ -163,26 +163,55 @@ export function headerPath(text: string, prefix: string): string {
 	return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
-/** Git's quoting of a path it finds unusual, undone: `\NNN` octal bytes as UTF-8. */
+const GIT_NAMED_ESCAPES = new Map([
+	["a", 0x07],
+	["b", 0x08],
+	["t", 0x09],
+	["n", 0x0a],
+	["v", 0x0b],
+	["f", 0x0c],
+	["r", 0x0d],
+	['"', 0x22],
+	["\\", 0x5c],
+]);
+
+/** Writes `text`'s whole Unicode code point at `at` as UTF-8, and returns the next UTF-16 index. */
+function pushCodePoint(bytes: number[], text: string, at: number): number {
+	const point = text.codePointAt(at);
+	if (point === undefined) return at + 1;
+	for (const byte of new TextEncoder().encode(String.fromCodePoint(point))) bytes.push(byte);
+	return at + (point > 0xffff ? 2 : 1);
+}
+
+/** Git's quoting of a path it finds unusual, undone: named escapes, and `\NNN` octal bytes as UTF-8. */
 function unquote(path: string): string {
 	if (!(path.length > 1 && path.startsWith('"') && path.endsWith('"'))) return path;
 	const bytes: number[] = [];
 	const inner = path.slice(1, -1);
-	for (let at = 0; at < inner.length; at++) {
-		const char = inner.charAt(at);
-		if (char !== "\\" || at + 1 >= inner.length) {
-			for (const byte of new TextEncoder().encode(char)) bytes.push(byte);
+	let at = 0;
+	while (at < inner.length) {
+		if (inner.charAt(at) !== "\\") {
+			at = pushCodePoint(bytes, inner, at);
 			continue;
 		}
-		const next = inner.charAt(at + 1);
+		if (at + 1 >= inner.length) {
+			bytes.push(0x5c);
+			at += 1;
+			continue;
+		}
 		const octal = inner.slice(at + 1, at + 4);
 		if (/^[0-7]{3}$/.test(octal)) {
 			bytes.push(Number.parseInt(octal, 8));
-			at += 3;
-		} else {
-			for (const byte of new TextEncoder().encode(next)) bytes.push(byte);
-			at += 1;
+			at += 4;
+			continue;
 		}
+		const named = GIT_NAMED_ESCAPES.get(inner.charAt(at + 1));
+		if (named !== undefined) {
+			bytes.push(named);
+			at += 2;
+			continue;
+		}
+		at = pushCodePoint(bytes, inner, at + 1);
 	}
 	return new TextDecoder().decode(new Uint8Array(bytes));
 }

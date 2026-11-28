@@ -90,7 +90,7 @@ The last `get_run` also gives `steps`, `inputTokens`, `outputTokens`, `cost` (in
 and the run is on the Runs page.
 
 With **Tasks from MCP clients** off, `run_agent` answers `status: "refused"` with the message `That agent does
-not allow tasks from outside; a workspace owner or admin can turn it on`, and no run starts.
+not allow tasks from outside. A workspace owner or admin can turn on "Tasks from MCP clients" in the agent's settings.`, and no run starts.
 
 ## What has not been tried
 
