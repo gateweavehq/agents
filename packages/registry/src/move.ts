@@ -794,6 +794,11 @@ export interface MoveTarget {
 	moveDigest(): Promise<Record<string, string>>;
 	/** Starts it with the workspace, which came from `from`. */
 	moveStart(from: string): Promise<void>;
+	/**
+	 * Restarts it after `moveStart` has committed, when what it read into memory as an empty
+	 * object has to be read again from the rows that came over.
+	 */
+	moveRestart?(): Promise<void>;
 }
 
 /** What the old registry says as a move begins: what the workspace holds, or why it can't move. */
@@ -936,6 +941,7 @@ async function finish(
 		const { from, to } = move.conversation(id);
 		await retry(() => from.moveSeal(token, move.to), retryMs);
 		await retry(() => to.moveStart(move.from), retryMs);
+		if (to.moveRestart) await retry(() => to.moveRestart?.() ?? Promise.resolve(), retryMs);
 	});
 	await retry(() => move.registry.to.moveStart(move.from), retryMs);
 	await retry(() => move.record(), retryMs);

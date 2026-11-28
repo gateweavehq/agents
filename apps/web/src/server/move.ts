@@ -201,8 +201,8 @@ function workspaceMove(db: Database, workspace: WorkspaceRef, to: string) {
 }
 
 /**
- * A new conversation's calls in a move. Its start restarts it, which can reach the caller before
- * the answer, as an error saying so: that means it started.
+ * A new conversation's calls in a move. Its restart can reach the caller before the answer, as
+ * an error saying so: that means it restarted.
  */
 function restarting(conversation: MoveTarget): MoveTarget {
 	return {
@@ -211,9 +211,11 @@ function restarting(conversation: MoveTarget): MoveTarget {
 		moveWriteKeys: (token, entries) => conversation.moveWriteKeys(token, entries),
 		moveCheck: (token, manifest) => conversation.moveCheck(token, manifest),
 		moveDigest: () => conversation.moveDigest(),
-		async moveStart(from) {
+		moveStart: (from) => conversation.moveStart(from),
+		async moveRestart() {
+			if (!conversation.moveRestart) return;
 			try {
-				await conversation.moveStart(from);
+				await conversation.moveRestart();
 			} catch (error) {
 				if ((error instanceof Error ? error.message : String(error)) !== MOVED_IN) throw error;
 			}
