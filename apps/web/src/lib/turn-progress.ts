@@ -2,7 +2,7 @@ import { TURN_PROGRESS_PART } from "@gateweave/agents-model";
 
 /**
  * The label of a turn's transient progress part: the text to show, `null` when the part clears
- * the line, or `undefined` when the chunk is not a progress part at all (AGT-139).
+ * the line, or `undefined` when the chunk is not a progress part at all.
  */
 export function turnProgressOf(chunk: unknown): string | null | undefined {
 	if (typeof chunk !== "object" || chunk === null) return undefined;

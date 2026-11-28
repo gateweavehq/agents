@@ -3,8 +3,8 @@ import { startAgents } from "./agents-worker";
 import { fromWorkerOn, whileJunkGoesOn } from "./workers";
 
 // Better Auth turns its limiter on only when NODE_ENV is "production", which a Worker never sets,
-// so the deployed app took unlimited password guesses (TRK-23). Once on, it counted in each
-// isolate's memory, so every isolate gave an attacker a fresh allowance (TRK-24).
+// so the deployed app took unlimited password guesses. Once on, it counted in each
+// isolate's memory, so every isolate gave an attacker a fresh allowance.
 
 const origin = "https://agents.test";
 

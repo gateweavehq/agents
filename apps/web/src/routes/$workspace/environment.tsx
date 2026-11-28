@@ -71,7 +71,7 @@ function EnvironmentPage() {
 				</p>
 			)}
 			{data.tiesFailedAt !== null && (
-				// The one-time pass that ties values stored before ties failed (AGT-66). Owners and
+				// The one-time pass that ties values stored before ties failed. Owners and
 				// admins only; the server says when, never why, and never a value.
 				<p
 					role="status"
@@ -289,14 +289,14 @@ function SecretRow({
 					</p>
 				)}
 				{contested?.length === 0 && (
-					// Stored before values were tied to one origin, and tying them failed (AGT-66).
+					// Stored before values were tied to one origin, and tying them failed.
 					<p className="text-xs text-amber-600 dark:text-amber-500">
 						Stored before values were tied to one server address, and it could not be tied to one.
 						Enter this value again before agents can use it.
 					</p>
 				)}
 				{contested && contested.length > 0 && (
-					// Stored before values were tied to one origin, and named at several (AGT-65).
+					// Stored before values were tied to one origin, and named at several.
 					<p className="text-xs text-amber-600 dark:text-amber-500">
 						Stored before values were tied to one server address, and named by servers at{" "}
 						<span className="break-all">{contested.join(", ")}</span>. It is sent only to one of

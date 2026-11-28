@@ -1,5 +1,5 @@
 /**
- * Writes a repository's wiki (AGT-108), as a Workflow so that each model request is a step of its
+ * Writes a repository's wiki, as a Workflow so that each model request is a step of its
  * own: one plans the pages, then one writes each page, then one makes the wiki the one people read.
  * A step that fails tries again on its own; a wiki that cannot be written is marked failed, and the
  * one people read stays as it was.

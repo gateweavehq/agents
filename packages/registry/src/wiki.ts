@@ -1,5 +1,5 @@
 /**
- * Repository wikis (AGT-108): each writing of one is a generation, and its pages are rows. The
+ * Repository wikis: each writing of one is a generation, and its pages are rows. The
  * app's `WikiWorkflow` does the writing, one step at a time, and calls the registry before and
  * after each: it plans the pages, then writes them one by one, then finishes. The registry keeps
  * what a step leaves, reads the repository for the next one, and opens the workspace's key for it.

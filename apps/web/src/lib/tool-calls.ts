@@ -183,7 +183,7 @@ const TARGET_ARGUMENTS = [
 	"pattern",
 ];
 
-/** Arguments that name an issue: shown only when the value looks like one, such as `TRK-137`. */
+/** Arguments that name an issue: shown only when the value looks like one, such as `TST-137`. */
 const ISSUE_ARGUMENTS = new Set(["issueKey", "issue_key", "issue", "key"]);
 const ISSUE_KEY = /^[A-Za-z][A-Za-z0-9]{0,15}-\d{1,9}$/;
 
@@ -195,7 +195,7 @@ const SECRET_VALUE =
 	/bearer\s+\S|authorization|cookie|passw|secret|token|api[-_]?key|\b(?:sk|pk|ghp|gho|ghs|ghu|xox[a-z]|whsec|glpat|AKIA)[-_]?[A-Za-z0-9]{8,}|github_pat_/i;
 
 /**
- * What a call acted on, as a chip shows it: `docs/roadmap.md`, `pnpm check`, `TRK-137`. `label` is
+ * What a call acted on, as a chip shows it: `docs/roadmap.md`, `pnpm check`, `TST-137`. `label` is
  * clipped; `full` is for the title. Null when the stored call has nothing safe to show. A command
  * that carries a credential shows only its program.
  */
