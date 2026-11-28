@@ -127,6 +127,10 @@ export class RegistryDO extends Registry {
 		return demoEnabled() ? offInDemo() : super.createTrigger(...args);
 	}
 
+	override async createScheduledTrigger(...args: Parameters<Registry["createScheduledTrigger"]>) {
+		return demoEnabled() ? offInDemo() : super.createScheduledTrigger(...args);
+	}
+
 	override async createReviewTrigger(...args: Parameters<Registry["createReviewTrigger"]>) {
 		return demoEnabled() ? offInDemo() : super.createReviewTrigger(...args);
 	}

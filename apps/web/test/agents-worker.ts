@@ -200,6 +200,10 @@ export interface RegistryStub {
 		input: TriggerInput,
 		createdBy: string,
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal>;
+	createScheduledTrigger(
+		input: Omit<TriggerInput, "pullRequest">,
+		createdBy: string,
+	): Promise<{ trigger: Trigger } | TriggerRefusal>;
 	createReviewTrigger(
 		input: Omit<TriggerInput, "pullRequest">,
 		createdBy: string,

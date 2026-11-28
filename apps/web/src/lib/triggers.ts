@@ -26,8 +26,8 @@ export interface TriggerSecretShown {
 	secret: string;
 }
 
-/** A review trigger just made: it has no URL and no secret, and nothing to show once. */
-export interface ReviewTriggerMade {
+/** A trigger just made that takes no webhooks: it has no URL and no secret to show once. */
+export interface CredentiallessTriggerMade {
 	trigger: Trigger & { url: null };
 	secret: null;
 }
@@ -75,13 +75,13 @@ export const getTriggers = createServerFn({ method: "GET" })
 		const triggers = await found.registry.listTriggers(data.target);
 		return triggers.map((trigger) => ({
 			...trigger,
-			url: trigger.pullRequest ? null : found.urlOf(trigger.id),
+			url: trigger.pullRequest || trigger.schedule ? null : found.urlOf(trigger.id),
 		}));
 	});
 
 export const createTrigger = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), trigger: triggerInput }))
-	.handler(async ({ data }): Promise<TriggerSecretShown | ReviewTriggerMade> => {
+	.handler(async ({ data }): Promise<TriggerSecretShown | CredentiallessTriggerMade> => {
 		const found = await requireAdmin(data.slug);
 		// A review trigger has no URL and no secret: it is made apart from the webhooks, which hand
 		// both out once.
@@ -95,6 +95,17 @@ export const createTrigger = createServerFn({ method: "POST" })
 				detail: { for: review.trigger.targetName, kind: "pull_request" },
 			});
 			return { trigger: { ...review.trigger, url: null }, secret: null };
+		}
+		if (data.trigger.schedule !== null) {
+			const { pullRequest: _, ...input } = data.trigger;
+			const scheduled = await found.registry.createScheduledTrigger(input, found.member.user.id);
+			if ("status" in scheduled) throw new Error(scheduled.message);
+			await found.audit({
+				action: "trigger.created",
+				target: triggerTarget(scheduled.trigger),
+				detail: { for: scheduled.trigger.targetName, kind: "schedule" },
+			});
+			return { trigger: { ...scheduled.trigger, url: null }, secret: null };
 		}
 		const made = await found.registry.createTrigger(data.trigger, found.member.user.id);
 		if ("status" in made) throw new Error(made.message);
