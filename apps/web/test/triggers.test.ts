@@ -318,3 +318,41 @@ it("makes and manages a review trigger with no URL and no secret", async () => {
 	expect((await call("deleteTrigger", { triggerId: review.id })).failed).toBe(false);
 	expect((await registry.listTriggers()).some((entry) => entry.id === review.id)).toBe(false);
 });
+
+it("makes and manages a scheduled trigger with no URL and no secret", async () => {
+	const slug = "triggers-scheduled";
+	const { owner, workspaceId, registry, agentId, url, secret } = await workspace(slug);
+	const call = (name: string, data: Record<string, unknown>, method: "GET" | "POST" = "POST") =>
+		callServerFn(agents, origin, name, {
+			data: { slug, ...data },
+			cookie: owner.headers.cookie,
+			client: owner.headers["cf-connecting-ip"],
+			method,
+		});
+
+	const created = await call("createTrigger", {
+		trigger: {
+			name: "Standup",
+			prompt: "Sum up changes",
+			target: { kind: "agent", agentId },
+			schedule: { cron: "0 9 * * 1-5", timeZone: "Europe/Istanbul" },
+		},
+	});
+	expect(created.failed).toBe(false);
+	expect(created.text).not.toContain("whsec_");
+	expect(created.text).not.toContain("/api/triggers/");
+	const scheduled = (await registry.listTriggers()).find((entry) => entry.schedule !== null);
+	if (!scheduled) throw new Error("The scheduled trigger was not made");
+	expect(scheduled.secretStart).toBe("");
+	const scheduledUrl = `${origin}/api/triggers/${workspaceId}/${scheduled.id}`;
+
+	const listed = await call("getTriggers", { target: { kind: "agent", agentId } }, "GET");
+	expect(listed.failed).toBe(false);
+	expect(listed.text).toContain(url);
+	expect(listed.text).not.toContain(scheduledUrl);
+
+	const replaced = await call("replaceTriggerSecret", { triggerId: scheduled.id });
+	expect(replaced.failed).toBe(true);
+	expect(replaced.text).toContain("has no secret");
+	expect((await post(scheduledUrl, secret)).status).toBe(404);
+});

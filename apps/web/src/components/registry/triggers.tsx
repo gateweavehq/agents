@@ -112,10 +112,10 @@ export function Triggers({
 						const made = await createTrigger({ data: { slug, trigger: { ...input, target } } });
 						// A review trigger has no URL and no secret to show. A schedule takes no webhooks, so
 						// its secret is of no use to anyone.
-						if (made.secret === null) {
+						if (made.trigger.schedule) toast.success(`${made.trigger.name} is scheduled`);
+						else if (made.secret === null) {
 							toast.success(`${made.trigger.name} will review the pull requests agents open`);
-						} else if (made.trigger.schedule) toast.success(`${made.trigger.name} is scheduled`);
-						else setShown(made);
+						} else setShown(made);
 						await router.invalidate();
 					}}
 					onClose={() => setCreating(false)}
