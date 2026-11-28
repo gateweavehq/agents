@@ -38,6 +38,8 @@ describe("sandbox settings", () => {
 			dailyMinutes: null,
 			monthlyMinutes: null,
 			monthlyBudget: null,
+			turnCost: null,
+			turnSeconds: null,
 		});
 		expect(
 			sandboxLimits({ SANDBOX_DAILY_MINUTES: " 120 ", SANDBOX_MONTHLY_BUDGET: "100" }),
@@ -45,16 +47,27 @@ describe("sandbox settings", () => {
 			dailyMinutes: 120,
 			monthlyMinutes: null,
 			monthlyBudget: 100,
+			turnCost: null,
+			turnSeconds: null,
+		});
+		// The per-turn ceiling a turn reserves against every budget as it begins.
+		expect(sandboxLimits({ SANDBOX_TURN_COST: "0.5", SANDBOX_TURN_SECONDS: "900" })).toMatchObject({
+			turnCost: 0.5,
+			turnSeconds: 900,
 		});
 		expect(sandboxLimits({ SANDBOX_DAILY_MINUTES: "", SANDBOX_MONTHLY_BUDGET: "0" })).toEqual({
 			dailyMinutes: null,
 			monthlyMinutes: null,
 			monthlyBudget: 0,
+			turnCost: null,
+			turnSeconds: null,
 		});
 		expect(sandboxLimits({ SANDBOX_DAILY_MINUTES: "2h", SANDBOX_MONTHLY_BUDGET: "-5" })).toEqual({
 			dailyMinutes: 0,
 			monthlyMinutes: null,
 			monthlyBudget: 0,
+			turnCost: null,
+			turnSeconds: null,
 		});
 		// Wrangler hands a number in `vars` over as one.
 		expect(sandboxLimits({ SANDBOX_DAILY_MINUTES: 90 as unknown as string }).dailyMinutes).toBe(90);
