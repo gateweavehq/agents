@@ -8,6 +8,7 @@ import {
 	controlsInstallation,
 	createBranch,
 	createCommit,
+	createReview,
 	GitHubApp,
 	importAppKey,
 	moveBranch,
@@ -23,6 +24,7 @@ import {
 	userInstallations,
 	verifyWebhook,
 } from "../src";
+import { FakeGit } from "./fake-git";
 
 const { privateKey: pkcs1, publicKey } = generateKeyPairSync("rsa", {
 	modulusLength: 2048,
@@ -332,6 +334,54 @@ describe("repository writes", () => {
 			head: "gateweave/setup-x",
 			base: "main",
 		});
+	});
+
+	it("posts a review only as comments, recording every request", async () => {
+		const fake = new FakeGit();
+		vi.stubGlobal("fetch", fake.fetch);
+		const commit = await fake.seed({ "a.ts": "one" });
+		fake.branches.set("gateweave/reviewed", commit);
+		fake.pulls.push({
+			number: 12,
+			title: "T",
+			body: "B",
+			head: "gateweave/reviewed",
+			base: "main",
+		});
+		await createReview(fake.token, fake.repository, 12, {
+			commitId: commit,
+			body: "A second reader's findings",
+			event: "COMMENT",
+			comments: [{ path: "a.ts", line: 1, side: "RIGHT", body: "Finding" }],
+		});
+		expect(fake.requests).toEqual(["POST /repos/acme/site/pulls/12/reviews"]);
+		expect(fake.reviews).toEqual([
+			{
+				commitId: commit,
+				body: "A second reader's findings",
+				event: "COMMENT",
+				comments: [{ path: "a.ts", line: 1, side: "RIGHT", body: "Finding" }],
+			},
+		]);
+		await expect(
+			createReview(fake.readToken, fake.repository, 12, {
+				commitId: commit,
+				body: "x",
+				event: "COMMENT",
+				comments: [],
+			}),
+		).rejects.toMatchObject({ status: 403 });
+		await expect(
+			createReview(fake.token, fake.repository, 12, {
+				commitId: commit,
+				body: "x",
+				event: "APPROVE" as never,
+				comments: [],
+			}),
+		).rejects.toMatchObject({ status: 422 });
+		expect(
+			fake.requests.filter((route) => route.includes("/check-runs") || route.includes("/statuses")),
+		).toEqual([]);
 	});
 
 	it("finds the open pull request from one of the repository's own branches", async () => {

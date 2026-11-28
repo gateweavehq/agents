@@ -17,7 +17,8 @@ workspace's GitHub settings say that GitHub is not set up.
 
 No account permissions. Writing is only ever a new branch named `gateweave/…` and a pull request
 from it: the app never writes to a default branch, and a commit changes only the files the setup
-writes (see [Applying a setup](#applying-a-setup)). It subscribes to three events, **Push** (to
+writes (see [Applying a setup](#applying-a-setup)). Reviews it posts on pull requests are comments
+only, never approvals or requests for changes. It subscribes to three events, **Push** (to
 read a default branch again when it changes), **Repository** (renames and default branch changes)
 and **Pull request** (to know when one that applies a setup is merged or closed). GitHub sends
 installation events to every app without a subscription.

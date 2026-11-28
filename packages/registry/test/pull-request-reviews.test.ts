@@ -16,6 +16,7 @@ import {
 	reviewDeliveryId,
 	reviewMessage,
 	reviewSummary,
+	type TrackSourceSave,
 } from "@gateweave/agents-model";
 import { describe, expect, it } from "vitest";
 import type { RegistryDO } from "../src";
@@ -796,6 +797,84 @@ describe("a review whose run never reports (criterion 4)", () => {
 		expect((await stub.listPullRequestReviews())[0]).toMatchObject({
 			status: "failed",
 			reason: "The review's run did not report back",
+		});
+	});
+});
+
+describe("Track reporting", () => {
+	it("copies the source run's destination and reports the review under its own run id", async () => {
+		const { stub, builder } = await workspace();
+		const destinationId = crypto.randomUUID();
+		const source = {
+			trackOrigin: "https://track.example.com",
+			sourceKey: `gws_${"s".repeat(43)}`,
+			source: { id: "source", name: "Gateweave Agents", product: "agents" },
+			workspace: { id: "workspace", slug: "acme", name: "Acme" },
+			team: { id: "team", key: "OPS", name: "Operations" },
+		} satisfies TrackSourceSave;
+		expect(await stub.saveTrackSource(destinationId, source)).toBe("saved");
+
+		const conversation = (await stub.startConversation(builder.id, ADA))?.id ?? "";
+		const begun = await stub.beginTurn(conversation, "Build it");
+		if ("status" in begun) throw new Error(begun.message);
+		await stub.recordRunPullRequest(begun.runId, { ...PULL, head: HEAD });
+		const target = {
+			destinationId,
+			sourceId: source.source.id,
+			origin: source.trackOrigin,
+			workspaceId: source.workspace.id,
+			teamId: source.team.id,
+			issue: "OPS-42",
+			issueId: "issue",
+			agent: "Coder",
+			runsPage: "https://agents.example.com/acme/runs/",
+		};
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"UPDATE runs SET track_report = ? WHERE id = ?",
+				JSON.stringify({ target, runningAt: Date.now() }),
+				begun.runId,
+			);
+		});
+		await stub.finishRun(begun.runId, FINISHED);
+		await alarm(stub);
+		const [review] = await stub.listPullRequestReviews();
+		expect(review).toMatchObject({ status: "running" });
+		if (!review?.runId) throw new Error("The review did not begin");
+		expect(review.runId).not.toBe(begun.runId);
+
+		const reports = async () =>
+			runInDurableObject(stub, (_instance, state) => {
+				const rows = state.storage.sql.exec("SELECT report FROM track_report_outbox").toArray() as {
+					report: unknown;
+				}[];
+				return rows.map(
+					({ report }) =>
+						(typeof report === "string" ? JSON.parse(report) : report) as {
+							key: string;
+							target: { destinationId: string; issue: string; issueId: string };
+							phase: { state: string };
+						},
+				);
+			});
+		const running = (await reports()).find(
+			(report) => report.key === review.runId && report.phase.state === "running",
+		);
+		expect(running?.target).toMatchObject({
+			destinationId,
+			issue: "OPS-42",
+			issueId: "issue",
+		});
+
+		await stub.recordReviewCounts(review.runId, { found: 1, shown: 1, proven: 1 });
+		await stub.finishRun(review.runId, FINISHED);
+		const succeeded = (await reports()).find(
+			(report) => report.key === review.runId && report.phase.state === "passed",
+		);
+		expect(succeeded?.target).toMatchObject({
+			destinationId,
+			issue: "OPS-42",
+			issueId: "issue",
 		});
 	});
 });

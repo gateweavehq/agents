@@ -1911,6 +1911,7 @@ export class RegistryDO extends DurableObject {
 		if ("problem" in repository) return settle(refused(repository.problem, "needs-mapping"));
 		const prepared = await this.#prepareTurn(conversation, agent, null, true, repository);
 		if ("status" in prepared) return settle(prepared);
+		let report: PendingTrackReport | undefined;
 		const turn = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry may have taken the review over while the key was opened.
 			if (!current()) return gone;
@@ -1921,6 +1922,15 @@ export class RegistryDO extends DurableObject {
 			const over = this.#sandboxLimitRefusal(conversation, agent);
 			if (over) return decline(over);
 			const now = Date.now();
+			const sourceTrackReport = this.#db
+				.select({ trackReport: schema.runs.trackReport })
+				.from(schema.runs)
+				.where(eq(schema.runs.id, review.sourceRunId))
+				.get()?.trackReport;
+			const trackReport = sourceTrackReport && {
+				target: sourceTrackReport.target,
+				runningAt: now,
+			};
 			noteTurn(this.#db, conversation, message, now);
 			const runId = beginRun(
 				this.#db,
@@ -1929,11 +1939,23 @@ export class RegistryDO extends DurableObject {
 					conversationId: conversation,
 					startedBy: parties.startedBy,
 					sandbox: prepared.sandbox,
+					trackReport,
 				},
 				now,
 			);
 			settleDelivery(this.#db, delivery, { runId });
 			startReview(this.#db, review, runId, now);
+			if (trackReport) {
+				report = this.#queueTrackReport(
+					{
+						target: trackReport.target,
+						key: runId,
+						sentAt: trackReport.runningAt,
+						phase: { state: "running", startedAt: now },
+					},
+					now,
+				);
+			}
 			return {
 				...prepared,
 				runId,
@@ -1941,6 +1963,7 @@ export class RegistryDO extends DurableObject {
 				review: { number: review.number, head: review.head },
 			};
 		});
+		this.#publishTrackReports(report);
 		// A review that is running is given up on if its run never reports: the alarm is set for it.
 		if (!("status" in turn)) await this.#scheduleAlarm();
 		return turn;

@@ -539,6 +539,40 @@ export async function openPullRequest(
 	);
 }
 
+export interface PullRequestReviewComment {
+	path: string;
+	line: number;
+	side: "LEFT" | "RIGHT";
+	body: string;
+}
+
+export interface CreateReviewInput {
+	/** The commit the review is of. */
+	commitId: string;
+	body: string;
+	/** A second reader comments only: never an approval or a request for changes. */
+	event: "COMMENT";
+	comments: readonly PullRequestReviewComment[];
+}
+
+/** Posts one pull request review as comments only. */
+export async function createReview(
+	token: string,
+	repository: RepositoryName,
+	number: number,
+	input: CreateReviewInput,
+): Promise<void> {
+	await request(`${repositoryPath(repository)}/pulls/${number}/reviews`, token, {
+		method: "POST",
+		body: JSON.stringify({
+			commit_id: objectId.parse(input.commitId),
+			body: input.body,
+			event: input.event,
+			comments: input.comments,
+		}),
+	});
+}
+
 /** The pull request, or null when there is none by that number. */
 export async function pullRequest(
 	token: string,

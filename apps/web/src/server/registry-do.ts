@@ -284,7 +284,12 @@ export class RegistryDO extends Registry {
 			objectsIn(this.env.CONVERSATIONS, this.ctx.id.jurisdiction),
 			conversationName(workspaceId, conversationId),
 		);
-		return conversation.reviewTurn(attemptId);
+		const workspace = await db
+			.select({ slug: schema.organization.slug })
+			.from(schema.organization)
+			.where(eq(schema.organization.id, workspaceId))
+			.get();
+		return conversation.reviewTurn(attemptId, workspace ? runsPage(workspace.slug) : null);
 	}
 
 	/**

@@ -65,6 +65,12 @@ function github({
 	mergeBases?: string[];
 } = {}) {
 	const asked: string[] = [];
+	const reviews: {
+		commit_id: string;
+		body: string;
+		event: string;
+		comments: { path: string; line: number; side: string; body: string }[];
+	}[] = [];
 	let comparisons = 0;
 	const handler = async (request: Request) => {
 		const url = new URL(request.url);
@@ -87,6 +93,10 @@ function github({
 			const sha = mergeBases[Math.min(comparisons++, mergeBases.length - 1)];
 			return Response.json({ merge_base_commit: { sha }, files: [] });
 		}
+		if (url.pathname === "/repos/acme/site/pulls/12/reviews" && request.method === "POST") {
+			reviews.push((await request.json()) as (typeof reviews)[number]);
+			return Response.json({ id: reviews.length }, { status: 201 });
+		}
 		if (url.pathname === "/repos/acme/site/pulls/12") {
 			return Response.json({
 				number: 12,
@@ -102,7 +112,7 @@ function github({
 		}
 		return Response.json({ message: "Not Found" }, { status: 404 });
 	};
-	return { asked, handler };
+	return { asked, reviews, handler };
 }
 
 /**
@@ -250,6 +260,20 @@ describe("a review turn", () => {
 			status: "succeeded",
 			sandbox: true,
 		});
+		expect(pulls.reviews).toHaveLength(1);
+		expect(pulls.reviews[0]).toMatchObject({
+			commit_id: HEAD,
+			event: "COMMENT",
+			comments: [],
+		});
+		expect(pulls.reviews[0]?.body).toContain(
+			"A second reader's findings, not an approval. A person reviews and merges.",
+		);
+		expect(pulls.reviews[0]?.body).toContain("No findings. This is not an approval.");
+		expect(pulls.reviews[0]?.body).toContain(
+			`Review run: https://agents.example.test/runs/${review?.runId}`,
+		);
+		expect(pulls.reviews[0]?.body).toContain("<!-- AI-Disclosure: mode=machine-generated -->");
 	});
 
 	it("reviews the exact head: the sandbox checks out the pull request's head by commit id, detached", async () => {

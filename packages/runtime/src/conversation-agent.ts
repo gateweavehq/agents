@@ -16,6 +16,7 @@ import {
 	type ReviewOutcome,
 	RUN_PART,
 	type RunSpan,
+	renderReview,
 	reviewSummary,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
@@ -123,6 +124,7 @@ import {
 } from "./pull-requests";
 import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
 import { type ReviewPort, reviewTools } from "./review";
+import { gitHubReviewPost, postReviewOnce, type ReviewPostMemory } from "./review-post";
 import {
 	gitHubReviewSource,
 	prepareReview,
@@ -725,7 +727,7 @@ ${runPageNote(runs, turn.runId)}`
 	 * closed, whose head moved, or whose diff is too large ends the review as skipped, and no run
 	 * begins. Nobody waits for the answer, so the conversation stays awake until the turn ends.
 	 */
-	async reviewTurn(attemptId?: string): Promise<TriggerTurnOutcome> {
+	async reviewTurn(attemptId?: string, runs: string | null = null): Promise<TriggerTurnOutcome> {
 		const { conversationId, registry } = this.#parties();
 		const delivery = await registry.reviewDelivery(conversationId, attemptId);
 		if (!delivery) return { runId: null, error: "This review has had its run already" };
@@ -761,6 +763,7 @@ ${runPageNote(runs, turn.runId)}`
 				diff: prepared.diff,
 				draft: prepared.draft,
 				draftReason: delivery.draftReason,
+				runsPage: turn.runId ? runPage(runs, turn.runId) : null,
 			},
 		};
 		const message: UIMessage = {
@@ -1048,7 +1051,12 @@ ${runPageNote(runs, turn.runId)}`
 									diff: review.diff,
 									head: review.head,
 									run,
-									record: (outcome) => this.#recordReview(registry, runId, outcome),
+									record: (outcome) =>
+										this.#recordReview(registry, runId, outcome, {
+											repository,
+											review,
+											agentName: agent.name,
+										}),
 									summarize: (outcome) =>
 										reviewSummary({
 											...reviewCountsOf(outcome),
@@ -1516,6 +1524,14 @@ ${runPageNote(runs, turn.runId)}`
 		return gitHubPullRequests(sharedApp({ appId, privateKey }), repository);
 	}
 
+	/** The posting side of a review, made by the app's installation and invisible to the sandbox. */
+	#reviewPost(repository: SandboxRepository) {
+		const env = this.env as unknown as RuntimeEnv;
+		const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
+		if (!appId || !privateKey) return null;
+		return gitHubReviewPost(sharedApp({ appId, privateKey }), repository);
+	}
+
 	/**
 	 * The repository's checks for `open_pull_request`: the commands as the registry holds
 	 * them when the tool is called, asked by the id GitHub gave the repository the turn began with,
@@ -1567,17 +1583,53 @@ ${runPageNote(runs, turn.runId)}`
 		};
 	}
 
+	/** Keeps whether a review was posted in the conversation's own store across an eviction. */
+	#reviewPostMemory(): ReviewPostMemory {
+		const kv = this.ctx.storage.kv;
+		return {
+			recall: async (key) => (await kv.get<boolean>(key)) === true,
+			remember: async (key) => {
+				await kv.put(key, true);
+			},
+		};
+	}
+
 	/**
-	 * Keeps the counts of what a review found in the registry. The findings stay in this
-	 * conversation, as the result of `submit_review`. A failure is thrown: the tool then lets the
-	 * review submit again.
+	 * Keeps the counts of what a review found in the registry and posts the review on GitHub.
+	 * The findings stay in this conversation, as the result of `submit_review`. A failure is
+	 * thrown: the tool then lets the review submit again.
 	 */
 	async #recordReview(
 		registry: DurableObjectStub<RegistryDO>,
 		runId: string,
 		{ findings }: ReviewOutcome,
+		context?: {
+			repository: SandboxRepository;
+			review: { number: number; head: string; runsPage?: string | null };
+			agentName: string;
+		},
 	): Promise<void> {
 		await registry.recordReviewCounts(runId, reviewCountsOf({ findings }));
+		if (!context) return;
+		const post = this.#reviewPost(context.repository);
+		if (!post)
+			throw new Error("GitHub is not set up on this server, so the review cannot be posted");
+		const rendered = renderReview({
+			findings,
+			agentName: context.agentName,
+			runsPage: context.review.runsPage ?? null,
+		});
+		await postReviewOnce(
+			post,
+			{
+				key: `review-post:${runId}`,
+				number: context.review.number,
+				commitId: context.review.head,
+				summary: rendered.summary,
+				comments: rendered.comments,
+			},
+			this.#reviewPostMemory(),
+		);
 	}
 
 	/** Puts the pull request on the run. A failure is logged: the pull request is made anyway. */
@@ -1750,8 +1802,14 @@ function lastUserText(messages: UIMessage[]): string {
  * passes `runs`; anything that is not an http(s) address of a sensible length is left out, so the
  * message never carries what it should not.
  */
+function runPage(runs: string | null, runId: string): string | null {
+	return runs !== null && runs.length <= 2000 && /^https?:\/\/[^\s]+\/$/.test(runs)
+		? `${runs}${runId}`
+		: null;
+}
+
 function runPageNote(runs: string, runId: string): string {
-	const page = runs.length <= 2000 && /^https?:\/\/[^\s]+\/$/.test(runs) ? `${runs}${runId}` : null;
+	const page = runPage(runs, runId);
 	return page === null
 		? `This run is ${runId} in Gateweave Agents.`
 		: `This run's page, where people can follow your work in Gateweave Agents: ${page}`;
