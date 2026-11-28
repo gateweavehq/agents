@@ -147,4 +147,55 @@ describe("the ready-made pull request reviewer", () => {
 		).rejects.toThrow("cannot use memory");
 		expect((await stub.getAgent(made.agent.id))?.definition?.memory).toBe(false);
 	});
+
+	it("refuses memory for the lead of a team a pull request trigger reviews with", async () => {
+		const stub = registry();
+		const lead = await stub.createAgent({
+			name: "Review lead",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			sandbox: true,
+			memory: false,
+		});
+		const team = await stub.createTeam({ name: "Reviewers", description: null, lead: lead.id });
+		const made = await stub.createReviewTrigger(
+			{
+				name: "Review as a team",
+				prompt: "Review it",
+				target: { kind: "team", teamId: team.id },
+			},
+			ADA,
+		);
+		if ("status" in made) throw new Error(made.message);
+		const detail = await stub.getAgent(lead.id);
+		const definition = detail?.definition;
+		if (!detail || !definition) throw new Error("The lead is missing");
+		await expect(
+			inside(stub, (instance) =>
+				instance.updateAgent(
+					lead.id,
+					{
+						name: detail.agent.name,
+						description: detail.agent.description,
+						provider: definition.provider,
+						model: definition.model,
+						instructions: null,
+						environment: null,
+						mcpServers: [],
+						sandbox: true,
+						repositoryId: null,
+						engine: "gateweave",
+						memory: true,
+						files: false,
+						outsideTasks: false,
+						allowedTargets: [],
+						anyTarget: false,
+					},
+					detail.agent.updatedAt,
+				),
+			),
+		).rejects.toThrow("cannot use memory");
+	});
 });

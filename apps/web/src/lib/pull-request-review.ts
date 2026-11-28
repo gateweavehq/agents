@@ -7,6 +7,7 @@
 import {
 	isKeyedProvider,
 	providerMissing,
+	reviewGatePassed,
 	reviewSetupInput,
 	sandboxOfferTo,
 } from "@gateweave/agents-model";
@@ -48,6 +49,9 @@ export const setUpPullRequestReview = createServerFn({ method: "POST" })
 		}
 		if (sandboxOfferTo(env, workspaceId) !== "offered") {
 			throw new Error("This server does not run sandboxes for this workspace.");
+		}
+		if (!reviewGatePassed()) {
+			throw new Error("Pull request review stays off until its replay gate has passed.");
 		}
 		const { default: instructions } = await import(
 			"#/server/pull-request-review-instructions.md?raw"

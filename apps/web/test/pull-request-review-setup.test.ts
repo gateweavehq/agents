@@ -1,3 +1,4 @@
+import { REVIEW_GATE } from "@gateweave/agents-model";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
@@ -75,8 +76,16 @@ it("only an owner or admin sets up pull request review; a member cannot", async 
 
 	const admin = await addMember(workspaceId, "admin");
 	const made = await call(admin, slug, review(repositoryId));
-	expect(made.failed, made.text).toBe(false);
-	expect((await registry.listTriggers()).filter((trigger) => trigger.pullRequest)).toHaveLength(1);
+	if (REVIEW_GATE.passed === null) {
+		expect(made.failed).toBe(true);
+		expect(made.text).toContain("replay gate");
+		expect(await registry.listTriggers()).toEqual([]);
+	} else {
+		expect(made.failed, made.text).toBe(false);
+		expect((await registry.listTriggers()).filter((trigger) => trigger.pullRequest)).toHaveLength(
+			1,
+		);
+	}
 });
 
 it("refuses a workspace without sandboxes before anything is made", async () => {

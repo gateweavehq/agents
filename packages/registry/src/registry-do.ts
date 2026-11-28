@@ -198,7 +198,7 @@ import {
 	wouldRefuseCounts,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { z } from "zod";
@@ -884,7 +884,13 @@ export class RegistryDO extends DurableObject {
 				const review = this.#db
 					.select({ id: schema.triggers.id })
 					.from(schema.triggers)
-					.where(and(eq(schema.triggers.agentId, agent), eq(schema.triggers.pullRequest, true)))
+					.leftJoin(schema.teams, eq(schema.teams.id, schema.triggers.teamId))
+					.where(
+						and(
+							eq(schema.triggers.pullRequest, true),
+							or(eq(schema.triggers.agentId, agent), eq(schema.teams.leadAgentId, agent)),
+						),
+					)
 					.get();
 				if (review) {
 					throw new AgentError(

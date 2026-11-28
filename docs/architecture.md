@@ -2026,13 +2026,14 @@ reviewed.
 - **The ready-made setup.** Until an owner or admin sets it up, a repository has no review. The
   Agents page offers **Review pull requests** only while `REVIEW_GATE.passed` records a passed
   replay-gate run, with its date, engine and model, hits out of 35 and real share shown in the
-  dialog. The server function is owners' and admins' alone and applies the server's offers first:
-  no provider key, no sandboxes, a GitLab repository or an engine that does not fit the provider
-  makes nothing. In one registry write `setUpPullRequestReview` makes the instructions as a
+  dialog. The server function is owners' and admins' alone and refuses the write while the gate
+  has no checked pass. It applies the server's offers first: no provider key, no sandboxes, a
+  GitLab repository or an engine that does not fit the provider makes nothing. In one registry write `setUpPullRequestReview` makes the instructions as a
   library asset, the agent with a sandbox on the chosen repository and memory off, and its
-  `pull_request` trigger, limited to 30 runs a day. Memory stays off for any agent with such a
-  trigger: the write that would turn it on is refused, because review runs stay confined to the
-  pull request. Reviews are paid with the workspace's provider key and count toward its sandbox
+  `pull_request` trigger, limited to 30 runs a day. A reviewer bound to a repository reviews only
+  pull requests there. Memory stays off for any agent with such a trigger: the write that would
+  turn it on is refused, because review runs stay confined to the pull request. Reviews are paid
+  with the workspace's provider key and count toward its sandbox
   minutes, like every other run, and the reviewer is a second reader, never the approval.
 
 - **One source of deliveries.** When `finishRun` closes a run that recorded a pull request, the

@@ -220,6 +220,41 @@ describe("one delivery per final head (criterion 1)", () => {
 		});
 		expect(await stub.listPullRequestReviews()).toEqual([]);
 	});
+
+	it("makes none outside the repository a repository-bound reviewer is for", async () => {
+		const { stub, builder, trigger } = await workspace();
+		const [otherId = ""] = await stub.syncRepositories([github("8", "other")]);
+		await stub.deleteTrigger(trigger.id);
+		const reviewer = await stub.createAgent({
+			name: "Other reviewer",
+			description: null,
+			provider: "anthropic",
+			model: "claude-sonnet-5-5",
+			instructions: null,
+			sandbox: true,
+			repositoryId: otherId,
+		});
+		const made = await stub.createReviewTrigger(
+			{
+				name: "Review other",
+				prompt: "Review it",
+				target: { kind: "agent", agentId: reviewer.id },
+			},
+			ADA,
+		);
+		if ("status" in made) throw new Error(made.message);
+
+		await built(stub, builder);
+		expect(await stub.listPullRequestReviews()).toEqual([]);
+		await built(stub, builder, {
+			repository: "acme/other",
+			url: "https://github.com/acme/other/pull/12",
+			head: NEXT,
+		});
+		expect(await stub.listPullRequestReviews()).toEqual([
+			expect.objectContaining({ repository: "acme/other", triggerId: made.trigger.id }),
+		]);
+	});
 });
 
 describe("pull requests that are not reviewed (criterion 5, as amended)", () => {
