@@ -44,7 +44,8 @@ export const meteredRequest = z.object({
 
 /** Where the sandbox's requests for the model are recorded: the conversation of the turn. */
 export interface EngineMeter {
-	engineRequestPause(token: string): Promise<string | null>;
+	/** The pause refusal and its already-started span, or null while the turn may go on. */
+	engineRequestPause(token: string): Promise<{ reason: string; step: number } | null>;
 	/** A request went out. The step of its span, or null when no such turn runs. */
 	engineRequestStarted(token: string): Promise<number | null>;
 	/** The request's answer ended, or it failed. */
@@ -114,6 +115,23 @@ export async function recordRefusal(
 		return null;
 	});
 	if (step === null) return;
+	waitUntil(
+		meter
+			.engineRequestEnded(token, step, failedRequest(reason, null))
+			.catch((error: unknown) =>
+				console.error("A sandbox's refused model request was not recorded", failureForLogs(error)),
+			),
+	);
+}
+
+/** Records the end of a refusal whose span `engineRequestPause` already started. */
+export function recordPausedRefusal(
+	meter: EngineMeter,
+	token: string,
+	step: number,
+	reason: string,
+	waitUntil: (promise: Promise<unknown>) => void,
+): void {
 	waitUntil(
 		meter
 			.engineRequestEnded(token, step, failedRequest(reason, null))

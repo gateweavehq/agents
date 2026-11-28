@@ -912,7 +912,7 @@ describe("Claude Code's output", () => {
 	});
 });
 
-it("records a paused sandbox's next model request and ends its run as stopped", async () => {
+it("stops a paused sandbox's engine and records its next model request as refused", async () => {
 	const { registry, stub, machine, agentId } = await conversation();
 	await machine.scriptEngine({ lines: [INIT], untilStopped: true });
 	const socket = await connect(stub);
@@ -941,13 +941,59 @@ it("records a paused sandbox's next model request and ends its run as stopped", 
 		expect((await response.text()).trim()).toBe(reason);
 		await Promise.all(waits);
 	} finally {
-		await machine.stopEngine();
 		await turn;
 		socket.close();
 	}
+	expect((await machine.seen()).stops).toBe(1);
 	const [run] = await registry.listRuns();
 	expect(run).toMatchObject({ status: "stopped", error: reason });
 	expect(await stub.runTrace(run?.id ?? "")).toContainEqual(
 		expect.objectContaining({ kind: "model", status: "error", error: reason }),
 	);
 });
+
+it.each([false, "fail"] as const)(
+	"retries a pause stop after the first did not reach the engine: %s",
+	async (first) => {
+		const { registry, stub, machine, agentId } = await conversation();
+		await machine.answerStops([first, true]);
+		await machine.holdEngineStart();
+		await machine.scriptEngine({ lines: [INIT], untilStopped: true });
+		const socket = await connect(stub);
+		const turn = ask(socket, "Review");
+		await vi.waitFor(async () => expect((await machine.seen()).engine).toHaveLength(1));
+		const [job] = (await machine.seen()).engine;
+		if (!job) throw new Error("Missing engine job");
+		await registry.pauseAgent(agentId, "admin");
+		const waits: Promise<unknown>[] = [];
+		const reason = "The agent was paused, so the run stopped before its next model request.";
+		try {
+			const request = new Request("https://api.anthropic.com/v1/messages", {
+				method: "POST",
+				body: JSON.stringify({
+					model: job.model,
+					max_tokens: 128,
+					messages: [{ role: "user", content: "Review" }],
+				}),
+			});
+			const response = await sendModelRequest(request, "anthropic", job, {
+				settings: {},
+				meter: stub,
+				waitUntil: (promise) => waits.push(promise),
+			});
+			expect(response.status).toBe(403);
+			expect((await response.text()).trim()).toBe(reason);
+			await Promise.all(waits);
+			await machine.releaseEngineStart();
+			await turn;
+		} finally {
+			await machine.releaseEngineStart();
+			socket.close();
+		}
+		// The first stop reached no engine, as OpenCode's can while its prompt is still being taken;
+		// finishing the start retries it against the live turn.
+		expect((await machine.seen()).stops).toBe(2);
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({ status: "stopped", error: reason });
+	},
+);

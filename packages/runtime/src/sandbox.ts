@@ -830,14 +830,18 @@ export class RunnerSandbox
 		return process.stdout as ReadableStream<Uint8Array>;
 	}
 
-	async stopEngine(): Promise<void> {
-		if (this.#openCode) return this.#openCode.stop();
+	async stopEngine(): Promise<boolean> {
+		if (this.#openCode) {
+			await this.#openCode.stop();
+			return true;
+		}
 		const process = this.#engine;
-		if (!process) return;
+		if (!process) return false;
 		process.kill(SIGINT);
 		setTimeout(() => {
 			if (this.#engine === process) process.kill(SIGTERM);
 		}, STOP_GRACE_MS);
+		return true;
 	}
 
 	async engineExit(): Promise<EngineExit | null> {
