@@ -1950,12 +1950,15 @@ export class RegistryDO extends DurableObject {
 				),
 			);
 		}
-		const bound = this.#db
-			.select({ repositoryId: schema.agentDefinitions.repositoryId })
-			.from(schema.agentDefinitions)
-			.where(eq(schema.agentDefinitions.agentId, agent.agentId))
-			.get()?.repositoryId;
-		if (bound && bound !== review.repositoryId) {
+		const boundElsewhere = (): boolean => {
+			const bound = this.#db
+				.select({ repositoryId: schema.agentDefinitions.repositoryId })
+				.from(schema.agentDefinitions)
+				.where(eq(schema.agentDefinitions.agentId, agent.agentId))
+				.get()?.repositoryId;
+			return Boolean(bound) && bound !== review.repositoryId;
+		};
+		if (boundElsewhere()) {
 			return settle(
 				refused(`${agent.name} is for another repository, so it cannot review this pull request`),
 			);
@@ -1968,6 +1971,11 @@ export class RegistryDO extends DurableObject {
 		const turn = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry may have taken the review over while the key was opened.
 			if (!current()) return gone;
+			if (boundElsewhere()) {
+				return decline(
+					refused(`${agent.name} is for another repository, so it cannot review this pull request`),
+				);
+			}
 			if (this.workspaceIsDeleted()) return decline(refused("This workspace was deleted"));
 			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
 			const cap = this.#providerAdmissionRefusal(agent);
