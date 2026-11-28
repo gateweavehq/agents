@@ -816,13 +816,19 @@ ${runPageNote(runs, turn.runId)}`
 		return serveEngineTools(turn.tools, request, turn.signal);
 	}
 
-	async engineRequestPause(token: string): Promise<string | null> {
+	async engineRequestPause(token: string): Promise<{ reason: string; step: number } | null> {
 		const turn = this.#engineTurnFor(token);
 		if (!turn) return null;
 		if (!turn.paused && (await this.#parties().registry.agentPause(turn.agentId))) {
 			turn.paused = true;
 		}
-		return turn.paused ? PAUSE_STOP : null;
+		if (!turn.paused) return null;
+		// Start the refusal's span in the same RPC that reports the pause. A startup retry may stop
+		// the engine as soon as this answer leaves, before a second RPC could join the span.
+		const step = turn.run.meteredStarted();
+		turn.requests.add(step);
+		turn.stop();
+		return { reason: PAUSE_STOP, step };
 	}
 
 	/**
