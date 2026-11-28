@@ -292,7 +292,7 @@ export interface OpenedEnvironment {
 
 /**
  * The servers of one turn or check, as `turnServer` fills them in, with each secret their headers
- * name sent only to the origin it was first sent to (AGT-64). Whoever may edit a server could
+ * name sent only to the origin it was first sent to. Whoever may edit a server could
  * otherwise point it at their own host and receive a key someone else entered. A secret sent
  * nowhere yet is tied to the origin of the first server that sends it; to send it to another,
  * someone enters it again. Runs in a write, after the environment was opened, so the ties it reads
@@ -326,9 +326,9 @@ export function turnServers(
 			const send = sends.get(name);
 			if (!send || send.sealed !== opened.opened.get(name)) changed.push(name);
 			else if (send.sentTo !== null && send.sentTo !== origin) elsewhere.push(name);
-			// Stored before ties, and the pass that ties those failed (AGT-66): nowhere.
+			// Stored before ties, and the pass that ties those failed: nowhere.
 			else if (send.sentTo === null && send.contested?.length === 0) closed.push(name);
-			// Stored before ties, and named at several origins then (AGT-65): one of those alone.
+			// Stored before ties, and named at several origins then: one of those alone.
 			else if (send.sentTo === null && send.contested && !send.contested.includes(origin)) {
 				elsewhere.push(name);
 			}
@@ -362,7 +362,7 @@ export function turnServers(
 
 /**
  * A remote server as a turn reaches it, marked to use the workspace's OAuth connection to it when
- * there is one for the URL it has now (AGT-78). The runtime gets the token itself, through the
+ * there is one for the URL it has now. The runtime gets the token itself, through the
  * registry, so that it can refresh it.
  */
 function withOAuth(db: Db, assetId: string, turn: TurnMcpServer): TurnMcpServer {
@@ -397,8 +397,8 @@ function localTurnServer(
 export const BIND_UNSENT_SECRETS = "bind-unsent-secrets";
 
 /**
- * Ties each value stored before values were tied to one origin (AGT-64), and sent nowhere since,
- * to the origin of the servers that name it, once per workspace (AGT-65). Until it was, whoever
+ * Ties each value stored before values were tied to one origin, and sent nowhere since,
+ * to the origin of the servers that name it, once per workspace. Until it was, whoever
  * may edit a server could point it at their own host and check it to have the value tied there.
  * The servers that count are those an agent run by Gateweave could send it to: the version each
  * live agent pins, and the current version, which a check sends to, of servers its environment

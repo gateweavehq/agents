@@ -92,6 +92,16 @@ describe("ready-made setups", () => {
 			expect(readyMadeMcpProblems(setup)).toEqual([]);
 		});
 
+		it("reports a server it cannot read", () => {
+			const setup = readServerFixture({
+				type: "websocket",
+				url: "https://api.githubcopilot.com/mcp/",
+			});
+			expect(readyMadeMcpProblems(setup)).toEqual([
+				expect.stringContaining('The transport "websocket" is not supported'),
+			]);
+		});
+
 		it("rejects a fixed server over plain http", () => {
 			const setup = readServerFixture({ type: "http", url: "http://api.githubcopilot.com/mcp/" });
 			expect(readyMadeMcpProblems(setup)).toEqual([

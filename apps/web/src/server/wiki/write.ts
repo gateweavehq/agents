@@ -1,5 +1,5 @@
 /**
- * What a repository's wiki asks of the model (AGT-108): a plan of the pages, then each page. The
+ * What a repository's wiki asks of the model: a plan of the pages, then each page. The
  * workflow (`./workflow.ts`) calls these once per step, with the workspace's key in memory.
  *
  * A plan comes back as JSON in the model's text rather than through a provider's structured

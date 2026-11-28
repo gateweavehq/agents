@@ -4,7 +4,7 @@ import { startAgents } from "./agents-worker";
 import { LOGOUT_EVENT, OIDC, OIDC_VARS, standInProvider } from "./oidc-provider";
 import { fromWorkerOn, whileJunkGoesOn } from "./workers";
 
-// Sign-in through an OpenID Connect provider (AGT-80). Agents never trusts the provider beyond what
+// Sign-in through an OpenID Connect provider. Agents never trusts the provider beyond what
 // it signed: an existing account links only when both sides have verified the address, and every
 // refused sign-in must leave no session behind. A provider that is down must not touch anything
 // but its own button, and its logout tokens must end the sessions they name and no others.

@@ -242,8 +242,8 @@ it("says what a call acted on, by the arguments that name it", () => {
 		"pnpm check",
 	);
 	expect(
-		describeToolTarget(used("track__get_issue", { workspace: "w", key: "TRK-137" }))?.label,
-	).toBe("TRK-137");
+		describeToolTarget(used("track__get_issue", { workspace: "w", key: "TST-137" }))?.label,
+	).toBe("TST-137");
 	expect(describeToolTarget(used("track__search_issues", { query: "flaky login" }))?.label).toBe(
 		"flaky login",
 	);

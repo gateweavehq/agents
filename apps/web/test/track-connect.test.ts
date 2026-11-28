@@ -7,7 +7,7 @@ import { FakeModels } from "./fake-models";
 import { FakeTrack } from "./fake-track";
 import { callServerFn } from "./server-fn";
 
-// Connecting Track in one step (AGT-119): the Worker's half against a stand-in for Track's
+// Connecting Track in one step: the Worker's half against a stand-in for Track's
 // approval page, exchange and undo, as built in gateweavehq/track#306.
 
 const origin = "https://agents.test";
@@ -152,7 +152,7 @@ function issueEvent(type: string, assigneeId: string | null) {
 			actor: { id: "u_1", name: "Maya", type: "person" },
 			issue: {
 				id: "i_7",
-				key: "TRK-7",
+				key: "TST-7",
 				title: "Login fails on Safari",
 				description: "The button does nothing.",
 				assigneeId,
