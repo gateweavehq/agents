@@ -7,7 +7,7 @@ import { faulty, LOCAL, migratedD1 } from "./faulty-d1";
 import { DatabaseError, withoutStatements } from "./query-failure";
 import { READ_ATTEMPTS } from "./retry-reads";
 
-// A query of D1 that failed for good (AGT-133). Drizzle's error for it is `Failed query: select …
+// A query of D1 that failed for good. Drizzle's error for it is `Failed query: select …
 // params: …`, with every value the statement was given. Better Auth logged the one for a session
 // read, token included, and a page showed the one for its own read.
 

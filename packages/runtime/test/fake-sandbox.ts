@@ -47,6 +47,8 @@ export interface RanCommand {
 export interface Checkout {
 	repository: SandboxRepository;
 	branch: string;
+	/** Set for a review's checkout: the pull request's head, detached. */
+	review?: { number: number; head: string };
 }
 
 export interface Push {
@@ -68,6 +70,25 @@ export interface CommitPush {
 	branch: string;
 	head: string;
 }
+
+/** What the fake sandbox's git answers for a review's `merge-base` and `diff`, unless scripted. */
+export const REVIEW_MERGE_BASE = "b".repeat(40);
+export const REVIEW_DIFF = `diff --git a/app.ts b/app.ts
+--- a/app.ts
++++ b/app.ts
+@@ -1 +1 @@
+-old
++new
+`;
+
+/** The heads of pull requests that GitHub has dropped: a review's checkout of one is `gone`. */
+export const goneHeads = new Set<string>();
+
+/**
+ * The diff the fake sandbox's own `git diff` answers, which a test may change to stand for a
+ * patch made again after the base branch moved.
+ */
+export const sandboxDiff = { text: REVIEW_DIFF };
 
 /** What a command answers; with `seconds`, how long it took by the sandbox's clock. */
 export type CommandAnswer = (CommandResult & { seconds?: number }) | Error;
@@ -251,8 +272,12 @@ export class MemorySandbox implements CheckoutPort, PushPort, CheckPort, Changes
 		return { written: new TextEncoder().encode(content).length };
 	}
 
-	async checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult> {
-		this.checkouts.push({ repository, branch });
+	async checkout(
+		repository: SandboxRepository,
+		branch: string,
+		review?: { number: number; head: string },
+	): Promise<CheckoutResult> {
+		this.checkouts.push({ repository, branch, ...(review ? { review } : {}) });
 		return this.checkoutAnswers.shift() ?? { checkedOut: true };
 	}
 
@@ -384,7 +409,16 @@ export class FakeSandbox
 {
 	readonly #memory = new MemorySandbox();
 	#destroyed = false;
-	/** What the fake sandbox keeps of its conversation, as the real one's `storage.kv` does (AGT-156). */
+	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+		super(ctx, env);
+		this.#memory.gitAnswer = (args) =>
+			args[0] === "merge-base"
+				? { exitCode: 0, output: REVIEW_MERGE_BASE, timedOut: false }
+				: args.includes("diff")
+					? { exitCode: 0, output: sandboxDiff.text, timedOut: false }
+					: undefined;
+	}
+	/** What the fake sandbox keeps of its conversation, as the real one's `storage.kv` does. */
 	readonly #kept = new Map<string, unknown>();
 	readonly #jobs: EngineJob[] = [];
 	readonly #scripts: EngineScript[] = [];
@@ -419,10 +453,25 @@ export class FakeSandbox
 		return this.#memory.discardCheckout();
 	}
 
-	checkout(repository: SandboxRepository, branch: string) {
+	checkout(
+		repository: SandboxRepository,
+		branch: string,
+		review?: { number: number; head: string },
+	) {
 		// As the real sandbox: the repository it cloned is what it keeps of the conversation.
 		this.#kept.set(REPOSITORY_KEY, repository);
-		return this.#memory.checkout(repository, branch);
+		if (review && goneHeads.has(review.head)) {
+			return Promise.resolve({
+				error: `The head ${review.head.slice(0, 7)} is gone`,
+				gone: true as const,
+			});
+		}
+		return this.#memory.checkout(repository, branch, review);
+	}
+
+	/** What the next checkouts answer, in order: for a test whose review head is gone. */
+	answerCheckouts(answers: CheckoutResult[]): void {
+		this.#memory.checkoutAnswers.push(...answers);
 	}
 
 	push(branch: string, message: string, author: CommitAuthor, model: string) {
@@ -581,10 +630,15 @@ export class FakeSandbox
 			throw new Error(failure);
 		}
 		// As the real sandbox's `forgetKeys`: an unmarked one stops and keeps nothing-to-wipe
-		// refuses before anything of it is touched (AGT-156).
+		// refuses before anything of it is touched.
 		assertForgotten(new KeptMap(this.#kept));
 		this.destroy();
 		forgetKept(new KeptMap(this.#kept));
+	}
+
+	/** The arguments of each `git` the sandbox ran for a tool, in order. */
+	gitCalls(): string[][] {
+		return this.#memory.gitCalls;
 	}
 
 	/**
@@ -611,7 +665,7 @@ export class FakeSandbox
 	}
 }
 
-/** A `Map` as the kept keys' `KeptStorage`, so the fake shares the real one's rules (AGT-156). */
+/** A `Map` as the kept keys' `KeptStorage`, so the fake shares the real one's rules. */
 class KeptMap implements KeptStorage {
 	constructor(private readonly entries: Map<string, unknown>) {}
 	get(key: string): unknown {

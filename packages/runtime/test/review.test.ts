@@ -511,6 +511,25 @@ describe("submitting a review", () => {
 		expect(findings.map((f) => f.offDiff)).toEqual([true, false, false, false, true]);
 		expect(findings[0]?.proof.proven).toBe(true);
 	});
+	it("checks the findings against the diff it was given and makes no other", async () => {
+		// The supplied patch holds app.ts line 40; the sandbox's own diff, which would be the one
+		// recomputed, does not.
+		const given = `diff --git a/app.ts b/app.ts
+--- a/app.ts
++++ b/app.ts
+@@ -40 +40 @@
+-before
++after
+`;
+		const { call, sandbox } = setup(undefined, given);
+		const { findings } = await call([
+			{ ...finding, test: null, line: 40 },
+			{ ...finding, test: null, line: 1 },
+		]);
+		// Line 40 is on the supplied diff; line 1 is only on the recomputed one.
+		expect(findings.map((f) => f.offDiff)).toEqual([false, true]);
+		expect(sandbox.gitCalls).toEqual([]);
+	});
 	it("records the returned outcome and traces submit_review", async () => {
 		const { call, run, record } = setup();
 		const outcome = await call();

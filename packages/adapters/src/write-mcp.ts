@@ -92,6 +92,44 @@ export interface McpHeader {
 	value: string | { variable: string; prefix: string };
 }
 
+/** The text the URL parser reads: tabs and line breaks out, C0 controls and spaces off the ends. */
+function urlTextAsWritten(value: string): string {
+	const withoutIgnored = value.replace(/[\t\n\r]/g, "");
+	let start = 0;
+	while (start < withoutIgnored.length && withoutIgnored.charCodeAt(start) <= 0x20) start += 1;
+	let end = withoutIgnored.length;
+	while (end > start && withoutIgnored.charCodeAt(end - 1) <= 0x20) end -= 1;
+	return withoutIgnored.slice(start, end);
+}
+
+/** Whether the authority of an address as written holds a userinfo delimiter, empty or not. */
+function authorityHasUserinfo(value: string): boolean {
+	// The URL parser reads a backslash as a slash in https.
+	const authority =
+		/^[a-z][a-z0-9+.-]*:[/\\]*([^/\\?#]*)/i.exec(urlTextAsWritten(value))?.[1] ?? "";
+	return authority.includes("@");
+}
+
+/**
+ * Why a remote MCP server address cannot be written, or null. Every runtime sends these from the
+ * repository owner's machine or a sandbox, so the writer does not broaden their reach beyond HTTPS.
+ */
+export function remoteMcpUrlProblem(value: string): string | null {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		return "is not a valid URL";
+	}
+	if (url.protocol !== "https:") return "must use https";
+	// `URL` drops an empty userinfo (`https://@host`, `https://:@host`), so read the text as written.
+	if (url.username !== "" || url.password !== "" || authorityHasUserinfo(value)) {
+		return "must not carry credentials";
+	}
+	if (url.port !== "") return "must use the default https port";
+	return null;
+}
+
 /**
  * Reads a stored MCP server as `writeMcpServers` does, for the runtime and the MCP page: a
  * redacted header becomes the variable named after the header, and a reference stays one. Says
@@ -148,6 +186,13 @@ export function writeMcpServers(
 			if (!(error instanceof Unwritable)) throw error;
 			output.problem(asset.name, error.message);
 			continue;
+		}
+		if (server.transport.kind !== "stdio") {
+			const invalid = remoteMcpUrlProblem(server.transport.url);
+			if (invalid !== null) {
+				output.problem(asset.name, `The server address ${invalid}`);
+				continue;
+			}
 		}
 		const identity = canonicalJson({
 			...server,

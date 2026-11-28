@@ -12,8 +12,11 @@ import {
 	PULL_REQUEST_TOOL,
 	type PullRequestOutcome,
 	providerMissing,
+	REVIEW_SKIPPED,
+	type ReviewOutcome,
 	RUN_PART,
 	type RunSpan,
+	reviewSummary,
 	SANDBOX_NOT_OFFERED,
 	SANDBOX_REPOSITORY_PATH,
 	type SandboxRepository,
@@ -118,6 +121,14 @@ import {
 	pullRequestTools,
 } from "./pull-requests";
 import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
+import { type ReviewPort, reviewTools } from "./review";
+import {
+	gitHubReviewSource,
+	prepareReview,
+	type ReviewSource,
+	reviewCountsOf,
+	reviewNote,
+} from "./review-turn";
 import { SANDBOX_ROOT, sandboxTools } from "./sandbox-tools";
 import { type ParentTargets, startTargetRule } from "./target-rule";
 import { createOutbox, queueExport, sendDue } from "./telemetry-export";
@@ -144,7 +155,8 @@ interface Sandbox
 		CheckPort,
 		EnginePort,
 		LocalServerPort,
-		ChangesPort {
+		ChangesPort,
+		ReviewPort {
 	destroy(): Promise<void>;
 	forgetKeys(): Promise<void>;
 	markForForget(): Promise<void>;
@@ -556,7 +568,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	}
 
 	/**
-	 * The answer a run gave, for an MCP client's get_run (AGT-155): the text of the reply whose
+	 * The answer a run gave, for an MCP client's get_run: the text of the reply whose
 	 * run part names it. Null when the run has no reply here yet, or never will.
 	 */
 	runAnswer(runId: string): string | null {
@@ -698,8 +710,78 @@ ${runPageNote(runs, turn.runId)}`
 	}
 
 	/**
+	 * Takes the one turn a review's delivery opened this conversation for. The registry says which
+	 * pull request, at which head, in which repository; the pull request and its diff are read from
+	 * GitHub, and the turn's message is made of them alone (`prepareReview`). A pull request that is
+	 * closed, whose head moved, or whose diff is too large ends the review as skipped, and no run
+	 * begins. Nobody waits for the answer, so the conversation stays awake until the turn ends.
+	 */
+	async reviewTurn(attemptId?: string): Promise<TriggerTurnOutcome> {
+		const { conversationId, registry } = this.#parties();
+		const delivery = await registry.reviewDelivery(conversationId, attemptId);
+		if (!delivery) return { runId: null, error: "This review has had its run already" };
+		const source = this.reviewSource(delivery.repository);
+		if (!source) {
+			return {
+				runId: null,
+				error: "GitHub is not set up on this server, so nothing can be reviewed",
+			};
+		}
+		let prepared: Awaited<ReturnType<typeof prepareReview>>;
+		try {
+			prepared = await prepareReview(source, delivery);
+		} catch (error) {
+			console.error("A pull request to review was not read", failureForLogs(error));
+			return { runId: null, error: "The pull request could not be read from GitHub" };
+		}
+		if ("skipped" in prepared) {
+			await registry.skipReviewOf(conversationId, prepared.skipped);
+			return { runId: null, error: prepared.skipped };
+		}
+		const turn = await registry.beginReviewTurn(conversationId, prepared.message, attemptId);
+		if ("status" in turn) return { runId: null, error: turn.message };
+		// The registry named the pull request and the head; GitHub says what it is based on and
+		// whether it is a draft, which the review reads and checks its findings against.
+		this.#begun = {
+			...turn,
+			review: {
+				number: delivery.number,
+				head: delivery.head,
+				...turn.review,
+				base: prepared.base,
+				diff: prepared.diff,
+				draft: prepared.draft,
+				draftReason: delivery.draftReason,
+			},
+		};
+		const message: UIMessage = {
+			id: crypto.randomUUID(),
+			role: "user",
+			// A review's message is the registry's delivery, not something a person wrote.
+			metadata: TRIGGER_MESSAGE_METADATA,
+			parts: [{ type: "text", text: prepared.message }],
+		};
+		const done = this.saveMessages((messages) => [...messages, message]);
+		this.keepAliveWhile(() => done).catch((error: unknown) =>
+			console.error("A review's turn failed", failureForLogs(error)),
+		);
+		return { runId: turn.runId };
+	}
+
+	/**
+	 * Where a review reads its pull request from: GitHub through the workspace's app. A test may
+	 * answer for it.
+	 */
+	protected reviewSource(repository: SandboxRepository): ReviewSource | null {
+		const env = this.env as unknown as RuntimeEnv;
+		const { GITHUB_APP_ID: appId, GITHUB_APP_PRIVATE_KEY: privateKey } = env;
+		if (!appId || !privateKey) return null;
+		return gitHubReviewSource(sharedApp({ appId, privateKey }), repository);
+	}
+
+	/**
 	 * Takes the one turn an outside task's admission opened this conversation for, with the task
-	 * as its message (AGT-155). The registry checks the conversation and begins the run. Nobody
+	 * as its message. The registry checks the conversation and begins the run. Nobody
 	 * waits for the answer, so the conversation stays awake until the turn ends.
 	 */
 	async outsideTurn(text: string): Promise<TriggerTurnOutcome> {
@@ -826,12 +908,12 @@ ${runPageNote(runs, turn.runId)}`
 		}
 		// The reply's stream opens before the turn's slow parts — connecting the servers, the
 		// repository's checkout on the first tool call, the model's first token — so the chat can
-		// say what it is doing instead of "thinking…" (AGT-139). Progress parts are transient:
+		// say what it is doing instead of "thinking…". Progress parts are transient:
 		// the conversation never stores them.
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
-				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				// The reply's run, so the chat can sum up what it used and link to its page.
 				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
@@ -859,7 +941,30 @@ ${runPageNote(runs, turn.runId)}`
 						this.#oauth(registry),
 					);
 					progress(null);
-					// What the turn changes in the checkout, summed under the reply (AGT-139). The
+					// A review checks the pull request's head out before the model sees anything, so a
+					// head that is gone ends the review as skipped and not as a turn that failed.
+					const review = turn.review && sandbox && repository ? turn.review : null;
+					if (review && sandbox && repository) {
+						progress("Checking out the pull request");
+						const result = await sandbox
+							.checkout(repository, branch, { number: review.number, head: review.head })
+							.catch((error: unknown): { error: string; gone?: true } => {
+								console.error("A review's checkout failed", failureForLogs(error));
+								return { error: "The pull request's head could not be checked out." };
+							});
+						progress(null);
+						if ("error" in result) {
+							if (result.gone) {
+								await registry
+									.skipReviewOf(conversationId, REVIEW_SKIPPED.headGone)
+									.catch(() => {});
+							}
+							writer.write({ type: "error", errorText: result.error });
+							await end("failed", result.error);
+							return;
+						}
+					}
+					// What the turn changes in the checkout, summed under the reply. The
 					// checkout is lazy here, so its state is noted as the first tool call starts,
 					// before that call can change anything. Concurrent tools share the one capture:
 					// a tool that starts while it is still running waits for it, so its change
@@ -877,7 +982,7 @@ ${runPageNote(runs, turn.runId)}`
 					// changes are summed, and only then may the fallback below ask for its base.
 					let sandboxTouched = false;
 					const checkedOut =
-						sandbox && repository
+						sandbox && repository && !review
 							? withCheckout(
 									sandbox,
 									repository,
@@ -889,7 +994,7 @@ ${runPageNote(runs, turn.runId)}`
 									},
 								)
 							: null;
-					const github = repository ? this.#pullRequests(repository) : null;
+					const github = repository && !review ? this.#pullRequests(repository) : null;
 					// A server's tools are named `<server>__<tool>`, so the sandbox's never clash with
 					// them. An edge is named after a member of the team, so it wins over any tool of
 					// that name.
@@ -915,6 +1020,25 @@ ${runPageNote(runs, turn.runId)}`
 									run,
 								})
 							: {}),
+						// A review has the sandbox's tools and `submit_review`, and nothing else.
+						...(review && sandbox && repository
+							? reviewTools({
+									sandbox,
+									// The commit the diff the model read was made against, not a branch that may move.
+									base: review.base ?? `origin/${repository.defaultBranch}`,
+									// The text the model read: the findings are checked against it, not a second diff.
+									diff: review.diff,
+									head: review.head,
+									run,
+									record: (outcome) => this.#recordReview(registry, runId, outcome),
+									summarize: (outcome) =>
+										reviewSummary({
+											...reviewCountsOf(outcome),
+											draft: review.draft === true,
+											draftReason: review.draftReason ?? null,
+										}),
+								})
+							: {}),
 						// The registry reads who asks, and what started the run, from the run itself.
 						...(turn.memory
 							? memoryTools(
@@ -934,7 +1058,9 @@ ${runPageNote(runs, turn.runId)}`
 					};
 					const system = [
 						agent.instructions,
-						sandbox && repository && repositoryNote(repository, branch),
+						review && repository
+							? reviewNote(repository, review)
+							: sandbox && repository && repositoryNote(repository, branch),
 					]
 						.filter((part) => typeof part === "string")
 						.join("\n\n");
@@ -1036,7 +1162,7 @@ ${runPageNote(runs, turn.runId)}`
 								: end("failed", describeFailure(agent, error)),
 					});
 					// The finish is written here, not by `toUIMessageStream`, so the turn's changes
-					// can be summed into the reply first (AGT-139).
+					// can be summed into the reply first.
 					const ui = toUIMessageStream({
 						stream: result.stream,
 						tools,
@@ -1125,7 +1251,7 @@ ${runPageNote(runs, turn.runId)}`
 		const stream = createUIMessageStream({
 			execute: async ({ writer }) => {
 				writer.write({ type: "start" });
-				// The reply's run, so the chat can sum up what it used and link to its page (AGT-139).
+				// The reply's run, so the chat can sum up what it used and link to its page.
 				writer.write({ type: RUN_PART, data: { runId } });
 				let shown: string | null = null;
 				const progress = (label: string | null) => {
@@ -1158,7 +1284,7 @@ ${runPageNote(runs, turn.runId)}`
 					return;
 				}
 				progress(null);
-				// What the turn changes in the checkout, summed under the reply (AGT-139). The
+				// What the turn changes in the checkout, summed under the reply. The
 				// checkout is done by now, before the CLI runs.
 				const changesFrom = repository ? await sandbox.changesBase().catch(() => null) : null;
 				// The capture awaited above is a window a stop can land in, before the listener
@@ -1360,7 +1486,7 @@ ${runPageNote(runs, turn.runId)}`
 	}
 
 	/**
-	 * The repository's checks for `open_pull_request` (AGT-142): the commands as the registry holds
+	 * The repository's checks for `open_pull_request`: the commands as the registry holds
 	 * them when the tool is called, asked by the id GitHub gave the repository the turn began with,
 	 * and the sandbox they run in. The registry is the only place they are read from.
 	 */
@@ -1397,7 +1523,7 @@ ${runPageNote(runs, turn.runId)}`
 	/**
 	 * What this conversation's `open_pull_request` calls proposed, kept in the conversation's own
 	 * store so it outlives the turn: a call retried after an eviction returns the first outcome
-	 * instead of running the checks and opening the pull request again (AGT-147). Only this tool
+	 * instead of running the checks and opening the pull request again. Only this tool
 	 * writes under the prefix, so what comes back is what it wrote.
 	 */
 	#pullRequestMemory(): PullRequestMemory {
@@ -1410,14 +1536,37 @@ ${runPageNote(runs, turn.runId)}`
 		};
 	}
 
+	/**
+	 * Keeps the counts of what a review found in the registry. The findings stay in this
+	 * conversation, as the result of `submit_review`. A failure is thrown: the tool then lets the
+	 * review submit again.
+	 */
+	async #recordReview(
+		registry: DurableObjectStub<RegistryDO>,
+		runId: string,
+		{ findings }: ReviewOutcome,
+	): Promise<void> {
+		await registry.recordReviewCounts(runId, reviewCountsOf({ findings }));
+	}
+
 	/** Puts the pull request on the run. A failure is logged: the pull request is made anyway. */
 	async #recordPullRequest(
 		registry: DurableObjectStub<RegistryDO>,
 		runId: string,
-		{ repository, number, url }: PullRequestOutcome,
+		{ repository, number, url, head, state, draft, draftReason }: PullRequestOutcome,
 	): Promise<void> {
 		try {
-			await registry.recordRunPullRequest(runId, { repository, number, url });
+			await registry.recordRunPullRequest(runId, {
+				repository,
+				number,
+				url,
+				// What a review of the run's work needs; the registry keeps the last call's.
+				head,
+				...(state === undefined ? {} : { state }),
+				...(draft === undefined ? {} : { draft }),
+				// Made by the tool of the checks' status and the changed files: never a command's output.
+				...(draft && draftReason ? { draftReason } : {}),
+			});
 		} catch (error) {
 			console.error("A run's pull request was not recorded", { runId, ...failureForLogs(error) });
 		}
@@ -1461,7 +1610,7 @@ ${runPageNote(runs, turn.runId)}`
 	}
 
 	/**
-	 * The OAuth clients of the turn's servers connected through OAuth (AGT-78): their tokens live
+	 * The OAuth clients of the turn's servers connected through OAuth: their tokens live
 	 * in the registry, sealed, and are refreshed there.
 	 */
 	#oauth(registry: DurableObjectStub<RegistryDO>): OAuthProviders {

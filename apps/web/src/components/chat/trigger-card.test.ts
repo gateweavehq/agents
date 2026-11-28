@@ -13,9 +13,9 @@ const BODY = JSON.stringify({
 		actor: { id: "u1", name: "Maya", type: "person" },
 		issue: {
 			id: "i1",
-			key: "TRK-137",
+			key: "TST-137",
 			title: "Roadmap: list feature flags",
-			url: "https://track.example.com/gateweave/issue/TRK-137",
+			url: "https://track.example.com/gateweave/issue/TST-137",
 			description: `${"x".repeat(5000)}`,
 		},
 	},
@@ -40,8 +40,8 @@ describe("a trigger's message", () => {
 	it("is an event card with the event closed, not a person's bubble", () => {
 		const html = render([user(TEXT, { source: "trigger" })]);
 		expect(html).toContain("Track: issue created");
-		expect(html).toContain('href="https://track.example.com/gateweave/issue/TRK-137"');
-		expect(html).toContain("TRK-137 Roadmap: list feature flags");
+		expect(html).toContain('href="https://track.example.com/gateweave/issue/TST-137"');
+		expect(html).toContain("TST-137 Roadmap: list feature flags");
 		expect(html).toContain("By Maya");
 		expect(html).toContain("The event as sent");
 		expect(html).toMatch(/<details(?![^>]* open)/);
@@ -98,14 +98,14 @@ describe("tool chips", () => {
 			parts: [
 				call("1", "read_file", { path: "docs/roadmap.md" }),
 				call("2", "read_file", { path: "docs/architecture.md" }),
-				call("3", "track__get_issue", { key: "TRK-137" }),
+				call("3", "track__get_issue", { key: "TST-137" }),
 				call("4", "run_command", { command: "curl -H 'Authorization: Bearer abcdefghij' x" }),
 			],
 		} as UIMessage;
 		const html = render([message]);
 		expect(html.indexOf("docs/roadmap.md")).toBeLessThan(html.indexOf("docs/architecture.md"));
 		expect(html).toContain('title="docs/roadmap.md"');
-		expect(html).toContain("TRK-137");
+		expect(html).toContain("TST-137");
 		expect(html).toContain(">curl<");
 		expect(html).not.toContain("abcdefghij");
 	});

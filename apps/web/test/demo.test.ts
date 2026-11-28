@@ -17,7 +17,7 @@ import { startAgents } from "./agents-worker";
 import { ask } from "./chat-socket";
 import { FakeModels, MODEL_HOSTS } from "./fake-models";
 
-// The public demo (AGT-116): every visitor gets a private sandbox, with made-up data and agents
+// The public demo: every visitor gets a private sandbox, with made-up data and agents
 // that answer from a script, which cleanup deletes after a day. The same code ships to every
 // deployment, so it must also do nothing anywhere else.
 
@@ -360,6 +360,17 @@ describe("on the demo deployment", () => {
 			userId,
 		);
 		expect(trigger).toEqual(refused);
+		// A review trigger holds no secret, and the demo has none the more.
+		expect(
+			await registry.createReviewTrigger(
+				{
+					name: "Reviews",
+					prompt: "Review it",
+					target: { kind: "team", teamId: team?.team.id ?? "" },
+				},
+				userId,
+			),
+		).toEqual(refused);
 		const track = {
 			trackUrl: "https://track.example.net",
 			agentKey: `gwt_${"a".repeat(43)}`,

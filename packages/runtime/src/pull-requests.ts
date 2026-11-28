@@ -3,13 +3,13 @@
  * in the repository, pushes the conversation's branch (`RunnerSandbox.push`), and opens a pull
  * request from it against the default branch, or pushes to the one the branch has open.
  *
- * When the repository has checks (AGT-142, `./checks.ts`), the tool runs them between the commit
+ * When the repository has checks (`./checks.ts`), the tool runs them between the commit
  * and the push. A round that fails pushes and opens nothing, and the model reads what failed; the
  * third failed round of a run pushes the work anyway and opens the pull request as a draft. The
  * body then ends with a section the tool writes, which says what ran. A repository without checks
  * gets none of this: its pull requests are made as before.
  *
- * A call that is retried or replayed (AGT-147) finds what the first one proposed in the
+ * A call that is retried or replayed finds what the first one proposed in the
  * conversation's memory and returns it, so the checks do not run twice and a pull request the
  * branch's open one cannot stand in for is not made again.
  *
@@ -45,12 +45,14 @@ import {
 	type CheckRunner,
 	type ChecksSpent,
 	checkPassed,
+	checksDraftReason,
 	checksNotRunSection,
 	checksSection,
 	describeDraft,
 	describeEdits,
 	describeFailedRound,
 	describeOutcome,
+	editsDraftReason,
 	editsSection,
 	NO_SANDBOX,
 	pullRequestBody,
@@ -243,7 +245,7 @@ export interface PullRequestMemoryEntry {
 
 /**
  * What a conversation's `open_pull_request` calls proposed, kept past the turn so a retried or
- * replayed call returns the first outcome instead of repeating the work (AGT-147).
+ * replayed call returns the first outcome instead of repeating the work.
  */
 export interface PullRequestMemory {
 	/** The proposal the latest call under this key recorded, if there was one. */
@@ -272,6 +274,27 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 	const name = `${repository.owner}/${repository.name}`;
 	// The tools are made once for a turn, which is one run: what its calls spent adds up here.
 	const spent: ChecksSpent = { failedRounds: 0, seconds: 0 };
+	// The pull request this run has recorded, as it last recorded it.
+	let known: PullRequestOutcome | null = null;
+	/** Records an outcome on the run, and keeps it as the pull request the run knows. */
+	const recorded = async (outcome: PullRequestOutcome): Promise<void> => {
+		await record(outcome);
+		known = outcome;
+	};
+	/**
+	 * A push that moved a pull request the run recorded already is kept on the run whatever else
+	 * the call comes to, as a failed update of the pull request's words does not unmake the push.
+	 * Left as it was, the run would end holding the first head, and its review would skip it.
+	 */
+	const keepHead = async (head: string): Promise<void> => {
+		const before: PullRequestOutcome | null = known;
+		if (before === null || before.head === head) return;
+		try {
+			await recorded({ ...before, head });
+		} catch (error) {
+			console.error("A pull request's new head was not recorded", failureForLogs(error));
+		}
+	};
 	// One call at a time. A model can make two at once, which would commit, check and push over
 	// each other in the one checkout, and each count the run's time for checks from the same start.
 	let last: Promise<unknown> = Promise.resolve();
@@ -324,6 +347,22 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		const entry = await memory.recall(memoKey(head));
 		return entry !== null && entry.title === title && entry.body === body ? entry.outcome : null;
 	};
+	/**
+	 * `recall` for a head that was just pushed: the push is on GitHub whatever the lookup comes to,
+	 * so a lookup that fails leaves the run holding the head it left, as a failed update does.
+	 */
+	const recallPushed = async (
+		head: string,
+		title: string,
+		body: string,
+	): Promise<PullRequestOutcome | null> => {
+		try {
+			return await recall(head, title, body);
+		} catch (error) {
+			await keepHead(head);
+			throw error;
+		}
+	};
 	const remember = async (
 		head: string,
 		title: string,
@@ -365,23 +404,25 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 		// What the tool adds to the body and to its answer; nothing when no checks are set.
 		let section: string | null = null;
 		let about: Pick<PullRequestOutcome, "checks" | "draft" | "note"> = {};
+		// Why the pull request is a draft, made of the checks' status and the changed files only.
+		const reasons: string[] = [];
 		// How the section is written once the push has shown what the branch edits.
 		let write: (review: OracleReview | null) => string | null = () => null;
 		if (commands.length === 0) {
 			pushed = await sandbox.push(branch, title, await author(), model);
 			// A retry's push is a no-op: the commit is there, so only the proposal is skipped.
-			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
+			const hit = "error" in pushed ? null : await recallPushed(pushed.head, title, body);
 			if (hit !== null) {
 				// Recorded again: the first call's record may have failed, and this sets the same
 				// pull request on the run, so recording twice changes nothing.
-				await record(hit);
+				await recorded(hit);
 				return hit;
 			}
 		} else if (!checks?.sandbox) {
 			pushed = await sandbox.push(branch, title, await author(), model);
-			const hit = "error" in pushed ? null : await recall(pushed.head, title, body);
+			const hit = "error" in pushed ? null : await recallPushed(pushed.head, title, body);
 			if (hit !== null) {
-				await record(hit);
+				await recorded(hit);
 				return hit;
 			}
 			write = (review) => checksNotRunSection(NO_SANDBOX, review);
@@ -398,7 +439,7 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 				// no-op.
 				const pushedAgain = await machine.pushCommit(branch, committed.head);
 				if ("error" in pushedAgain) throw new Error(pushedAgain.error);
-				await record(hit);
+				await recorded(hit);
 				return hit;
 			}
 			const checked = await checkAndPush(commands, machine, committed, abortSignal);
@@ -411,58 +452,75 @@ export function pullRequestTools(options: PullRequestToolOptions): ToolSet {
 				draft,
 				...(draft ? { note: describeDraft(checked.round) } : {}),
 			};
+			const why = draft ? checksDraftReason(checked.round) : null;
+			if (why !== null) reasons.push(why);
 		}
 		if ("error" in pushed) throw new Error(pushed.error);
-		// After the push, so the branch is on GitHub to be compared. A branch that edits what its
-		// checks rely on is a draft, whether or not the repository has checks.
-		const review = (await github.review?.(branch)) ?? null;
-		// The review is many requests long: a turn stopped meanwhile creates, updates or converts nothing.
-		abortSignal?.throwIfAborted();
-		section = commands.length === 0 ? editsSection(review) : write(review);
-		if (reviewFlagged(review)) {
-			const edits = describeEdits(review);
-			about = {
-				...about,
-				draft: true,
-				...(edits === null ? {} : { note: [about.note, edits].filter(Boolean).join("\n\n") }),
-			};
-		}
-		// The model's own copy of the section goes whether checks are set or not: the heading is
-		// the tool's, and a reader takes what stands under it as the tool's word.
-		const written = pullRequestBody(body, section, agentName);
-		let made: Awaited<ReturnType<PullRequestPort["propose"]>>;
+		const pushedHead = pushed.head;
 		try {
-			made = await github.propose({
-				branch,
-				title,
-				body: written,
-				...(about.draft ? { draft: true } : {}),
-				// A pull request that was open already is made a draft for what it edited; one that
-				// failed its checks stays as it is.
-				...(reviewFlagged(review) ? { convert: true } : {}),
-			});
+			// After the push, so the branch is on GitHub to be compared. A branch that edits what its
+			// checks rely on is a draft, whether or not the repository has checks.
+			const review = (await github.review?.(branch)) ?? null;
+			// The review is many requests long: a turn stopped meanwhile creates, updates or converts nothing.
+			abortSignal?.throwIfAborted();
+			section = commands.length === 0 ? editsSection(review) : write(review);
+			if (reviewFlagged(review)) {
+				const edits = describeEdits(review);
+				const editsWhy = editsDraftReason(review);
+				if (editsWhy !== null) reasons.push(editsWhy);
+				about = {
+					...about,
+					draft: true,
+					...(edits === null ? {} : { note: [about.note, edits].filter(Boolean).join("\n\n") }),
+				};
+			}
+			// The model's own copy of the section goes whether checks are set or not: the heading is
+			// the tool's, and a reader takes what stands under it as the tool's word.
+			const written = pullRequestBody(body, section, agentName);
+			let made: Awaited<ReturnType<PullRequestPort["propose"]>>;
+			try {
+				made = await github.propose({
+					branch,
+					title,
+					body: written,
+					...(about.draft ? { draft: true } : {}),
+					// A pull request that was open already is made a draft for what it edited; one that
+					// failed its checks stays as it is.
+					...(reviewFlagged(review) ? { convert: true } : {}),
+				});
+			} catch (error) {
+				console.error("A pull request was not made", failureForLogs(error));
+				throw new Error(describeGitHubFailure(error, name, branch));
+			}
+			const outcome: PullRequestOutcome = {
+				repository: name,
+				number: made.number,
+				url: made.url,
+				opened: made.opened,
+				title: made.title,
+				branch: made.headRef,
+				state: made.state,
+				additions: made.additions,
+				deletions: made.deletions,
+				changedFiles: made.changedFiles,
+				head: pushed.head,
+				...about,
+				// GitHub's word on whether it is a draft, which an open pull request keeps when it
+				// was not converted, and not what the tool meant it to be.
+				...(made.draft === undefined ? {} : { draft: made.draft }),
+				...((made.draft ?? about.draft) === true && reasons.length > 0
+					? { draftReason: reasons.join(" ").slice(0, 2000) }
+					: {}),
+			};
+			await recorded(outcome);
+			// Only a call that proposed is remembered: a failed one is retried as if it were the first.
+			await remember(pushed.head, title, body, outcome);
+			return outcome;
 		} catch (error) {
-			console.error("A pull request was not made", failureForLogs(error));
-			throw new Error(describeGitHubFailure(error, name, branch));
+			// The push is on GitHub whatever came of the rest: the run keeps the head it left.
+			await keepHead(pushedHead);
+			throw error;
 		}
-		const outcome: PullRequestOutcome = {
-			repository: name,
-			number: made.number,
-			url: made.url,
-			opened: made.opened,
-			title: made.title,
-			branch: made.headRef,
-			state: made.state,
-			additions: made.additions,
-			deletions: made.deletions,
-			changedFiles: made.changedFiles,
-			head: pushed.head,
-			...about,
-		};
-		await record(outcome);
-		// Only a call that proposed is remembered: a failed one is retried as if it were the first.
-		await remember(pushed.head, title, body, outcome);
-		return outcome;
 	};
 	return {
 		[PULL_REQUEST_TOOL]: traced(open, SANDBOX_SERVER, PULL_REQUEST_TOOL, run, {

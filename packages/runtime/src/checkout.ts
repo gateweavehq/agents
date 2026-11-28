@@ -12,11 +12,18 @@ import {
 import type { SandboxPort } from "./sandbox-tools";
 
 /** How a checkout went: done now, there already, or why not, in words the model reads. */
-export type CheckoutResult = { checkedOut: boolean } | { error: string };
+export type CheckoutResult =
+	| { checkedOut: boolean }
+	/** `gone`: a review's head is no longer on GitHub, so there is nothing to check out. */
+	| { error: string; gone?: true };
 
 /** A sandbox that can check out a repository. */
 export interface CheckoutPort extends SandboxPort {
-	checkout(repository: SandboxRepository, branch: string): Promise<CheckoutResult>;
+	checkout(
+		repository: SandboxRepository,
+		branch: string,
+		review?: { number: number; head: string },
+	): Promise<CheckoutResult>;
 }
 
 /** The sandbox as the tools reach it, with the repository checked out before any of them runs. */
@@ -28,7 +35,7 @@ export interface CheckedOutSandbox extends SandboxPort {
 /**
  * The sandbox as the tools reach it, checking out the repository before the first of them runs.
  * A checkout that fails is the tool's answer, and the next tool call tries again. `onWait` says
- * when a checkout starts and settles, so a turn can show the wait (AGT-139); a failed checkout's
+ * when a checkout starts and settles, so a turn can show the wait; a failed checkout's
  * retry says it again.
  */
 export function withCheckout(

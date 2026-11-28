@@ -5,7 +5,7 @@
  */
 import { parseJsonConfig, parseTomlConfig } from "./assets";
 import type { SetupFolder } from "./setup-folder";
-import { readMcpConnection } from "./write-mcp";
+import { readMcpConnection, remoteMcpUrlProblem } from "./write-mcp";
 
 /** The remote hosts and exact local commands a ready-made setup may configure. */
 export interface ReadyMadeMcpAllowlist {
@@ -50,7 +50,10 @@ export function readyMadeMcpProblems(
 	for (const asset of setup.assets) {
 		if (asset.kind !== "mcp-server") continue;
 		const read = readMcpConnection(asset.files);
-		if (!read.ok) continue;
+		if (!read.ok) {
+			problems.push(`${asset.name}: ${read.message}`);
+			continue;
+		}
 		const { connection } = read;
 		const [file] = asset.files;
 		const remoteKeys = file?.path.endsWith(".toml") ? REMOTE_TOML_KEYS : REMOTE_KEYS;
@@ -83,18 +86,12 @@ export function readyMadeMcpProblems(
 			continue;
 		}
 
-		let host: string;
-		try {
-			const url = new URL(connection.url);
-			if (url.protocol !== "https:") {
-				problems.push(`${asset.name}: the server address must use https`);
-				continue;
-			}
-			host = url.hostname.toLowerCase();
-		} catch {
-			problems.push(`${asset.name}: the server address is not a valid URL`);
+		const invalid = remoteMcpUrlProblem(connection.url);
+		if (invalid !== null) {
+			problems.push(`${asset.name}: the server address ${invalid}`);
 			continue;
 		}
+		const host = new URL(connection.url).hostname.toLowerCase();
 		const example =
 			asked.has(asset.name) &&
 			allowlist.askUrlExampleHosts.some((domain) => host === domain || host.endsWith(`.${domain}`));

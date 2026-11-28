@@ -1,7 +1,7 @@
 /**
  * Outside tasks: an MCP client with the `agents:run` scope hands an agent of the workspace a task
- * (`run_agent` on /mcp, AGT-155). The registry admits the task the way it admits a trigger's
- * delivery: the agent must exist and its owner must have allowed tasks from outside, the agent
+ * (`run_agent` on /mcp). The registry admits the task the way it admits a trigger's
+ * delivery: the agent must exist and have tasks from outside allowed, the agent
  * must be runnable, and the agent is held to its runs per minute and per day. Each task opens a
  * conversation of its own, started by the person whose token asked, and the runtime begins its
  * run (`beginOutsideTurn`). The run is counted like a trigger's: in the same runs table, under the
@@ -94,7 +94,8 @@ export function admitOutsideTask(
 	if (!agent.outsideTasks) {
 		return {
 			status: "refused",
-			message: "That agent does not allow tasks from outside; its owner can turn it on",
+			message:
+				"That agent does not allow tasks from outside; a workspace owner or admin can turn it on",
 		};
 	}
 	const refusal = targetRefusal(db, { kind: "agent", agentId: agent.id });

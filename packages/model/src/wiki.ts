@@ -1,5 +1,5 @@
 /**
- * A repository's wiki (AGT-108): pages a model writes about the code, which members read in the
+ * A repository's wiki: pages a model writes about the code, which members read in the
  * app and agents read over MCP with the tools DeepWiki's server has. The text formats here are
  * DeepWiki's, as its server answers (checked 2026-11-11, "DeepWiki" 4.0.2), so an agent that reads
  * DeepWiki reads this wiki the same way.
@@ -212,8 +212,9 @@ export function wikiStructureText(
 	return `Available pages for ${repoName}:\n\n${lines.join("\n")}`;
 }
 
-/** One page as `read_wiki_contents` gives it: its sources first, then its text. */
+/** One page as `read_wiki_contents` gives it: its number and title, sources, then its text. */
 export function wikiPageText(page: {
+	number: string;
 	title: string;
 	sources: readonly WikiSource[];
 	body: string;
@@ -223,7 +224,7 @@ export function wikiPageText(page: {
 		page.sources.length === 0
 			? ""
 			: `<details>\n<summary>Relevant source files</summary>\n\nThe following files were used as context for generating this wiki page:\n\n${sources}\n\n</details>\n\n`;
-	return `# Page: ${page.title}\n\n${details}# ${page.title}\n\n${page.body.trim()}`;
+	return `# Page ${page.number}: ${page.title}\n\n${details}# ${page.title}\n\n${page.body.trim()}`;
 }
 
 /** `read_wiki_contents`'s answer: every page in reading order. */

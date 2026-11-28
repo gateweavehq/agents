@@ -67,7 +67,7 @@ export interface AgentsAccess {
 	/** Every repository with a wiki in the person's workspaces, or in the one named. */
 	wikiRepos(workspace: string | undefined): Promise<WikiRepo[]>;
 	/**
-	 * Hands an agent of the workspace `workspace` the task `task` (`run_agent`, AGT-155): admitted
+	 * Hands an agent of the workspace `workspace` the task `task` (`run_agent`): admitted
 	 * and begun the way a trigger's delivery is, and counted like its run. `requestId` is the
 	 * caller's own id for the task, so its retry finds the run instead of starting another.
 	 */
@@ -78,7 +78,7 @@ export interface AgentsAccess {
 		requestId: string;
 	}): Promise<TaskStart>;
 	/**
-	 * Reads one run of the workspace `workspace` (`get_run`, AGT-155): its state and answer, as
+	 * Reads one run of the workspace `workspace` (`get_run`): its state and answer, as
 	 * the Runs pages show them to the person. A run the person may not see is refused as if it
 	 * did not exist.
 	 */
@@ -228,7 +228,7 @@ export function wikiReposText(repos: readonly WikiRepo[]): string {
 
 /**
  * The server one request talks to, made for the person it acts as. Every tool reaches Agents
- * through `access` alone. `canRun` is whether the token carries `agents:run` (AGT-155): without
+ * through `access` alone. `canRun` is whether the token carries `agents:run`: without
  * it the server offers the read tools alone, so a read-only token cannot even see `run_agent`.
  */
 export function createAgentsServer(access: AgentsAccess, canRun = false): McpServer {
@@ -374,13 +374,15 @@ export function createAgentsServer(access: AgentsAccess, canRun = false): McpSer
 		{
 			title: "Read a wiki",
 			description:
-				"Gives a repository's wiki in one of your workspaces: every page, or the one asked for, each with the source files it was written from and citations of their lines.",
+				"Gives a repository's wiki in one of your workspaces: every page, or the one asked for, each headed by its number, with the source files it was written from and citations of their lines.",
 			inputSchema: wikiInput.extend({
 				page: z
 					.string()
 					.regex(WIKI_PAGE_NUMBER)
 					.optional()
-					.describe('One page\'s number from read_wiki_structure, such as "2.1", to read only it.'),
+					.describe(
+						'One page\'s number, as its heading or read_wiki_structure shows it, such as "2.1", to read only it.',
+					),
 			}),
 			annotations: { readOnlyHint: true, openWorldHint: false },
 		},

@@ -48,6 +48,7 @@ import m0046 from "./0046_easy_hulk.sql";
 import m0047 from "./0047_adorable_vargas.sql";
 import m0048 from "./0048_track_report_outbox.sql";
 import m0049 from "./0049_agent_pauses.sql";
+import m0050 from "./0050_pull_request_reviews.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -103,5 +104,6 @@ export default {
 		m0047,
 		m0048,
 		m0049,
+		m0050,
 	},
 };

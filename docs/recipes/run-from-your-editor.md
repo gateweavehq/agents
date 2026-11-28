@@ -20,10 +20,10 @@ was a stand-in that answered `run_agent` and `get_run` with fixed data, so no ru
 ## 1. Turn on "Tasks from MCP clients"
 
 Starting a task needs the agent's **Tasks from MCP clients** setting to be on, and it is off until someone turns
-it on. An owner or admin of the workspace can: open the agent under **Agents**, choose **Edit**, tick
+it on. A workspace owner or admin can: open the agent under **Agents**, choose **Edit**, tick
 **Tasks from MCP clients** and save.
 
-An agent without it refuses the task, saying that its owner can turn the setting on.
+An agent without it refuses the task, saying that a workspace owner or admin can turn the setting on.
 
 ## 2. Start the run
 
@@ -50,7 +50,7 @@ The client calls `get_run` with the `workspace` and the `runId`, again and again
 longer `running`. A run ends as `succeeded`, `failed`, `stopped`, `interrupted` or `step-limit`. The answer holds
 the agent's answer once it has one, its steps and tokens, and `link`.
 
-You can read your own runs. An owner or admin of the workspace reads every member's.
+You can read your own runs. A workspace owner or admin reads every member's.
 
 ## 4. Open the run
 
@@ -90,7 +90,7 @@ The last `get_run` also gives `steps`, `inputTokens`, `outputTokens`, `cost` (in
 and the run is on the Runs page.
 
 With **Tasks from MCP clients** off, `run_agent` answers `status: "refused"` with the message `That agent does
-not allow tasks from outside; its owner can turn it on`, and no run starts.
+not allow tasks from outside; a workspace owner or admin can turn it on`, and no run starts.
 
 ## What has not been tried
 

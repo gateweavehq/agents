@@ -28,7 +28,7 @@ it("offers list_workspaces, which returns what access gives it and nothing more"
 	await client.close();
 });
 
-it("offers run_agent only to a token with agents:run, and hands it the ask (AGT-155)", async () => {
+it("offers run_agent only to a token with agents:run, and hands it the ask", async () => {
 	const asked: unknown[] = [];
 	const access: AgentsAccess = {
 		workspaces: async () => [],
@@ -148,10 +148,10 @@ describe("the wiki tools, as DeepWiki's", () => {
 	it("gives every page, or the one asked for", async () => {
 		const all = await call([written], "read_wiki_contents", { repoName: "acme/app" });
 		expect(all.text.split("\n\n---\n\n")).toHaveLength(2);
-		expect(all.text).toContain("# Page: Overview");
+		expect(all.text).toContain("# Page 1: Overview");
 
 		const one = await call([written], "read_wiki_contents", { repoName: "acme/app", page: "1.1" });
-		expect(one.text).toMatch(/^# Page: Sync\n/);
+		expect(one.text).toMatch(/^# Page 1\.1: Sync\n/);
 		expect(one.text).not.toContain("Overview");
 
 		const missing = await call([written], "read_wiki_contents", {
@@ -207,9 +207,11 @@ describe("asking a wiki", () => {
 		expect(answer.isError).toBe(false);
 		expect(answer.text).toMatch(/^From the wiki of acme\/app, the pages that bear on the question/);
 		// "sync" is in the Sync page's title and the Overview's text: Sync comes first, then Overview.
-		expect(answer.text.indexOf("# Page: Sync")).toBeLessThan(
-			answer.text.indexOf("# Page: Overview"),
-		);
+		const sync = answer.text.indexOf("# Page 1.1: Sync");
+		const overview = answer.text.indexOf("# Page 1: Overview");
+		expect(sync).toBeGreaterThan(-1);
+		expect(overview).toBeGreaterThan(-1);
+		expect(sync).toBeLessThan(overview);
 		expect(answer.text).toContain("[src/sync.ts:1-3]()");
 	});
 
@@ -224,8 +226,8 @@ describe("asking a wiki", () => {
 			},
 		);
 		expect(answer.isError).toBe(false);
-		expect(answer.text).toContain("Repository: acme/store\n\n# Page: Storage");
-		expect(answer.text).not.toContain("# Page: Sync");
+		expect(answer.text).toContain("Repository: acme/store\n\n# Page 1: Storage");
+		expect(answer.text).not.toContain("# Page 1.1: Sync");
 		expect(answer.text).toMatch(
 			/Not read:\nError fetching wiki for acme\/gone: Repository not found\.$/,
 		);
