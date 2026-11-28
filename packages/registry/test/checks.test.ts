@@ -1,5 +1,5 @@
 /**
- * A repository's checks in the registry (AGT-142). Each test names the requirement of the issue it
+ * A repository's checks in the registry. Each test names the requirement of the issue it
  * holds the registry to.
  */
 import { runInDurableObject } from "cloudflare:test";

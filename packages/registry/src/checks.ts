@@ -1,5 +1,5 @@
 /**
- * A repository's checks (AGT-142; `checks.ts` in the model package): the commands
+ * A repository's checks (`checks.ts` in the model package): the commands
  * `open_pull_request` runs on an agent's work before it pushes it. They are kept on the
  * repository's row and written only by `setRepositoryChecks`, which the app calls for an owner or
  * admin. Nothing read from the repository itself, a scan among it, ever writes them.

@@ -1,5 +1,5 @@
 /**
- * Files only (AGT-122): a turn that works on its agent's repository without a sandbox. It reads
+ * Files only: a turn that works on its agent's repository without a sandbox. It reads
  * and edits the repository's files, kept in the conversation, and opens pull requests; it runs no
  * command. These are the pure parts the registry and the runtime share.
  *

@@ -11,7 +11,7 @@ const ID = /^[\w-]{1,64}$/;
 const MAX_BODY_BYTES = 1024 * 1024;
 
 /**
- * The gateway to a GitLab connection's push webhook (AGT-79). Anyone may post here, so nothing is
+ * The gateway to a GitLab connection's push webhook. Anyone may post here, so nothing is
  * read until the workspace's registry has checked the `X-Gitlab-Token` header against the
  * connection's secret token. A workspace that does not exist is turned away first, so no registry
  * is made for it, and a delivery that is not for us gets the same 404 as a missing connection.
