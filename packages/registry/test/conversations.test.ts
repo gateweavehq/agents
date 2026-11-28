@@ -201,6 +201,40 @@ describe("workspace model-key spending caps", () => {
 		expect(refusedTurn).toMatchObject({ status: "refused" });
 		if (!("status" in refusedTurn)) throw new Error("expected a refusal");
 		expect(refusedTurn.message).toContain("made-up-model has no prices");
+
+		await stub.setModelKeyCaps({ daily: "0", monthly: "" });
+		const zero = await stub.beginTurn(id, "Again");
+		expect(zero).toMatchObject({ status: "refused" });
+		if (!("status" in zero)) throw new Error("expected a refusal");
+		expect(zero.message).toContain("daily cap, $0");
+		expect(zero.message).not.toContain("has no prices");
+	});
+
+	it("checks a cap again as the turn begins when another run closes meanwhile", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "2" });
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		const second = await runInDurableObject(stub, async (instance: RegistryDO) => {
+			const pending = instance.beginTurn(id, "Again");
+			instance.finishRun(first.runId, {
+				status: "succeeded",
+				error: null,
+				steps: 1,
+				inputTokens: 10,
+				outputTokens: 5,
+				cachedInputTokens: 0,
+				cost: 2_000_000,
+				endedAt: Date.now(),
+			});
+			return pending;
+		});
+		expect(second).toMatchObject({ status: "refused" });
+		if (!("status" in second)) throw new Error("expected a refusal");
+		expect(second.message).toContain("monthly cap, $2");
 	});
 
 	it("pass 80 and 100 percent of a monthly cap once in a period", async () => {
@@ -222,6 +256,47 @@ describe("workspace model-key spending caps", () => {
 		expect(heard).toEqual([
 			expect.objectContaining({ kind: "month", share: 80, cap: 2, spent: 1.6 }),
 			expect.objectContaining({ kind: "month", share: 100, cap: 2, spent: 2 }),
+		]);
+	});
+
+	it("pass exactly 80 percent of a cap in exact units", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.1" });
+		const begun = await stub.beginTurn(id, "Hello");
+		if ("status" in begun) throw new Error(begun.message);
+		await finish(stub, begun.runId, 80_000);
+		const heard = await runInDurableObject(stub, async (instance: RegistryDO) =>
+			(instance as unknown as TestRegistry).modelKeyCapsPassed(),
+		);
+		expect(heard).toEqual([expect.objectContaining({ kind: "month", share: 80, spent: 0.08 })]);
+	});
+
+	it("uses the finished run's started month for cap alerts", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.1" });
+		const begun = await stub.beginTurn(id, "Hello");
+		if ("status" in begun) throw new Error(begun.message);
+		const now = new Date();
+		const startedAt = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0, 23, 59);
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec("UPDATE runs SET started_at = ? WHERE id = ?", startedAt, begun.runId);
+		});
+		await finish(stub, begun.runId, 80_000);
+		const heard = await runInDurableObject(stub, async (instance: RegistryDO) =>
+			(instance as unknown as TestRegistry).modelKeyCapsPassed(),
+		);
+		expect(heard).toEqual([
+			expect.objectContaining({
+				kind: "month",
+				period: new Date(startedAt).toISOString().slice(0, 7),
+				share: 80,
+			}),
 		]);
 	});
 });

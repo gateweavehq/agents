@@ -1655,6 +1655,8 @@ export class RegistryDO extends DurableObject {
 		// awaited.
 		return this.#write(() => {
 			if (agentPause(this.#db, agent.agentId)) return refused(PAUSED_AGENT);
+			const cap = this.#modelKeyCapAdmissionRefusal(agent);
+			if (cap) return refused(cap.message);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
 			if (over) return refused(over.message);
 			const replayOf =
@@ -1732,6 +1734,8 @@ export class RegistryDO extends DurableObject {
 			// A retry or another delivery about this issue may have taken the turn while we awaited.
 			if (!current()) return gone;
 			if (agentPause(this.#db, plan.agent.agentId)) return decline(refused(PAUSED_AGENT));
+			const cap = this.#modelKeyCapAdmissionRefusal(plan.agent);
+			if (cap) return decline(cap);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
 			if (over) return decline(over);
 			const now = Date.now();
@@ -1893,6 +1897,8 @@ export class RegistryDO extends DurableObject {
 			// A retry may have taken the review over while the key was opened.
 			if (!current()) return gone;
 			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
+			const cap = this.#modelKeyCapAdmissionRefusal(agent);
+			if (cap) return decline(cap);
 			// The sandbox slots and the day's minutes decide as the run begins: other turns may have
 			// begun while this one awaited. A run is what holds a slot, so none is held before it.
 			const over = this.#sandboxLimitRefusal(conversation, agent);
@@ -1959,6 +1965,11 @@ export class RegistryDO extends DurableObject {
 				settleOutsideTask(this.#db, conversation, { error: PAUSED_AGENT });
 				return refused(PAUSED_AGENT);
 			}
+			const cap = this.#modelKeyCapAdmissionRefusal(plan.agent);
+			if (cap) {
+				settleOutsideTask(this.#db, conversation, { error: cap.message });
+				return cap;
+			}
 			// And other turns may have taken the sandboxes, or the day's minutes.
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
 			if (over) {
@@ -2021,6 +2032,8 @@ export class RegistryDO extends DurableObject {
 			if (now.agent.agentId !== plan.agent.agentId) {
 				return refused("The team changed as this turn began");
 			}
+			const cap = this.#modelKeyCapAdmissionRefusal(plan.agent);
+			if (cap) return refused(cap.message);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
 			if (over) return refused(over.message);
 			const at = Date.now();
@@ -2173,12 +2186,6 @@ export class RegistryDO extends DurableObject {
 		const daily = modelKeyCap(row.dailyCap);
 		const monthly = modelKeyCap(row.monthlyCap);
 		const anyCap = daily !== null || monthly !== null;
-		if (anyCap && priceOf(provider, agent.model, now) === null) {
-			return refused(
-				`${agent.model} has no prices here, so its cost cannot count toward this workspace's model-key cap and ${agent.name} cannot answer. Choose a model with prices in the agent's settings.`,
-				"budget-limit",
-			);
-		}
 		const month = utcMonth(now);
 		if (monthly !== null) {
 			const spent = keyedProviderCost(this.#db, month.start, month.end) / 1_000_000;
@@ -2200,7 +2207,19 @@ export class RegistryDO extends DurableObject {
 				);
 			}
 		}
+		if (anyCap && priceOf(provider, agent.model, now) === null) {
+			return refused(
+				`${agent.model} has no prices here, so its cost cannot count toward this workspace's model-key cap and ${agent.name} cannot answer. Choose a model with prices in the agent's settings.`,
+				"budget-limit",
+			);
+		}
 		return null;
+	}
+
+	/** The model-key cap check repeated as a run begins, after another run may have closed. */
+	#modelKeyCapAdmissionRefusal(agent: AgentSnapshot): TurnRefusal | null {
+		if (!isKeyedProvider(agent.provider) || this.standInTurns()) return null;
+		return this.#modelKeyCapRefusal(agent.provider, agent);
 	}
 
 	/** Why no model of `agent`'s provider can answer here, or null when one can. */
@@ -2346,7 +2365,7 @@ export class RegistryDO extends DurableObject {
 				.where(eq(schema.runs.id, run))
 				.get();
 			if (finished && isKeyedProvider(finished.provider)) {
-				capPassed = this.#modelKeyCapAlerts();
+				capPassed = this.#modelKeyCapAlerts(reporting?.startedAt ?? Date.now());
 			}
 			return true;
 		});
@@ -3941,11 +3960,11 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/** Claims each model-key cap email in the same write that closes the run. */
-	#modelKeyCapAlerts(): ModelKeyCapPassed[] {
+	#modelKeyCapAlerts(startedAt: number): ModelKeyCapPassed[] {
 		const row = modelKeyCapsOf(this.#db);
 		const now = Date.now();
-		const today = utcDay(now);
-		const month = utcMonth(now);
+		const today = utcDay(startedAt);
+		const month = utcMonth(startedAt);
 		const periods = [
 			{
 				kind: "day" as const,
@@ -3967,9 +3986,10 @@ export class RegistryDO extends DurableObject {
 		const passed: ModelKeyCapPassed[] = [];
 		for (const period of periods) {
 			if (period.cap === null || period.cap <= 0) continue;
-			const spent = keyedProviderCost(this.#db, period.from, period.to) / 1_000_000;
+			const spentMicros = keyedProviderCost(this.#db, period.from, period.to);
+			const capMicros = Math.round(period.cap * 1_000_000);
 			for (const share of [80, 100] as const) {
-				if (spent < period.cap * (share / 100)) continue;
+				if (spentMicros * 100 < capMicros * share) continue;
 				const existing = this.#db
 					.select({ share: schema.modelKeyCapAlerts.share })
 					.from(schema.modelKeyCapAlerts)
@@ -3990,7 +4010,7 @@ export class RegistryDO extends DurableObject {
 					kind: period.kind,
 					period: period.period,
 					share,
-					spent,
+					spent: spentMicros / 1_000_000,
 					cap: period.cap,
 					resetsOn: period.resetsOn,
 				});
