@@ -211,24 +211,30 @@ export function keyedProviderReserved(db: Db, from: number, to: number): number 
 }
 
 /**
- * The sandbox seconds the runs still going in a period reserved, for the workspace's minute
- * limits. Only runs that have their conversation's sandbox count, as `sandboxRunSeconds` reads.
+ * The sandbox seconds the workspace's running turns have reserved but not used yet: each counts
+ * at its ceiling while it runs, and `sandboxSeconds` already counts what it has used, so only the
+ * remainder is added. A run past its ceiling adds nothing.
  */
-export function sandboxSecondsReserved(db: Db, from: number, to: number): number {
-	const row = db
-		.select({ reserved: sum(runs.reservedSeconds) })
+export function sandboxSecondsOutstanding(db: Db, from: number, to: number, now: number): number {
+	const rows = db
+		.select({ startedAt: runs.startedAt, reservedSeconds: runs.reservedSeconds })
 		.from(runs)
 		.where(
 			and(
 				eq(runs.sandbox, true),
 				eq(runs.status, "running"),
 				isNull(runs.endedAt),
+				isNotNull(runs.reservedSeconds),
 				gte(runs.startedAt, from),
 				lt(runs.startedAt, to),
 			),
 		)
-		.get();
-	return Number(row?.reserved ?? 0);
+		.all();
+	let seconds = 0;
+	for (const row of rows) {
+		seconds += Math.max(0, (row.reservedSeconds ?? 0) - (now - row.startedAt) / 1000);
+	}
+	return seconds;
 }
 
 /** The runs that replay a run, oldest first. */

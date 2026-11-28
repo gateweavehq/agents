@@ -425,7 +425,7 @@ import {
 	runUsage,
 	sandboxesInUse,
 	sandboxSeconds,
-	sandboxSecondsReserved,
+	sandboxSecondsOutstanding,
 } from "./runs";
 import { importSample, type SampleInput } from "./sample";
 import {
@@ -2223,12 +2223,14 @@ export class RegistryDO extends DurableObject {
 					"The server's sandbox budget for the month was reached. Retry when the month resets.",
 				);
 			}
-			// The meter counts what sandboxes have used; the workspace's running turns count at
-			// the seconds they reserved, priced the same, plus the ceiling this turn asks for.
-			const month = utcMonth(Date.now());
-			const reserved = sandboxSecondsReserved(this.#db, month.start, month.end);
+			// The meter counts what sandboxes have used; a running turn counts at the ceiling
+			// it reserved, so only the part of it the turn has not used yet is added, priced the
+			// same, plus the ceiling this turn asks for.
+			const now = Date.now();
+			const month = utcMonth(now);
+			const outstanding = sandboxSecondsOutstanding(this.#db, month.start, month.end, now);
 			const ceiling = this.#turnReservation().seconds ?? 0;
-			if (reading.spent + (reserved + ceiling) * SANDBOX_SECOND_PRICE > limits.monthlyBudget) {
+			if (reading.spent + (outstanding + ceiling) * SANDBOX_SECOND_PRICE > limits.monthlyBudget) {
 				return refused(
 					`${SANDBOX_BUDGET_SPENT}, so ${agent.name} cannot answer until the month ends (UTC). Whoever runs this server can raise it.`,
 					"budget-limit",
@@ -2418,8 +2420,10 @@ export class RegistryDO extends DurableObject {
 		if (monthlyMinutes !== null) {
 			const now = Date.now();
 			const month = utcMonth(now);
-			const reserved = sandboxSecondsReserved(this.#db, month.start, month.end);
-			const used = this.#sandboxSecondsInMonth(month, now) + reserved;
+			// A running turn counts at the ceiling it reserved: `sandboxSeconds` has what it
+			// has used, so only the remainder of its reservation is added.
+			const outstanding = sandboxSecondsOutstanding(this.#db, month.start, month.end, now);
+			const used = this.#sandboxSecondsInMonth(month, now) + outstanding;
 			if (used >= monthlyMinutes * 60 || used + ceiling > monthlyMinutes * 60) {
 				return refused(
 					`${SANDBOX_MONTH_USED}, ${monthlyMinutes} minutes, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
@@ -2431,8 +2435,8 @@ export class RegistryDO extends DurableObject {
 		if (dailyMinutes !== null) {
 			const now = Date.now();
 			const today = utcDay(now);
-			const reserved = sandboxSecondsReserved(this.#db, today.start, today.end);
-			const usedToday = this.sandboxSecondsToday() + reserved;
+			const outstandingToday = sandboxSecondsOutstanding(this.#db, today.start, today.end, now);
+			const usedToday = this.sandboxSecondsToday() + outstandingToday;
 			if (usedToday >= dailyMinutes * 60 || usedToday + ceiling > dailyMinutes * 60) {
 				return refused(
 					`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,

@@ -1121,6 +1121,36 @@ describe("sandbox time", () => {
 		}
 	});
 
+	it("counts a running turn at the ceiling it reserved instead of what it has used", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const start = Date.UTC(2026, 11, 15, 10);
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					// A turn reserves 300 seconds; the cap is 15 minutes. The first turn, 100
+					// seconds in, counts at its ceiling: 100 + 5 idle minutes stretch + the 200
+					// seconds of its reservation it has not used = 600. The second's own ceiling
+					// fills the cap exactly (900), so it begins. Counting the running turn's
+					// reservation on top of what it has used would read 1000 and refuse it.
+					await turn(instance, first);
+					clock.mockReturnValue(start + 100_000);
+					expect(await instance.beginTurn(second, "Build it")).toMatchObject({ sandbox: true });
+				},
+				{
+					limits: {
+						SANDBOX_MONTHLY_MINUTES: "15",
+						SANDBOX_TURN_SECONDS: "300",
+					},
+				},
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
 	it("names the month's reset when the day's and the month's minutes are both used up", async () => {
 		const stub = registry();
 		const [first = "", second = ""] = await builderConversations(stub, 2);
