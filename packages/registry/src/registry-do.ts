@@ -620,10 +620,10 @@ export class RegistryDO extends DurableObject {
 			// A half-filled copy runs nothing either, until the move that fills it starts it, and a
 			// frozen one waits for its move: its alarm is set for when the freeze lapses.
 			if (moving === "importing" || moving === "frozen") return;
-			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
+			// Once, after 0030 began tying secrets to an origin: those stored before it.
 			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`). This
 			// one's failure closes the values it would have tied, which go nowhere until they are
-			// entered again, rather than to the first origin that asks (AGT-66).
+			// entered again, rather than to the first origin that asks.
 			runPassOnce(
 				this.#db,
 				(fn) => this.#write(fn),
@@ -661,7 +661,7 @@ export class RegistryDO extends DurableObject {
 
 	/**
 	 * Gives a repository exactly these checks, which `open_pull_request` runs on an agent's work
-	 * before it pushes it (AGT-142). The app calls it for an owner or admin only. Returns what the
+	 * before it pushes it. The app calls it for an owner or admin only. Returns what the
 	 * repository had before and has now, or null when the workspace has no such repository.
 	 */
 	setRepositoryChecks(repositoryId: string, checks: RepositoryChecksInput): ChecksSet | null {
@@ -931,7 +931,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * When tying the values stored before ties failed, closing them (AGT-66), or null. For owners
+	 * When tying the values stored before ties failed, closing them, or null. For owners
 	 * and admins, who enter those values again; why it failed is in the log, not here.
 	 */
 	secretTiesFailedAt(): number | null {
@@ -989,7 +989,7 @@ export class RegistryDO extends DurableObject {
 		return target ?? null;
 	}
 
-	// MCP servers connected through OAuth (AGT-78, `./mcp-oauth.ts`). These are for the app's
+	// MCP servers connected through OAuth (`./mcp-oauth.ts`). These are for the app's
 	// server functions and its OAuth provider alone; none returns a secret to a page.
 
 	/**
@@ -1024,7 +1024,7 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => takeState(this.#db, asset, given, member, Date.now()));
 	}
 
-	// Connecting Track in one step (AGT-119, `./track-connect.ts`). For the app's server code
+	// Connecting Track in one step (`./track-connect.ts`). For the app's server code
 	// alone: what comes back is never for a page.
 
 	/**
@@ -2083,7 +2083,7 @@ export class RegistryDO extends DurableObject {
 			const over = this.#sandboxLimitRefusal(conversation, agent);
 			if (over) return over;
 		}
-		// Working on the repository's files without a sandbox (AGT-122) asks for no sandbox, so no
+		// Working on the repository's files without a sandbox asks for no sandbox, so no
 		// offer, limit or meter of theirs decides here, and the run is not marked as having one. An
 		// ask has no tools, so it has no files to work on either. The runtime gives such a turn no
 		// file tools yet, so a server refuses it unless it says otherwise (`FILES_ONLY_RUNS`): an
@@ -2373,7 +2373,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * Starts a conversation that replays a run from its model request `step` (AGT-73), for the runtime
+	 * Starts a conversation that replays a run from its model request `step`, for the runtime
 	 * to fill with the run's conversation up to there and answer with the agent as it is now. Only
 	 * whoever started a run may replay it, since that copies their conversation's words, and an owner
 	 * or admin (`admin`) a trigger's run, whose words they read on the run already. A run of an engine
@@ -2662,7 +2662,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * Takes a task an MCP client handed an agent (`run_agent` on /mcp, AGT-155): admits it the way
+	 * Takes a task an MCP client handed an agent (`run_agent` on /mcp): admits it the way
 	 * a trigger's delivery is admitted — the agent must allow outside tasks, be runnable, and be
 	 * under its limits — and opens the conversation its run begins in. The runtime then begins
 	 * the run with `beginOutsideTurn`.
@@ -2976,7 +2976,7 @@ export class RegistryDO extends DurableObject {
 		this.#write(() => removeInstallation(this.#db, installation, Date.now()));
 	}
 
-	// GitLab connections (AGT-79): a token an owner or admin pastes, kept sealed.
+	// GitLab connections: a token an owner or admin pastes, kept sealed.
 
 	gitlabConnections(): GitLabConnection[] {
 		return listConnections(this.#db);
@@ -3232,7 +3232,7 @@ export class RegistryDO extends DurableObject {
 	 * Begins the scheduled runs that are due, works through the scans that are and destroys the
 	 * conversations of people who deleted their accounts, then sets the alarm for what comes next.
 	 */
-	// Repository wikis (AGT-108). Members read them; owners and admins have them written, which
+	// Repository wikis. Members read them; owners and admins have them written, which
 	// spends the workspace's key. `WikiWorkflow` in the app writes one, calling the methods below
 	// that take a generation, for it alone.
 

@@ -1,5 +1,5 @@
 /**
- * A repository's checks before a pull request (AGT-142). Each test names the requirement of the
+ * A repository's checks before a pull request. Each test names the requirement of the
  * issue it holds the tool to. `open_pull_request` stands on a sandbox in memory, a GitHub that
  * records what it was asked to open, and settings a test can change between two calls.
  */
@@ -1168,7 +1168,7 @@ describe("a repository's checks", () => {
 	});
 });
 
-describe("a call retried or replayed (AGT-147)", () => {
+describe("a call retried or replayed", () => {
 	it("R1: returns what the first call proposed, and runs neither the checks nor the proposal again", async () => {
 		const { sandbox, proposed, recorded, call } = setup(["pnpm test"]);
 		const first = await call();

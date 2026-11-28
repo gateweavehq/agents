@@ -387,7 +387,7 @@ describe("triggers", () => {
 		});
 		expect(trigger.label).toBe("agent");
 		const about = (type: string, labels: { id: string; name: string }[], rest = {}) =>
-			JSON.stringify({ type, data: { issue: { id: "TRK-7", labels }, ...rest } });
+			JSON.stringify({ type, data: { issue: { id: "TST-7", labels }, ...rest } });
 
 		const unlabeled = crypto.randomUUID();
 		const plain = about("issue.created", [{ id: "bug", name: "bug" }]);
@@ -414,7 +414,7 @@ describe("triggers", () => {
 		const labelled = about("issue.created", [{ id: "agent-id", name: "Agent" }]);
 		const receipt = await deliver(stub, trigger.id, secret, { body: labelled });
 		if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
-		expect(receipt.text.startsWith("Work on TRK-7\n\n")).toBe(true);
+		expect(receipt.text.startsWith("Work on TST-7\n\n")).toBe(true);
 		const turn = await stub.beginTriggerTurn(
 			receipt.conversationId,
 			receipt.text,

@@ -18,6 +18,15 @@ export const REVIEW_LIMITS = {
 	testPath: 300,
 } as const;
 
+/**
+ * The ship gate for the review agent, measured by `scripts/review-replay` on the replay set. A run
+ * passes when it finds at least `hits` of the `rows` defects and at least `realShare` of all its
+ * findings are real. The bar was set before anything was measured.
+ */
+export const REVIEW_GATE = {
+	bar: { rows: 35, hits: 12, realShare: 0.5 },
+} as const;
+
 export const reviewTest = z.object({
 	path: z.string().trim().min(1).max(REVIEW_LIMITS.testPath),
 	content: z.string().max(REVIEW_LIMITS.testContent),

@@ -1,0 +1,14 @@
+{
+	"name": "@gateweave/agents-review-replay",
+	"version": "0.0.0",
+	"private": true,
+	"license": "AGPL-3.0-only",
+	"type": "module",
+	"scripts": {
+		"test": "node --test"
+	},
+	"devDependencies": {
+		"@gateweave/agents-model": "workspace:*",
+		"esbuild": "catalog:"
+	}
+}

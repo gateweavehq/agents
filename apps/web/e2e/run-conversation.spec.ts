@@ -16,9 +16,9 @@ const EVENT = JSON.stringify({
 		actor: { id: "u1", name: "Maya", type: "person" },
 		issue: {
 			id: "i1",
-			key: "TRK-137",
+			key: "TST-137",
 			title: "Roadmap: list feature flags",
-			url: "https://track.example.com/gateweave/issue/TRK-137",
+			url: "https://track.example.com/gateweave/issue/TST-137",
 			description: `A \`code\` span and ${LONG_TOKEN}`,
 		},
 	},
@@ -91,8 +91,8 @@ test("a trigger's run shows its event as a card, and nothing in it widens the pa
 	const conversation = page.getByRole("region", { name: "Conversation" });
 	await expect(conversation.getByText("Track: issue created")).toBeVisible();
 	await expect(
-		conversation.getByRole("link", { name: "TRK-137 Roadmap: list feature flags" }),
-	).toHaveAttribute("href", "https://track.example.com/gateweave/issue/TRK-137");
+		conversation.getByRole("link", { name: "TST-137 Roadmap: list feature flags" }),
+	).toHaveAttribute("href", "https://track.example.com/gateweave/issue/TST-137");
 	await expect(conversation.getByText("By Maya")).toBeVisible();
 
 	// The event waits closed, and opens as pretty-printed code that scrolls inside its own box.
