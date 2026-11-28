@@ -197,7 +197,6 @@ export function providerReserved(
 				inArray(runs.provider, providers as Run["provider"][]),
 				eq(runs.status, "running"),
 				isNull(runs.endedAt),
-				gte(runs.startedAt, from),
 				lt(runs.startedAt, to),
 			),
 		)
@@ -225,7 +224,7 @@ export function sandboxSecondsOutstanding(db: Db, from: number, to: number, now:
 				eq(runs.status, "running"),
 				isNull(runs.endedAt),
 				isNotNull(runs.reservedSeconds),
-				gte(runs.startedAt, from),
+				gt(runs.startedAt, now - RUN_TIMEOUT),
 				lt(runs.startedAt, to),
 			),
 		)

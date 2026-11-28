@@ -33,14 +33,16 @@ export interface SandboxSettings {
 	/** The binding of the meter's Durable Object, which a monthly budget needs. */
 	SANDBOX_METER?: unknown;
 	/**
-	 * The most a single turn may cost in US dollars at list prices, reserved against the model-key
-	 * caps and the sandbox budget as the turn begins; no reservation when unset or empty. A turn
-	 * that reaches it makes no further model requests.
+	 * What a single turn reserves, in US dollars at list prices, against the workspace's
+	 * model-key caps and the server's Workers AI limit as it begins; no reservation when unset or
+	 * empty. It reserves at admission: it does not count toward the sandbox budget, which is
+	 * priced in seconds, and it does not stop a turn that is already running.
 	 */
 	SANDBOX_TURN_COST?: string;
 	/**
-	 * The most sandbox time a single turn may use in seconds, reserved against the workspace's
-	 * sandbox minute limits as the turn begins; no reservation when unset or empty.
+	 * What a single turn reserves, in seconds of sandbox time, against the workspace's sandbox
+	 * minute limits and the server's monthly sandbox budget as it begins; no reservation when
+	 * unset or empty. It reserves at admission: it does not stop a turn that is already running.
 	 */
 	SANDBOX_TURN_SECONDS?: string;
 }
