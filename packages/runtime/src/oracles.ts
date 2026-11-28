@@ -225,11 +225,14 @@ function movableSpec(spec: string): boolean {
 	return !value.startsWith("@") && /^[a-z0-9_.-]+\/[a-z0-9_.-]+(?:#.*)?$/.test(value);
 }
 
-/** The package a resolution key pins, with yarn's globstar prefix taken out. */
+/** The package a resolution or override key pins, without yarn's prefix or npm's version. */
 function dependencyKeyName(key: string): string {
 	let name = key;
 	while (name.startsWith("**/")) name = name.slice(3);
-	return name;
+	const version = name.startsWith("@")
+		? name.indexOf("@", name.indexOf("/") + 1)
+		: name.indexOf("@");
+	return version === -1 ? name : name.slice(0, version);
 }
 
 /** Whether a dependency spec changed in a way that can change what the checks run. */
