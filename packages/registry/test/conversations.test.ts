@@ -939,6 +939,34 @@ describe("sandbox time", () => {
 		}
 	});
 
+	it("names the month's reset when the pool is full and the month's minutes are used up", async () => {
+		const stub = registry();
+		const ids = await builderConversations(stub, MAX_WORKSPACE_SANDBOXES + 1);
+		const target = ids.pop() ?? "";
+		const start = Date.UTC(2026, 11, 15, 10);
+		const cap = 10 + IDLE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					for (const id of ids) await turn(instance, id);
+					clock.mockReturnValue(start + 10 * MINUTE);
+					// Lower the cap only once the pool is full, so filling it did not refuse a turn.
+					(instance as unknown as { env: Record<string, unknown> }).env.SANDBOX_MONTHLY_MINUTES =
+						String(cap);
+					expect(await instance.beginTurn(target, "Build it")).toEqual({
+						status: "refused",
+						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
+					});
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: "1000" } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
 	it("names the month's reset when the day's and the month's minutes are both used up", async () => {
 		const stub = registry();
 		const [first = "", second = ""] = await builderConversations(stub, 2);
@@ -1014,6 +1042,67 @@ describe("sandbox time", () => {
 					);
 				},
 				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("checks the closing month's minutes when a run ends after midnight", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const start = Date.UTC(2026, 11, 31, 23, 12);
+		const close = Date.UTC(2027, 0, 1, 0, 1);
+		const cap = 60;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, conversation);
+					clock.mockReturnValue(close);
+					expect(instance.finishRun(run, { ...done, endedAt: close })).toBe(true);
+					const heard = () => (instance as unknown as TestRegistry).minutesPassed();
+					await vi.waitFor(() =>
+						expect(heard()).toEqual([
+							{ share: 80, minutes: 48, cap, month: "2026-12", resetsOn: "2027-01-01" },
+						]),
+					);
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("checks the closing month's deployment budget when a run ends after midnight", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const start = Date.UTC(2026, 11, 31, 23, 12);
+		const close = Date.UTC(2027, 0, 1, 0, 1);
+		const budget = 60 * 60 * SANDBOX_SECOND_PRICE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, conversation);
+					clock.mockReturnValue(close);
+					expect(instance.finishRun(run, { ...done, endedAt: close })).toBe(true);
+					const heard = () => (instance as unknown as TestRegistry).budgetPassed();
+					await vi.waitFor(() =>
+						expect(heard()).toEqual([
+							{
+								share: 80,
+								spent: expect.closeTo(48 * 60 * SANDBOX_SECOND_PRICE, 10),
+								budget,
+								month: "2026-12",
+							},
+						]),
+					);
+				},
+				{ limits: { SANDBOX_MONTHLY_BUDGET: String(budget) } },
 			);
 		} finally {
 			clock.mockRestore();
