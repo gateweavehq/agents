@@ -157,17 +157,26 @@ describe("submitting a review", () => {
 			expect(sandbox.created).toEqual([]);
 		},
 	);
-	it.each(["exit 1", "false", "pnpm test", "pnpm vitest run test/b.test.ts"])(
-		"refuses a command that does not name the file: %s",
-		async (command) => {
-			const { call, sandbox } = setup();
-			sandbox.answers.push(failed);
-			expect(
-				(await call([{ ...finding, test: { ...finding.test, command } }])).findings[0]?.proof,
-			).toEqual({ proven: false, reason: "the command does not run the test file" });
-			expect(sandbox.commands).toEqual([]);
-		},
-	);
+	it.each([
+		"exit 1",
+		"false",
+		"pnpm test",
+		"pnpm vitest run test/b.test.ts",
+		"echo test/a.test.ts; exit 1",
+		"echo test/a.test.ts && exit 1",
+		"echo test/a.test.ts || exit 1",
+		"true && test/a.test.ts",
+		"vitest run # test/a.test.ts",
+		"echo > vitest run test/a.test.ts; exit 1",
+		"vitest run > test/a.test.ts",
+	])("refuses a command that does not run the file: %s", async (command) => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push(failed);
+		expect(
+			(await call([{ ...finding, test: { ...finding.test, command } }])).findings[0]?.proof,
+		).toEqual({ proven: false, reason: "the command does not run the test file" });
+		expect(sandbox.commands).toEqual([]);
+	});
 	it.each(["./test/a.test.ts", "a.test.ts"])("accepts the test named as %s", async (spelling) => {
 		const { call, sandbox } = setup();
 		sandbox.answers.push(failed);
@@ -177,6 +186,19 @@ describe("submitting a review", () => {
 					{ ...finding, test: { ...finding.test, command: `pnpm vitest run ${spelling}` } },
 				])
 			).findings[0]?.proof.proven,
+		).toBe(true);
+	});
+	it.each([
+		"vitest run test/a.test.ts",
+		"node --test test/a.test.ts",
+		"vitest run test/a.test.ts >proof.out",
+		"vitest run test/a.test.ts 2>proof.err",
+		"vitest run test/a.test.ts 2>&1",
+	])("accepts the file as a runner argument: %s", async (command) => {
+		const { call, sandbox } = setup();
+		sandbox.answers.push(failed);
+		expect(
+			(await call([{ ...finding, test: { ...finding.test, command } }])).findings[0]?.proof.proven,
 		).toBe(true);
 	});
 	it.each([
