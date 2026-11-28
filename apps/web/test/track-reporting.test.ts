@@ -293,7 +293,7 @@ it("reports daily budget and repository mapping refusals with their actionable T
 		...common(blocked?.key ?? "", "failed"),
 		progress: "Run could not start",
 		waitReason: "budget-limit",
-		waitDetail: "A usage limit was reached. Retry when the limit resets.",
+		waitDetail: "The trigger started its 1 run for the day",
 	});
 	expect((await ready.post({ id })).status).toBe(429);
 
@@ -307,6 +307,22 @@ it("reports daily budget and repository mapping refusals with their actionable T
 		progress: "Run could not start",
 		waitReason: "needs-mapping",
 		waitDetail: "An admin needs to check the agent's repository setup.",
+	});
+});
+
+it("reports which model budget limit refused a run", async () => {
+	const ready = await setup("report-model-cap");
+	await ready.connect();
+	await ready.registry.setModelKeyCaps({ daily: "0", monthly: "" });
+	const limited = await ready.post({ id: "model-cap-refusal" });
+	expect(limited.status).toBe(409);
+	await vi.waitFor(() => expect(reports).toHaveLength(2));
+	const blocked = reports.find(({ body }) => body.state === "failed")?.body;
+	expect(blocked).toEqual({
+		...common(blocked?.key ?? "", "failed"),
+		progress: "Run could not start",
+		waitReason: "budget-limit",
+		waitDetail: "The workspace's model-key daily cap was reached. Retry when the day resets.",
 	});
 });
 

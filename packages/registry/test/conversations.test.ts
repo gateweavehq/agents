@@ -171,6 +171,12 @@ describe("workspace model-key spending caps", () => {
 		if (!("status" in monthly)) throw new Error("expected a refusal");
 		expect(monthly.message).toContain("monthly cap, $2");
 		expect(monthly.message).toContain("resets on");
+		// The refusal stays visible as a zero-use run, with the workspace cap as its reason.
+		const capped = await stub.listRuns();
+		expect(capped).toHaveLength(2);
+		expect(capped.find((run) => run.status === "refused")).toMatchObject({
+			error: monthly.message,
+		});
 		await stub.setModelKeyCaps({ daily: "0", monthly: "" });
 		const zero = await stub.beginTurn(id, "Again");
 		expect(zero).toMatchObject({ status: "refused" });
@@ -509,6 +515,7 @@ describe("turns with Workers AI", () => {
 		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "2" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Again")).toHaveProperty("runId");
 		});
+		const beforeRefusal = await stub.listRuns();
 		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "1.5" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Again")).toEqual({
 				status: "refused",
@@ -516,9 +523,47 @@ describe("turns with Workers AI", () => {
 					"This workspace has used its Workers AI for today, $1.5, so Scout cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.",
 			});
 		});
+		// The Workers AI refusal stays visible too, classified by its own message.
+		const afterRefusal = await stub.listRuns();
+		expect(afterRefusal).toHaveLength(beforeRefusal.length + 1);
+		expect(afterRefusal.find((run) => run.status === "refused")).toMatchObject({
+			error:
+				"This workspace has used its Workers AI for today, $1.5, so Scout cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.",
+		});
 		// A limit that is not a number allows nothing.
 		await withSettings(stub, { WORKERS_AI_DAILY_DOLLARS: "twenty" }, async (instance) => {
 			expect(await instance.beginTurn(id, "Again")).toHaveProperty("status", "refused");
+		});
+	});
+
+	it("checks the daily limit again as a turn begins when another run closes meanwhile", async () => {
+		const stub = registry();
+		const id = await workersAiConversation(stub);
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		const second = await withSettings(
+			stub,
+			{ WORKERS_AI_DAILY_DOLLARS: "1.5" },
+			async (instance) => {
+				const pending = instance.beginTurn(id, "Again");
+				instance.finishRun(first.runId, {
+					status: "succeeded",
+					error: null,
+					steps: 1,
+					inputTokens: 10,
+					outputTokens: 5,
+					cachedInputTokens: 0,
+					cost: 1_500_000,
+					endedAt: Date.now(),
+				});
+				return pending;
+			},
+		);
+		expect(second).toMatchObject({ status: "refused" });
+		if (!("status" in second)) throw new Error("expected a refusal");
+		expect(second.message).toContain("Workers AI for today, $1.5");
+		expect((await stub.listRuns()).find((run) => run.status === "refused")).toMatchObject({
+			error: second.message,
 		});
 	});
 
