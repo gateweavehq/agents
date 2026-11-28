@@ -306,6 +306,17 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 			},
 		],
 		[
+			"a version-qualified override key names the runner a script uses",
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts@^5.0.0": { jest: "27.0.0" } },
+			},
+			{
+				scripts: { test: "react-scripts test" },
+				overrides: { "react-scripts@^5.0.0": { jest: "28.0.0" } },
+			},
+		],
+		[
 			"a nested override of the runner a script names changes",
 			{
 				scripts: { test: "react-scripts test" },
