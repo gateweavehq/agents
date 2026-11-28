@@ -10,7 +10,7 @@ import {
 	SANDBOX_SECOND_PRICE,
 } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
-import type { RegistryDO } from "../src";
+import { METER_NAME, type RegistryDO } from "../src";
 import { saveAgent } from "./agent-update";
 import type { RegistryDO as TestRegistry } from "./worker";
 
@@ -609,7 +609,12 @@ describe("turns with a sandbox", () => {
 				message: `The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so Builder cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
 			}),
 		);
-		expect(await stub.listRuns()).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+		const listed = await stub.listRuns();
+		expect(listed).toHaveLength(ids.length);
+		expect(listed.filter((run) => run.status === "running")).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+		expect(listed.filter((run) => run.status === "refused")).toHaveLength(
+			ids.length - MAX_WORKSPACE_SANDBOXES,
+		);
 	});
 });
 
@@ -765,6 +770,17 @@ describe("sandbox time", () => {
 						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
 					};
 					expect(await instance.beginTurn(second, "Build it")).toEqual(refusal);
+					const listed = instance.listRuns();
+					expect(listed[0]).toMatchObject({
+						conversationId: second,
+						status: "refused",
+						error: refusal.message,
+						steps: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						cost: 0,
+						sandbox: false,
+					});
 					clock.mockReturnValue(Date.UTC(2026, 11, 16));
 					expect(instance.sandboxSecondsToday()).toBe(0);
 					expect(await instance.beginTurn(second, "Build it")).toEqual(refusal);
@@ -774,6 +790,34 @@ describe("sandbox time", () => {
 					expect(await instance.beginTurn(second, "Build it")).toMatchObject({ sandbox: true });
 				},
 				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("names the month's reset when the pool is full and the month's minutes are used up", async () => {
+		const stub = registry();
+		const ids = await builderConversations(stub, MAX_WORKSPACE_SANDBOXES + 1);
+		const target = ids.pop() ?? "";
+		const start = Date.UTC(2026, 11, 15, 10);
+		const cap = 10 + IDLE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					for (const id of ids) await turn(instance, id);
+					clock.mockReturnValue(start + 10 * MINUTE);
+					// Lower the cap only once the pool is full, so filling it did not refuse a turn.
+					(instance as unknown as { env: Record<string, unknown> }).env.SANDBOX_MONTHLY_MINUTES =
+						String(cap);
+					expect(await instance.beginTurn(target, "Build it")).toEqual({
+						status: "refused",
+						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
+					});
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: "1000" } },
 			);
 		} finally {
 			clock.mockRestore();
@@ -800,6 +844,44 @@ describe("sandbox time", () => {
 					});
 				},
 				{ limits: { SANDBOX_DAILY_MINUTES: String(cap), SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("retries a monthly minutes alert whose delivery failed, then sends it once", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const start = Date.UTC(2026, 11, 15, 10);
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const test = instance as unknown as TestRegistry;
+					test.failMinutesAlerts(1);
+					const finish = async (at: number) => {
+						const run = await turn(instance, conversation);
+						clock.mockReturnValue(at);
+						expect(instance.finishRun(run, { ...done, endedAt: at })).toBe(true);
+					};
+					await finish(start + 11 * MINUTE);
+					await vi.waitFor(() => expect(test.failedMinutesAlerts()).toBe(1));
+					expect(test.minutesPassed()).toEqual([]);
+
+					await finish(start + 12 * MINUTE);
+					await vi.waitFor(() =>
+						expect(test.minutesPassed()).toEqual([
+							expect.objectContaining({ share: 80, month: "2026-12" }),
+						]),
+					);
+					await finish(start + 13 * MINUTE);
+					await new Promise((resolve) => setTimeout(resolve, 20));
+					expect(test.minutesPassed()).toHaveLength(1);
+					expect(test.failedMinutesAlerts()).toBe(1);
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: "20" } },
 			);
 		} finally {
 			clock.mockRestore();
@@ -855,6 +937,109 @@ describe("sandbox time", () => {
 					);
 				},
 				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("retries a budget alert whose delivery failed, then sends it once", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const start = Date.UTC(2025, 0, 1);
+		const firstMinutes = 6 + IDLE;
+		const budget = ((firstMinutes * 60) / 0.84) * SANDBOX_SECOND_PRICE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const test = instance as unknown as TestRegistry;
+					const run = await turn(instance, first);
+					const ended = start + 6 * MINUTE;
+					clock.mockReturnValue(ended);
+					test.failBudgetAlerts(1);
+					expect(instance.finishRun(run, { ...done, endedAt: ended })).toBe(true);
+					await vi.waitFor(() => expect(test.failedBudgetAlerts()).toBe(1));
+					expect(test.budgetPassed()).toEqual([]);
+
+					// The retry goes through the meter, in another object, before the next report can pass it again.
+					await vi.waitFor(async () => {
+						const readings = await env.SANDBOX_METER.getByName(METER_NAME).readings();
+						const heard = readings.find(([key]) => key === "alerts:2025-01")?.[1];
+						expect(Array.isArray(heard) && heard.includes(80)).toBe(false);
+					});
+					const retry = await turn(instance, second);
+					await vi.waitFor(() =>
+						expect(test.budgetPassed()).toEqual([expect.objectContaining({ share: 80, budget })]),
+					);
+					expect(instance.finishRun(retry, { ...done, endedAt: ended })).toBe(true);
+					await new Promise((resolve) => setTimeout(resolve, 20));
+					expect(test.budgetPassed().filter(({ share }) => share === 80)).toHaveLength(1);
+					expect(test.failedBudgetAlerts()).toBe(1);
+				},
+				{ limits: { SANDBOX_MONTHLY_BUDGET: String(budget) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("checks the closing month's minutes when a run ends after midnight", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const start = Date.UTC(2026, 11, 31, 23, 12);
+		const close = Date.UTC(2027, 0, 1, 0, 1);
+		const cap = 60;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, conversation);
+					clock.mockReturnValue(close);
+					expect(instance.finishRun(run, { ...done, endedAt: close })).toBe(true);
+					const heard = () => (instance as unknown as TestRegistry).minutesPassed();
+					await vi.waitFor(() =>
+						expect(heard()).toEqual([
+							{ share: 80, minutes: 48, cap, month: "2026-12", resetsOn: "2027-01-01" },
+						]),
+					);
+				},
+				{ limits: { SANDBOX_MONTHLY_MINUTES: String(cap) } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("checks the closing month's deployment budget when a run ends after midnight", async () => {
+		const stub = registry();
+		const [conversation = ""] = await builderConversations(stub, 1);
+		const start = Date.UTC(2026, 11, 31, 23, 12);
+		const close = Date.UTC(2027, 0, 1, 0, 1);
+		const budget = 60 * 60 * SANDBOX_SECOND_PRICE;
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					const run = await turn(instance, conversation);
+					clock.mockReturnValue(close);
+					expect(instance.finishRun(run, { ...done, endedAt: close })).toBe(true);
+					const heard = () => (instance as unknown as TestRegistry).budgetPassed();
+					await vi.waitFor(() =>
+						expect(heard()).toEqual([
+							{
+								share: 80,
+								spent: expect.closeTo(48 * 60 * SANDBOX_SECOND_PRICE, 10),
+								budget,
+								month: "2026-12",
+							},
+						]),
+					);
+				},
+				{ limits: { SANDBOX_MONTHLY_BUDGET: String(budget) } },
 			);
 		} finally {
 			clock.mockRestore();
@@ -1027,11 +1212,23 @@ it("refuses a paused agent before resolving its provider, and resumes its turns"
 	expect(first).toMatchObject({ by: ADA, at: expect.any(Number), changed: true });
 	expect(await stub.pauseAgent(id, GRACE)).toEqual({ ...first, changed: false });
 	expect((await stub.getAgent(id))?.agent.paused).toEqual({ by: ADA, at: first?.at });
+	const pause = "This agent is paused, so it takes no new turns. An owner or admin can resume it.";
 	expect(await stub.beginTurn(conversation, "Hello")).toEqual({
 		status: "refused",
-		message: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+		message: pause,
 	});
-	expect(await stub.listRuns()).toEqual([]);
+	const refusedRuns = await stub.listRuns();
+	expect(refusedRuns).toHaveLength(1);
+	expect(refusedRuns[0]).toMatchObject({
+		conversationId: conversation,
+		status: "refused",
+		error: pause,
+		steps: 0,
+		inputTokens: 0,
+		outputTokens: 0,
+		cost: 0,
+		sandbox: false,
+	});
 	expect(await stub.resumeAgent(id)).toBe(true);
 	await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, ADA);
 	expect(await stub.beginTurn(conversation, "Again")).toHaveProperty("runId");

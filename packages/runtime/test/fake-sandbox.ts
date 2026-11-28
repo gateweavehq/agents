@@ -418,7 +418,7 @@ export class FakeSandbox
 					? { exitCode: 0, output: sandboxDiff.text, timedOut: false }
 					: undefined;
 	}
-	/** What the fake sandbox keeps of its conversation, as the real one's `storage.kv` does (AGT-156). */
+	/** What the fake sandbox keeps of its conversation, as the real one's `storage.kv` does. */
 	readonly #kept = new Map<string, unknown>();
 	readonly #jobs: EngineJob[] = [];
 	readonly #scripts: EngineScript[] = [];
@@ -630,7 +630,7 @@ export class FakeSandbox
 			throw new Error(failure);
 		}
 		// As the real sandbox's `forgetKeys`: an unmarked one stops and keeps nothing-to-wipe
-		// refuses before anything of it is touched (AGT-156).
+		// refuses before anything of it is touched.
 		assertForgotten(new KeptMap(this.#kept));
 		this.destroy();
 		forgetKept(new KeptMap(this.#kept));
@@ -665,7 +665,7 @@ export class FakeSandbox
 	}
 }
 
-/** A `Map` as the kept keys' `KeptStorage`, so the fake shares the real one's rules (AGT-156). */
+/** A `Map` as the kept keys' `KeptStorage`, so the fake shares the real one's rules. */
 class KeptMap implements KeptStorage {
 	constructor(private readonly entries: Map<string, unknown>) {}
 	get(key: string): unknown {

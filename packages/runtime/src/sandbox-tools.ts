@@ -7,7 +7,7 @@
  * Only `run_command` needs a machine. The five tools for files ask for a `FilePort`: files read
  * and written whole, listed by a glob and searched. A sandbox answers it through `sandboxFiles`,
  * with ripgrep for the last two, so files kept some other way can stand behind the same tools
- * (AGT-122): `FileStore` in `./file-store.ts` keeps a repository's files in the conversation's
+ *: `FileStore` in `./file-store.ts` keeps a repository's files in the conversation's
  * own SQLite. What a port answers is written down at `SearchResult`, and what it says of itself
  * to the model at `FileWords`.
  */

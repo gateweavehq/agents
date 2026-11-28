@@ -6,7 +6,7 @@
  *
  * The sandbox wipes them only through `forgetKept`, which asks for the mark its conversation left
  * when it was erased (`markForgotten`): a caller that reaches the sandbox directly cannot wipe a
- * live conversation's keys by mistake (AGT-156). The mark stays after the wipe, so a write that
+ * live conversation's keys by mistake. The mark stays after the wipe, so a write that
  * lands late — an engine turn settling as its conversation went — still finds the erasure and
  * keeps out, until a move brings the sandbox back to life (`replaceKept` clears it).
  */

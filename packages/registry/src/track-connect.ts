@@ -1,5 +1,5 @@
 /**
- * Connecting Gateweave Track in one step (AGT-119), the registry's part: the pending connection
+ * Connecting Gateweave Track in one step, the registry's part: the pending connection
  * kept while the person's browser is in Track. It is kept as MCP OAuth keeps its state
  * (`./mcp-oauth.ts`): a random `state`, bound to the person who started it, good for
  * `TRACK_CONNECT_LIFETIME_MS`, and taken, that is deleted, by the first call that names it,

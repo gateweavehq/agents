@@ -171,7 +171,8 @@ export const INSTRUCTION_KINDS = ["instructions", "prompt"] as const satisfies r
 
 /**
  * How a run ended, or that it is still going. A run is `interrupted` when its conversation's
- * Durable Object restarted in the middle of it, so it never finished.
+ * Durable Object restarted in the middle of it, so it never finished. A `refused` run never
+ * called the model: the turn was refused before it could begin.
  */
 export const RUN_STATUSES = [
 	"running",
@@ -180,6 +181,7 @@ export const RUN_STATUSES = [
 	"stopped",
 	"interrupted",
 	"step-limit",
+	"refused",
 ] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
