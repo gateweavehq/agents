@@ -299,14 +299,22 @@ describe("a server that has an owner", () => {
 				.bind("cased-member", organizationId, memberUserId, Date.now())
 				.run();
 
-			const invited = await api(agents, "/organization/invite-member", {
+			const selected = await api(agents, "/organization/set-active", {
 				cookie: owner,
-				body: { email: "  provider@case.TEST ", role: "member", organizationId },
+				body: { organizationId },
 			});
-			expect(invited.status).toBe(400);
-			expect(((await invited.json()) as { message?: string }).message).toBe(
-				"User is already a member of this organization",
-			);
+			expect(selected.status).toBe(200);
+			for (const requestedId of [organizationId, undefined, ""]) {
+				const invited = await api(agents, "/organization/invite-member", {
+					cookie: cookieOf(selected),
+					body: { email: "  provider@case.TEST ", role: "member", organizationId: requestedId },
+				});
+				expect(invited.status).toBe(400);
+				expect(await invited.json()).toEqual({
+					code: "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
+					message: "User is already a member of this organization",
+				});
+			}
 			const invitations = await agents.db
 				.prepare("SELECT COUNT(*) AS n FROM invitation WHERE organization_id = ?")
 				.bind(organizationId)

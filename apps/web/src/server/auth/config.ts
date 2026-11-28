@@ -256,8 +256,10 @@ export function createAuth(config: AuthConfig) {
 					// OAuth accounts can keep their provider's casing, while Better Auth compares the
 					// lower-cased invitation exactly. Match the member case-insensitively before it does.
 					const session = await getSessionFromCtx(ctx);
-					const organizationId: unknown =
-						ctx.body?.organizationId ?? session?.session.activeOrganizationId;
+					// Better Auth uses the active organization for an empty ID as well as an omitted one.
+					const requestedId: unknown = ctx.body?.organizationId;
+					const organizationId =
+						(requestedId === "" ? undefined : requestedId) ?? session?.session.activeOrganizationId;
 					if (session && typeof organizationId === "string" && z.email().safeParse(email).success) {
 						const inviter = await config.db
 							.select({ role: schema.member.role })
@@ -285,6 +287,7 @@ export function createAuth(config: AuthConfig) {
 								: null;
 						if (existing) {
 							throw new APIError("BAD_REQUEST", {
+								code: "USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION",
 								message: "User is already a member of this organization",
 							});
 						}
