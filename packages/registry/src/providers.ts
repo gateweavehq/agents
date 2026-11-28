@@ -101,11 +101,17 @@ export function modelKeyCapMicros(
 	value: string | null,
 ): { numerator: bigint; denominator: bigint } | null {
 	if (value === null || value.trim() === "") return null;
-	const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(value.trim());
-	if (!match) return { numerator: 0n, denominator: 1n };
+	const match = /^(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(value.trim());
+	if (!match || (match[1] === "" && match[2] === "")) return { numerator: 0n, denominator: 1n };
 	const [, whole = "", fraction = "", exponentText = "0"] = match;
+	// Beyond this a JavaScript number is zero or infinite, so the public cap is zero already. Do not
+	// build a bigint with millions of digits only to have that cap skipped.
+	const exponentInput = Number(exponentText);
+	if (!Number.isSafeInteger(exponentInput) || Math.abs(exponentInput) > 1000) {
+		return { numerator: 0n, denominator: 1n };
+	}
 	const digits = BigInt(`${whole}${fraction}`);
-	const exponent = BigInt(exponentText) - BigInt(fraction.length) + 6n;
+	const exponent = BigInt(exponentInput - fraction.length + 6);
 	if (exponent >= 0n) return { numerator: digits * 10n ** exponent, denominator: 1n };
 	return { numerator: digits, denominator: 10n ** -exponent };
 }
