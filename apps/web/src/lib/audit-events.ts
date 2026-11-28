@@ -41,6 +41,7 @@ export const AUDIT_ACTIONS = [
 	"trackTriage.setUp",
 	"trackWork.setUp",
 	"track.connected",
+	"pullRequestReview.setUp",
 	// Agents, teams and setups, which act in repositories and on other services.
 	"agent.created",
 	"agent.updated",

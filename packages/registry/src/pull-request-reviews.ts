@@ -28,6 +28,7 @@ import {
 } from "@gateweave/agents-model";
 import { and, asc, eq, isNull, lt, lte, min, or, sql } from "drizzle-orm";
 import {
+	agentDefinitions,
 	type PullRequestReviewRow,
 	pullRequestReviews,
 	repositories,
@@ -37,6 +38,7 @@ import {
 import { reviewTrigger } from "./review-triggers";
 import { RUN_TIMEOUT } from "./runs";
 import type { Db } from "./state";
+import { teamLead } from "./teams";
 import { admitDelivery, triggerRow } from "./triggers";
 
 /** Reviews admitted by one alarm, so a burst of them never holds the alarm for long. */
@@ -80,8 +82,20 @@ export function queueReviews(db: Db, runId: string, now: number): number {
 		)
 		.get();
 	if (!repository) return 0;
-	const trigger = reviewTrigger(db);
+	const trigger = reviewTrigger(db, [], repository.id);
 	if (!trigger) return 0;
+	const row = triggerRow(db, trigger);
+	const reviewerId = row?.agentId ?? (row?.teamId ? teamLead(db, row.teamId)?.leadAgentId : null);
+	const reviewerRepository = reviewerId
+		? db
+				.select({ repositoryId: agentDefinitions.repositoryId })
+				.from(agentDefinitions)
+				.where(eq(agentDefinitions.agentId, reviewerId))
+				.get()?.repositoryId
+		: null;
+	// A reviewer set up for one repository reviews there alone; one without a repository is the
+	// older workspace-wide kind.
+	if (reviewerRepository && reviewerRepository !== repository.id) return 0;
 	// One row for the head in the whole workspace: the id is the primary key, so a head that was
 	// queued or reviewed before, by this trigger or another that is gone, makes none.
 	const queued = db

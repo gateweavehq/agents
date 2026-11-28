@@ -157,6 +157,16 @@ test("an invitation cannot be answered before its page's script has run", async 
 	}
 });
 
+test("the pull request review card is hidden while the replay gate is unpassed", async ({
+	page,
+}) => {
+	const { slug } = await startWorkspace(page);
+	await page.goto(`/${slug}/agents`);
+	await waitForHydration(page);
+	await expect(page.getByText("Triage Track issues", { exact: true })).toBeVisible();
+	await expect(page.getByText("Review pull requests", { exact: true })).toHaveCount(0);
+});
+
 test("someone adds a ready-made setup that asks for its server's address", async ({ page }) => {
 	const { slug } = await startWorkspace(page);
 	await page.goto(`/${slug}/setups`);

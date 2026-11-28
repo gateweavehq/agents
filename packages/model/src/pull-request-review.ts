@@ -6,8 +6,10 @@
  * the review conversation, as the result of `submit_review`; the registry keeps counts only.
  */
 import { z } from "zod";
+import { agentDefinitionInput, MAX_WRITTEN_LENGTH } from "./inputs";
 import { REVIEW_LIMITS } from "./review";
 import type { SandboxRepository } from "./sandbox";
+import { AGENT_ENGINES, MODEL_PROVIDERS } from "./vocabulary";
 
 /** Where a review stands. */
 export const PULL_REQUEST_REVIEW_STATUSES = [
@@ -23,6 +25,35 @@ export const PULL_REQUEST_REVIEW_STATUSES = [
 	"skipped",
 ] as const;
 export type PullRequestReviewStatus = (typeof PULL_REQUEST_REVIEW_STATUSES)[number];
+
+/** What the ready-made review setup names what it makes, before a number is added to a taken name. */
+export const REVIEW_SETUP_NAMES = {
+	agent: "Pull request reviewer",
+	instructions: "Pull request review",
+	trigger: "Pull request reviews",
+} as const;
+
+/** Reviews one ready-made trigger may start in a day. */
+export const REVIEW_SETUP_RUNS_PER_DAY = 30;
+
+/** The trigger's prompt; the review's message itself is prepared from the pull request. */
+export const REVIEW_SETUP_PROMPT = "Review the pull request as your instructions say.";
+
+export const reviewSetupInput = z.object({
+	name: z.string().trim().min(1).max(200).default(REVIEW_SETUP_NAMES.agent),
+	provider: z.enum(MODEL_PROVIDERS),
+	model: agentDefinitionInput.shape.model,
+	engine: z.enum(AGENT_ENGINES),
+	/** The repository whose pull requests are reviewed, which the workspace's GitHub App reaches. */
+	repositoryId: z.string().min(1, "Choose the repository to review").max(64),
+});
+export type ReviewSetupInput = z.input<typeof reviewSetupInput>;
+
+/** What the registry takes to set the review agent up: the input and the instructions the app bundles. */
+export const reviewSetupPlan = reviewSetupInput.extend({
+	instructions: z.string().min(1).max(MAX_WRITTEN_LENGTH),
+});
+export type ReviewSetupPlan = z.input<typeof reviewSetupPlan>;
 
 /** The `type` of the event a review's delivery starts with. */
 export const PULL_REQUEST_EVENT = "pull_request";

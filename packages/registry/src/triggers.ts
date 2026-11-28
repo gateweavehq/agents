@@ -180,15 +180,22 @@ export function reviewTargetRefusal(db: Db, target: TriggerTarget): string | nul
 			name: agents.name,
 			sandbox: agentDefinitions.sandbox,
 			engine: agentDefinitions.engine,
+			memory: agentDefinitions.memory,
 		})
 		.from(agents)
 		.innerJoin(agentDefinitions, eq(agentDefinitions.agentId, agents.id))
 		.where(eq(agents.id, agentId))
 		.get();
-	if (!agent || (agent.sandbox && agent.engine === "gateweave")) return null;
-	return agent.engine === "gateweave"
-		? `${agent.name} has no sandbox: turn its sandbox on, so it can review pull requests`
-		: `${agent.name} does not run on Gateweave's own loop, which a review agent must`;
+	if (!agent) return null;
+	if (agent.engine !== "gateweave") {
+		return `${agent.name} does not run on Gateweave's own loop, which a review agent must`;
+	}
+	if (!agent.sandbox) {
+		return `${agent.name} has no sandbox: turn its sandbox on, so it can review pull requests`;
+	}
+	return agent.memory
+		? `${agent.name} has memory on: turn memory off, so review runs stay confined to the pull request`
+		: null;
 }
 
 /** Why the workspace cannot have another trigger, if it has as many as it may. */

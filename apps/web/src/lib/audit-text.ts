@@ -168,6 +168,8 @@ export function auditSentence(event: AuditEvent, people: People): string {
 			return `set up Track triage with the agent ${label}${trackHost(detail.track)}`;
 		case "trackWork.setUp":
 			return `set up Track work with the agent ${label}${trackHost(detail.track)}`;
+		case "pullRequestReview.setUp":
+			return `set up pull request review with the agent ${label}`;
 		case "track.connected": {
 			const workspace = text(detail.workspace);
 			const host = hostOf(text(detail.origin) ?? "");

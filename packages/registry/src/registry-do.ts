@@ -96,6 +96,7 @@ import {
 	type ReviewCounts,
 	type ReviewDelivery,
 	type ReviewPullState,
+	type ReviewSetupPlan,
 	type Run,
 	type RunCursor,
 	type RunFinish,
@@ -107,6 +108,7 @@ import {
 	repositoryChecksInput,
 	repositoryInput,
 	reviewCounts,
+	reviewSetupPlan,
 	runCursor,
 	runFinish,
 	runPullRequest,
@@ -196,7 +198,7 @@ import {
 	wouldRefuseCounts,
 	writtenAssetInput,
 } from "@gateweave/agents-model";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { z } from "zod";
@@ -363,6 +365,10 @@ import {
 	saveProviderKey,
 	sealedKeyOf,
 } from "./providers";
+import {
+	type PullRequestReviewSetupMade,
+	setUpPullRequestReview,
+} from "./pull-request-review-setup";
 import {
 	admitReview,
 	dueReview,
@@ -872,9 +878,28 @@ export class RegistryDO extends DurableObject {
 	): Agent | null {
 		const data = agentDefinitionUpdate.parse(input);
 		const revision = z.number().int().nonnegative().parse(expectedRevision);
-		const updated = this.#write(() =>
-			updateAgent(this.#db, id.parse(agentId), data, revision, Date.now()),
-		);
+		const updated = this.#write(() => {
+			const agent = id.parse(agentId);
+			if (data.memory === true) {
+				const review = this.#db
+					.select({ id: schema.triggers.id })
+					.from(schema.triggers)
+					.leftJoin(schema.teams, eq(schema.teams.id, schema.triggers.teamId))
+					.where(
+						and(
+							eq(schema.triggers.pullRequest, true),
+							or(eq(schema.triggers.agentId, agent), eq(schema.teams.leadAgentId, agent)),
+						),
+					)
+					.get();
+				if (review) {
+					throw new AgentError(
+						"An agent with a pull request trigger cannot use memory: review runs stay confined to the pull request",
+					);
+				}
+			}
+			return updateAgent(this.#db, agent, data, revision, Date.now());
+		});
 		if (updated) this.#clearAllMcpHealth();
 		return updated;
 	}
@@ -1925,6 +1950,19 @@ export class RegistryDO extends DurableObject {
 				),
 			);
 		}
+		const boundElsewhere = (): boolean => {
+			const bound = this.#db
+				.select({ repositoryId: schema.agentDefinitions.repositoryId })
+				.from(schema.agentDefinitions)
+				.where(eq(schema.agentDefinitions.agentId, agent.agentId))
+				.get()?.repositoryId;
+			return Boolean(bound) && bound !== review.repositoryId;
+		};
+		if (boundElsewhere()) {
+			return settle(
+				refused(`${agent.name} is for another repository, so it cannot review this pull request`),
+			);
+		}
 		const repository = reviewRepository(this.#db, review);
 		if ("problem" in repository) return settle(refused(repository.problem, "needs-mapping"));
 		const prepared = await this.#prepareTurn(conversation, agent, null, true, repository);
@@ -1933,6 +1971,11 @@ export class RegistryDO extends DurableObject {
 		const turn = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry may have taken the review over while the key was opened.
 			if (!current()) return gone;
+			if (boundElsewhere()) {
+				return decline(
+					refused(`${agent.name} is for another repository, so it cannot review this pull request`),
+				);
+			}
 			if (this.workspaceIsDeleted()) return decline(refused("This workspace was deleted"));
 			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
 			const cap = this.#providerAdmissionRefusal(agent);
@@ -2713,6 +2756,22 @@ export class RegistryDO extends DurableObject {
 				},
 				Date.now(),
 			),
+		);
+		return "refused" in made ? refused(made.refused) : made;
+	}
+
+	/**
+	 * Sets up the ready-made pull request reviewer in one write (`./pull-request-review-setup.ts`).
+	 * It needs no sealed secret: the trigger is internal and the provider key stays where every agent's does.
+	 */
+	setUpPullRequestReview(
+		input: ReviewSetupPlan,
+		createdBy: string,
+	): PullRequestReviewSetupMade | TriggerRefusal {
+		const plan = reviewSetupPlan.parse(input);
+		const member = id.parse(createdBy);
+		const made = this.#write(() =>
+			setUpPullRequestReview(this.#db, { ...plan, createdBy: member }, Date.now()),
 		);
 		return "refused" in made ? refused(made.refused) : made;
 	}
