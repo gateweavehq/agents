@@ -17,9 +17,17 @@ const world = vi.hoisted(() => {
 	const registries = new Map<string, Map<string, string[]>>();
 	/** Conversations whose destroy or forget fails, as `place/name`. */
 	const failing = new Set<string>();
+	/** Conversation objects a deletion finished, as the registry records them, by `place/workspace`. */
+	const forgotten = new Map<string, Set<string>>();
+	/** Deletion failures the registry records, by `place/workspace` then conversation. */
+	const failures = new Map<string, Map<string, number>>();
+	const markedDeleted = new Set<string>();
 	const deleted: string[] = [];
 	/** Runs inside a registry's destroy, to change D1 while a deletion is under way. */
-	const meanwhile = { onDestroy: async (_place: string, _workspaceId: string) => {} };
+	const meanwhile = {
+		onDestroy: async (_place: string, _workspaceId: string) => {},
+		onDestroyed: (_place: string, _workspaceId: string, _ids: string[]) => {},
+	};
 	function placeOf(place: string) {
 		let workspaces = registries.get(place);
 		if (!workspaces) {
@@ -27,6 +35,24 @@ const world = vi.hoisted(() => {
 			registries.set(place, workspaces);
 		}
 		return workspaces;
+	}
+	function forgottenIn(place: string, workspaceId: string) {
+		const key = `${place}/${workspaceId}`;
+		let ids = forgotten.get(key);
+		if (!ids) {
+			ids = new Set();
+			forgotten.set(key, ids);
+		}
+		return ids;
+	}
+	function failuresIn(place: string, workspaceId: string) {
+		const key = `${place}/${workspaceId}`;
+		let ids = failures.get(key);
+		if (!ids) {
+			ids = new Map();
+			failures.set(key, ids);
+		}
+		return ids;
 	}
 	function conversation(place: string, name: string) {
 		const act = async () => {
@@ -41,9 +67,29 @@ const world = vi.hoisted(() => {
 			place: (place: string) => ({
 				getByName: (workspaceId: string) => ({
 					conversationIds: async () => placeOf(place).get(workspaceId) ?? [],
+					conversationsToDestroy: async () =>
+						(placeOf(place).get(workspaceId) ?? [])
+							.filter((id) => !forgottenIn(place, workspaceId).has(id))
+							.map((id) => ({ id, failures: failuresIn(place, workspaceId).get(id) ?? 0 }))
+							.sort((a, b) => a.failures - b.failures)
+							.map(({ id }) => id),
+					noteConversationsDestroyed: async (ids: string[]) => {
+						for (const id of ids) forgottenIn(place, workspaceId).add(id);
+						meanwhile.onDestroyed(place, workspaceId, ids);
+					},
+					noteConversationDeletionFailed: async (ids: string[]) => {
+						for (const id of ids) {
+							const counts = failuresIn(place, workspaceId);
+							counts.set(id, (counts.get(id) ?? 0) + 1);
+						}
+					},
+					markWorkspaceDeleted: async () => {
+						markedDeleted.add(`${place}/${workspaceId}`);
+					},
 					destroy: async () => {
 						await meanwhile.onDestroy(place, workspaceId);
 						placeOf(place).delete(workspaceId);
+						forgotten.delete(`${place}/${workspaceId}`);
 						deleted.push(`${place}/registry`);
 					},
 				}),
@@ -53,7 +99,18 @@ const world = vi.hoisted(() => {
 			place: (place: string) => ({ getByName: (name: string) => conversation(place, name) }),
 		},
 	};
-	return { registries, failing, deleted, meanwhile, placeOf, env, target: vi.fn() };
+	return {
+		registries,
+		failing,
+		forgotten,
+		failures,
+		markedDeleted,
+		deleted,
+		meanwhile,
+		placeOf,
+		env,
+		target: vi.fn(),
+	};
 });
 
 vi.mock("cloudflare:workers", () => ({ env: world.env }));
@@ -106,8 +163,12 @@ beforeEach(async () => {
 	world.target.mockReturnValue(null);
 	world.registries.clear();
 	world.failing.clear();
+	world.forgotten.clear();
+	world.failures.clear();
+	world.markedDeleted.clear();
 	world.deleted.length = 0;
 	world.meanwhile.onDestroy = async () => {};
+	world.meanwhile.onDestroyed = () => {};
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	vi.spyOn(console, "log").mockImplementation(() => {});
 	await db.delete(workspaceDeletion).run();
@@ -244,6 +305,7 @@ it("keeps the note when a move records a new place during the deletion, and dele
 	expect(world.placeOf("fr").has("racing-on")).toBe(true);
 
 	world.meanwhile.onDestroy = async () => {};
+	world.meanwhile.onDestroyed = () => {};
 	await retryWorkspaceDeletions(db);
 	for (const id of ["racing", "racing-on"]) {
 		expect(await note(id)).toBeUndefined();
@@ -262,6 +324,47 @@ it("finishes two a run, those never tried first", async () => {
 	expect(await note("first")).toBeUndefined();
 	expect(await note("second")).toBeUndefined();
 	expect(await note("tried")).toBeDefined();
+});
+
+it("makes bounded progress through a large workspace over several daily runs", async () => {
+	await placed("big", "eu");
+	await noted("big");
+	world.placeOf("eu").set(
+		"big",
+		Array.from({ length: 205 }, (_, index) => `conversation-${index}`),
+	);
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted.filter((name) => name.startsWith("eu/big:"))).toHaveLength(200);
+	expect(world.deleted).not.toContain("eu/registry");
+	expect(world.placeOf("eu").has("big")).toBe(true);
+	expect(await note("big")).toBeDefined();
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted.filter((name) => name.startsWith("eu/big:"))).toHaveLength(205);
+	expect(world.deleted.at(-1)).toBe("eu/registry");
+	expect(world.placeOf("eu").has("big")).toBe(false);
+	expect(await note("big")).toBeUndefined();
+	expect(await location("big")).toBeUndefined();
+});
+
+it("tries conversations it has not failed before the ones that failed", async () => {
+	await placed("big", "eu");
+	await noted("big");
+	world.placeOf("eu").set(
+		"big",
+		Array.from({ length: 201 }, (_, index) => `conversation-${index}`),
+	);
+	for (let index = 0; index < 200; index++) world.failing.add(`eu/big:conversation-${index}`);
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted.filter((name) => name.startsWith("eu/big:"))).toHaveLength(0);
+	expect(world.failures.get("eu/big")?.size).toBe(200);
+	expect(world.markedDeleted.has("eu/big")).toBe(true);
+
+	world.failing.clear();
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted[0]).toBe("eu/big:conversation-200");
 });
 
 it("deletes a workspace the app deletes itself even when its objects fail, and leaves them a note", async () => {
@@ -296,4 +399,59 @@ it("deletes the deployment's place too when the workspace has no location row", 
 		expect.arrayContaining(["/unplaced:one", "/registry", "eu/unplaced:one", "eu/registry"]),
 	);
 	expect(await note("unplaced")).toBeUndefined();
+});
+
+it("shares the retry budget across places instead of starving an old copy", async () => {
+	await placed("moved", "eu", "");
+	await noted("moved");
+	world.placeOf("eu").set(
+		"moved",
+		Array.from({ length: 200 }, (_, index) => `conversation-${index}`),
+	);
+	world.placeOf("").set("moved", ["conversation-0"]);
+	for (let index = 0; index < 200; index++) world.failing.add(`eu/moved:conversation-${index}`);
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted).toContain("/moved:conversation-0");
+	expect(world.deleted.filter((name) => name.startsWith("eu/moved:"))).toHaveLength(0);
+	expect(world.placeOf("").has("moved")).toBe(false);
+	expect(world.placeOf("eu").has("moved")).toBe(true);
+});
+
+it("keeps a registry whose conversation appears after the first deletion list", async () => {
+	await placed("racing", "eu");
+	await noted("racing");
+	world.placeOf("eu").set("racing", ["one"]);
+	world.meanwhile.onDestroyed = (place, workspaceId) => {
+		if (place === "eu" && workspaceId === "racing") {
+			world.placeOf("eu").set("racing", ["one", "late"]);
+		}
+	};
+
+	await expect(finishWorkspaceDeletion(db, "racing")).rejects.toThrow(
+		"1 of the workspace's conversations are left for the next try",
+	);
+	expect(world.deleted).toContain("eu/racing:one");
+	expect(world.deleted).not.toContain("eu/registry");
+	expect(world.placeOf("eu").has("racing")).toBe(true);
+});
+
+it("charges the retry budget when a registry fails after its conversations were deleted", async () => {
+	await placed("big", "eu");
+	await noted("big", 1);
+	await placed("next", "eu");
+	await noted("next", 2);
+	world.placeOf("eu").set(
+		"big",
+		Array.from({ length: 200 }, (_, index) => `conversation-${index}`),
+	);
+	world.placeOf("eu").set("next", ["one"]);
+	world.meanwhile.onDestroy = async (place, workspaceId) => {
+		if (place === "eu" && workspaceId === "big") throw new Error("registry unreachable");
+	};
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted.filter((name) => name.startsWith("eu/big:"))).toHaveLength(200);
+	expect(world.deleted).not.toContain("eu/next:one");
+	expect(world.placeOf("eu").has("next")).toBe(true);
 });

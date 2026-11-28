@@ -256,6 +256,7 @@ export class RegistryDO extends Registry {
 		// Each registry is named for its workspace (`registryFor`).
 		const workspaceId = this.ctx.id.name;
 		if (!workspaceId) return { runId: null, error: "This registry does not know its workspace" };
+		if (this.workspaceIsDeleted()) return { runId: null, error: "This workspace was deleted" };
 		// The workspace's conversations are where its registry is.
 		const conversation = await getAgentByName(
 			objectsIn(this.env.CONVERSATIONS, this.ctx.id.jurisdiction),
@@ -277,6 +278,7 @@ export class RegistryDO extends Registry {
 		// Each registry is named for its workspace (`registryFor`).
 		const workspaceId = this.ctx.id.name;
 		if (!workspaceId) return { runId: null, error: "This registry does not know its workspace" };
+		if (this.workspaceIsDeleted()) return { runId: null, error: "This workspace was deleted" };
 		// The workspace's conversations are where its registry is.
 		const conversation = await getAgentByName(
 			objectsIn(this.env.CONVERSATIONS, this.ctx.id.jurisdiction),

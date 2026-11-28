@@ -872,6 +872,36 @@ describe("scheduled triggers", () => {
 		expect(listed?.deliveries.map((delivery) => delivery.status)).toEqual(["limited", "started"]);
 	});
 
+	it("start no scheduled run after the workspace is marked deleted", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger } = await scheduled(stub);
+		await makeDue(stub, trigger.id);
+		await stub.markWorkspaceDeleted();
+		await runDurableObjectAlarm(stub);
+		expect(await stub.startedTurns()).toEqual([]);
+	});
+
+	it("refuse a trigger turn admitted before the workspace was marked deleted", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const agentId = await withAgent(stub);
+		const { trigger, secret } = await create(stub, {
+			name: "New issues",
+			prompt: "Triage it",
+			target: { kind: "agent", agentId },
+		});
+		const receipt = await deliver(stub, trigger.id, secret);
+		if (receipt.status !== "start") throw new Error(`The delivery was ${receipt.status}`);
+		await stub.markWorkspaceDeleted();
+		expect(
+			await stub.beginTriggerTurn(receipt.conversationId, receipt.text, receipt.attemptId),
+		).toEqual({
+			status: "refused",
+			message: "This workspace was deleted",
+		});
+	});
+
 	it("take no webhooks, and take them once the schedule is taken away and a secret is made", async () => {
 		const stub = registry();
 		const { trigger } = await scheduled(stub);
