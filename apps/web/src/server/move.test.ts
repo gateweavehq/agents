@@ -91,6 +91,8 @@ function deletionRegistry(ids: string[], destroy = vi.fn()) {
 		conversationIds: async () => ids,
 		conversationsToDestroy: async () => ids,
 		noteConversationsDestroyed: async () => {},
+		noteConversationDeletionFailed: async () => {},
+		markWorkspaceDeleted: async () => {},
 		destroy,
 	};
 }
@@ -211,6 +213,8 @@ it.each(["conversationsToDestroy", "destroy"] as const)(
 			conversationIds: vi.fn().mockResolvedValue(["one"]),
 			conversationsToDestroy: vi.fn().mockResolvedValue(["one"]),
 			noteConversationsDestroyed: vi.fn().mockResolvedValue(undefined),
+			noteConversationDeletionFailed: vi.fn().mockResolvedValue(undefined),
+			markWorkspaceDeleted: vi.fn().mockResolvedValue(undefined),
 			destroy: vi.fn().mockResolvedValue(undefined),
 		};
 		liveRegistry[rpc].mockImplementation(async () => {
@@ -225,6 +229,8 @@ it.each(["conversationsToDestroy", "destroy"] as const)(
 				return ["one"];
 			},
 			noteConversationsDestroyed: async () => {},
+			noteConversationDeletionFailed: async () => {},
+			markWorkspaceDeleted: async () => {},
 			destroy: async () => {
 				events.push("sealed registry destroy started");
 				await Promise.resolve();
