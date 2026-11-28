@@ -198,7 +198,7 @@ function specsOf(value: unknown): Map<string, DependencySpec> {
 	return specs;
 }
 
-/** Names scripts use, with the last part of a path as well as the word itself. */
+/** Names scripts use, with the last part of a path and an explicit package path as well. */
 function dependencyNamesOf(text: string): Set<string> {
 	const names = new Set<string>();
 	for (const command of commandsOf(text)) {
@@ -207,6 +207,14 @@ function dependencyNamesOf(text: string): Set<string> {
 			const parts = word.split("/");
 			const last = parts[parts.length - 1];
 			if (last) names.add(last);
+			for (const [index, part] of parts.entries()) {
+				if (part !== "node_modules") continue;
+				const first = parts[index + 1];
+				if (!first) continue;
+				names.add(
+					first.startsWith("@") && parts[index + 2] ? `${first}/${parts[index + 2]}` : first,
+				);
+			}
 		}
 	}
 	return names;
@@ -225,14 +233,21 @@ function movableSpec(spec: string): boolean {
 	return !value.startsWith("@") && /^[a-z0-9_.-]+\/[a-z0-9_.-]+(?:#.*)?$/.test(value);
 }
 
-/** The package a resolution or override key pins, without yarn's prefix or npm's version. */
-function dependencyKeyName(key: string): string {
+/** The packages a resolution or override key can pin, without yarn's prefix or npm's versions. */
+function dependencyKeyNames(key: string): string[] {
 	let name = key;
 	while (name.startsWith("**/")) name = name.slice(3);
-	const version = name.startsWith("@")
-		? name.indexOf("@", name.indexOf("/") + 1)
-		: name.indexOf("@");
-	return version === -1 ? name : name.slice(0, version);
+	const withoutVersion = (part: string) => {
+		const version = part.startsWith("@")
+			? part.indexOf("@", part.indexOf("/") + 1)
+			: part.indexOf("@");
+		return version === -1 ? part : part.slice(0, version);
+	};
+	const parts = name.split("/");
+	if (parts[0]?.startsWith("@") && parts.length > 1) {
+		return [withoutVersion(`${parts[0]}/${parts[1]}`), ...parts.slice(2).map(withoutVersion)];
+	}
+	return parts.map(withoutVersion);
 }
 
 /** Whether a dependency spec changed in a way that can change what the checks run. */
@@ -248,7 +263,7 @@ function dependencySwap(before: PackageObject, after: PackageObject, beforeText:
 			const path = newEntry?.path ?? oldEntry?.path ?? [];
 			if (
 				(newEntry !== undefined && movableSpec(newEntry.spec)) ||
-				path.some((part) => named.has(dependencyKeyName(part)))
+				path.some((part) => dependencyKeyNames(part).some((name) => named.has(name)))
 			) {
 				return true;
 			}

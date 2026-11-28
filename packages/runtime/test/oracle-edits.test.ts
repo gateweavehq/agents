@@ -323,6 +323,28 @@ describe("open_pull_request and an agent's edits to its checks", () => {
 			},
 		],
 		[
+			"the package behind an explicit runner path",
+			{
+				scripts: { test: "node --experimental-vm-modules node_modules/jest/bin/jest.js" },
+				devDependencies: { jest: "^29.6.0" },
+			},
+			{
+				scripts: { test: "node --experimental-vm-modules node_modules/jest/bin/jest.js" },
+				devDependencies: { jest: "^29.7.0" },
+			},
+		],
+		[
+			"a parent-qualified resolution for the runner a script names",
+			{
+				scripts: { test: "react-scripts test" },
+				resolutions: { "react-scripts/jest": "27.0.0" },
+			},
+			{
+				scripts: { test: "react-scripts test" },
+				resolutions: { "react-scripts/jest": "28.0.0" },
+			},
+		],
+		[
 			"a nested override of the runner a script names changes",
 			{
 				scripts: { test: "react-scripts test" },
