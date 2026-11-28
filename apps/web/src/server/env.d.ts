@@ -102,7 +102,7 @@ declare namespace Cloudflare {
 		SANDBOX_ALERT_EMAIL?: string;
 		/**
 		 * `1` to let through the turns of agents set to work on a repository's files without a
-		 * sandbox (AGT-122). Unset everywhere for now: no form offers that setting, and the turns
+		 * sandbox. Unset everywhere for now: no form offers that setting, and the turns
 		 * have no file tools yet, so the registry refuses them unless this says otherwise.
 		 */
 		FILES_ONLY_RUNS?: string;

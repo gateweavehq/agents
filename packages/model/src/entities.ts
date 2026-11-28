@@ -377,7 +377,7 @@ export interface AgentDefinition {
 	 */
 	files: boolean;
 	/**
-	 * Whether an MCP client may hand it tasks from outside the app (AGT-155): `run_agent` and
+	 * Whether an MCP client may hand it tasks from outside the app: `run_agent` and
 	 * `get_run` on /mcp, which spend the workspace's budget. Off unless someone turns it on.
 	 */
 	outsideTasks: boolean;
@@ -786,7 +786,7 @@ export type TurnMcpServer =
 			/** The tools the agent may use, by the server's names; null is all of them. */
 			tools: string[] | null;
 			/**
-			 * The library server whose OAuth connection the turn signs in with (AGT-78), through
+			 * The library server whose OAuth connection the turn signs in with, through
 			 * the registry, which keeps and refreshes its token; absent when it has none.
 			 */
 			oauth?: string;
@@ -833,7 +833,7 @@ export interface McpServerEntry {
 	agents: { id: string; name: string; version: number }[];
 	check: McpCheck | null;
 	/**
-	 * The workspace's OAuth connection to it (AGT-78): who made it and when, and whether it is for
+	 * The workspace's OAuth connection to it: who made it and when, and whether it is for
 	 * the URL the server has now, so turns send it. Null when it has none.
 	 */
 	oauth: { connectedBy: string; connectedAt: number; current: boolean } | null;

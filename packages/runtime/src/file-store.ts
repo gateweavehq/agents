@@ -1,5 +1,5 @@
 /**
- * A repository's files without a machine (AGT-122): kept in the conversation's own SQLite, read
+ * A repository's files without a machine: kept in the conversation's own SQLite, read
  * from GitHub only as they are asked for, and put back as a commit made through GitHub's API. It
  * answers the tools for files (`DeletingFilePort` in `./sandbox-tools.ts`), checks a repository
  * out as a sandbox does and pushes as one does, so the same tools and the same

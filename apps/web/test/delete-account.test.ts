@@ -4,7 +4,7 @@ import { startAgents } from "./agents-worker";
 import { ask } from "./chat-socket";
 import { FakeModels } from "./fake-models";
 
-// Deleting an account (AGT-88): the person goes from D1 at once, and every workspace that knew them
+// Deleting an account: the person goes from D1 at once, and every workspace that knew them
 // destroys their conversations as soon as it can be reached. What a registry does is tested where it
 // lives, in packages/registry/test/forget.test.ts. These go through the real endpoint, to real
 // conversations.

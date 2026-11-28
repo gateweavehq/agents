@@ -298,7 +298,7 @@ export interface SecretSend {
 	contested: string[] | null;
 }
 
-/** Leaves a stored secret unbound, noting the origins of the servers that name it (AGT-65). */
+/** Leaves a stored secret unbound, noting the origins of the servers that name it. */
 export function contestSecret(db: Db, assetId: string, name: string, origins: string[]): void {
 	db.update(envSecrets)
 		.set({ contested: origins })
@@ -310,7 +310,7 @@ export function contestSecret(db: Db, assetId: string, name: string, origins: st
 
 /**
  * Closes every stored secret sent nowhere yet, in every set, with an empty `contested` list, for
- * when `bindUnsentSecrets` failed (AGT-66). Left open, each would be tied to the first origin that
+ * when `bindUnsentSecrets` failed. Left open, each would be tied to the first origin that
  * uses it, which is the hole that pass closes. Entering a value again opens it, as a new value.
  */
 export function closeUnsentSecrets(db: Db): void {

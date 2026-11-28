@@ -1,5 +1,5 @@
 /**
- * The workspace's memory (AGT-107): notes its people and agents keep, which agents recall in
+ * The workspace's memory: notes its people and agents keep, which agents recall in
  * later runs. Members read them. Owners and admins add, edit and delete them, and approve or
  * dismiss the ones that wait: what an agent wrote about the workspace or a repository, or in a
  * run a trigger started, which no agent recalls until someone has looked at it. Each change is

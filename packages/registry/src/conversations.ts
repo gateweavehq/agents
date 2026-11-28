@@ -62,7 +62,7 @@ export interface ConversationTurn {
 	/** Whether the turn has the memory tools: the agent has memory, and the turn has tools. */
 	memory: boolean;
 	/**
-	 * Set when the turn works on the repository's files without a sandbox (AGT-122): the agent is
+	 * Set when the turn works on the repository's files without a sandbox: the agent is
 	 * set to, and the turn has tools. Left out otherwise. The runtime does not read it yet, so
 	 * such a turn runs as one without file tools.
 	 */
@@ -128,7 +128,7 @@ export function startTeamConversation(
 }
 
 /**
- * A conversation that replays a run from one of its steps (AGT-73): with the run's agent, or its
+ * A conversation that replays a run from one of its steps: with the run's agent, or its
  * team when the run was a team's turn and the team is still there, for the member who replays it.
  * Its first run links back to the run it replays. Null when the agent or team is gone.
  */

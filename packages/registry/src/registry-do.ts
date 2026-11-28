@@ -620,10 +620,10 @@ export class RegistryDO extends DurableObject {
 			// A half-filled copy runs nothing either, until the move that fills it starts it, and a
 			// frozen one waits for its move: its alarm is set for when the freeze lapses.
 			if (moving === "importing" || moving === "frozen") return;
-			// Once, after 0030 began tying secrets to an origin: those stored before it (AGT-65).
+			// Once, after 0030 began tying secrets to an origin: those stored before it.
 			// A pass that throws is recorded as failed and the wake goes on (see `passes.ts`). This
 			// one's failure closes the values it would have tied, which go nowhere until they are
-			// entered again, rather than to the first origin that asks (AGT-66).
+			// entered again, rather than to the first origin that asks.
 			runPassOnce(
 				this.#db,
 				(fn) => this.#write(fn),
@@ -661,7 +661,7 @@ export class RegistryDO extends DurableObject {
 
 	/**
 	 * Gives a repository exactly these checks, which `open_pull_request` runs on an agent's work
-	 * before it pushes it (AGT-142). The app calls it for an owner or admin only. Returns what the
+	 * before it pushes it. The app calls it for an owner or admin only. Returns what the
 	 * repository had before and has now, or null when the workspace has no such repository.
 	 */
 	setRepositoryChecks(repositoryId: string, checks: RepositoryChecksInput): ChecksSet | null {
@@ -931,7 +931,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * When tying the values stored before ties failed, closing them (AGT-66), or null. For owners
+	 * When tying the values stored before ties failed, closing them, or null. For owners
 	 * and admins, who enter those values again; why it failed is in the log, not here.
 	 */
 	secretTiesFailedAt(): number | null {
@@ -989,7 +989,7 @@ export class RegistryDO extends DurableObject {
 		return target ?? null;
 	}
 
-	// MCP servers connected through OAuth (AGT-78, `./mcp-oauth.ts`). These are for the app's
+	// MCP servers connected through OAuth (`./mcp-oauth.ts`). These are for the app's
 	// server functions and its OAuth provider alone; none returns a secret to a page.
 
 	/**
@@ -1024,7 +1024,7 @@ export class RegistryDO extends DurableObject {
 		return this.#write(() => takeState(this.#db, asset, given, member, Date.now()));
 	}
 
-	// Connecting Track in one step (AGT-119, `./track-connect.ts`). For the app's server code
+	// Connecting Track in one step (`./track-connect.ts`). For the app's server code
 	// alone: what comes back is never for a page.
 
 	/**
@@ -2083,7 +2083,7 @@ export class RegistryDO extends DurableObject {
 			const over = this.#sandboxLimitRefusal(conversation, agent);
 			if (over) return over;
 		}
-		// Working on the repository's files without a sandbox (AGT-122) asks for no sandbox, so no
+		// Working on the repository's files without a sandbox asks for no sandbox, so no
 		// offer, limit or meter of theirs decides here, and the run is not marked as having one. An
 		// ask has no tools, so it has no files to work on either. The runtime gives such a turn no
 		// file tools yet, so a server refuses it unless it says otherwise (`FILES_ONLY_RUNS`): an
@@ -2235,13 +2235,6 @@ export class RegistryDO extends DurableObject {
 	 * is prepared, and others may begin meanwhile.
 	 */
 	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): TurnRefusal | null {
-		const idle = this.#idleMinutes();
-		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
-			return refused(
-				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
-				"waiting-for-slot",
-			);
-		}
 		const { dailyMinutes, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
 		// The month first: when both are used up, the refusal that names the later reset is the true one.
 		if (monthlyMinutes !== null) {
@@ -2260,6 +2253,13 @@ export class RegistryDO extends DurableObject {
 				"budget-limit",
 			);
 		}
+		const idle = this.#idleMinutes();
+		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
+			return refused(
+				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
+				"waiting-for-slot",
+			);
+		}
 		return null;
 	}
 
@@ -2273,6 +2273,7 @@ export class RegistryDO extends DurableObject {
 		let report: PendingTrackReport | undefined;
 		let hadSandbox = false;
 		let minutesPassed: SandboxMinutesPassed[] = [];
+		let usageChecks: { month: UtcMonth; now: number }[] = [];
 		let reviewsQueued = false;
 		const closed = this.#write(() => {
 			if (!finishRun(this.#db, run, data)) return false;
@@ -2293,7 +2294,14 @@ export class RegistryDO extends DurableObject {
 				);
 			}
 			hadSandbox = (monthlyBudget !== null || cap > 0) && runHadSandbox(this.#db, run);
-			if (hadSandbox && cap > 0) minutesPassed = this.#sandboxMinutesAlerts(cap);
+			if (hadSandbox) {
+				usageChecks = this.#sandboxUsageChecks(reporting?.startedAt ?? ended, ended);
+				if (cap > 0) {
+					minutesPassed = usageChecks.flatMap(({ month, now }) =>
+						this.#sandboxMinutesAlerts(cap, month, now),
+					);
+				}
+			}
 			return true;
 		});
 		this.#publishTrackReports(report);
@@ -2308,11 +2316,13 @@ export class RegistryDO extends DurableObject {
 		if (minutesPassed.length > 0) this.ctx.waitUntil(this.#notifySandboxMinutes(minutesPassed));
 		if (hadSandbox && monthlyBudget !== null) {
 			// The run is closed whatever the meter says; the next turn with a sandbox reports again.
-			this.ctx.waitUntil(
-				this.#meterSandboxes(monthlyBudget).catch((error: unknown) => {
-					console.error("registry: the sandbox meter did not answer", error);
-				}),
-			);
+			for (const check of usageChecks) {
+				this.ctx.waitUntil(
+					this.#meterSandboxes(monthlyBudget, check).catch((error: unknown) => {
+						console.error("registry: the sandbox meter did not answer", error);
+					}),
+				);
+			}
 		}
 		return closed;
 	}
@@ -2373,7 +2383,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * Starts a conversation that replays a run from its model request `step` (AGT-73), for the runtime
+	 * Starts a conversation that replays a run from its model request `step`, for the runtime
 	 * to fill with the run's conversation up to there and answer with the agent as it is now. Only
 	 * whoever started a run may replay it, since that copies their conversation's words, and an owner
 	 * or admin (`admin`) a trigger's run, whose words they read on the run already. A run of an engine
@@ -2628,7 +2638,7 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/**
-	 * Takes a task an MCP client handed an agent (`run_agent` on /mcp, AGT-155): admits it the way
+	 * Takes a task an MCP client handed an agent (`run_agent` on /mcp): admits it the way
 	 * a trigger's delivery is admitted — the agent must allow outside tasks, be runnable, and be
 	 * under its limits — and opens the conversation its run begins in. The runtime then begins
 	 * the run with `beginOutsideTurn`.
@@ -2942,7 +2952,7 @@ export class RegistryDO extends DurableObject {
 		this.#write(() => removeInstallation(this.#db, installation, Date.now()));
 	}
 
-	// GitLab connections (AGT-79): a token an owner or admin pastes, kept sealed.
+	// GitLab connections: a token an owner or admin pastes, kept sealed.
 
 	gitlabConnections(): GitLabConnection[] {
 		return listConnections(this.#db);
@@ -3198,7 +3208,7 @@ export class RegistryDO extends DurableObject {
 	 * Begins the scheduled runs that are due, works through the scans that are and destroys the
 	 * conversations of people who deleted their accounts, then sets the alarm for what comes next.
 	 */
-	// Repository wikis (AGT-108). Members read them; owners and admins have them written, which
+	// Repository wikis. Members read them; owners and admins have them written, which
 	// spends the workspace's key. `WikiWorkflow` in the app writes one, calling the methods below
 	// that take a generation, for it alone.
 
@@ -3874,10 +3884,18 @@ export class RegistryDO extends DurableObject {
 		);
 	}
 
+	/** The months a closing run can still put over a threshold: its own, and the one that just ended. */
+	#sandboxUsageChecks(startedAt: number, now: number): { month: UtcMonth; now: number }[] {
+		const current = utcMonth(now);
+		if (startedAt >= current.start) return [{ month: current, now }];
+		return [
+			{ month: utcMonth(current.start - 1), now: current.start },
+			{ month: current, now },
+		];
+	}
+
 	/** Claims each alert in the same write that closes the run. */
-	#sandboxMinutesAlerts(cap: number): SandboxMinutesPassed[] {
-		const now = Date.now();
-		const month = utcMonth(now);
+	#sandboxMinutesAlerts(cap: number, month: UtcMonth, now: number): SandboxMinutesPassed[] {
 		const minutes = this.#sandboxSecondsInMonth(month, now) / 60;
 		const { kv } = this.ctx.storage;
 		const passed: SandboxMinutesPassed[] = [];
@@ -3925,13 +3943,16 @@ export class RegistryDO extends DurableObject {
 	 * Reports the workspace's sandbox time this month to the deployment's meter, and reads what the
 	 * deployment has spent. Null when there is no meter.
 	 */
-	async #meterSandboxes(budget: number): Promise<MeterReading | null> {
+	async #meterSandboxes(
+		budget: number,
+		check?: { month: UtcMonth; now: number },
+	): Promise<MeterReading | null> {
 		const meter = (this.env as SandboxSettings).SANDBOX_METER as
 			| DurableObjectNamespace<SandboxMeterDO>
 			| undefined;
 		if (!meter) return null;
-		const now = Date.now();
-		const month = utcMonth(now);
+		const now = check?.now ?? Date.now();
+		const month = check?.month ?? utcMonth(now);
 		const seconds = this.#sandboxSecondsInMonth(month, now);
 		// Each registry is named for its workspace (`registryFor` in the app).
 		const workspace = this.ctx.id.name ?? this.ctx.id.toString();
