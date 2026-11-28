@@ -44,6 +44,13 @@ async function create(stub: Stub, input: TriggerInput) {
 	return made;
 }
 
+/** Makes a scheduled trigger, failing the test when it is refused. */
+async function createScheduled(stub: Stub, input: Omit<TriggerInput, "pullRequest">) {
+	const made = await stub.createScheduledTrigger(input, ADA);
+	if ("status" in made) throw new Error(made.message);
+	return made;
+}
+
 /** Signs as a Standard Webhooks sender does. */
 async function sign(secret: string, id: string, timestamp: string, body: string) {
 	const raw = Uint8Array.from(atob(secret.slice("whsec_".length)), (char) => char.charCodeAt(0));
@@ -772,7 +779,7 @@ describe("scheduled triggers", () => {
 
 	async function scheduled(stub: Stub, input: Partial<TriggerInput> = {}) {
 		const agentId = await withAgent(stub);
-		const made = await create(stub, {
+		const made = await createScheduled(stub, {
 			name: "Standup",
 			prompt: "Sum up what changed since {{data.scheduledFor}}",
 			target: { kind: "agent", agentId },
@@ -875,20 +882,45 @@ describe("scheduled triggers", () => {
 		expect(await stub.startedTurns()).toEqual([]);
 	});
 
-	it("take no webhooks, and take them again once the schedule is taken away", async () => {
+	it("take no webhooks, and take them once the schedule is taken away and a secret is made", async () => {
 		const stub = registry();
-		const { trigger, secret } = await scheduled(stub);
-		expect(await deliver(stub, trigger.id, secret)).toEqual({ status: "not_found" });
+		const { trigger } = await scheduled(stub);
+		expect(trigger.secretStart).toBe("");
+		expect(await deliver(stub, trigger.id, "whsec_dGVzdA==")).toEqual({ status: "not_found" });
+		expect(await stub.replaceTriggerSecret(trigger.id)).toMatchObject({ status: "refused" });
 
 		const changed = await stub.updateTrigger(trigger.id, { schedule: null });
 		expect(changed).toMatchObject({ schedule: null, nextRunAt: null });
-		expect(await deliver(stub, trigger.id, secret)).toMatchObject({ status: "start" });
+		const rotated = await stub.replaceTriggerSecret(trigger.id);
+		if (!rotated || "status" in rotated) throw new Error("The secret was not made");
+		expect(await deliver(stub, trigger.id, rotated.secret)).toMatchObject({ status: "start" });
 
 		const again = await stub.updateTrigger(trigger.id, {
 			schedule: { cron: "30 18 * * 5", timeZone: "UTC" },
 		});
 		expect(again).toMatchObject({ events: null });
 		expect(new Date(again?.nextRunAt ?? 0).getUTCDay()).toBe(5);
+	});
+
+	it("refuse a rotation whose trigger was scheduled while its secret was sealed", async () => {
+		const stub = registry();
+		const agentId = await withAgent(stub);
+		const { trigger } = await create(stub, {
+			name: "New issues",
+			prompt: "Triage it",
+			target: { kind: "agent", agentId },
+		});
+		const rotated = await inside(stub, async (instance) => {
+			const rotating = instance.replaceTriggerSecret(trigger.id);
+			await instance.updateTrigger(trigger.id, { schedule: WEEKDAYS });
+			return rotating;
+		});
+		expect(rotated).toEqual({
+			status: "refused",
+			message: "This trigger has no secret: it takes no webhooks",
+		});
+		const [listed] = await stub.listTriggers();
+		expect(listed).toMatchObject({ id: trigger.id, secretStart: trigger.secretStart });
 	});
 });
 

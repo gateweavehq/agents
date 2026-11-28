@@ -2579,7 +2579,7 @@ export class RegistryDO extends DurableObject {
 		return "refused" in made ? refused(made.refused) : made;
 	}
 
-	/** Adds a trigger, and hands back its secret, which is not shown again. */
+	/** Adds a webhook trigger, and hands back its secret, which is not shown again. */
 	async createTrigger(
 		input: TriggerInput,
 		createdBy: string,
@@ -2587,6 +2587,9 @@ export class RegistryDO extends DurableObject {
 		const data = triggerInput.parse(input);
 		if (data.pullRequest) {
 			return refused("A pull request trigger is made with createReviewTrigger: it has no secret");
+		}
+		if (data.schedule !== null) {
+			return refused("A scheduled trigger is made with createScheduledTrigger: it has no secret");
 		}
 		const member = id.parse(createdBy);
 		const sealer = await this.#sealerOf();
@@ -2604,6 +2607,29 @@ export class RegistryDO extends DurableObject {
 		if ("refused" in made) return refused(made.refused);
 		await this.#scheduleAlarm();
 		return { trigger: made, secret };
+	}
+
+	/**
+	 * Adds a scheduled trigger. It takes no webhooks, so no secret is made, sealed or handed back,
+	 * and the sealing key need not be set up.
+	 */
+	async createScheduledTrigger(
+		input: Omit<TriggerInput, "pullRequest">,
+		createdBy: string,
+	): Promise<{ trigger: Trigger } | TriggerRefusal> {
+		const data = triggerInput.parse({ ...input, pullRequest: false });
+		if (data.schedule === null) return refused("A scheduled trigger needs a schedule");
+		const member = id.parse(createdBy);
+		const made = this.#write(() =>
+			insertTrigger(
+				this.#db,
+				{ id: crypto.randomUUID(), ...data, sealed: "", secretStart: "", createdBy: member },
+				Date.now(),
+			),
+		);
+		if ("refused" in made) return refused(made.refused);
+		await this.#scheduleAlarm();
+		return { trigger: made };
 	}
 
 	/**
@@ -2656,17 +2682,25 @@ export class RegistryDO extends DurableObject {
 	): Promise<{ trigger: Trigger; secret: string } | TriggerRefusal | null> {
 		const trigger = id.parse(triggerId);
 		const next = secret === undefined ? newTriggerSecret() : triggerSecret.parse(secret);
-		// A pull request trigger has no secret to give a new one to.
-		if (triggerRow(this.#db, trigger)?.pullRequest) {
-			return refused("A pull request trigger has no secret: it takes no webhooks");
+		// A trigger that takes no webhooks has no secret to give a new one to.
+		const current = triggerRow(this.#db, trigger);
+		if (current?.pullRequest || current?.schedule != null) {
+			return refused("This trigger has no secret: it takes no webhooks");
 		}
 		const sealer = await this.#sealerOf();
 		if ("unavailable" in sealer) return refused(sealer.unavailable);
 		const sealed = await sealer.seal(triggerPlace(trigger), next);
-		const replaced = this.#write(() =>
-			replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now()),
-		);
-		return replaced && { trigger: replaced, secret: next };
+		// The trigger can have been given a schedule while the secret was sealed. Only a row that
+		// still takes webhooks may gain the new credential.
+		return this.#write(() => {
+			const latest = triggerRow(this.#db, trigger);
+			if (!latest) return null;
+			if (latest.pullRequest || latest.schedule != null) {
+				return refused("This trigger has no secret: it takes no webhooks");
+			}
+			const replaced = replaceSecret(this.#db, trigger, sealed, secretStartOf(next), Date.now());
+			return replaced && { trigger: replaced, secret: next };
+		});
 	}
 
 	/**
