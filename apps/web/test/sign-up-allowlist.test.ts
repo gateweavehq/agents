@@ -277,6 +277,43 @@ describe("a server that has an owner", () => {
 			expect(member).not.toBeNull();
 		});
 
+		it("refuses a second invitation to a member whose account kept provider casing", async () => {
+			const created = await api(agents, "/organization/create", {
+				cookie: owner,
+				body: { name: "Cased", slug: "cased" },
+			});
+			expect(created.status).toBe(200);
+			const { id: organizationId } = (await created.json()) as { id: string };
+			expect((await allow(agents, owner, "provider@case.test")).status).toBe(200);
+			await signedUp(agents, "provider@case.test");
+			// A provider can give back casing the password path would not keep.
+			await agents.db
+				.prepare("UPDATE user SET email = ?, email_verified = 1 WHERE email = ?")
+				.bind("Provider@Case.test", "provider@case.test")
+				.run();
+			const memberUserId = await userId(agents, "Provider@Case.test");
+			await agents.db
+				.prepare(
+					"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, 'member', ?)",
+				)
+				.bind("cased-member", organizationId, memberUserId, Date.now())
+				.run();
+
+			const invited = await api(agents, "/organization/invite-member", {
+				cookie: owner,
+				body: { email: "  provider@case.TEST ", role: "member", organizationId },
+			});
+			expect(invited.status).toBe(400);
+			expect(((await invited.json()) as { message?: string }).message).toBe(
+				"User is already a member of this organization",
+			);
+			const invitations = await agents.db
+				.prepare("SELECT COUNT(*) AS n FROM invitation WHERE organization_id = ?")
+				.bind(organizationId)
+				.first<{ n: number }>();
+			expect(invitations?.n).toBe(0);
+		});
+
 		it("refuses at the database an address with no way in, if a path forgot to ask", async () => {
 			// What a path that forgot to ask would meet: the database itself.
 			await expect(insertUser(agents, "raw@nowhere.test")).rejects.toThrow(

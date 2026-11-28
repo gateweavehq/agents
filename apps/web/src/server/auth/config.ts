@@ -5,7 +5,7 @@ import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/a
 import { betterAuth } from "better-auth/minimal";
 import { jwt, organization } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
-import { and, count, eq, gt } from "drizzle-orm";
+import { and, count, eq, gt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { slugProblem } from "../../lib/slug";
 import { recordAudit } from "../audit";
@@ -248,6 +248,48 @@ export function createAuth(config: AuthConfig) {
 						throw APIError.from("FORBIDDEN", SIGN_UP_CLOSED);
 					}
 					return { context: { body: { name: validName(ctx.body?.name) } } };
+				}
+				if (ctx.path === "/organization/invite-member") {
+					const address: unknown = ctx.body?.email;
+					if (typeof address !== "string") return;
+					const email = address.trim().toLowerCase();
+					// OAuth accounts can keep their provider's casing, while Better Auth compares the
+					// lower-cased invitation exactly. Match the member case-insensitively before it does.
+					const session = await getSessionFromCtx(ctx);
+					const organizationId: unknown =
+						ctx.body?.organizationId ?? session?.session.activeOrganizationId;
+					if (session && typeof organizationId === "string" && z.email().safeParse(email).success) {
+						const inviter = await config.db
+							.select({ role: schema.member.role })
+							.from(schema.member)
+							.where(
+								and(
+									eq(schema.member.organizationId, organizationId),
+									eq(schema.member.userId, session.user.id),
+								),
+							)
+							.get();
+						const existing =
+							inviter && canInvite(inviter.role)
+								? await config.db
+										.select({ id: schema.member.id })
+										.from(schema.member)
+										.innerJoin(schema.user, eq(schema.member.userId, schema.user.id))
+										.where(
+											and(
+												eq(schema.member.organizationId, organizationId),
+												eq(sql`lower(${schema.user.email})`, email),
+											),
+										)
+										.get()
+								: null;
+						if (existing) {
+							throw new APIError("BAD_REQUEST", {
+								message: "User is already a member of this organization",
+							});
+						}
+					}
+					return { context: { body: { ...ctx.body, email } } };
 				}
 				// Whoever knew the old password may be why it is changing, and may be the one asking.
 				if (ctx.path === "/change-password") {
