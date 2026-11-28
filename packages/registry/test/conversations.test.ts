@@ -812,7 +812,12 @@ describe("turns with a sandbox", () => {
 				message: `The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so Builder cannot answer now. A sandbox is free again ${SANDBOX_IDLE_MINUTES} minutes after its conversation's last turn.`,
 			}),
 		);
-		expect(await stub.listRuns()).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+		const listed = await stub.listRuns();
+		expect(listed).toHaveLength(ids.length);
+		expect(listed.filter((run) => run.status === "running")).toHaveLength(MAX_WORKSPACE_SANDBOXES);
+		expect(listed.filter((run) => run.status === "refused")).toHaveLength(
+			ids.length - MAX_WORKSPACE_SANDBOXES,
+		);
 	});
 });
 
@@ -968,6 +973,17 @@ describe("sandbox time", () => {
 						message: `${SANDBOX_MONTH_USED}, ${cap} minutes, so Builder cannot answer until the month ends (UTC). It resets on 2027-01-01.`,
 					};
 					expect(await instance.beginTurn(second, "Build it")).toEqual(refusal);
+					const listed = instance.listRuns();
+					expect(listed[0]).toMatchObject({
+						conversationId: second,
+						status: "refused",
+						error: refusal.message,
+						steps: 0,
+						inputTokens: 0,
+						outputTokens: 0,
+						cost: 0,
+						sandbox: false,
+					});
 					clock.mockReturnValue(Date.UTC(2026, 11, 16));
 					expect(instance.sandboxSecondsToday()).toBe(0);
 					expect(await instance.beginTurn(second, "Build it")).toEqual(refusal);
@@ -1399,11 +1415,23 @@ it("refuses a paused agent before resolving its provider, and resumes its turns"
 	expect(first).toMatchObject({ by: ADA, at: expect.any(Number), changed: true });
 	expect(await stub.pauseAgent(id, GRACE)).toEqual({ ...first, changed: false });
 	expect((await stub.getAgent(id))?.agent.paused).toEqual({ by: ADA, at: first?.at });
+	const pause = "This agent is paused, so it takes no new turns. An owner or admin can resume it.";
 	expect(await stub.beginTurn(conversation, "Hello")).toEqual({
 		status: "refused",
-		message: "This agent is paused, so it takes no new turns. An owner or admin can resume it.",
+		message: pause,
 	});
-	expect(await stub.listRuns()).toEqual([]);
+	const refusedRuns = await stub.listRuns();
+	expect(refusedRuns).toHaveLength(1);
+	expect(refusedRuns[0]).toMatchObject({
+		conversationId: conversation,
+		status: "refused",
+		error: pause,
+		steps: 0,
+		inputTokens: 0,
+		outputTokens: 0,
+		cost: 0,
+		sandbox: false,
+	});
 	expect(await stub.resumeAgent(id)).toBe(true);
 	await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, ADA);
 	expect(await stub.beginTurn(conversation, "Again")).toHaveProperty("runId");

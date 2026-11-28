@@ -416,6 +416,7 @@ import {
 	listRuns,
 	providerCost,
 	recordRunPullRequest,
+	refuseRun,
 	runHadSandbox,
 	runningRuns,
 	runUsage,
@@ -1647,19 +1648,47 @@ export class RegistryDO extends DurableObject {
 			return refused("This conversation was started by a trigger, so it cannot go on");
 		}
 		this.#write(() => noteTurn(this.#db, conversation, message, Date.now()));
-		const plan = this.#planTurn(parties);
+		const plan = this.#planTurn(parties, true);
 		if ("status" in plan) return plan;
 		const { agent, position } = plan;
+		// A pause or limit refusal is a turn's outcome too: record it where the person looks for
+		// what became of their message. Other refusals still say why only in the conversation.
+		const decline = (refusal: TurnRefusal): ProviderRefusal => {
+			const record =
+				refusal.message === PAUSED_AGENT ||
+				refusal.trackReason === "waiting-for-slot" ||
+				refusal.trackReason === "budget-limit";
+			if (!record) return refused(refusal.message);
+			const now = Date.now();
+			const replayOf =
+				parties.replayOf !== null && !hasRuns(this.#db, conversation) ? parties.replayOf : null;
+			refuseRun(
+				this.#db,
+				{
+					agent,
+					conversationId: conversation,
+					startedBy: parties.startedBy,
+					teamPath: position?.path ?? null,
+					replayOf,
+				},
+				refusal.message,
+				now,
+			);
+			return refused(refusal.message);
+		};
+		if (agentPause(this.#db, agent.agentId)) {
+			return this.#write(() => decline(refused(PAUSED_AGENT)));
+		}
 		const prepared = await this.#prepareTurn(conversation, agent, position, true);
-		if ("status" in prepared) return refused(prepared.message);
+		if ("status" in prepared) return this.#write(() => decline(prepared));
 		// The limits decide again as the run begins: other turns may have begun while this one
 		// awaited.
 		return this.#write(() => {
-			if (agentPause(this.#db, agent.agentId)) return refused(PAUSED_AGENT);
+			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
 			const cap = this.#modelKeyCapAdmissionRefusal(agent);
-			if (cap) return refused(cap.message);
+			if (cap) return decline(cap);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
-			if (over) return refused(over.message);
+			if (over) return decline(over);
 			const replayOf =
 				parties.replayOf !== null && !hasRuns(this.#db, conversation) ? parties.replayOf : null;
 			const runId = beginRun(
@@ -1996,17 +2025,20 @@ export class RegistryDO extends DurableObject {
 	}
 
 	/** Who answers a conversation's turn: its agent, or its team's lead, as they are now. */
-	#planTurn(parties: {
-		agentId: string;
-		teamId: string | null;
-	}): { agent: AgentSnapshot; position: TeamPosition | null } | ProviderRefusal {
+	#planTurn(
+		parties: {
+			agentId: string;
+			teamId: string | null;
+		},
+		allowPaused = false,
+	): { agent: AgentSnapshot; position: TeamPosition | null } | ProviderRefusal {
 		const plan =
 			parties.teamId === null
 				? { agent: agentSnapshot(this.#db, parties.agentId), position: null }
 				: teamTurnPlan(this.#db, parties.teamId);
 		if ("refused" in plan) return refused(plan.refused);
 		if (!plan.agent) return refused("This agent was removed, so the conversation cannot go on");
-		if (agentPause(this.#db, plan.agent.agentId)) return refused(PAUSED_AGENT);
+		if (!allowPaused && agentPause(this.#db, plan.agent.agentId)) return refused(PAUSED_AGENT);
 		return { agent: plan.agent, position: plan.position };
 	}
 

@@ -103,6 +103,30 @@ export function beginRun(
 }
 
 /**
+ * Records a turn that was refused before it could begin, so the run list says why. It used no
+ * model and no sandbox: its cost is zero and its end is its start.
+ */
+export function refuseRun(
+	db: Db,
+	input: Omit<Parameters<typeof beginRun>[1], "sandbox">,
+	message: string,
+	now: number,
+): string {
+	const runId = beginRun(db, { ...input, sandbox: false }, now);
+	finishRun(db, runId, {
+		status: "refused",
+		error: message,
+		steps: 0,
+		inputTokens: 0,
+		outputTokens: 0,
+		cachedInputTokens: 0,
+		cost: 0,
+		endedAt: now,
+	});
+	return runId;
+}
+
+/**
  * What a provider's runs that started between `from` and `to` cost, in millionths of a dollar, at
  * list prices: those still going count what they reported so far, which is nothing until they end.
  */
