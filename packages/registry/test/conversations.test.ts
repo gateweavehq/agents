@@ -123,6 +123,7 @@ describe("conversations", () => {
 			sandbox: false,
 			repository: null,
 			memory: false,
+			reservation: { costMicros: 10_000, seconds: null },
 			runId: expect.any(String),
 			origin: "person",
 		});
@@ -1144,7 +1145,7 @@ describe("sandbox time", () => {
 		}
 	});
 
-	it("counts a running turn at the ceiling it reserved instead of what it has used", async () => {
+	it("counts a running turn and its idle span at its ceiling", async () => {
 		const stub = registry();
 		const [first = "", second = ""] = await builderConversations(stub, 2);
 		const start = Date.UTC(2026, 11, 15, 10);
@@ -1153,18 +1154,17 @@ describe("sandbox time", () => {
 			await withSandboxes(
 				stub,
 				async (instance) => {
-					// A turn reserves 300 seconds; the cap is 15 minutes. The first turn, 100
+					// A turn reserves 300 seconds; the cap is 20 minutes. The first turn, 100
 					// seconds in, counts at its ceiling: 100 + 5 idle minutes stretch + the 200
-					// seconds of its reservation it has not used = 600. The second's own ceiling
-					// fills the cap exactly (900), so it begins. Counting the running turn's
-					// reservation on top of what it has used would read 1000 and refuse it.
+					// seconds of its reservation it has not used = 600. The second reserves
+					// another 300 seconds and 5 idle minutes, filling the cap exactly (1200).
 					await turn(instance, first);
 					clock.mockReturnValue(start + 100_000);
 					expect(await instance.beginTurn(second, "Build it")).toMatchObject({ sandbox: true });
 				},
 				{
 					limits: {
-						SANDBOX_MONTHLY_MINUTES: "15",
+						SANDBOX_MONTHLY_MINUTES: "20",
 						SANDBOX_TURN_SECONDS: "300",
 					},
 				},
@@ -1173,6 +1173,79 @@ describe("sandbox time", () => {
 			clock.mockRestore();
 		}
 	});
+
+	it.each(["SANDBOX_DAILY_MINUTES", "SANDBOX_MONTHLY_MINUTES"] as const)(
+		"includes a distinct sandbox's idle time under %s",
+		async (limit) => {
+			const stub = registry();
+			const [first = "", second = ""] = await builderConversations(stub, 2);
+			const start = Date.UTC(2026, 11, 15, 10);
+			const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+			try {
+				await withSandboxes(
+					stub,
+					async (instance) => {
+						await turn(instance, first);
+						clock.mockReturnValue(start + 100_000);
+						expect(await instance.beginTurn(second, "Build it")).toMatchObject({
+							status: "refused",
+						});
+					},
+					{ limits: { [limit]: "15", SANDBOX_TURN_SECONDS: "300" } },
+				);
+			} finally {
+				clock.mockRestore();
+			}
+		},
+	);
+
+	it.each(["SANDBOX_DAILY_MINUTES", "SANDBOX_MONTHLY_MINUTES"] as const)(
+		"reuses a conversation's projected warm sandbox under %s",
+		async (limit) => {
+			const stub = registry();
+			const [conversation = ""] = await builderConversations(stub, 1);
+			const start = Date.UTC(2026, 11, 15, 10);
+			const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+			try {
+				await withSandboxes(
+					stub,
+					async (instance) => {
+						await turn(instance, conversation);
+						clock.mockReturnValue(start + 100_000);
+						expect(await instance.beginTurn(conversation, "Build it again")).toMatchObject({
+							sandbox: true,
+						});
+					},
+					{ limits: { [limit]: "12", SANDBOX_TURN_SECONDS: "300" } },
+				);
+			} finally {
+				clock.mockRestore();
+			}
+		},
+	);
+
+	it.each(["SANDBOX_DAILY_MINUTES", "SANDBOX_MONTHLY_MINUTES"] as const)(
+		"clips a proposed sandbox span at the UTC boundary under %s",
+		async (limit) => {
+			const stub = registry();
+			const [conversation = ""] = await builderConversations(stub, 1);
+			const start = Date.UTC(2026, 11, 31, 23, 58);
+			const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+			try {
+				await withSandboxes(
+					stub,
+					async (instance) => {
+						expect(await instance.beginTurn(conversation, "Build it")).toMatchObject({
+							sandbox: true,
+						});
+					},
+					{ limits: { [limit]: "3", SANDBOX_TURN_SECONDS: "300" } },
+				);
+			} finally {
+				clock.mockRestore();
+			}
+		},
+	);
 
 	it("names the month's reset when the day's and the month's minutes are both used up", async () => {
 		const stub = registry();

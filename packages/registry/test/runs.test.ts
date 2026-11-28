@@ -39,6 +39,58 @@ const finished = {
 };
 
 describe("runs", () => {
+	it("keeps a reserved estimate when the final cost is unknown, before and after expiry", async () => {
+		const stub = registry();
+		await runInDurableObject(stub, (instance) => {
+			const bindings = (instance as unknown as { env: object }).env;
+			Object.defineProperty(instance, "env", {
+				value: { ...bindings, SANDBOX_TURN_COST: "0.25" },
+				configurable: true,
+			});
+		});
+		const first = await turn(stub);
+		expect(await stub.finishRun(first.runId, { ...finished, cost: null })).toBe(true);
+		expect((await stub.getRun(first.runId))?.cost).toBe(250_000);
+		expect(await stub.finishRun(first.runId, finished)).toBe(false);
+
+		const expired = await turn(stub);
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec(
+				"UPDATE runs SET started_at = ? WHERE id = ?",
+				Date.now() - RUN_TIMEOUT,
+				expired.runId,
+			);
+		});
+		expect((await stub.getRun(expired.runId))?.cost).toBe(250_000);
+		expect(await stub.finishRun(expired.runId, { ...finished, cost: null })).toBe(true);
+		expect((await stub.getRun(expired.runId))?.cost).toBe(250_000);
+		expect(await stub.finishRun(expired.runId, finished)).toBe(false);
+		expect((await stub.runUsage(0)).cost).toBe(500_000);
+
+		const known = await turn(stub);
+		expect(await stub.finishRun(known.runId, { ...finished, cost: 0 })).toBe(true);
+		expect((await stub.getRun(known.runId))?.cost).toBe(0);
+		const late = await turn(stub);
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec(
+				"UPDATE runs SET started_at = ? WHERE id = ?",
+				Date.now() - RUN_TIMEOUT,
+				late.runId,
+			);
+		});
+		expect(await stub.finishRun(late.runId, finished)).toBe(true);
+		expect((await stub.getRun(late.runId))?.cost).toBe(finished.cost);
+	});
+
+	it("keeps unknown cost null when a legacy run reserved no cost", async () => {
+		const { stub, runId } = await turn();
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec("UPDATE runs SET reserved_cost = NULL WHERE id = ?", runId);
+		});
+		expect(await stub.finishRun(runId, { ...finished, cost: null })).toBe(true);
+		expect((await stub.getRun(runId))?.cost).toBeNull();
+	});
+
 	it("open when a turn calls the model, and close once with what it used", async () => {
 		const { stub, agent, conversation, runId } = await turn();
 		expect(await stub.getRun(runId)).toMatchObject({
@@ -124,8 +176,8 @@ describe("runs", () => {
 			runs: 2,
 			inputTokens: 1_210,
 			outputTokens: 305,
-			cost: 5_200,
-			unpriced: 1,
+			cost: 15_200,
+			unpriced: 0,
 		});
 		expect(await stub.runUsage(Date.now() + 60_000)).toEqual({
 			runs: 0,

@@ -8,6 +8,15 @@ export { ConversationAgent } from "../src";
 export { FakeSandbox } from "./fake-sandbox";
 
 export class RegistryDO extends Registry {
+	override async beginTurn(...args: Parameters<Registry["beginTurn"]>) {
+		const turn = await super.beginTurn(...args);
+		if (!this.ctx.storage.kv.get<boolean>("test:legacy-reservation") || "status" in turn) {
+			return turn;
+		}
+		const { reservation: _, ...legacy } = turn;
+		return legacy;
+	}
+
 	/** Begins a review's run in its conversation, as the app's registry does. */
 	protected override async startReviewTurn(
 		conversationId: string,

@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { createMCPClient } from "@ai-sdk/mcp";
 import type { McpServerInput } from "@gateweave/agents-model";
@@ -179,6 +180,27 @@ const LISTING = [
 ];
 
 describe("an agent whose engine is Claude Code", () => {
+	it("continues through sandbox model requests when an older registry omits the reservation", async () => {
+		const { registry, stub, machine } = await conversation();
+		await machine.scriptEngine({ lines: LISTING });
+		await runInDurableObject(registry, (instance, state) => {
+			state.storage.kv.put("test:legacy-reservation", true);
+			const bindings = (instance as unknown as { env: object }).env;
+			Object.defineProperty(instance, "env", {
+				value: { ...bindings, SANDBOX_TURN_COST: "0.0005" },
+				configurable: true,
+			});
+		});
+		const socket = await connect(stub);
+		const turn = await ask(socket, "List the files");
+		socket.close();
+		expect(turn).toMatchObject({ text: "Let me look. There are two files.", error: null });
+		const [run] = await registry.listRuns();
+		expect(
+			(await stub.runTrace(run?.id ?? "")).filter((span) => span.kind === "model"),
+		).toHaveLength(2);
+	});
+
 	it("runs Claude Code in its sandbox, and passes on its text, tool calls and usage", async () => {
 		const { workspaceId, registry, stub, machine, conversationId, agentId } = await conversation({
 			repository: true,
@@ -233,6 +255,44 @@ describe("an agent whose engine is Claude Code", () => {
 		expect(trace.filter((span) => span.kind === "tool")).toMatchObject([
 			{ step: 0, status: "ok", server: "claude-code", tool: "Bash", error: null },
 		]);
+	});
+
+	it("refuses the next model request once the turn's reserved cost is reached", async () => {
+		const { registry, stub, machine } = await conversation();
+		await machine.scriptEngine({ lines: LISTING });
+		await runInDurableObject(registry, (instance) => {
+			const bindings = (instance as unknown as { env: object }).env;
+			Object.defineProperty(instance, "env", {
+				// The first request costs exactly $0.0005: 100 uncached input, 1,000 cached input
+				// and 20 output tokens at Sonnet 5.5's prices.
+				value: { ...bindings, SANDBOX_TURN_COST: "0.0005" },
+				configurable: true,
+			});
+		});
+		const socket = await connect(stub);
+
+		const turn = await ask(socket, "List the files");
+		socket.close();
+
+		expect(turn.error).toBe(
+			"The run reached its cost limit, so it stopped before its next model request.",
+		);
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({
+			status: "stopped",
+			error: "The run reached its cost limit, so it stopped before its next model request.",
+			cost: 500,
+		});
+		const trace = await stub.runTrace(run?.id ?? "");
+		expect(trace.filter((span) => span.kind === "model")).toMatchObject([
+			{ step: 0, status: "ok", cost: 500 },
+			{
+				step: 1,
+				status: "error",
+				error: "The run reached its cost limit, so it stopped before its next model request.",
+			},
+		]);
+		expect((await machine.seen()).stops).toBeGreaterThan(0);
 	});
 
 	it("works at the sandbox's root when the agent has no repository", async () => {

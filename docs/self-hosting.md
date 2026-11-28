@@ -425,17 +425,18 @@ bill in hand:
   time before each sandbox stops. At the cap, new turns that need a sandbox are refused and the
   message names the reset date. Running turns can finish. With email configured, the workspace's
   owners hear at 80% and 100%, once per threshold each month.
-- `SANDBOX_TURN_COST` sets what one turn reserves, in dollars, against the workspace's model-key
-  caps and the server's Workers AI limit, and `SANDBOX_TURN_SECONDS` what it reserves, in sandbox
-  seconds, against the sandbox minutes and the server's monthly budget — `SANDBOX_TURN_COST` does
-  not count toward the sandbox budget, which is priced in seconds. A turn reserves them as it
-  begins, so two turns admitted at once cannot both fit the last of a budget. While the turn runs,
-  a cap counts it at its ceiling; when it ends, what it cost replaces the reservation, and when
-  nobody reports what an interrupted turn cost, the reservation stays as the estimate. They reserve
-  at admission; they do not stop a turn that is already running.
-- `SANDBOX_MONTHLY_BUDGET` limits the server's spending per month. Agents prices sandbox time at
-  the most it can cost, so Cloudflare's bill stays under the budget. Set `SANDBOX_ALERT_EMAIL` to
-  hear at 80% and at 100%.
+- `SANDBOX_TURN_COST` sets what one turn reserves in dollars against the workspace's model-key
+  caps and the Workers AI daily limit for that workspace. Once metered model cost reaches that
+  amount, the runtime refuses the next model request. `SANDBOX_TURN_SECONDS` sets what a turn
+  reserves against the workspace's sandbox minute limits at admission. Admission includes projected
+  idle time within the current UTC period. Running turns can carry over into the next period.
+- Workspace admission checks account for outstanding reservations in the same write that starts
+  the run. When metered use is reported, it replaces the reservation. If an interrupted turn's
+  use is unknown, the reservation stays as its estimate.
+- For `SANDBOX_MONTHLY_BUDGET`, admission compares the new sandbox reservation with the latest
+  total measured across the server and the outstanding reservations in the current workspace.
+  Concurrent admissions from different workspaces can still share the same reading. Agents
+  estimates sandbox cost from seconds of usage. Set `SANDBOX_ALERT_EMAIL` to hear at 80% and at 100%.
 
 #### Checks before a pull request
 

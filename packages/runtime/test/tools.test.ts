@@ -92,6 +92,49 @@ async function conversation(
 }
 
 describe("MCP servers", () => {
+	it("refuses the next model request once the turn's reserved cost is reached", async () => {
+		const acme = new FakeMcpServer([SEARCH], () => ({ content: [{ type: "text", text: FOUND }] }));
+		const requests = fakeModel(
+			(call) =>
+				call === 0 ? anthropicToolCall("acme__search", { query: QUERY }) : anthropicStream("Done."),
+			{ "mcp.acme.dev": acme.handle },
+		);
+		const { registry, stub } = await conversation([ACME]);
+		await runInDurableObject(registry, (instance) => {
+			const bindings = (instance as unknown as { env: object }).env;
+			Object.defineProperty(instance, "env", {
+				// The first request's 20 input and 8 output tokens cost exactly $0.00012.
+				value: { ...bindings, SANDBOX_TURN_COST: "0.00012" },
+				configurable: true,
+			});
+		});
+		const socket = await connect(stub);
+
+		const turn = await ask(socket, QUERY);
+		socket.close();
+
+		expect(requests).toHaveLength(1);
+		expect(turn.error).toBe(
+			"The run reached its cost limit, so it stopped before its next model request.",
+		);
+		const [run] = await registry.listRuns();
+		expect(run).toMatchObject({
+			status: "stopped",
+			error: "The run reached its cost limit, so it stopped before its next model request.",
+			cost: 120,
+		});
+		expect(
+			(await stub.runTrace(run?.id ?? "")).filter((span) => span.kind === "model"),
+		).toMatchObject([
+			{ step: 0, status: "ok", cost: 120 },
+			{
+				step: 1,
+				status: "error",
+				error: "The run reached its cost limit, so it stopped before its next model request.",
+			},
+		]);
+	});
+
 	it.each([
 		{ task: "Edit deploy.sh", body: "https://deploy.sh/upload", allowed: false },
 		{

@@ -349,8 +349,8 @@ describe("a team's runs", () => {
 			running: 1,
 			inputTokens: 3_000,
 			outputTokens: 300,
-			cost: 2_500,
-			unpriced: 1,
+			cost: 12_500,
+			unpriced: 0,
 			// None of the team's agents has a sandbox.
 			sandboxSeconds: 0,
 			sandboxCost: 0,

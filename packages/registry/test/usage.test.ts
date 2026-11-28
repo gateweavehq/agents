@@ -129,6 +129,9 @@ describe("usage events", () => {
 
 	it("say when a run has no price, rather than counting it as free", async () => {
 		const { stub, runId } = await turn();
+		await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+			state.storage.sql.exec("UPDATE runs SET reserved_cost = NULL WHERE id = ?", runId);
+		});
 		await stub.finishRun(runId, {
 			status: "failed",
 			error: "Overloaded",
