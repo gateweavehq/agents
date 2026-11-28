@@ -5,7 +5,13 @@
 import type { GitHubApp } from "@gateweave/agents-github";
 import type { PullRequestOutcome } from "@gateweave/agents-model";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ChangedFile, MANIFESTS_LIMIT, oracleKind, reviewOracles } from "../src/oracles";
+import {
+	type ChangedFile,
+	MANIFESTS_LIMIT,
+	namesFile,
+	oracleKind,
+	reviewOracles,
+} from "../src/oracles";
 import { gitHubPullRequests, pullRequestTools } from "../src/pull-requests";
 import type { RunRecorder } from "../src/trace";
 import { MemorySandbox } from "./fake-sandbox";
@@ -835,5 +841,28 @@ describe("the review of a branch on GitHub", () => {
 		await expect(port().propose({ ...input, draft: true, convert: true })).rejects.toThrow(
 			"could not make the pull request a draft",
 		);
+	});
+});
+
+describe("namesFile", () => {
+	it("does not let a newline join another command to the runner", () => {
+		expect(namesFile("vitest run test/b.test.ts\necho test/a.test.ts", "test/a.test.ts")).toBe(
+			false,
+		);
+	});
+
+	it("does not take a redirection target for a runner argument", () => {
+		expect(namesFile("echo > vitest run test/a.test.ts; exit 1", "test/a.test.ts")).toBe(false);
+		expect(namesFile("vitest run > test/a.test.ts", "test/a.test.ts")).toBe(false);
+	});
+
+	it("still accepts a runner whose output is redirected", () => {
+		for (const command of [
+			"vitest run test/a.test.ts >proof.out",
+			"vitest run test/a.test.ts 2>proof.err",
+			"vitest run test/a.test.ts 2>&1",
+		]) {
+			expect(namesFile(command, "test/a.test.ts")).toBe(true);
+		}
 	});
 });

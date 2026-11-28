@@ -214,8 +214,13 @@ function shellSegments(command: string): string[][] {
 	let started = false;
 	let quote: "'" | '"' | null = null;
 	let escaped = false;
+	let redirect = false;
 	const endWord = () => {
 		if (started) words.push(word);
+		word = "";
+		started = false;
+	};
+	const dropWord = () => {
 		word = "";
 		started = false;
 	};
@@ -248,16 +253,55 @@ function shellSegments(command: string): string[][] {
 			started = true;
 			continue;
 		}
-		if (/\s/.test(char)) {
-			endWord();
+		if (char === "\n") {
+			if (redirect) {
+				if (!started) return [];
+				dropWord();
+				redirect = false;
+			}
+			endSegment();
 			continue;
 		}
-		if (char === "#" && !started) {
+		if (/\s/.test(char)) {
+			if (redirect) {
+				if (started) {
+					dropWord();
+					redirect = false;
+				}
+			} else {
+				endWord();
+			}
+			continue;
+		}
+		if (char === "#" && !started && !redirect) {
 			endSegment();
 			while (at + 1 < command.length && command.charAt(at + 1) !== "\n") at += 1;
 			continue;
 		}
-		if (";&|<>()".includes(char)) {
+		// Input redirection is too different in what it passes to the command to accept here.
+		if (char === "<") return [];
+		if (char === ">") {
+			if (redirect) return [];
+			// A file descriptor before the operator is part of the redirection, not an argument.
+			if (/^\d+$/.test(word)) dropWord();
+			else endWord();
+			while (command.charAt(at + 1) === ">") at += 1;
+			// `>&1` duplicates a descriptor and names no file.
+			if (command.charAt(at + 1) === "&") {
+				at += 1;
+				if (!/\d/.test(command.charAt(at + 1))) return [];
+				while (/\d/.test(command.charAt(at + 1))) at += 1;
+				continue;
+			}
+			redirect = true;
+			continue;
+		}
+		if (";&|()".includes(char)) {
+			if (redirect) {
+				if (!started) return [];
+				dropWord();
+				redirect = false;
+			}
 			endSegment();
 			continue;
 		}
@@ -265,6 +309,10 @@ function shellSegments(command: string): string[][] {
 		started = true;
 	}
 	if (quote !== null || escaped) return [];
+	if (redirect) {
+		if (!started) return [];
+		dropWord();
+	}
 	endSegment();
 	return segments;
 }
