@@ -453,6 +453,11 @@ export class FakeSandbox
 	readonly #scripts: EngineScript[] = [];
 	/** Ends the turn of the engine that waits to be stopped. */
 	#release: (() => void) | null = null;
+	/** Holds an engine's start back, as OpenCode's prompt can still be reaching its server. */
+	#startBlocker: Promise<void> | null = null;
+	#startRelease: (() => void) | null = null;
+	/** What the next stops answer; `fail` is a rejected stop call, as OpenCode's can fail. */
+	readonly #stopAnswers: (boolean | "fail")[] = [];
 	#stops = 0;
 	#exit: EngineExit | null = null;
 	/** The message the next `forgetKeys` fails with, once, as a container that would not stop can. */
@@ -570,8 +575,27 @@ export class FakeSandbox
 		this.#scripts.push(script);
 	}
 
+	/** Holds the next engine start until `releaseEngineStart`, after its job is visible. */
+	holdEngineStart(): void {
+		this.#startBlocker = new Promise((resolve) => {
+			this.#startRelease = resolve;
+		});
+	}
+
+	releaseEngineStart(): void {
+		this.#startRelease?.();
+		this.#startRelease = null;
+		this.#startBlocker = null;
+	}
+
+	/** What the next stops answer, in order; then each reaches the engine. */
+	answerStops(answers: (boolean | "fail")[]): void {
+		this.#stopAnswers.push(...answers);
+	}
+
 	async startEngine(job: EngineJob): Promise<ReadableStream<Uint8Array>> {
 		this.#jobs.push(job);
+		if (this.#startBlocker) await this.#startBlocker;
 		const { lines, untilStopped = false, exit = null } = this.#scripts.shift() ?? { lines: [] };
 		this.#exit = exit;
 		const { readable, writable } = new IdentityTransformStream();
@@ -625,10 +649,15 @@ export class FakeSandbox
 		return this.#exit;
 	}
 
-	async stopEngine(): Promise<void> {
+	async stopEngine(): Promise<boolean> {
 		this.#stops += 1;
-		this.#release?.();
-		this.#release = null;
+		const answer = this.#stopAnswers.shift() ?? true;
+		if (answer === "fail") throw new Error("the engine stop failed");
+		if (answer) {
+			this.#release?.();
+			this.#release = null;
+		}
+		return answer;
 	}
 
 	destroy(): void {

@@ -419,8 +419,15 @@ describe("a model request the sandbox may not make", () => {
 	) {
 		const requests = fakeModel(() => anthropicStream("Should not be asked."));
 		const { context, recorded } = meterOf();
-		if (pause)
-			context.meter.engineRequestPause = async (token) => (token === "turn-token" ? pause : null);
+		if (pause) {
+			context.meter.engineRequestPause = async (token) =>
+				token === "turn-token" ? { reason: pause, step: 100 } : null;
+			// The pause answer carries an already-started span: stopping the engine must not wait for
+			// a second RPC that a startup retry could beat.
+			context.meter.engineRequestStarted = async () => {
+				throw new Error("must already be started");
+			};
+		}
 		const response = await sendModelRequest(request, provider, running, context);
 		expect(response.status).toBe(403);
 		expect(await response.text()).toMatch(words);
