@@ -435,3 +435,23 @@ it("keeps a registry whose conversation appears after the first deletion list", 
 	expect(world.deleted).not.toContain("eu/registry");
 	expect(world.placeOf("eu").has("racing")).toBe(true);
 });
+
+it("charges the retry budget when a registry fails after its conversations were deleted", async () => {
+	await placed("big", "eu");
+	await noted("big", 1);
+	await placed("next", "eu");
+	await noted("next", 2);
+	world.placeOf("eu").set(
+		"big",
+		Array.from({ length: 200 }, (_, index) => `conversation-${index}`),
+	);
+	world.placeOf("eu").set("next", ["one"]);
+	world.meanwhile.onDestroy = async (place, workspaceId) => {
+		if (place === "eu" && workspaceId === "big") throw new Error("registry unreachable");
+	};
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted.filter((name) => name.startsWith("eu/big:"))).toHaveLength(200);
+	expect(world.deleted).not.toContain("eu/next:one");
+	expect(world.placeOf("eu").has("next")).toBe(true);
+});

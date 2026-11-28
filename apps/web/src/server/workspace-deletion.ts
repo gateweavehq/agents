@@ -86,7 +86,6 @@ export async function deleteWorkspaceData(
 				place === location?.movedFrom && place !== location.jurisdiction,
 				share,
 			);
-			if (budget && allowed) budget.conversations -= allowance - allowed.conversations;
 		} catch (error) {
 			failures.push(error);
 			console.error("A deleted workspace's registry cleanup failed", {
@@ -94,6 +93,8 @@ export async function deleteWorkspaceData(
 				jurisdiction: place || "default",
 				error: messageOf(error),
 			});
+		} finally {
+			if (budget && allowed) budget.conversations -= allowance - allowed.conversations;
 		}
 	}
 	if (failures.length > 0) throw failures[0];
