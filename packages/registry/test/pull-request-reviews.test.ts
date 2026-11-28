@@ -619,6 +619,46 @@ describe("one delivery for a head in the workspace, whatever the number of trigg
 		expect((await stub.listPullRequestReviews())[2]?.triggerId).toBe(ordered[0]?.id);
 	});
 
+	it("chooses the trigger whose reviewer is bound to the pull request's repository", async () => {
+		const { stub, builder, trigger, repositoryId } = await workspace();
+		const [otherId = ""] = await stub.syncRepositories([github("8", "other")]);
+		await stub.deleteTrigger(trigger.id);
+		const bound = (name: string, repository: string) =>
+			stub.createAgent({
+				name,
+				description: null,
+				provider: "anthropic",
+				model: "claude-sonnet-5-5",
+				instructions: null,
+				sandbox: true,
+				repositoryId: repository,
+			});
+		const other = await bound("Other reviewer", otherId);
+		const site = await bound("Site reviewer", repositoryId);
+		const make = async (agentId: string, name: string) => {
+			const made = await stub.createReviewTrigger(
+				{ name, prompt: "Review it", target: { kind: "agent", agentId } },
+				ADA,
+			);
+			if ("status" in made) throw new Error(made.message);
+			return made.trigger;
+		};
+		// The wrong repository's trigger is older: compatibility, not age alone, chooses.
+		const otherTrigger = await make(other.id, "Review other");
+		const siteTrigger = await make(site.id, "Review site");
+
+		await built(stub, builder);
+		await built(stub, builder, {
+			repository: "acme/other",
+			url: "https://github.com/acme/other/pull/12",
+			head: NEXT,
+		});
+		expect(await stub.listPullRequestReviews()).toEqual([
+			expect.objectContaining({ repository: "acme/site", triggerId: siteTrigger.id }),
+			expect.objectContaining({ repository: "acme/other", triggerId: otherTrigger.id }),
+		]);
+	});
+
 	it("does not review a head again when the trigger that reviewed it is replaced", async () => {
 		const { stub, builder, reviewer, trigger } = await workspace();
 		await built(stub, builder);

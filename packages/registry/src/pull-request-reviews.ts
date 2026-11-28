@@ -82,7 +82,7 @@ export function queueReviews(db: Db, runId: string, now: number): number {
 		)
 		.get();
 	if (!repository) return 0;
-	const trigger = reviewTrigger(db);
+	const trigger = reviewTrigger(db, [], repository.id);
 	if (!trigger) return 0;
 	const row = triggerRow(db, trigger);
 	const reviewerId = row?.agentId ?? (row?.teamId ? teamLead(db, row.teamId)?.leadAgentId : null);
