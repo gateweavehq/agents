@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	invitationEmail,
+	modelKeyCapEmail,
 	passwordResetEmail,
 	passwordTriesSpentEmail,
 	sandboxBudgetEmail,
@@ -100,6 +101,31 @@ describe("sandboxBudgetEmail", () => {
 		);
 		expect(stopped.text).toContain("cannot answer until the month ends (UTC)");
 		expect(stopped.text).toContain("SANDBOX_MONTHLY_BUDGET");
+	});
+});
+
+describe("modelKeyCapEmail", () => {
+	const passed = {
+		kind: "month" as const,
+		period: "2026-11",
+		spent: 82.4,
+		cap: 100,
+		resetsOn: "2026-12-01",
+		workspace: "Acme",
+		server: "agents.example.com",
+	};
+
+	it("warns at 80% and says turns stop at 100%", () => {
+		const warning = modelKeyCapEmail({ ...passed, share: 80 });
+		expect(warning.subject).toBe(
+			"Acme on agents.example.com used 80% of its model-key monthly cap",
+		);
+		expect(warning.text).toContain("$82.40 of its $100 monthly cap");
+		expect(warning.text).toContain("resets on 2026-12-01 (UTC)");
+
+		const reached = modelKeyCapEmail({ ...passed, share: 100, spent: 100 });
+		expect(reached.text).toContain("New turns that use the workspace's own model keys are refused");
+		expect(reached.text).toContain("owner or admin can change or clear the cap");
 	});
 });
 

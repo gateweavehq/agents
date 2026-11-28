@@ -17,12 +17,12 @@ export async function currentMember(slug: string) {
 }
 
 /** Matches Better Auth's freshSessionMiddleware, including deployments that disable freshness. */
-export async function requireFreshSession(createdAt: Date) {
+export async function requireFreshSession(createdAt: Date, action = "resume this agent") {
 	const { sessionConfig } = await getAuth().$context;
 	if (
 		sessionConfig.freshAge !== 0 &&
 		Date.now() - createdAt.getTime() >= sessionConfig.freshAge * 1000
 	) {
-		throw new Error("Sign in again to resume this agent.");
+		throw new Error(`Sign in again to ${action}.`);
 	}
 }

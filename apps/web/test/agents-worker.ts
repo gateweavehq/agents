@@ -30,6 +30,8 @@ import type {
 	McpServerInput,
 	MemoryFilter,
 	MemoryPage,
+	ModelKeyCaps,
+	ModelKeyCapsInput,
 	NewTeamInput,
 	Overview,
 	Project,
@@ -141,6 +143,8 @@ export interface RegistryStub {
 	saveProviderKey(input: ProviderKeyInput, addedBy: string): Promise<ProviderKey | ProviderRefusal>;
 	checkProviderKey(provider: string): Promise<ProviderKey | ProviderRefusal>;
 	listProviderKeys(): Promise<ProviderKey[]>;
+	getModelKeyCaps(): Promise<ModelKeyCaps>;
+	setModelKeyCaps(input: ModelKeyCapsInput): Promise<void>;
 	removeProviderKey(provider: string): Promise<boolean>;
 	listModels(provider: string): Promise<ProviderModel[] | ProviderRefusal>;
 	gitlabConnect(

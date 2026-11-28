@@ -1,5 +1,6 @@
 import type {
 	MemoryAgentEvent,
+	ModelKeyCapPassed,
 	ReviewPullState,
 	SandboxBudgetPassed,
 	SandboxMinutesPassed,
@@ -19,10 +20,13 @@ export interface StartedTurn {
 const STARTED_KEY = "test:started-turns";
 const BUDGET_KEY = "test:budget-passed";
 const MINUTES_KEY = "test:minutes-passed";
+const MODEL_KEY_CAP_KEY = "test:model-key-cap-passed";
 const FAIL_BUDGET_KEY = "test:fail-budget-alerts";
 const FAIL_MINUTES_KEY = "test:fail-minutes-alerts";
 const FAILED_BUDGET_KEY = "test:failed-budget-alerts";
 const FAILED_MINUTES_KEY = "test:failed-minutes-alerts";
+const FAIL_MODEL_KEY_CAP_KEY = "test:fail-model-key-cap-alerts";
+const FAILED_MODEL_KEY_CAP_KEY = "test:failed-model-key-cap-alerts";
 const USAGE_KEY = "test:usage";
 const DESTROYED_KEY = "test:destroyed";
 const REFUSED_KEY = "test:refused";
@@ -173,6 +177,18 @@ export class RegistryDO extends Registry {
 		this.ctx.storage.kv.put(MINUTES_KEY, [...this.minutesPassed(), passed]);
 	}
 
+	protected override async modelKeyCapPassed(passed: ModelKeyCapPassed): Promise<void> {
+		if (this.#failsNext(FAIL_MODEL_KEY_CAP_KEY, FAILED_MODEL_KEY_CAP_KEY)) {
+			throw new Error("The test's model-key cap alert failed");
+		}
+		this.ctx.storage.kv.put(MODEL_KEY_CAP_KEY, [...this.modelKeyCapsPassed(), passed]);
+	}
+
+	/** What owners and admins would have been emailed about model-key spending caps. */
+	modelKeyCapsPassed(): ModelKeyCapPassed[] {
+		return this.ctx.storage.kv.get<ModelKeyCapPassed[]>(MODEL_KEY_CAP_KEY) ?? [];
+	}
+
 	#failsNext(failuresKey: string, failedKey: string): boolean {
 		const failures = this.ctx.storage.kv.get<number>(failuresKey) ?? 0;
 		if (failures === 0) return false;
@@ -195,6 +211,14 @@ export class RegistryDO extends Registry {
 
 	failedMinutesAlerts(): number {
 		return this.ctx.storage.kv.get<number>(FAILED_MINUTES_KEY) ?? 0;
+	}
+
+	failModelKeyCapAlerts(count: number): void {
+		this.ctx.storage.kv.put(FAIL_MODEL_KEY_CAP_KEY, count);
+	}
+
+	failedModelKeyCapAlerts(): number {
+		return this.ctx.storage.kv.get<number>(FAILED_MODEL_KEY_CAP_KEY) ?? 0;
 	}
 
 	protected override recordUsage(point: AnalyticsEngineDataPoint): void {

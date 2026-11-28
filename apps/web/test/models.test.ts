@@ -83,6 +83,69 @@ it("says when a key stops working, in its own words", async () => {
 	expect(html).not.toContain("revoked-long-ago");
 });
 
+it("emails owners and admins once at each model-key cap threshold", async () => {
+	const owner = await signUp(agents, origin, "cap-owner");
+	const admin = await signUp(agents, origin, "cap-admin");
+	const member = await signUp(agents, origin, "cap-member");
+	const workspaceId = await createWorkspace(agents, origin, owner.headers, "cap-studio");
+	for (const [person, role] of [
+		[admin, "admin"],
+		[member, "member"],
+	] as const) {
+		await agents.db
+			.prepare(
+				"INSERT INTO member (id, organization_id, user_id, role, created_at) VALUES (?, ?, ?, ?, ?)",
+			)
+			.bind(crypto.randomUUID(), workspaceId, person.userId, role, Date.now())
+			.run();
+	}
+	const registry = await agents.registry(workspaceId);
+	await registry.saveProviderKey({ provider: "openai", key: KEY }, "Owner");
+	await registry.setModelKeyCaps({ daily: "", monthly: "1" });
+	const agent = await registry.createAgent({
+		name: "Writer",
+		description: null,
+		instructions: null,
+		provider: "openai",
+		model: "gpt-6-astra",
+	});
+	const conversation = await registry.startConversation(agent.id, owner.userId);
+	const turn = async () => {
+		const begun = await registry.beginTurn(conversation?.id ?? "", "Write");
+		if ("status" in begun) throw new Error(begun.message);
+		return begun.runId;
+	};
+	const finish = (runId: string, cost: number) =>
+		registry.finishRun(runId, {
+			status: "succeeded",
+			error: null,
+			steps: 1,
+			inputTokens: 0,
+			outputTokens: 0,
+			cachedInputTokens: 0,
+			cost,
+			endedAt: Date.now(),
+		});
+	await finish(await turn(), 800_000);
+	await finish(await turn(), 200_000);
+
+	await vi.waitFor(async () => {
+		const notices = (await agents.emails()).filter(({ subject }) =>
+			subject.startsWith("cap-studio on agents.test used "),
+		);
+		expect(notices).toHaveLength(4);
+		for (const share of [80, 100]) {
+			const batch = notices.filter(({ subject }) => subject.includes(`used ${share}%`));
+			expect(batch.map(({ to }) => to).sort()).toEqual([
+				"cap-admin@example.com",
+				"cap-owner@example.com",
+			]);
+			expect(batch.every(({ text }) => text.includes("model-key monthly cap"))).toBe(true);
+		}
+		expect(notices.some(({ to }) => to === "cap-member@example.com")).toBe(false);
+	});
+});
+
 it("shows the monthly sandbox limit and emails only this workspace's owners", async () => {
 	const cap = "0.001";
 	const server = await startAgents(origin, {
