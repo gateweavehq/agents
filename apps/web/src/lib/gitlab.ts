@@ -1,5 +1,5 @@
 /**
- * The workspace's GitLab connections (AGT-79). Members see which GitLabs are connected; owners
+ * The workspace's GitLab connections. Members see which GitLabs are connected; owners
  * and admins connect, sync and disconnect them, and see the push webhook's address. A token goes
  * to the registry and never comes back: the page gets its last four characters, and the webhook's
  * secret token is shown once, when it is made.

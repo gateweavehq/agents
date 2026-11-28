@@ -1,5 +1,5 @@
 /**
- * The address a browser is sent to when Track is connected (AGT-119): Track's approval page, with
+ * The address a browser is sent to when Track is connected: Track's approval page, with
  * what it needs to show what is asked and where the answer goes. No server code, so the tests
  * read it as they read `audit-events.ts`.
  */

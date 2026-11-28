@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
 
-// The audit log (AGT-114): who changed a workspace's people and invitations, as Better Auth makes
+// The audit log: who changed a workspace's people and invitations, as Better Auth makes
 // those changes, and the Settings page that shows it to owners and admins only.
 
 const origin = "https://agents.test";

@@ -27,7 +27,7 @@ const TRACK_TOOLS: FakeTool[] = [
 	inputSchema: { type: "object", properties: {} },
 }));
 const track = new FakeMcpServer(TRACK_TOOLS, (name) => ({
-	content: [{ type: "text", text: name === "get_issue" ? '{"key":"TRK-7"}' : "{}" }],
+	content: [{ type: "text", text: name === "get_issue" ? '{"key":"TST-7"}' : "{}" }],
 }));
 
 const models = new FakeModels({ [KEY]: { provider: "anthropic", models: ["claude-haiku-5-5"] } });
@@ -35,7 +35,7 @@ const models = new FakeModels({ [KEY]: { provider: "anthropic", models: ["claude
 models.script = (body) =>
 	body.tools?.some((tool) => tool.name === "track__get_issue") &&
 	!JSON.stringify(body.messages).includes("tool_result")
-		? anthropicToolCall("track__get_issue", { key: "TRK-7" })
+		? anthropicToolCall("track__get_issue", { key: "TST-7" })
 		: undefined;
 
 let agents: Awaited<ReturnType<typeof startAgents>>;
@@ -75,10 +75,10 @@ function deliver(url: string, secret: string, type = "issue.created") {
 			actor: { id: "u_1", name: "Maya", type: "user" },
 			issue: {
 				id: "i_7",
-				key: "TRK-7",
+				key: "TST-7",
 				title: "Login fails on Safari",
 				description: "The button does nothing.",
-				url: "https://track.test/acme/issue/TRK-7",
+				url: "https://track.test/acme/issue/TST-7",
 			},
 		},
 	});
@@ -135,10 +135,10 @@ it("triages each new Track issue with the agent member's key and only triage's t
 
 	// The model reads the issue as the prompt says it, with the triage instructions, and is
 	// offered triage's tools only.
-	const asked = models.requests.find((request) => request.body.includes("TRK-7"));
+	const asked = models.requests.find((request) => request.body.includes("TST-7"));
 	const body = JSON.parse(asked?.body ?? "{}") as { system?: unknown; tools?: { name: string }[] };
 	expect(JSON.stringify(body)).toContain(
-		'A new issue was opened in the Track workspace \\"acme\\": TRK-7, \\"Login fails on Safari\\". Triage it.',
+		'A new issue was opened in the Track workspace \\"acme\\": TST-7, \\"Login fails on Safari\\". Triage it.',
 	);
 	expect(JSON.stringify(body.system)).toContain("Triage each new issue.");
 	expect(body.tools?.map((tool) => tool.name).sort()).toEqual(
@@ -152,7 +152,7 @@ it("triages each new Track issue with the agent member's key and only triage's t
 	}
 	expect(track.requests.find((request) => request.method === "tools/call")?.params).toEqual({
 		name: "get_issue",
-		arguments: { key: "TRK-7" },
+		arguments: { key: "TST-7" },
 	});
 
 	// Track sends what its webhook was set to; the trigger starts only on new issues.

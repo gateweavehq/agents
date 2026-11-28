@@ -4,7 +4,7 @@ import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 
 // For tests: a real local D1, and a way to put a failure in front of it.
 
-/** What the local runtime's D1 answered a read with under load (AGT-131). */
+/** What the local runtime's D1 answered a read with under load. */
 export const LOCAL =
 	"D1_ERROR: Failed to get session commit token: internal error; reference = test";
 

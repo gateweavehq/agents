@@ -1,5 +1,5 @@
 /**
- * An engine's request for the model, from the sandbox to its provider (AGT-62). `decideOutbound`
+ * An engine's request for the model, from the sandbox to its provider. `decideOutbound`
  * has let it through by its address; this reads its body, checks what it asks the provider to do
  * (`checkModelRequest` in `./outbound.ts`), and only then sends it with the workspace's key,
  * metered (`./meter.ts`). A request refused here never reaches the provider, and the run's trace

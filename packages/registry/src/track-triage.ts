@@ -139,7 +139,7 @@ export function makeTrackAccess(
 			name: TRACK_KEY_VARIABLE,
 			sealed: plan.sealedKey,
 			setBy: plan.setBy,
-			// The key is for this Track alone, from the start (AGT-64).
+			// The key is for this Track alone, from the start.
 			sentTo: new URL(url).origin,
 		},
 		now,

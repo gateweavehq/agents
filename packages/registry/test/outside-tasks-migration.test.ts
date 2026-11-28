@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import migrations from "../drizzle/migrations.js";
 import type { RegistryDO } from "../src";
 
-/** The migration that adds `agent_definitions.outside_tasks` (AGT-155). */
+/** The migration that adds `agent_definitions.outside_tasks`. */
 const TAG = "0043_nifty_bulldozer";
 const entry = migrations.journal.entries.find(({ tag }) => tag === TAG);
 const newest = migrations.journal.entries.at(-1)?.tag;
