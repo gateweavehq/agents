@@ -1649,6 +1649,11 @@ The disclosure and trailer cannot be turned off.
 
 ## Chat
 
+Members talk to agents run by Gateweave on the Chat page. Each conversation is a Durable Object
+of its own, `ConversationAgent` (`packages/runtime`), built on the Agents SDK's `AIChatAgent`: it
+keeps the messages in its SQLite, streams the reply over a WebSocket, and picks a stream back up
+after a reconnect.
+
 Workspace owners and admins can pause an agent with their session cookie. Resuming it requires
 a fresh Better Auth session. The registry refuses new chat, trigger and outside-task turns for a
 paused agent, including turns answered by a team lead. A refused team call records the reason in
@@ -1659,11 +1664,6 @@ stops with the pause reason. The runtime reads the pause by agent id, so removin
 does not hide it from a run under way. A failed read fails open in the loop, where it costs at most
 one more step and stopping a whole run on a transient error would be worse, and fails closed for
 the CLI's requests, which answer a transient `503` that the CLI retries.
-
-Members talk to agents run by Gateweave on the Chat page. Each conversation is a Durable Object
-of its own, `ConversationAgent` (`packages/runtime`), built on the Agents SDK's `AIChatAgent`: it
-keeps the messages in its SQLite, streams the reply over a WebSocket, and picks a stream back up
-after a reconnect.
 
 - **A conversation belongs to the member who started it.** The registry keeps the index
   (`conversations`: the agent, who started it, the title and when), and nobody else lists, opens

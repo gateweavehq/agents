@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createWorkspace, signUp } from "./accounts";
 import { startAgents } from "./agents-worker";
 
-// A query of D1 that failed for good, in the Worker as it deploys (AGT-133). A page whose read
+// A query of D1 that failed for good, in the Worker as it deploys. A page whose read
 // failed showed Drizzle's `Failed query: select … params: …` and had it in its HTML, and Better
 // Auth logged the one for a session read, with the session's token among the values. A table that
 // is gone makes every read of it fail, as the database being down would.

@@ -1,5 +1,5 @@
 /**
- * Setting a repository's checks from its page (AGT-142): the commands `open_pull_request` runs on
+ * Setting a repository's checks from its page: the commands `open_pull_request` runs on
  * an agent's work before it pushes it. They run on a machine and decide what a pull request says
  * of itself, so who may set them is the point.
  */

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import migrations from "../drizzle/migrations.js";
 import type { RegistryDO } from "../src";
 
-/** The migration that adds `agent_definitions.files` (AGT-122). */
+/** The migration that adds `agent_definitions.files`. */
 const TAG = "0041_agent_files";
 const entry = migrations.journal.entries.find(({ tag }) => tag === TAG);
 const newest = migrations.journal.entries.at(-1)?.tag;

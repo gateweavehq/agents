@@ -252,12 +252,12 @@ describe("an agent whose engine is Codex", () => {
 				item("item.completed", {
 					...call,
 					result: {
-						content: [{ type: "text", text: JSON.stringify({ issues: ["TRK-1"] }) }],
+						content: [{ type: "text", text: JSON.stringify({ issues: ["TST-1"] }) }],
 						structured_content: null,
 					},
 					status: "completed",
 				}),
-				item("item.completed", { id: "item_2", type: "agent_message", text: "TRK-1 is flaky." }),
+				item("item.completed", { id: "item_2", type: "agent_message", text: "TST-1 is flaky." }),
 				event("turn.completed", { usage: usage(100, 0, 5) }),
 			],
 		});
@@ -265,13 +265,13 @@ describe("an agent whose engine is Codex", () => {
 		const turn = await ask(socket, "Which issues are flaky?");
 		socket.close();
 
-		expect(turn).toMatchObject({ text: "TRK-1 is flaky.", error: null });
+		expect(turn).toMatchObject({ text: "TST-1 is flaky.", error: null });
 		const chunks = chunksOf(turn);
 		expect(chunks).toContainEqual(
 			expect.objectContaining({ type: "tool-input-available", toolName: "acme__search" }),
 		);
 		expect(chunks).toContainEqual(
-			expect.objectContaining({ type: "tool-output-available", output: { issues: ["TRK-1"] } }),
+			expect.objectContaining({ type: "tool-output-available", output: { issues: ["TST-1"] } }),
 		);
 		expect(turn.raw.join("\n")).not.toContain("codex__");
 		const [run] = await registry.listRuns();

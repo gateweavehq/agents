@@ -23,7 +23,7 @@ const SENDS: ReadonlySet<PropertyKey> = new Set(["all", "raw", "first", "run"]);
 /**
  * The failures that pass, each with the name it is logged under. The texts are the ones
  * Cloudflare's D1 error list answers with "Retry the operation", matched the way its "Retry
- * queries" page matches them, and the one the local runtime gives under load (AGT-131). Anything
+ * queries" page matches them, and the one the local runtime gives under load. Anything
  * else is the caller's at once: an overloaded database is not helped by more requests, a statement
  * that used too much CPU or memory or returned too much would again, and what is not known here
  * is not known to be safe to repeat. `Can't read from request stream because client disconnected`
@@ -75,7 +75,7 @@ async function sendAgain<Answer>(
 /**
  * The database, with a read that fails for a moment sent again before anyone is told. D1 can fail
  * so (its object restarting, a connection lost), and so can the local runtime under load, which is
- * how this was found (AGT-131): one failed read of a session made a signed-in person's page a 500.
+ * how this was found: one failed read of a session made a signed-in person's page a 500.
  * D1 retries reads too where it can tell the failure is passing; this covers what is left, and
  * local runs, where nothing retries. After the last attempt the failure reaches the caller as it
  * would have.

@@ -564,7 +564,7 @@ function Message({
 }
 
 /**
- * What the turn changed in its repository, summed from the reply's changes part (AGT-139). Each
+ * What the turn changed in its repository, summed from the reply's changes part. Each
  * file opens to its diff as text — never HTML, since a diff is the repository's words, not
  * markup — and the server already left secrets out of it.
  */
