@@ -274,6 +274,50 @@ describe("workspace model-key spending caps", () => {
 		expect(heard).toEqual([expect.objectContaining({ kind: "month", share: 80, spent: 0.08 })]);
 	});
 
+	it("retries a model-key cap alert whose delivery failed", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.1" });
+		const turn = async () => {
+			const begun = await stub.beginTurn(id, "Hello");
+			if ("status" in begun) throw new Error(begun.message);
+			return begun.runId;
+		};
+		const test = async <T>(fn: (instance: TestRegistry) => T) =>
+			runInDurableObject(stub, async (instance: RegistryDO) =>
+				fn(instance as unknown as TestRegistry),
+			);
+		await test((instance) => instance.failModelKeyCapAlerts(1));
+		await finish(stub, await turn(), 80_000);
+		await vi.waitFor(async () =>
+			expect(await test((instance) => instance.failedModelKeyCapAlerts())).toBe(1),
+		);
+		expect(await test((instance) => instance.modelKeyCapsPassed())).toEqual([]);
+		await finish(stub, await turn(), 0);
+		await vi.waitFor(async () =>
+			expect(await test((instance) => instance.modelKeyCapsPassed())).toEqual([
+				expect.objectContaining({ kind: "month", share: 80 }),
+			]),
+		);
+	});
+
+	it("does not round a precise cap before its thresholds", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.1000004" });
+		const begun = await stub.beginTurn(id, "Hello");
+		if ("status" in begun) throw new Error(begun.message);
+		await finish(stub, begun.runId, 100_000);
+		const heard = await runInDurableObject(stub, async (instance: RegistryDO) =>
+			(instance as unknown as TestRegistry).modelKeyCapsPassed(),
+		);
+		expect(heard).toEqual([expect.objectContaining({ kind: "month", share: 80 })]);
+	});
+
 	it("uses the finished run's started month for cap alerts", async () => {
 		const stub = registry();
 		const agent = await withAgent(stub);

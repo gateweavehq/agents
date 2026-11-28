@@ -96,6 +96,20 @@ export function modelKeyCap(value: string | null): number | null {
 	return Number.isFinite(cap) && cap >= 0 ? cap : 0;
 }
 
+/** A cap in exact microdollars, as a fraction so no threshold is rounded. */
+export function modelKeyCapMicros(
+	value: string | null,
+): { numerator: bigint; denominator: bigint } | null {
+	if (value === null || value.trim() === "") return null;
+	const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(value.trim());
+	if (!match) return { numerator: 0n, denominator: 1n };
+	const [, whole = "", fraction = "", exponentText = "0"] = match;
+	const digits = BigInt(`${whole}${fraction}`);
+	const exponent = BigInt(exponentText) - BigInt(fraction.length) + 6n;
+	if (exponent >= 0n) return { numerator: digits * 10n ** exponent, denominator: 1n };
+	return { numerator: digits, denominator: 10n ** -exponent };
+}
+
 export function removeProviderKey(db: Db, provider: KeyedProvider): boolean {
 	const removed = db
 		.delete(providerKeys)

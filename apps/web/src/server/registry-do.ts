@@ -237,9 +237,12 @@ export class RegistryDO extends Registry {
 			);
 		const server = hostOf(this.env.BETTER_AUTH_URL);
 		const deliveries = await Promise.allSettled(
-			admins.map(({ email, workspace }) =>
-				sender.send({ to: email, ...modelKeyCapEmail({ ...passed, workspace, server }) }),
-			),
+			admins.map(async ({ email, workspace }) => {
+				const delivered = `model-key-cap-alert:${passed.kind}:${passed.period}:${passed.share}:${email}`;
+				if (this.ctx.storage.kv.get(delivered)) return;
+				await sender.send({ to: email, ...modelKeyCapEmail({ ...passed, workspace, server }) });
+				this.ctx.storage.kv.put(delivered, true);
+			}),
 		);
 		if (deliveries.some(({ status }) => status === "rejected")) {
 			throw new Error("A workspace's model-key cap alert could not be sent");

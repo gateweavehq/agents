@@ -355,6 +355,7 @@ import {
 	listProviderKeys,
 	listProviderModels,
 	modelKeyCap,
+	modelKeyCapMicros,
 	modelKeyCapsOf,
 	recordProviderCheck,
 	removeProviderKey,
@@ -3980,6 +3981,7 @@ export class RegistryDO extends DurableObject {
 				kind: "day" as const,
 				period: new Date(today.start).toISOString().slice(0, 10),
 				cap: modelKeyCap(row.dailyCap),
+				capMicros: modelKeyCapMicros(row.dailyCap),
 				from: today.start,
 				to: today.end,
 				resetsOn: new Date(today.end).toISOString().slice(0, 10),
@@ -3988,6 +3990,7 @@ export class RegistryDO extends DurableObject {
 				kind: "month" as const,
 				period: month.name,
 				cap: modelKeyCap(row.monthlyCap),
+				capMicros: modelKeyCapMicros(row.monthlyCap),
 				from: month.start,
 				to: month.end,
 				resetsOn: sandboxMonthResetsOn(month),
@@ -3995,11 +3998,12 @@ export class RegistryDO extends DurableObject {
 		];
 		const passed: ModelKeyCapPassed[] = [];
 		for (const period of periods) {
-			if (period.cap === null || period.cap <= 0) continue;
+			if (period.cap === null || period.cap <= 0 || period.capMicros === null) continue;
 			const spentMicros = keyedProviderCost(this.#db, period.from, period.to);
-			const capMicros = Math.round(period.cap * 1_000_000);
 			for (const share of [80, 100] as const) {
-				if (spentMicros * 100 < capMicros * share) continue;
+				const threshold = period.capMicros.numerator * BigInt(share);
+				const spent = BigInt(spentMicros) * 100n * period.capMicros.denominator;
+				if (spent < threshold) continue;
 				const existing = this.#db
 					.select({ share: schema.modelKeyCapAlerts.share })
 					.from(schema.modelKeyCapAlerts)
@@ -4033,6 +4037,18 @@ export class RegistryDO extends DurableObject {
 		for (const alert of passed) {
 			await this.modelKeyCapPassed(alert).catch((error: unknown) => {
 				console.error("registry: telling of a model-key cap failed", error);
+				this.ctx.storage.transactionSync(() => {
+					this.#db
+						.delete(schema.modelKeyCapAlerts)
+						.where(
+							and(
+								eq(schema.modelKeyCapAlerts.kind, alert.kind),
+								eq(schema.modelKeyCapAlerts.period, alert.period),
+								eq(schema.modelKeyCapAlerts.share, alert.share),
+							),
+						)
+						.run();
+				});
 			});
 		}
 	}
