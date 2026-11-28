@@ -1,4 +1,4 @@
-import type { SandboxMinutesPassed } from "@gateweave/agents-model";
+import type { ModelKeyCapPassed, SandboxMinutesPassed } from "@gateweave/agents-model";
 import type { Email } from "./mailer";
 
 /** An email before it is addressed. */
@@ -132,6 +132,37 @@ export function sandboxBudgetEmail({
 			url: "https://dash.cloudflare.com/?to=/:account/workers/containers",
 		},
 		footer: "You get this email because this address is the server's SANDBOX_ALERT_EMAIL.",
+	});
+}
+
+/** To workspace owners and admins when model-key use reaches a share of one spending cap. */
+export function modelKeyCapEmail({
+	kind,
+	period,
+	share,
+	spent,
+	cap,
+	resetsOn,
+	workspace,
+	server,
+}: ModelKeyCapPassed & { workspace: string; server: string }): Message {
+	const space = clip(workspace, 60);
+	const label = kind === "day" ? "daily" : "monthly";
+	const used = `$${spent.toFixed(2)} of its $${cap} ${label} cap`;
+	return compose({
+		subject: `${space} on ${server} used ${share}% of its model-key ${label} cap`,
+		heading:
+			share === 100
+				? `Model-key ${label} cap reached`
+				: `${share}% of the model-key ${label} cap used`,
+		body: [
+			`${space} on ${server} has used ${share}% of the workspace's model-key ${label} cap for ${period} (${used}).`,
+			share === 100
+				? `New turns that use the workspace's own model keys are refused until the cap resets on ${resetsOn} (UTC). Any running turn can finish.`
+				: `The cap resets on ${resetsOn} (UTC).`,
+			"An owner or admin can change or clear the cap in the workspace's model settings.",
+		],
+		footer: "You get this email because you own or administer the workspace.",
 	});
 }
 

@@ -461,6 +461,26 @@ export const providerKeys = sqliteTable("provider_keys", {
 	checkModels: integer("check_models"),
 });
 
+/** The workspace's one pair of caps on model use with its own provider keys. */
+export const modelKeyCaps = sqliteTable("model_key_caps", {
+	id: text("id").primaryKey(),
+	/** Daily and monthly caps in US dollars, as typed; empty is none, a non-number none at all. */
+	dailyCap: text("daily_cap"),
+	monthlyCap: text("monthly_cap"),
+});
+
+/** The model-key cap threshold emails already sent for a UTC day or month. */
+export const modelKeyCapAlerts = sqliteTable(
+	"model_key_cap_alerts",
+	{
+		kind: text("kind", { enum: ["day", "month"] }).notNull(),
+		period: text("period").notNull(),
+		share: integer("share").notNull(),
+		createdAt: integer("created_at").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.kind, table.period, table.share] })],
+);
+
 /**
  * The values of environment sets' secrets, encrypted (see `secrets.ts`). They belong to the set,
  * not to one of its versions, so moving a pin keeps them. Only the runtime decrypts one; the app

@@ -2,7 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
-import { listProviderModels } from "../src/providers";
+import { listProviderModels, modelKeyCapMicros } from "../src/providers";
 import { SEALED_COLUMNS } from "../src/sealed";
 import { type Sealer, type SecretsEnv, sealerFor, secretsProblem } from "../src/secrets";
 
@@ -82,6 +82,25 @@ function provider(pages: Record<string, unknown>, status = 200) {
 	};
 	return { fetcher: fetcher as typeof fetch, requests };
 }
+
+describe("model key caps", () => {
+	it("parse exact microdollars with the decimal forms JavaScript accepts", () => {
+		expect(modelKeyCapMicros(".1")).toEqual({ numerator: 100_000n, denominator: 1n });
+		expect(modelKeyCapMicros("1.")).toEqual({ numerator: 1_000_000n, denominator: 1n });
+		expect(modelKeyCapMicros("1e-2")).toEqual({ numerator: 10_000n, denominator: 1n });
+	});
+
+	it("do not build huge exact values for exponents JavaScript cannot use as a cap", () => {
+		expect(modelKeyCapMicros("1e999999999999999999999")).toEqual({
+			numerator: 0n,
+			denominator: 1n,
+		});
+		expect(modelKeyCapMicros("1e-999999999999999999999")).toEqual({
+			numerator: 0n,
+			denominator: 1n,
+		});
+	});
+});
 
 describe("secrets", () => {
 	it("seal for one workspace and one place, and open only there", async () => {
@@ -416,6 +435,15 @@ describe("provider keys", () => {
 		expect(await stub.removeProviderKey("anthropic")).toBe(true);
 		expect(await stub.removeProviderKey("anthropic")).toBe(false);
 		expect((await stub.listProviderKeys()).map((key) => key.provider)).toEqual(["openai"]);
+	});
+
+	it("keep model-key caps independently of any provider key", async () => {
+		const stub = registry();
+		expect(await stub.getModelKeyCaps()).toEqual({ dailyCap: null, monthlyCap: null });
+		await stub.setModelKeyCaps({ daily: "1", monthly: "20" });
+		expect(await stub.getModelKeyCaps()).toEqual({ dailyCap: "1", monthlyCap: "20" });
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		expect(await stub.getModelKeyCaps()).toEqual({ dailyCap: "1", monthlyCap: "20" });
 	});
 
 	/** Puts a key sealed under the key derived from `authSecret` where the workspace keeps OpenAI's. */

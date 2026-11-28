@@ -2,6 +2,7 @@ import {
 	KEYED_PROVIDERS,
 	type MemoryAgentEvent,
 	MODEL_PROVIDERS,
+	type ModelKeyCapPassed,
 	type ModelProvider,
 	type ProviderKey,
 	type ProviderModel,
@@ -21,7 +22,7 @@ import { schema } from "./db";
 import { fillSandbox } from "./demo/fill";
 import { assertDemo, demoEnabled, OFF_IN_DEMO } from "./demo/mode";
 import { mailer } from "./email";
-import { sandboxBudgetEmail, sandboxMinutesEmail } from "./email/templates";
+import { modelKeyCapEmail, sandboxBudgetEmail, sandboxMinutesEmail } from "./email/templates";
 import { runsPage } from "./runs-page";
 
 /** What the public demo answers in place of something it has off. */
@@ -217,6 +218,38 @@ export class RegistryDO extends Registry {
 		);
 		if (deliveries.some(({ status }) => status === "rejected")) {
 			throw new Error("A workspace's sandbox minutes alert could not be sent");
+		}
+	}
+
+	protected override async modelKeyCapPassed(passed: ModelKeyCapPassed): Promise<void> {
+		const workspaceId = this.ctx.id.name;
+		if (!workspaceId) return;
+		await super.modelKeyCapPassed(passed);
+		const sender = mailer;
+		if (!sender) return;
+		const { member, organization, user } = schema;
+		const admins = await db
+			.selectDistinct({ email: user.email, workspace: organization.name })
+			.from(member)
+			.innerJoin(user, eq(user.id, member.userId))
+			.innerJoin(organization, eq(organization.id, member.organizationId))
+			.where(
+				and(
+					eq(member.organizationId, workspaceId),
+					sql`(instr(',' || ${member.role} || ',', ',owner,') > 0 or instr(',' || ${member.role} || ',', ',admin,') > 0)`,
+				),
+			);
+		const server = hostOf(this.env.BETTER_AUTH_URL);
+		const deliveries = await Promise.allSettled(
+			admins.map(async ({ email, workspace }) => {
+				const delivered = `model-key-cap-alert:${passed.kind}:${passed.period}:${passed.share}:${email}`;
+				if (this.ctx.storage.kv.get(delivered)) return;
+				await sender.send({ to: email, ...modelKeyCapEmail({ ...passed, workspace, server }) });
+				this.ctx.storage.kv.put(delivered, true);
+			}),
+		);
+		if (deliveries.some(({ status }) => status === "rejected")) {
+			throw new Error("A workspace's model-key cap alert could not be sent");
 		}
 	}
 

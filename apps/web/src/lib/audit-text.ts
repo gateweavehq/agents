@@ -113,6 +113,8 @@ export function auditSentence(event: AuditEvent, people: People): string {
 		}
 		case "providerKey.saved":
 			return `saved the ${provider(target.id)} key`;
+		case "modelKeyCaps.saved":
+			return "changed the model-key spending caps";
 		case "providerKey.removed":
 			return `removed the ${provider(target.id)} key`;
 		case "envSet.created":

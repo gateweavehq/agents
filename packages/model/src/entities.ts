@@ -321,6 +321,22 @@ export interface ProviderKey {
 	check: ProviderCheck | null;
 }
 
+/** The workspace's caps on model use with its own provider keys, as typed; null is no cap. */
+export interface ModelKeyCaps {
+	dailyCap: string | null;
+	monthlyCap: string | null;
+}
+
+/** A model-key cap threshold owners and admins are emailed about once in a period. */
+export interface ModelKeyCapPassed {
+	kind: "day" | "month";
+	period: string;
+	share: 80 | 100;
+	spent: number;
+	cap: number;
+	resetsOn: string;
+}
+
 /** Trying a key: listing the provider's models, which proves the key works and costs nothing. */
 export interface ProviderCheck {
 	ok: boolean;

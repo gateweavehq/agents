@@ -492,6 +492,17 @@ export const providerKeyInput = z.object({
 export type ProviderKeyInput = z.input<typeof providerKeyInput>;
 
 /**
+ * The workspace's daily and monthly caps on model use with its own provider keys, in US dollars
+ * as typed. Empty means no cap; a value that is not a number is kept and allows nothing, so a
+ * typo never lifts a cap.
+ */
+export const modelKeyCapsInput = z.object({
+	daily: z.string().trim().max(100),
+	monthly: z.string().trim().max(100),
+});
+export type ModelKeyCapsInput = z.input<typeof modelKeyCapsInput>;
+
+/**
  * Connecting a GitLab, gitlab.com or a self-managed one, with an access token an owner or admin
  * pastes: a project, group or personal token that can read the API and the repositories.
  */

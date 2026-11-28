@@ -16,11 +16,12 @@ import {
 	KEYED_PROVIDERS,
 	type KeyedProvider,
 	MODEL_PROVIDER_NAMES,
+	type ModelKeyCaps,
 	type ProviderKey,
 	type ProviderModel,
 } from "@gateweave/agents-model";
 import { eq } from "drizzle-orm";
-import { type ProviderKeyRow, providerKeys } from "./db/schema";
+import { modelKeyCaps, type ProviderKeyRow, providerKeys } from "./db/schema";
 import type { Db } from "./state";
 
 /** Where a provider's key is sealed, which ties the sealed value to its row. */
@@ -55,6 +56,64 @@ export function saveProviderKey(
 		.onConflictDoUpdate({ target: providerKeys.provider, set: row })
 		.run();
 	return toProviderKey(row);
+}
+
+const MODEL_KEY_CAPS_ID = "workspace";
+
+/** The workspace's model-key spending caps, or two nulls before anyone sets them. */
+export function modelKeyCapsOf(db: Db): ModelKeyCaps {
+	const row = db
+		.select({
+			dailyCap: modelKeyCaps.dailyCap,
+			monthlyCap: modelKeyCaps.monthlyCap,
+		})
+		.from(modelKeyCaps)
+		.where(eq(modelKeyCaps.id, MODEL_KEY_CAPS_ID))
+		.get();
+	return { dailyCap: row?.dailyCap ?? null, monthlyCap: row?.monthlyCap ?? null };
+}
+
+/** Saves the workspace's model-key spending caps, exactly as typed except that empty is none. */
+export function saveModelKeyCaps(db: Db, caps: { daily: string; monthly: string }): void {
+	const row = {
+		id: MODEL_KEY_CAPS_ID,
+		dailyCap: caps.daily === "" ? null : caps.daily,
+		monthlyCap: caps.monthly === "" ? null : caps.monthly,
+	};
+	db.insert(modelKeyCaps)
+		.values(row)
+		.onConflictDoUpdate({ target: modelKeyCaps.id, set: row })
+		.run();
+}
+
+/**
+ * A cap as typed, in dollars; null when unset. Anything that is not a non-negative number is zero,
+ * so a typo refuses spending rather than lifting the cap.
+ */
+export function modelKeyCap(value: string | null): number | null {
+	if (value === null || value.trim() === "") return null;
+	const cap = Number(value);
+	return Number.isFinite(cap) && cap >= 0 ? cap : 0;
+}
+
+/** A cap in exact microdollars, as a fraction so no threshold is rounded. */
+export function modelKeyCapMicros(
+	value: string | null,
+): { numerator: bigint; denominator: bigint } | null {
+	if (value === null || value.trim() === "") return null;
+	const match = /^(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(value.trim());
+	if (!match || (match[1] === "" && match[2] === "")) return { numerator: 0n, denominator: 1n };
+	const [, whole = "", fraction = "", exponentText = "0"] = match;
+	// Beyond this a JavaScript number is zero or infinite, so the public cap is zero already. Do not
+	// build a bigint with millions of digits only to have that cap skipped.
+	const exponentInput = Number(exponentText);
+	if (!Number.isSafeInteger(exponentInput) || Math.abs(exponentInput) > 1000) {
+		return { numerator: 0n, denominator: 1n };
+	}
+	const digits = BigInt(`${whole}${fraction}`);
+	const exponent = BigInt(exponentInput - fraction.length + 6);
+	if (exponent >= 0n) return { numerator: digits * 10n ** exponent, denominator: 1n };
+	return { numerator: digits, denominator: 10n ** -exponent };
 }
 
 export function removeProviderKey(db: Db, provider: KeyedProvider): boolean {
