@@ -912,7 +912,7 @@ export class RunnerSandbox
 			await this.#engineEnded(container);
 			throw error;
 		}
-		// A turn settling as its conversation was erased writes nothing back (AGT-156).
+		// A turn settling as its conversation was erased writes nothing back.
 		if (turn.session !== null && !isForgotten(this.ctx.storage.kv)) {
 			this.ctx.storage.kv.put(OPENCODE_SESSION_KEY, turn.session);
 		}
@@ -990,7 +990,7 @@ export class RunnerSandbox
 					session !== undefined && (await this.#hasClaudeCodeSession(container, session));
 				if (!resume || session === undefined) {
 					session = crypto.randomUUID();
-					// A start racing its conversation's erasure writes nothing back (AGT-156).
+					// A start racing its conversation's erasure writes nothing back.
 					if (!isForgotten(this.ctx.storage.kv)) {
 						this.ctx.storage.kv.put(SESSION_KEY, session);
 					}
@@ -1042,7 +1042,7 @@ export class RunnerSandbox
 
 	/**
 	 * Marks the sandbox as being erased with its conversation, which `forgetKeys` asks for before
-	 * it wipes what the sandbox kept. Only the conversation's own erasure paths call it (AGT-156).
+	 * it wipes what the sandbox kept. Only the conversation's own erasure paths call it.
 	 */
 	markForForget(): void {
 		markForgotten(this.ctx.storage.kv);
@@ -1051,10 +1051,10 @@ export class RunnerSandbox
 	/**
 	 * Stops the container and forgets what the conversation left in this place. The conversation
 	 * calls it as it is deleted or forgotten after a move, after `markForForget`: an unmarked
-	 * sandbox keeps its keys, so a caller that reaches it directly cannot wipe a live one (AGT-156).
+	 * sandbox keeps its keys, so a caller that reaches it directly cannot wipe a live one.
 	 */
 	async forgetKeys(): Promise<void> {
-		// The guard goes first: an unmarked sandbox is a live one, and stops nothing (AGT-156).
+		// The guard goes first: an unmarked sandbox is a live one, and stops nothing.
 		assertForgotten(this.ctx.storage.kv);
 		await this.destroy();
 		forgetKept(this.ctx.storage.kv);

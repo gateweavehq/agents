@@ -1,5 +1,5 @@
 /**
- * OpenCode's server in the sandbox (AGT-50): `opencode serve`, started once per container and
+ * OpenCode's server in the sandbox: `opencode serve`, started once per container and
  * driven over HTTP, so that a turn skips what `opencode run` spends before its first request:
  * starting Bun, loading the settings, plugins and MCP servers, and opening the database. On one
  * vCPU that was about 4 s a turn, and on staging's `standard-1` about 9 s; a turn on the running

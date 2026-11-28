@@ -8,7 +8,7 @@ import { passing } from "./retry-reads";
  * Drizzle's own error says `Failed query: select … params: …` with every value the statement was
  * given, and whoever catches it tends to log it or show it. Better Auth logged a session read
  * that failed, so the session's token was in the Worker's logs, and a page whose read failed
- * showed the statement and its values, in the page and in its HTML (AGT-133).
+ * showed the statement and its values, in the page and in its HTML.
  *
  * The message holds the reference only, because a message travels: to a page, to a toast, into
  * the HTML. The kind and the statement are for the log, where the same reference finds them.

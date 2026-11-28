@@ -65,7 +65,7 @@ const definition: AgentDefinition = {
 	anyTarget: true,
 };
 
-/** An agent that works on its repository's files without a sandbox (AGT-122). */
+/** An agent that works on its repository's files without a sandbox. */
 const onFiles: AgentDefinition = {
 	...definition,
 	sandbox: false,

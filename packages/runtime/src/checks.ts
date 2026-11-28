@@ -1,11 +1,11 @@
 /**
- * A repository's checks before a pull request (AGT-142). When the repository an agent works on
+ * A repository's checks before a pull request. When the repository an agent works on
  * has checks, `open_pull_request` commits the work, runs each command here, in the sandbox, on
  * the tree as committed, and only then pushes and opens the pull request (`./pull-requests.ts`).
  * A check that fails stops the round, and the model reads which one, its exit code and the end
  * of its output, to fix the work and call again.
  *
- * Where each thing comes from is the point (WEB-67): the commands are the repository's settings
+ * Where each thing comes from is the point: the commands are the repository's settings
  * in the registry, read at each call; the section at the end of the pull request is written here,
  * from the commands, their exit codes and their durations; nothing of a command's output, and
  * nothing the model wrote, is in it. The output goes to the model alone, and never to the trace.

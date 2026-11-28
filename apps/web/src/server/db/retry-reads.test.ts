@@ -4,7 +4,7 @@ import { createDb } from ".";
 import { faulty, LOCAL, migratedD1 } from "./faulty-d1";
 import { READ_ATTEMPTS, retryingReads } from "./retry-reads";
 
-// A read of D1 that fails for a moment (AGT-131). Under load, the local runtime's D1 answered one
+// A read of D1 that fails for a moment. Under load, the local runtime's D1 answered one
 // read of a session with the error below, and a signed-in person's page was a 500 that said
 // "Failed to get session". The database here is a real one, with the failure put in front of it.
 

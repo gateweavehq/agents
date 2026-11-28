@@ -1,5 +1,5 @@
 /**
- * MCP servers connected through OAuth (AGT-78). An owner or admin connects a library server for
+ * MCP servers connected through OAuth. An owner or admin connects a library server for
  * the workspace; `@ai-sdk/mcp`'s OAuth client does the flow (discovery, dynamic client
  * registration, PKCE, the token exchange and refreshing), and keeps what it needs here between
  * steps, through the app's provider (`apps/web/src/server/mcp-oauth.ts`). What is secret, the

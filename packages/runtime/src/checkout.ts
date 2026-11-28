@@ -35,7 +35,7 @@ export interface CheckedOutSandbox extends SandboxPort {
 /**
  * The sandbox as the tools reach it, checking out the repository before the first of them runs.
  * A checkout that fails is the tool's answer, and the next tool call tries again. `onWait` says
- * when a checkout starts and settles, so a turn can show the wait (AGT-139); a failed checkout's
+ * when a checkout starts and settles, so a turn can show the wait; a failed checkout's
  * retry says it again.
  */
 export function withCheckout(
