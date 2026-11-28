@@ -291,6 +291,7 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 		signal: AbortSignal;
 		run: RunRecorder;
 		requests: Set<number>;
+		stop: () => void;
 	} | null = null;
 
 	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
@@ -815,13 +816,19 @@ ${runPageNote(runs, turn.runId)}`
 		return serveEngineTools(turn.tools, request, turn.signal);
 	}
 
-	async engineRequestPause(token: string): Promise<string | null> {
+	async engineRequestPause(token: string): Promise<{ reason: string; step: number } | null> {
 		const turn = this.#engineTurnFor(token);
 		if (!turn) return null;
 		if (!turn.paused && (await this.#parties().registry.agentPause(turn.agentId))) {
 			turn.paused = true;
 		}
-		return turn.paused ? PAUSE_STOP : null;
+		if (!turn.paused) return null;
+		// Start the refusal's span in the same RPC that reports the pause. A startup retry may stop
+		// the engine as soon as this answer leaves, before a second RPC could join the span.
+		const step = turn.run.meteredStarted();
+		turn.requests.add(step);
+		turn.stop();
+		return { reason: PAUSE_STOP, step };
 	}
 
 	/**
@@ -833,6 +840,9 @@ ${runPageNote(runs, turn.runId)}`
 		if (!turn) return null;
 		const step = turn.run.meteredStarted();
 		turn.requests.add(step);
+		// The pause is noticed before this refusal is metered. Stop only once its span is
+		// in `requests`, or the turn's cleanup could drop this state before the trace has it.
+		if (turn.paused) turn.stop();
 		return step;
 	}
 
@@ -1329,6 +1339,19 @@ ${runPageNote(runs, turn.runId)}`
 				const token = crypto.randomUUID();
 				const calls = new AbortController();
 				const requests = new Set<number>();
+				let stopped = false;
+				const stop = () => {
+					if (stopped) return;
+					calls.abort();
+					// A stop can arrive while OpenCode's server is still taking the prompt, before the
+					// sandbox has the turn's handle. Only one that reaches the engine closes this retry path.
+					void sandbox
+						.stopEngine()
+						.then((reached) => {
+							if (reached) stopped = true;
+						})
+						.catch(() => {});
+				};
 				const state = {
 					agentId: agent.agentId,
 					paused: false,
@@ -1337,13 +1360,10 @@ ${runPageNote(runs, turn.runId)}`
 					signal: calls.signal,
 					run,
 					requests,
+					stop,
 				};
 				this.#engineTurnState = state;
 				const turn = engineTurn(engine, writer, run, agent);
-				const stop = () => {
-					calls.abort();
-					sandbox.stopEngine().catch(() => {});
-				};
 				signal?.addEventListener("abort", stop, { once: true });
 				try {
 					const note = engineNote(repository, branch, PULL_REQUEST_TOOL in tools);
@@ -1370,6 +1390,9 @@ ${runPageNote(runs, turn.runId)}`
 							meter: { conversation: this.name, token },
 						},
 					});
+					// A pause or abort could have been asked for in the startup window above, when the
+					// sandbox did not have the engine's handle yet. Now that it does, reach it.
+					if ((state.paused || signal?.aborted) && !stopped) stop();
 					// startEngine resolving means the process is up, not that it has spoken; the
 					// label stays until the engine's first line (the finally clears a silent turn's).
 					let started = false;
