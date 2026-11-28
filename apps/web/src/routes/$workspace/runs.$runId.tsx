@@ -1,5 +1,4 @@
 import {
-	countWouldRefuse,
 	MODEL_PROVIDER_NAMES,
 	type RunSpan,
 	sandboxCost,
@@ -24,6 +23,7 @@ import {
 	TotalCost,
 	tokensUsed,
 } from "#/components/runs/run-labels";
+import { RunTrace } from "#/components/runs/run-trace";
 import { Button } from "#/components/ui/button";
 import { useWorkspace } from "#/components/workspace/context";
 import { Notice } from "#/components/workspace/notice";
@@ -336,33 +336,10 @@ function Trace({
 	/** Replays the run from a model request; only on a run the viewer may replay. */
 	onReplay?: (step: number) => Promise<void>;
 }) {
-	if (trace === null) {
-		return (
-			<p className="text-sm text-muted-foreground">
-				The conversation this run belonged to was deleted, and its trace with it.
-			</p>
-		);
-	}
-	if (trace.length === 0) {
-		return (
-			<p className="text-sm text-muted-foreground">The run ended before it called the model.</p>
-		);
-	}
-	const flagged = countWouldRefuse(trace).total;
-	const refused = trace.filter((span) => span.status === "refused").length;
 	return (
-		<>
-			{(flagged > 0 || refused > 0) && (
-				<p className="mb-3 text-sm">
-					{flagged > 0 &&
-						`${flagged === 1 ? "1 call" : `${flagged} calls`} would be refused by the target rule. `}
-					{refused > 0 &&
-						`${refused === 1 ? "1 call was" : `${refused} calls were`} refused by the target rule. `}
-					After receiving outside content, the agent used a target without a trusted source.
-				</p>
-			)}
-			<Timeline run={run} trace={trace} nested={nested} onReplay={onReplay} />
-		</>
+		<RunTrace trace={trace}>
+			{trace && <Timeline run={run} trace={trace} nested={nested} onReplay={onReplay} />}
+		</RunTrace>
 	);
 }
 
