@@ -19,6 +19,9 @@ const world = vi.hoisted(() => {
 	const failing = new Set<string>();
 	/** Conversation objects a deletion finished, as the registry records them, by `place/workspace`. */
 	const forgotten = new Map<string, Set<string>>();
+	/** Deletion failures the registry records, by `place/workspace` then conversation. */
+	const failures = new Map<string, Map<string, number>>();
+	const markedDeleted = new Set<string>();
 	const deleted: string[] = [];
 	/** Runs inside a registry's destroy, to change D1 while a deletion is under way. */
 	const meanwhile = { onDestroy: async (_place: string, _workspaceId: string) => {} };
@@ -39,6 +42,15 @@ const world = vi.hoisted(() => {
 		}
 		return ids;
 	}
+	function failuresIn(place: string, workspaceId: string) {
+		const key = `${place}/${workspaceId}`;
+		let ids = failures.get(key);
+		if (!ids) {
+			ids = new Map();
+			failures.set(key, ids);
+		}
+		return ids;
+	}
 	function conversation(place: string, name: string) {
 		const act = async () => {
 			if (failing.has(`${place}/${name}`)) throw new Error("unreachable");
@@ -53,11 +65,22 @@ const world = vi.hoisted(() => {
 				getByName: (workspaceId: string) => ({
 					conversationIds: async () => placeOf(place).get(workspaceId) ?? [],
 					conversationsToDestroy: async () =>
-						(placeOf(place).get(workspaceId) ?? []).filter(
-							(id) => !forgottenIn(place, workspaceId).has(id),
-						),
+						(placeOf(place).get(workspaceId) ?? [])
+							.filter((id) => !forgottenIn(place, workspaceId).has(id))
+							.map((id) => ({ id, failures: failuresIn(place, workspaceId).get(id) ?? 0 }))
+							.sort((a, b) => a.failures - b.failures)
+							.map(({ id }) => id),
 					noteConversationsDestroyed: async (ids: string[]) => {
 						for (const id of ids) forgottenIn(place, workspaceId).add(id);
+					},
+					noteConversationDeletionFailed: async (ids: string[]) => {
+						for (const id of ids) {
+							const counts = failuresIn(place, workspaceId);
+							counts.set(id, (counts.get(id) ?? 0) + 1);
+						}
+					},
+					markWorkspaceDeleted: async () => {
+						markedDeleted.add(`${place}/${workspaceId}`);
 					},
 					destroy: async () => {
 						await meanwhile.onDestroy(place, workspaceId);
@@ -72,7 +95,18 @@ const world = vi.hoisted(() => {
 			place: (place: string) => ({ getByName: (name: string) => conversation(place, name) }),
 		},
 	};
-	return { registries, failing, forgotten, deleted, meanwhile, placeOf, env, target: vi.fn() };
+	return {
+		registries,
+		failing,
+		forgotten,
+		failures,
+		markedDeleted,
+		deleted,
+		meanwhile,
+		placeOf,
+		env,
+		target: vi.fn(),
+	};
 });
 
 vi.mock("cloudflare:workers", () => ({ env: world.env }));
@@ -126,6 +160,8 @@ beforeEach(async () => {
 	world.registries.clear();
 	world.failing.clear();
 	world.forgotten.clear();
+	world.failures.clear();
+	world.markedDeleted.clear();
 	world.deleted.length = 0;
 	world.meanwhile.onDestroy = async () => {};
 	vi.spyOn(console, "error").mockImplementation(() => {});
@@ -304,6 +340,25 @@ it("makes bounded progress through a large workspace over several daily runs", a
 	expect(world.placeOf("eu").has("big")).toBe(false);
 	expect(await note("big")).toBeUndefined();
 	expect(await location("big")).toBeUndefined();
+});
+
+it("tries conversations it has not failed before the ones that failed", async () => {
+	await placed("big", "eu");
+	await noted("big");
+	world.placeOf("eu").set(
+		"big",
+		Array.from({ length: 201 }, (_, index) => `conversation-${index}`),
+	);
+	for (let index = 0; index < 200; index++) world.failing.add(`eu/big:conversation-${index}`);
+
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted.filter((name) => name.startsWith("eu/big:"))).toHaveLength(0);
+	expect(world.failures.get("eu/big")?.size).toBe(200);
+	expect(world.markedDeleted.has("eu/big")).toBe(true);
+
+	world.failing.clear();
+	await retryWorkspaceDeletions(db);
+	expect(world.deleted[0]).toBe("eu/big:conversation-200");
 });
 
 it("deletes a workspace the app deletes itself even when its objects fail, and leaves them a note", async () => {

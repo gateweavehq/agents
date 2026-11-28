@@ -241,6 +241,7 @@ async function deleteObjectsIn(
 	budget?: { conversations: number },
 ): Promise<number> {
 	const registry = objectsIn(env.REGISTRY, place).getByName(workspaceId);
+	await registry.markWorkspaceDeleted();
 	const ids = await registry.conversationsToDestroy();
 	const taking: string[] = [];
 	for (const id of ids) {
@@ -250,6 +251,7 @@ async function deleteObjectsIn(
 	}
 	let left = ids.length - taking.length;
 	for (let start = 0; start < taking.length; start += AT_ONCE) {
+		const failed: string[] = [];
 		const results = await Promise.all(
 			taking.slice(start, start + AT_ONCE).map(async (conversationId) => {
 				try {
@@ -260,6 +262,7 @@ async function deleteObjectsIn(
 					return conversationId;
 				} catch (error) {
 					left++;
+					failed.push(conversationId);
 					console.error("A deleted workspace's conversation was not deleted", {
 						workspaceId,
 						conversationId,
@@ -272,6 +275,7 @@ async function deleteObjectsIn(
 		);
 		const destroyed = results.filter((id) => id !== null);
 		if (destroyed.length > 0) await registry.noteConversationsDestroyed(destroyed);
+		if (failed.length > 0) await registry.noteConversationDeletionFailed(failed);
 	}
 	if (left > 0) return left;
 	await registry.destroy();

@@ -3438,6 +3438,8 @@ export class RegistryDO extends DurableObject {
 		}
 		// A freeze that lapsed ends here, if a restart hasn't ended it.
 		thaw(this.ctx.storage);
+		// A registry retained only so workspace deletion can finish starts no more work.
+		if (this.ctx.storage.kv.get(WORKSPACE_DELETED)) return;
 		const pending = this.#write(() =>
 			takeDueTrackReports(this.#db, Date.now(), TRACK_REPORTS_PER_ALARM),
 		);
@@ -3495,9 +3497,12 @@ export class RegistryDO extends DurableObject {
 	 * out of the registry's tables, so the deletion notes it here and a retry skips it.
 	 */
 	conversationsToDestroy(): string[] {
-		return this.conversationIds().filter(
-			(id) => !this.ctx.storage.kv.get(FORGOTTEN_CONVERSATION + id),
-		);
+		const storage = this.ctx.storage;
+		return this.conversationIds()
+			.filter((id) => !storage.kv.get(FORGOTTEN_CONVERSATION + id))
+			.map((id) => ({ id, failures: storage.kv.get<number>(DELETION_FAILURE + id) ?? 0 }))
+			.sort((a, b) => a.failures - b.failures)
+			.map(({ id }) => id);
 	}
 
 	/** Records conversations whose objects a workspace deletion destroyed or forgot. */
@@ -3506,6 +3511,24 @@ export class RegistryDO extends DurableObject {
 		storage.transactionSync(() => {
 			for (const id of ids) storage.kv.put(FORGOTTEN_CONVERSATION + id, true);
 		});
+	}
+
+	/** Records conversations whose objects a workspace deletion could not destroy this time. */
+	noteConversationDeletionFailed(ids: string[]): void {
+		const storage = this.ctx.storage;
+		storage.transactionSync(() => {
+			for (const id of ids) {
+				storage.kv.put(
+					DELETION_FAILURE + id,
+					(storage.kv.get<number>(DELETION_FAILURE + id) ?? 0) + 1,
+				);
+			}
+		});
+	}
+
+	/** Stops the retained registry's scheduled and review work once its workspace is deleted. */
+	markWorkspaceDeleted(): void {
+		this.ctx.storage.kv.put(WORKSPACE_DELETED, true);
 	}
 
 	// RPC for moving the workspace's objects somewhere else (`move.ts`), which the app does from its
@@ -4056,6 +4079,8 @@ const SECRETS_SCOPE = "secrets.scope";
 // Each entry is small even when a workspace has thousands of conversations. The registry's
 // erasure removes them with its data, and importing into a sealed registry also clears them.
 const FORGOTTEN_CONVERSATION = "move.forgotten-conversation:";
+const DELETION_FAILURE = "workspace-delete.failure:";
+const WORKSPACE_DELETED = "workspace-delete.deleted";
 
 // The registry records one-time passes on its first wake, even when there is nothing to migrate.
 const REGISTRY_STARTUP = { tables: ["registry_passes"] };

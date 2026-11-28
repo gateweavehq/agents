@@ -292,10 +292,14 @@ describe("deleting a workspace", () => {
 
 		await stub.noteConversationsDestroyed([first]);
 		expect(await stub.conversationsToDestroy()).toEqual([second]);
+
+		const third = await conversationOf(stub, agent, ADA);
+		await stub.noteConversationDeletionFailed([second]);
+		expect(await stub.conversationsToDestroy()).toEqual([third, second]);
 		await runInDurableObject(stub, (_instance, state) => state.abort("restart")).catch(() => {});
 
 		const restarted = env.REGISTRY.get(stub.id);
-		expect(await restarted.conversationsToDestroy()).toEqual([second]);
-		expect((await restarted.conversationIds()).sort()).toEqual([first, second].sort());
+		expect(await restarted.conversationsToDestroy()).toEqual([third, second]);
+		expect((await restarted.conversationIds()).sort()).toEqual([first, second, third].sort());
 	});
 });

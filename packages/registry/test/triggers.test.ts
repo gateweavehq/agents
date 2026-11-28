@@ -865,6 +865,16 @@ describe("scheduled triggers", () => {
 		expect(listed?.deliveries.map((delivery) => delivery.status)).toEqual(["limited", "started"]);
 	});
 
+	it("start no scheduled run after the workspace is marked deleted", async () => {
+		const stub = registry();
+		await stub.saveProviderKey({ provider: "anthropic", key: KEY }, "Ada");
+		const { trigger } = await scheduled(stub);
+		await makeDue(stub, trigger.id);
+		await stub.markWorkspaceDeleted();
+		await runDurableObjectAlarm(stub);
+		expect(await stub.startedTurns()).toEqual([]);
+	});
+
 	it("take no webhooks, and take them again once the schedule is taken away", async () => {
 		const stub = registry();
 		const { trigger, secret } = await scheduled(stub);
