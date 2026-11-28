@@ -248,7 +248,7 @@ export const updateAgent = createServerFn({ method: "POST" })
 /**
  * Moves one pin of an agent to another version of its asset. Unlike `updateAgent` it takes only
  * the pin, so a page that shows an agent need not send the agent back, and cannot send it back
- * short of a field (AGT-135).
+ * short of a field.
  */
 export const moveAgentPin = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), agentId: id, pin: agentPinInput }))
@@ -452,7 +452,7 @@ export const scanRepository = createServerFn({ method: "POST" })
 	});
 
 /**
- * Gives a repository exactly these checks (AGT-142): the commands `open_pull_request` runs on an
+ * Gives a repository exactly these checks: the commands `open_pull_request` runs on an
  * agent's work there before it pushes it. They run on a machine and decide what a pull request
  * says of itself, so only owners and admins set them, and the audit log keeps who changed them
  * and how many there were, before and after. Not the commands: the log keeps no free text, and
@@ -981,7 +981,7 @@ export const getMcpOAuthHealth = createServerFn({ method: "GET" })
 		);
 	});
 
-/** Forgets a library MCP server's OAuth connection (AGT-78). Owners and admins only. */
+/** Forgets a library MCP server's OAuth connection. Owners and admins only. */
 export const disconnectMcpServer = createServerFn({ method: "POST" })
 	.validator(z.object({ slug: z.string().min(1), assetId: id }))
 	.handler(async ({ data }): Promise<boolean> => {

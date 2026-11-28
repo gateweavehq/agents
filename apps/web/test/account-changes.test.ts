@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { startAgents } from "./agents-worker";
 
-// Changing a name or a password on the account page (AGT-97). The cookie behind either request may
+// Changing a name or a password on the account page. The cookie behind either request may
 // be a stolen one, so a rename can reach a name and nothing else, and a new password needs the old
 // one, a limit on guesses, and an email to the person.
 

@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - scripts/review-replay
 
 # Versions shared across workspace packages. Reference them with "catalog:".
 #

@@ -11,7 +11,7 @@ const doc = (name: string) =>
 
 const minutes = (seconds: number) => seconds / 60;
 
-describe("the docs on a repository's checks (AGT-142)", () => {
+describe("the docs on a repository's checks", () => {
 	it("R8: docs/track-work.md says how to set them, with the limits the code keeps, and what the section means", () => {
 		const text = doc("track-work.md");
 		expect(text).toContain("## Checks before a pull request");
