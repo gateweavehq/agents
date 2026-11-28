@@ -565,7 +565,14 @@ export function admitDelivery(
 		: undefined;
 	const decline = (status: "limited" | "failed", error: string, refusal: TrackRefusal) => {
 		if (reservation && !reservation.refused) {
-			reporting?.collect(trackRefusalReport(reservation, refusal, now));
+			reporting?.collect(
+				trackRefusalReport(
+					reservation,
+					refusal,
+					now,
+					refusal === "budget-limit" ? error : undefined,
+				),
+			);
 		}
 		record(status, { error, trackReport: reservation && { ...reservation, refused: true } });
 	};
@@ -763,12 +770,13 @@ export function trackRefusalReport(
 	reservation: TrackReservation,
 	refusal: TrackRefusal,
 	now: number,
+	detail?: string,
 ): TrackReport {
 	return {
 		target: reservation.target,
 		key: reservation.key,
 		sentAt: Math.max(now, reservation.queuedAt + 1),
-		phase: { state: "failed", refusal },
+		phase: { state: "failed", refusal, ...(detail && { detail }) },
 	};
 }
 

@@ -1657,7 +1657,7 @@ export class RegistryDO extends DurableObject {
 			const record =
 				refusal.message === PAUSED_AGENT ||
 				refusal.trackReason === "waiting-for-slot" ||
-				refusal.sandboxBudget === true;
+				refusal.trackReason === "budget-limit";
 			if (!record) return refused(refusal.message);
 			const now = Date.now();
 			const replayOf =
@@ -1685,7 +1685,7 @@ export class RegistryDO extends DurableObject {
 		// awaited.
 		return this.#write(() => {
 			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
-			const cap = this.#modelKeyCapAdmissionRefusal(agent);
+			const cap = this.#providerAdmissionRefusal(agent);
 			if (cap) return decline(cap);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, agent) : null;
 			if (over) return decline(over);
@@ -1744,7 +1744,12 @@ export class RegistryDO extends DurableObject {
 			if (reservation && !reservation.refused) {
 				const now = Date.now();
 				report = this.#queueTrackReport(
-					trackRefusalReport(reservation, refusal.trackReason ?? "unavailable", now),
+					trackRefusalReport(
+						reservation,
+						refusal.trackReason ?? "unavailable",
+						now,
+						refusal.trackDetail,
+					),
 					now,
 				);
 			}
@@ -1765,7 +1770,7 @@ export class RegistryDO extends DurableObject {
 			if (!current()) return gone;
 			if (this.workspaceIsDeleted()) return decline(refused("This workspace was deleted"));
 			if (agentPause(this.#db, plan.agent.agentId)) return decline(refused(PAUSED_AGENT));
-			const cap = this.#modelKeyCapAdmissionRefusal(plan.agent);
+			const cap = this.#providerAdmissionRefusal(plan.agent);
 			if (cap) return decline(cap);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
 			if (over) return decline(over);
@@ -1930,7 +1935,7 @@ export class RegistryDO extends DurableObject {
 			if (!current()) return gone;
 			if (this.workspaceIsDeleted()) return decline(refused("This workspace was deleted"));
 			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
-			const cap = this.#modelKeyCapAdmissionRefusal(agent);
+			const cap = this.#providerAdmissionRefusal(agent);
 			if (cap) return decline(cap);
 			// The sandbox slots and the day's minutes decide as the run begins: other turns may have
 			// begun while this one awaited. A run is what holds a slot, so none is held before it.
@@ -2020,7 +2025,7 @@ export class RegistryDO extends DurableObject {
 				settleOutsideTask(this.#db, conversation, { error: PAUSED_AGENT });
 				return refused(PAUSED_AGENT);
 			}
-			const cap = this.#modelKeyCapAdmissionRefusal(plan.agent);
+			const cap = this.#providerAdmissionRefusal(plan.agent);
 			if (cap) {
 				settleOutsideTask(this.#db, conversation, { error: cap.message });
 				return cap;
@@ -2090,7 +2095,7 @@ export class RegistryDO extends DurableObject {
 			if (now.agent.agentId !== plan.agent.agentId) {
 				return refused("The team changed as this turn began");
 			}
-			const cap = this.#modelKeyCapAdmissionRefusal(plan.agent);
+			const cap = this.#providerAdmissionRefusal(plan.agent);
 			if (cap) return refused(cap.message);
 			const over = prepared.sandbox ? this.#sandboxLimitRefusal(conversation, plan.agent) : null;
 			if (over) return refused(over.message);
@@ -2203,8 +2208,10 @@ export class RegistryDO extends DurableObject {
 				);
 			}
 			if (reading.spent >= limits.monthlyBudget) {
-				return sandboxBudgetRefused(
+				return refused(
 					`${SANDBOX_BUDGET_SPENT}, so ${agent.name} cannot answer until the month ends (UTC). Whoever runs this server can raise it.`,
+					"budget-limit",
+					"The server's sandbox budget for the month was reached. Retry when the month resets.",
 				);
 			}
 		}
@@ -2250,6 +2257,7 @@ export class RegistryDO extends DurableObject {
 				return refused(
 					`This workspace has used its model-key monthly cap, $${monthly}, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
 					"budget-limit",
+					"The workspace's model-key monthly cap was reached. Retry when the month resets.",
 				);
 			}
 		}
@@ -2261,6 +2269,7 @@ export class RegistryDO extends DurableObject {
 				return refused(
 					`This workspace has used its model-key daily cap, $${daily}, so ${agent.name} cannot answer until the day ends (UTC). It resets on ${resetsOn} at 00:00 UTC.`,
 					"budget-limit",
+					"The workspace's model-key daily cap was reached. Retry when the day resets.",
 				);
 			}
 		}
@@ -2268,15 +2277,16 @@ export class RegistryDO extends DurableObject {
 			return refused(
 				`${agent.model} has no prices here, so its cost cannot count toward this workspace's model-key cap and ${agent.name} cannot answer. Choose a model with prices in the agent's settings.`,
 				"budget-limit",
+				"The model's cost cannot be measured for the workspace's model-key cap.",
 			);
 		}
 		return null;
 	}
 
-	/** The model-key cap check repeated as a run begins, after another run may have closed. */
-	#modelKeyCapAdmissionRefusal(agent: AgentSnapshot): TurnRefusal | null {
-		if (!isKeyedProvider(agent.provider) || this.standInTurns()) return null;
-		return this.#modelKeyCapRefusal(agent.provider, agent);
+	/** The provider and its budget checks repeated as a run begins, after another run may have closed. */
+	#providerAdmissionRefusal(agent: AgentSnapshot): TurnRefusal | null {
+		if (this.standInTurns()) return null;
+		return this.#providerRefusal(agent);
 	}
 
 	/** Why no model of `agent`'s provider can answer here, or null when one can. */
@@ -2307,6 +2317,7 @@ export class RegistryDO extends DurableObject {
 			return refused(
 				`${WORKERS_AI_DAY_USED}, $${limit}, so ${agent.name} cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.`,
 				"budget-limit",
+				"The server's Workers AI daily limit for this workspace was reached. Retry when the day resets.",
 			);
 		}
 		// An unpriced model costs null and would never count toward the limit, so it cannot run
@@ -2362,14 +2373,18 @@ export class RegistryDO extends DurableObject {
 			const now = Date.now();
 			const month = utcMonth(now);
 			if (this.#sandboxSecondsInMonth(month, now) >= monthlyMinutes * 60) {
-				return sandboxBudgetRefused(
+				return refused(
 					`${SANDBOX_MONTH_USED}, ${monthlyMinutes} minutes, so ${agent.name} cannot answer until the month ends (UTC). It resets on ${sandboxMonthResetsOn(month)}.`,
+					"budget-limit",
+					"The workspace's monthly sandbox time limit was reached. Retry when the month resets.",
 				);
 			}
 		}
 		if (dailyMinutes !== null && this.sandboxSecondsToday() >= dailyMinutes * 60) {
-			return sandboxBudgetRefused(
+			return refused(
 				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
+				"budget-limit",
+				"The workspace's daily sandbox time limit was reached. Retry when the day resets.",
 			);
 		}
 		const idle = this.#idleMinutes();
@@ -4411,14 +4426,15 @@ const WORKSPACE_DELETED = "workspace-delete.deleted";
 // The registry records one-time passes on its first wake, even when there is nothing to migrate.
 const REGISTRY_STARTUP = { tables: ["registry_passes"] };
 
-type TurnRefusal = ProviderRefusal & { trackReason?: TrackRefusal; sandboxBudget?: true };
+type TurnRefusal = ProviderRefusal & { trackReason?: TrackRefusal; trackDetail?: string };
 
-function refused(message: string, trackReason?: TrackRefusal): TurnRefusal {
-	return { status: "refused", message, ...(trackReason && { trackReason }) };
-}
-
-function sandboxBudgetRefused(message: string): TurnRefusal {
-	return { ...refused(message, "budget-limit"), sandboxBudget: true };
+function refused(message: string, trackReason?: TrackRefusal, trackDetail?: string): TurnRefusal {
+	return {
+		status: "refused",
+		message,
+		...(trackReason && { trackReason }),
+		...(trackDetail && { trackDetail }),
+	};
 }
 
 /** The part of GitLab's push event a scan needs. */
