@@ -191,6 +191,8 @@ when a third product needs them (see "Decisions" in `docs/spec.md`).
 - Follow `.claude/skills/open-pull-request/SKILL.md` for the full flow.
 - Work is planned on the Gateweave board, team AGT. Mention the issue key (`AGT-2`) in the pull
   request.
+- A `CHANGELOG.md` entry for an outside pull request — not from the owner, not from a bot — ends
+  with `thanks @login`, unless the contributor asked not to be thanked on the pull request.
 
 ## Playbooks
 
