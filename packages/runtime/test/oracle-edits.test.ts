@@ -882,4 +882,37 @@ describe("namesFile", () => {
 			expect(namesFile(command, "test/a.test.ts")).toBe(true);
 		}
 	});
+
+	it("keeps command separators inside a parameter expansion", () => {
+		expect(namesFile(`echo \${X:-; vitest run test/a.test.ts }; exit 1`, "test/a.test.ts")).toBe(
+			false,
+		);
+		expect(namesFile(`FOO=\${BAR} vitest run test/a.test.ts`, "test/a.test.ts")).toBe(true);
+	});
+
+	it("removes an escaped newline without separating the word", () => {
+		expect(namesFile("vitest run test\\\n/a.test.ts", "test/a.test.ts")).toBe(true);
+		expect(namesFile("vitest run \\\ntest/a.test.ts", "test/a.test.ts")).toBe(true);
+	});
+
+	it("does not treat a runner option's value as a test operand", () => {
+		expect(namesFile("vitest run --exclude test/a.test.ts test/b.test.ts", "test/a.test.ts")).toBe(
+			false,
+		);
+		expect(namesFile("vitest run --exclude test/a.test.ts test/b.test.ts", "test/b.test.ts")).toBe(
+			true,
+		);
+		expect(
+			namesFile(
+				"node --test --test-reporter spec --test-reporter-destination test/a.test.js test/b.test.js",
+				"test/a.test.js",
+			),
+		).toBe(false);
+		expect(
+			namesFile(
+				"node --test --test-reporter spec --test-reporter-destination test/a.test.js test/b.test.js",
+				"test/b.test.js",
+			),
+		).toBe(true);
+	});
 });

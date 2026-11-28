@@ -255,10 +255,43 @@ function shellSegments(command: string): ShellWord[][] {
 			started = true;
 			continue;
 		}
+		if (char === "$" && command.charAt(at + 1) === "{") {
+			// Parameter expansion is part of this word even when its default text holds spaces or
+			// characters that would separate commands outside it. The expansion is never a file.
+			let depth = 1;
+			let end = -1;
+			let expanded = "${";
+			for (let scan = at + 2; scan < command.length; scan++) {
+				const inner = command.charAt(scan);
+				if (inner === "\\") {
+					expanded += inner;
+					scan += 1;
+					if (scan < command.length) expanded += command.charAt(scan);
+					continue;
+				}
+				if (inner === "{") depth += 1;
+				if (inner === "}") depth -= 1;
+				expanded += inner;
+				if (depth === 0) {
+					end = scan;
+					break;
+				}
+			}
+			if (end < 0) return [];
+			word += expanded;
+			started = true;
+			at = end;
+			continue;
+		}
 		if (char === "'" || char === '"') {
 			if (!started) unquotedStart = false;
 			quote = char;
 			started = true;
+			continue;
+		}
+		if (char === "\\" && command.charAt(at + 1) === "\n") {
+			// The pair is removed before the shell reads words, wherever it occurs in a word.
+			at += 1;
 			continue;
 		}
 		if (char === "\\") {
@@ -376,15 +409,59 @@ const NODE_VALUE_OPTIONS = new Set([
 	"--watch-path",
 ]);
 
+/** Vitest options that take the next word as their value when written separately. */
+const VITEST_VALUE_OPTIONS = new Set([
+	"--exclude",
+	"--include",
+	"--includeSource",
+	"--dir",
+	"--root",
+	"--config",
+	"--reporter",
+	"--outputFile",
+	"--maxWorkers",
+	"--minWorkers",
+	"--testTimeout",
+	"--hookTimeout",
+	"--testNamePattern",
+]);
+
+/**
+ * The operands of a runner command. An unknown option makes the answer empty rather than letting
+ * its value pose as a test path; a proof command can always use the runner's plain form.
+ */
+function runnerFileOperands(
+	words: readonly ShellWord[],
+	valueOptions: ReadonlySet<string>,
+): readonly ShellWord[] {
+	const operands: ShellWord[] = [];
+	for (let at = 0; at < words.length; at++) {
+		const word = words[at];
+		if (!word) continue;
+		if (word.text === "--") return [...operands, ...words.slice(at + 1)];
+		if (word.text.startsWith("-")) {
+			if (!word.text.includes("=")) {
+				if (!valueOptions.has(word.text)) return [];
+				at += 1;
+			}
+			continue;
+		}
+		operands.push(word);
+	}
+	return operands;
+}
+
 /** The arguments after a recognized test runner's own words, or null for another command. */
 function directRunnerArguments(words: readonly ShellWord[]): readonly ShellWord[] | null {
 	const [runner, next] = words.map((word) => word.text);
-	if (runner === "vitest" && next === "run") return words.slice(2);
+	if (runner === "vitest" && next === "run") {
+		return runnerFileOperands(words.slice(2), VITEST_VALUE_OPTIONS);
+	}
 	if (runner === "node") {
 		for (let at = 1; at < words.length; at++) {
 			const argument = words[at]?.text ?? "";
 			if (argument === "--") break;
-			if (argument === "--test") return words.slice(at + 1);
+			if (argument === "--test") return runnerFileOperands(words.slice(at + 1), NODE_VALUE_OPTIONS);
 			if (!argument.startsWith("-")) break;
 			if (!argument.includes("=") && NODE_VALUE_OPTIONS.has(argument)) at += 1;
 		}
