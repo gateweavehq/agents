@@ -5,7 +5,13 @@
 import type { GitHubApp } from "@gateweave/agents-github";
 import type { PullRequestOutcome } from "@gateweave/agents-model";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type ChangedFile, MANIFESTS_LIMIT, oracleKind, reviewOracles } from "../src/oracles";
+import {
+	type ChangedFile,
+	MANIFESTS_LIMIT,
+	namesFile,
+	oracleKind,
+	reviewOracles,
+} from "../src/oracles";
 import { gitHubPullRequests, pullRequestTools } from "../src/pull-requests";
 import type { RunRecorder } from "../src/trace";
 import { MemorySandbox } from "./fake-sandbox";
@@ -835,5 +841,78 @@ describe("the review of a branch on GitHub", () => {
 		await expect(port().propose({ ...input, draft: true, convert: true })).rejects.toThrow(
 			"could not make the pull request a draft",
 		);
+	});
+});
+
+describe("namesFile", () => {
+	it("does not let a newline join another command to the runner", () => {
+		expect(namesFile("vitest run test/b.test.ts\necho test/a.test.ts", "test/a.test.ts")).toBe(
+			false,
+		);
+	});
+
+	it("does not take a redirection target for a runner argument", () => {
+		expect(namesFile("echo > vitest run test/a.test.ts; exit 1", "test/a.test.ts")).toBe(false);
+		expect(namesFile("vitest run > test/a.test.ts", "test/a.test.ts")).toBe(false);
+	});
+
+	it("does not treat an escaped quote inside double quotes as the end of the word", () => {
+		expect(namesFile('vitest run "test/\\" test/a.test.ts"', "test/a.test.ts")).toBe(false);
+	});
+
+	it("does not treat a quoted command name as an environment assignment", () => {
+		expect(namesFile('"X=1" vitest run test/a.test.ts', "test/a.test.ts")).toBe(false);
+	});
+
+	it("recognizes node --test only before the end of its options", () => {
+		expect(namesFile("node -- --test test/a.test.ts", "test/a.test.ts")).toBe(false);
+		expect(namesFile("node --import tsx --test test/a.test.ts", "test/a.test.ts")).toBe(true);
+	});
+
+	it("accepts npm exec's separator before the runner", () => {
+		expect(namesFile("npm exec -- vitest run test/a.test.ts", "test/a.test.ts")).toBe(true);
+	});
+
+	it("still accepts a runner whose output is redirected", () => {
+		for (const command of [
+			"vitest run test/a.test.ts >proof.out",
+			"vitest run test/a.test.ts 2>proof.err",
+			"vitest run test/a.test.ts 2>&1",
+		]) {
+			expect(namesFile(command, "test/a.test.ts")).toBe(true);
+		}
+	});
+
+	it("keeps command separators inside a parameter expansion", () => {
+		expect(namesFile(`echo \${X:-; vitest run test/a.test.ts }; exit 1`, "test/a.test.ts")).toBe(
+			false,
+		);
+		expect(namesFile(`FOO=\${BAR} vitest run test/a.test.ts`, "test/a.test.ts")).toBe(true);
+	});
+
+	it("removes an escaped newline without separating the word", () => {
+		expect(namesFile("vitest run test\\\n/a.test.ts", "test/a.test.ts")).toBe(true);
+		expect(namesFile("vitest run \\\ntest/a.test.ts", "test/a.test.ts")).toBe(true);
+	});
+
+	it("does not treat a runner option's value as a test operand", () => {
+		expect(namesFile("vitest run --exclude test/a.test.ts test/b.test.ts", "test/a.test.ts")).toBe(
+			false,
+		);
+		expect(namesFile("vitest run --exclude test/a.test.ts test/b.test.ts", "test/b.test.ts")).toBe(
+			true,
+		);
+		expect(
+			namesFile(
+				"node --test --test-reporter spec --test-reporter-destination test/a.test.js test/b.test.js",
+				"test/a.test.js",
+			),
+		).toBe(false);
+		expect(
+			namesFile(
+				"node --test --test-reporter spec --test-reporter-destination test/a.test.js test/b.test.js",
+				"test/b.test.js",
+			),
+		).toBe(true);
 	});
 });
