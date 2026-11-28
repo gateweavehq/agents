@@ -171,6 +171,17 @@ not from an issue's text: the agent cannot change the list of commands, and neit
 writes an issue. The agent can change what those commands do by editing `package.json` scripts,
 and it is root in its sandbox. Reading them from a file on the default branch is not supported yet.
 
+**Edits to what the checks rely on.** When the agent proposes its pushed work, Gateweave compares
+the branch with its base for edits to tests, check scripts, CI, lint and type configuration, and
+`package.json` scripts or check configuration. A dependency change is allowed when it is only a
+version change, except for the runner a script names or a spec moved to an alias, local path,
+link or git address. A pull request with such an edit opens as a draft, and its checks section
+lists the path. This review is a heuristic, not a package or module graph: it does not follow
+imports, variables or globs inside scripts. When it scans the base's `package.json` files for
+scripts that name check files, it reads at most 40; comparing changed `package.json` files has no
+corresponding limit. When GitHub or those limits do not show whether the branch touches its
+checks, the pull request is a draft and says the review could not tell.
+
 The same holds for every engine: Claude Code, Codex and OpenCode open their pull requests with
 the same tool, so their work is checked the same way.
 
