@@ -253,9 +253,14 @@ describe("submitting a review", () => {
 			reason: "the test file was not the only change in the checkout, so it was not run",
 		});
 		expect(sandbox.commands).toEqual([]);
-		expect(sandbox.log.slice(-3)).toEqual([reset, "git clean -fdq", compare]);
+		expect(sandbox.log.slice(-4)).toEqual([
+			reset,
+			"git clean -fdq",
+			`git clean -fdqx -- :(literal)${finding.test.path}`,
+			compare,
+		]);
 	});
-	it("does not run a test whose file git does not list, such as one in an ignored folder", async () => {
+	it("does not run a test whose file git neither lists nor marks ignored", async () => {
 		const { call, sandbox } = setup();
 		const normal = sandbox.gitAnswer;
 		sandbox.gitAnswer = (args) => (args[0] === "status" ? answer("") : normal?.(args));
@@ -332,9 +337,44 @@ describe("submitting a review", () => {
 			runCommand,
 			reset,
 			"git clean -fdq",
+			`git clean -fdqx -- :(literal)${finding.test.path}`,
 			compare,
 		];
 		expect(sandbox.log.slice(2)).toEqual([...one, ...one]);
+	});
+	it("runs and removes a proof test in a git-ignored folder", async () => {
+		const { call, sandbox } = setup();
+		sandbox.ignored.add("dist");
+		sandbox.answers.push(failed);
+		const test = {
+			path: "dist/test/a.test.ts",
+			content: finding.test.content,
+			command: "pnpm vitest run dist/test/a.test.ts",
+		};
+		const outcome = await call([{ ...finding, test }]);
+		expect(outcome.findings[0]?.proof.proven).toBe(true);
+		expect(sandbox.commands.map((command) => command.command)).toEqual([test.command]);
+		expect(sandbox.files.has(`${SANDBOX_REPOSITORY_PATH}/${test.path}`)).toBe(false);
+		expect(sandbox.untracked.has(test.path)).toBe(false);
+		expect(sandbox.gitCalls).toContainEqual(["check-ignore", "-q", "--", test.path]);
+		expect(sandbox.gitCalls).toContainEqual(["clean", "-fdqx", "--", `:(literal)${test.path}`]);
+	});
+	it("does not mistake a dependency file the runner excludes for a failing proof", async () => {
+		const { call, sandbox } = setup();
+		sandbox.ignored.add("node_modules");
+		sandbox.answers.push(failed);
+		const test = {
+			path: "node_modules/pkg/a.test.ts",
+			content: finding.test.content,
+			command: "pnpm vitest run node_modules/pkg/a.test.ts",
+		};
+		const outcome = await call([{ ...finding, test }]);
+		expect(outcome.findings[0]?.proof).toEqual({
+			proven: false,
+			reason: "the test's path is inside the repository's dependencies",
+		});
+		expect(sandbox.created).toEqual([]);
+		expect(sandbox.commands).toEqual([]);
 	});
 	it.each(["changed", "compare throws", "reset fails", "clean fails"])(
 		"shows a failed cleanup on this submission and refuses the next proof: %s",
