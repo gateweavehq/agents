@@ -68,8 +68,11 @@ export interface EngineJob {
 export interface EnginePort {
 	/** Starts the turn. Its events, one JSON object a line, as the CLI writes them. */
 	startEngine(job: EngineJob): Promise<ReadableStream<Uint8Array>>;
-	/** Ends the turn under way: the CLI finishes it as it would on Ctrl+C, or is killed. */
-	stopEngine(): Promise<void>;
+	/**
+	 * Ends the turn under way: the CLI finishes it as it would on Ctrl+C, or is killed. False when
+	 * none had started yet, so the caller knows the stop still has to reach it.
+	 */
+	stopEngine(): Promise<boolean>;
 	/**
 	 * How the CLI of the last turn ended, for a turn it ended without saying why; null when the
 	 * container has run no turn since it started.

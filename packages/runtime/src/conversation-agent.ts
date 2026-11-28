@@ -1336,9 +1336,15 @@ ${runPageNote(runs, turn.runId)}`
 				let stopped = false;
 				const stop = () => {
 					if (stopped) return;
-					stopped = true;
 					calls.abort();
-					sandbox.stopEngine().catch(() => {});
+					// A stop can arrive while OpenCode's server is still taking the prompt, before the
+					// sandbox has the turn's handle. Only one that reaches the engine closes this retry path.
+					void sandbox
+						.stopEngine()
+						.then((reached) => {
+							if (reached) stopped = true;
+						})
+						.catch(() => {});
 				};
 				const state = {
 					agentId: agent.agentId,
@@ -1378,6 +1384,9 @@ ${runPageNote(runs, turn.runId)}`
 							meter: { conversation: this.name, token },
 						},
 					});
+					// A pause or abort could have been asked for in the startup window above, when the
+					// sandbox did not have the engine's handle yet. Now that it does, reach it.
+					if ((state.paused || signal?.aborted) && !stopped) stop();
 					// startEngine resolving means the process is up, not that it has spoken; the
 					// label stays until the engine's first line (the finally clears a silent turn's).
 					let started = false;
