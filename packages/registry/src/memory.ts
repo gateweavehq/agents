@@ -1,5 +1,5 @@
 /**
- * The workspace's memory (AGT-107): short notes its people and agents keep, recalled by keyword.
+ * The workspace's memory: short notes its people and agents keep, recalled by keyword.
  *
  * A memory says who or what wrote it and, for an agent, in which run. An agent reads what
  * outsiders wrote: a trigger's event, and in any run an issue, a page or a tool's result. A

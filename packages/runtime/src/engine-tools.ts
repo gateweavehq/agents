@@ -1,5 +1,5 @@
 /**
- * Gateweave's tools for an engine in the sandbox (AGT-44): the agent's MCP servers,
+ * Gateweave's tools for an engine in the sandbox: the agent's MCP servers,
  * `open_pull_request` and a team's edges, served to the vendor's CLI as one MCP server named
  * `gateweave`. The CLI reaches it at `ENGINE_TOOLS_URL`, a host that exists only inside the
  * sandbox: `SandboxOutbound` takes the request and hands it to the conversation, which runs each

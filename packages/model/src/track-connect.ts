@@ -1,5 +1,5 @@
 /**
- * Connecting Gateweave Track in one step (AGT-119): the person chooses what the agent is, the
+ * Connecting Gateweave Track in one step: the person chooses what the agent is, the
  * browser goes to Track to approve it, and Track hands the agent member's key and the webhook's
  * secret to this server alone, for a one-time code. This holds what both sides must agree on: the
  * choices made before the browser leaves, and what Track's answer must look like. Pure, with no

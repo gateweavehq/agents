@@ -81,7 +81,7 @@ export const repositories = sqliteTable(
 			.notNull()
 			.default(sql`'[]'`),
 		/**
-		 * The commands `open_pull_request` runs on an agent's work before it pushes it (AGT-142), in
+		 * The commands `open_pull_request` runs on an agent's work before it pushes it, in
 		 * order. Only an owner or admin sets them: a scan of the repository never does.
 		 */
 		checks: text("checks", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
@@ -259,7 +259,7 @@ export const agentDefinitions = sqliteTable(
 		/** Whether its turns have the memory tools (`../memory.ts`). Off unless someone turns it on. */
 		memory: integer("memory", { mode: "boolean" }).notNull().default(false),
 		/**
-		 * Whether its turns work on the repository's files without a sandbox (AGT-122). Never with
+		 * Whether its turns work on the repository's files without a sandbox. Never with
 		 * `sandbox`, and only with a repository, which `../definitions.ts` holds on every save.
 		 */
 		files: integer("files", { mode: "boolean" }).notNull().default(false),
@@ -269,7 +269,7 @@ export const agentDefinitions = sqliteTable(
 			.default([]),
 		anyTarget: integer("any_target", { mode: "boolean" }).notNull().default(false),
 		/**
-		 * Whether an MCP client may hand it tasks from outside the app (AGT-155): `run_agent` and
+		 * Whether an MCP client may hand it tasks from outside the app: `run_agent` and
 		 * `get_run` on /mcp, which spend the workspace's budget. Off unless someone turns it on.
 		 */
 		outsideTasks: integer("outside_tasks", { mode: "boolean" }).notNull().default(false),
@@ -498,12 +498,12 @@ export const envSecrets = sqliteTable(
 		setAt: integer("set_at").notNull(),
 		/**
 		 * The origin of the MCP server this value was first sent to in a header, and the only one it
-		 * is sent to after (AGT-64). Null until then; entering the value again clears it.
+		 * is sent to after. Null until then; entering the value again clears it.
 		 */
 		sentTo: text("sent_to"),
 		/**
 		 * The origins of the servers that named this value when the registry first tied stored values
-		 * to one origin (AGT-65), when they disagreed, so it was left unbound for an admin to look at.
+		 * to one origin, when they disagreed, so it was left unbound for an admin to look at.
 		 * Null otherwise; cleared when the value is tied or entered again.
 		 */
 		contested: text("contested", { mode: "json" }).$type<string[]>(),
@@ -555,7 +555,7 @@ export const conversations = sqliteTable(
 		 * `<workspace id>:<issue id>` (`issueOfEvent`): later events about it continue it.
 		 */
 		issue: text("issue"),
-		/** The run this conversation replays from one of its steps (AGT-73); null for any other. */
+		/** The run this conversation replays from one of its steps; null for any other. */
 		replayOf: text("replay_of"),
 	},
 	(table) => [
@@ -762,7 +762,7 @@ export const pullRequestReviews = sqliteTable(
 export type PullRequestReviewRow = typeof pullRequestReviews.$inferSelect;
 
 /**
- * A task an MCP client handed an agent (`run_agent` on /mcp, AGT-155): admitted like a trigger's
+ * A task an MCP client handed an agent (`run_agent` on /mcp): admitted like a trigger's
  * delivery, counted in the same limits, and settled when its run begins or cannot.
  */
 export const outsideTasks = sqliteTable(
@@ -806,7 +806,7 @@ export const telemetry = sqliteTable("telemetry", {
 });
 
 /**
- * A library MCP server connected for the workspace through OAuth (AGT-78): what `@ai-sdk/mcp`'s
+ * A library MCP server connected for the workspace through OAuth: what `@ai-sdk/mcp`'s
  * OAuth client keeps between the steps of the flow and between turns. The client registration,
  * the PKCE verifier and the tokens are sealed (see `secrets.ts`). The connection is for the URL
  * the server had when it was made, and is not sent anywhere else.
@@ -830,7 +830,7 @@ export const mcpOAuth = sqliteTable("mcp_oauth", {
 });
 
 /**
- * A Track connection under way (AGT-119): what the person chose before the browser left for
+ * A Track connection under way: what the person chose before the browser left for
  * Track, kept until it comes back. `state` is what Track hands back; the verifier that proves
  * this server started the flow stays sealed here and never leaves it. A row lives until its
  * `expires_at` and is taken, deleted, by the first call that names it.
@@ -892,7 +892,7 @@ export const trackReportOutbox = sqliteTable(
 );
 
 /**
- * A GitLab reached with an access token (AGT-79). The token and the webhook's secret token are
+ * A GitLab reached with an access token. The token and the webhook's secret token are
  * sealed (`secrets.ts`); the token is opened only to read the repositories, and the secret only to
  * check a delivery.
  */
@@ -911,7 +911,7 @@ export const gitlabConnections = sqliteTable("gitlab_connections", {
 });
 
 /**
- * Each writing of a repository's wiki (AGT-108). The newest that is `ready` is the one people
+ * Each writing of a repository's wiki. The newest that is `ready` is the one people
  * read; finishing one deletes the older ones. At most one per repository is under way
  * (`planning` or `writing`) at a time, which the partial index holds.
  */
@@ -984,7 +984,7 @@ export const wikiPages = sqliteTable(
 );
 
 /**
- * The workspace's memory (AGT-107): short notes its people and agents keep to be recalled later
+ * The workspace's memory: short notes its people and agents keep to be recalled later
  * (`../memory.ts`). Each says who or what wrote it and, for an agent, in which run. One an agent
  * wrote about the workspace or a repository, or in a run a person's message did not start, is not
  * `trusted`: no agent recalls it until an owner or admin approves it. An agent's `forget` sets

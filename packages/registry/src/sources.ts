@@ -24,7 +24,7 @@ export interface SourceEnv {
 
 export const GITHUB_NOT_SET_UP = "GitHub is not set up on this server";
 
-/** Setups are applied by pull request, which GitLab repositories cannot take yet (AGT-79). */
+/** Setups are applied by pull request, which GitLab repositories cannot take yet. */
 export const GITLAB_CANNOT_WRITE_YET =
 	"Setups can be applied to GitHub repositories only, for now; GitLab merge requests are planned";
 

@@ -635,7 +635,7 @@ const agentDefinitionFields = projectInput.extend({
 	files: z.boolean().default(false),
 	/**
 	 * Whether an MCP client may hand it tasks from outside the app (`run_agent` and `get_run` on
-	 * /mcp, AGT-155), which spends the workspace's budget. Off by default, so an agent made before
+	 * /mcp), which spends the workspace's budget. Off by default, so an agent made before
 	 * the setting existed takes no outside tasks until someone turns it on.
 	 */
 	outsideTasks: z.boolean().default(false),

@@ -1,5 +1,5 @@
 /**
- * Replaying a run from one of its model requests (AGT-73): a new conversation gets this
+ * Replaying a run from one of its model requests: a new conversation gets this
  * conversation's messages up to that request, and the agent, as it is now, answers from there.
  * Each run remembers the person's message it answered (`run_messages`), and the steps of its
  * answer are the `step-start` parts of the message that follows.
