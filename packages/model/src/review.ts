@@ -84,7 +84,10 @@ export function rankFindings(findings: readonly ReviewedFinding[]): {
 				REVIEW_SEVERITIES.indexOf(finding.severity) < REVIEW_SEVERITIES.indexOf(first.severity)
 					? finding.severity
 					: first.severity,
-			proof: first.proof.proven || !finding.proof.proven ? first.proof : finding.proof,
+			// Proof and test describe one run: a proven duplicate brings the test it ran along.
+			...(first.proof.proven || !finding.proof.proven
+				? {}
+				: { proof: finding.proof, test: finding.test }),
 			// Side and offDiff describe one location: an on-diff duplicate brings its side along.
 			...(first.offDiff && !finding.offDiff ? { side: finding.side, offDiff: false } : {}),
 		};
@@ -103,6 +106,130 @@ export function rankFindings(findings: readonly ReviewedFinding[]): {
 	return {
 		shown: ranked.slice(0, REVIEW_LIMITS.shown),
 		collapsed: ranked.slice(REVIEW_LIMITS.shown),
+	};
+}
+
+/** GitHub refuses a review body longer than this. */
+export const REVIEW_SUMMARY_LIMIT = 65_536;
+
+export interface RenderedReviewComment {
+	path: string;
+	line: number;
+	side: "LEFT" | "RIGHT";
+	body: string;
+}
+
+function inline(text: string, limit = 500): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	const chars = Array.from(flat);
+	return chars.length <= limit ? flat : `${chars.slice(0, limit - 1).join("")}…`;
+}
+
+function charsOf(text: string, limit: number): string {
+	return Array.from(text).slice(0, limit).join("");
+}
+
+function proofText({ proof, test }: ReviewedFinding): string {
+	const command = test ? `\`${test.command}\`` : "no test command";
+	return proof.proven
+		? `Proven: ${command} exited ${proof.exitCode}.`
+		: `Unproven: ${inline(proof.reason).replace(/[.]+$/, "")}.`;
+}
+
+function testText({ test }: ReviewedFinding): string {
+	return test
+		? `Proposed test: \`${test.path}\` with \`${test.command}\`.`
+		: "Proposed test: none.";
+}
+
+function findingText(finding: ReviewedFinding): string {
+	return [
+		proofText(finding),
+		`Failing case: ${inline(finding.failingCase).replace(/[.]+$/, "")}.`,
+		testText(finding),
+	].join(" ");
+}
+
+function commentBody(finding: ReviewedFinding): string {
+	return [
+		`**${finding.severity}: ${finding.title}**`,
+		proofText(finding),
+		`Failing case: ${finding.failingCase}`,
+		testText(finding),
+	].join("\n\n");
+}
+
+function disclosure(agentName: string | null | undefined): string {
+	const name = Array.from((agentName ?? "").replace(/[`\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "").trim())
+		.slice(0, 100)
+		.join("")
+		.trimEnd();
+	const byline = name ? `\`${name}\`, an AI agent` : "an AI agent";
+	return `Written by ${byline} in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->`;
+}
+
+/**
+ * The GitHub review of one review run. Only the findings ranked as shown and on the diff become
+ * line comments; off-diff and collapsed findings stay in the summary. The wording is fixed so a
+ * machine review never reads as a person's approval, and it ends with the same AI disclosure as
+ * an agent's pull request.
+ */
+export function renderReview({
+	findings,
+	agentName,
+	runsPage = null,
+}: {
+	findings: readonly ReviewedFinding[];
+	agentName?: string | null;
+	/** The review run's page, linked from the summary when the app knows it. */
+	runsPage?: string | null;
+}): { summary: string; comments: RenderedReviewComment[] } {
+	const ranked = rankFindings(findings);
+	const lines = [
+		"A second reader's findings, not an approval. A person reviews and merges.",
+		runsPage ? `Review run: ${runsPage}` : null,
+	];
+	if (ranked.shown.length + ranked.collapsed.length === 0) {
+		lines.push("No findings. This is not an approval.");
+	} else {
+		const shown = ranked.shown.map((finding, index) => {
+			const place = `\`${finding.path}:${finding.line}\``;
+			return `${index + 1}. **${finding.severity}: ${finding.title}** (${place}) — ${findingText(finding)}`;
+		});
+		const onDiff = ranked.shown.filter((finding) => !finding.offDiff).length;
+		const offDiff = ranked.shown.length - onDiff;
+		lines.push(
+			`${ranked.shown.length} shown ${ranked.shown.length === 1 ? "finding" : "findings"}: ${onDiff} on the diff, ${offDiff} off it.`,
+			...shown,
+		);
+		if (ranked.collapsed.length > 0) {
+			const collapsed = ranked.collapsed.map(
+				(finding) =>
+					`- **${finding.severity}: ${finding.title}** (\`${finding.path}:${finding.line}\`) — ${findingText(finding)}`,
+			);
+			lines.push(
+				`<details>\n<summary>Collapsed findings (${ranked.collapsed.length})</summary>\n\n${collapsed.join("\n")}\n</details>`,
+			);
+		}
+	}
+	const end = disclosure(agentName);
+	const body = lines.filter((line) => line !== null).join("\n\n");
+	let summary = `${body}\n\n${end}`;
+	if (summary.length > REVIEW_SUMMARY_LIMIT) {
+		const notice = "\n\n[The summary was shortened to fit GitHub's limit.]";
+		const room = REVIEW_SUMMARY_LIMIT - notice.length - end.length - 2;
+		summary = `${charsOf(body, Math.max(0, room))}${notice}\n\n${end}`;
+	}
+	return {
+		summary,
+		comments: ranked.shown
+			.filter((finding) => !finding.offDiff)
+			.map((finding) => ({
+				path: finding.path,
+				line: finding.line,
+				side: finding.side,
+				body: commentBody(finding),
+			})),
 	};
 }
 

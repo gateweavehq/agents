@@ -18,7 +18,7 @@ export class RegistryDO extends Registry {
 			env.CONVERSATIONS,
 			conversationName(workspaceId, conversationId),
 		);
-		return conversation.reviewTurn(attemptId);
+		return conversation.reviewTurn(attemptId, "https://agents.example.test/runs/");
 	}
 
 	protected override recordUsage(point: AnalyticsEngineDataPoint): void {

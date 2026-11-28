@@ -539,6 +539,72 @@ export async function openPullRequest(
 	);
 }
 
+export interface PullRequestReviewComment {
+	path: string;
+	line: number;
+	side: "LEFT" | "RIGHT";
+	body: string;
+}
+
+export interface CreateReviewInput {
+	/** The commit the review is of. */
+	commitId: string;
+	body: string;
+	/** A second reader comments only: never an approval or a request for changes. */
+	event: "COMMENT";
+	comments: readonly PullRequestReviewComment[];
+}
+
+const pullReviewSchema = z.object({ commit_id: objectId, body: z.string(), state: z.string() });
+
+/** Whether the exact comment-only review is already on the pull request. */
+export async function pullRequestReviewExists(
+	token: string,
+	repository: RepositoryName,
+	number: number,
+	input: { commitId: string; body: string },
+): Promise<boolean> {
+	for (let page = 1; ; page += 1) {
+		const answer = z
+			.array(pullReviewSchema)
+			.parse(
+				await request(
+					`${repositoryPath(repository)}/pulls/${number}/reviews?per_page=100&page=${page}`,
+					token,
+				),
+			);
+		if (
+			answer.some(
+				(review) =>
+					review.state === "COMMENTED" &&
+					review.commit_id === input.commitId &&
+					review.body === input.body,
+			)
+		)
+			return true;
+		if (answer.length < 100) return false;
+	}
+}
+
+/** Posts one pull request review as comments only. */
+export async function createReview(
+	token: string,
+	repository: RepositoryName,
+	number: number,
+	input: CreateReviewInput,
+): Promise<void> {
+	await send(`${repositoryPath(repository)}/pulls/${number}/reviews`, token, {
+		method: "POST",
+		body: JSON.stringify({
+			commit_id: objectId.parse(input.commitId),
+			body: input.body,
+			// Pinned here as well as typed: a runtime value outside the type can never become an approval.
+			event: "COMMENT",
+			comments: input.comments,
+		}),
+	});
+}
+
 /** The pull request, or null when there is none by that number. */
 export async function pullRequest(
 	token: string,

@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	REVIEW_LIMITS,
+	REVIEW_SUMMARY_LIMIT,
 	type ReviewedFinding,
 	type ReviewProof,
 	rankFindings,
+	renderReview,
 	reviewFinding,
 	reviewInput,
 	reviewMessage,
 } from "../src";
 
 const finding = {
-	severity: "high",
+	severity: "high" as const,
 	path: "a.ts",
 	line: 1,
 	title: "Drops zero",
@@ -99,6 +101,96 @@ describe("the review message", () => {
 		const message = reviewMessage(`${first}\né\nlast`, []);
 		expect(message).toContain(`${first}\n[7 bytes left out]\n`);
 		expect(message).not.toContain("�");
+	});
+});
+
+describe("renderReview", () => {
+	const reviewed = (overrides: Partial<ReviewedFinding> = {}): ReviewedFinding => ({
+		...finding,
+		side: "RIGHT",
+		offDiff: false,
+		proof: { proven: false, reason: "No proof ran" },
+		...overrides,
+	});
+	const provenFinding = reviewed({
+		offDiff: false,
+		proof: { proven: true, exitCode: 1, output: "failed" },
+	});
+	const offDiffFinding = reviewed({
+		line: 2,
+		title: "Outside the diff",
+		offDiff: true,
+		proof: { proven: false, reason: "the finding proposes no test" },
+		test: null,
+	});
+	const collapsedFinding = reviewed({ line: 3, title: "Collapsed defect", severity: "low" });
+
+	it("opens as a non-approval and ends with the machine disclosure", () => {
+		const rendered = renderReview({
+			findings: [],
+			agentName: "Reviewer",
+			runsPage: "https://agents.test/ws/runs/run-1",
+		});
+		expect(rendered.summary).toContain(
+			"A second reader's findings, not an approval. A person reviews and merges.",
+		);
+		expect(rendered.summary).toContain("No findings. This is not an approval.");
+		expect(rendered.summary).toContain("Review run: https://agents.test/ws/runs/run-1");
+		expect(
+			rendered.summary.endsWith(
+				"Written by `Reviewer`, an AI agent in Gateweave Agents.\n<!-- AI-Disclosure: mode=machine-generated -->",
+			),
+		).toBe(true);
+		for (const forbidden of ["LGTM", "looks good", "ready to merge"]) {
+			expect(rendered.summary).not.toContain(forbidden);
+		}
+		expect(rendered.summary).not.toContain("approve");
+		expect(rendered.comments).toEqual([]);
+	});
+
+	it("puts only shown on-diff findings on lines and every other finding in the summary", () => {
+		const fillers = Array.from({ length: 4 }, (_, index) =>
+			reviewed({ line: 10 + index, title: `Shown off-diff ${index}`, offDiff: true }),
+		);
+		const rendered = renderReview({
+			findings: [collapsedFinding, offDiffFinding, provenFinding, ...fillers],
+			agentName: "Reviewer",
+		});
+		expect(rendered.comments).toEqual([
+			{
+				path: provenFinding.path,
+				line: provenFinding.line,
+				side: "RIGHT",
+				body: expect.stringContaining("Proven: `node test/a.test.ts` exited 1."),
+			},
+		]);
+		expect(rendered.comments[0]?.body).toContain("Failing case: Passing 0 returns null");
+		expect(rendered.comments[0]?.body).toContain(
+			"Proposed test: `test/a.test.ts` with `node test/a.test.ts`.",
+		);
+		expect(rendered.summary).toContain("Outside the diff");
+		expect(rendered.summary).toContain("Unproven: the finding proposes no test.");
+		expect(rendered.summary).toContain("<details>");
+		expect(rendered.summary).toContain("Collapsed defect");
+		expect(rendered.summary).toContain(
+			"Proposed test: `test/a.test.ts` with `node test/a.test.ts`.",
+		);
+	});
+
+	it("fits GitHub's body limit even with the largest findings, and still ends with disclosure", () => {
+		const large = Array.from({ length: REVIEW_LIMITS.findings }, (_, index) =>
+			reviewed({
+				line: index + 1,
+				title: `Large ${index} ${"t".repeat(REVIEW_LIMITS.title)}`,
+				failingCase: "x".repeat(REVIEW_LIMITS.failingCase),
+			}),
+		);
+		const rendered = renderReview({ findings: large, agentName: "Reviewer" });
+		expect(rendered.summary.length).toBeLessThanOrEqual(REVIEW_SUMMARY_LIMIT);
+		expect(rendered.summary).toContain(
+			"A second reader's findings, not an approval. A person reviews and merges.",
+		);
+		expect(rendered.summary.endsWith("<!-- AI-Disclosure: mode=machine-generated -->")).toBe(true);
 	});
 });
 
@@ -239,6 +331,20 @@ describe("rankFindings", () => {
 				collapsed: [],
 			});
 		}
+	});
+
+	it("keeps proof and test of the same duplicate together", () => {
+		const first = reviewed({ test: null });
+		const duplicateTest = {
+			path: "test/proven.test.ts",
+			content: "assert.equal(read(0), 0)",
+			command: "node test/proven.test.ts",
+		};
+		const duplicate = reviewed({ proof: proven, test: duplicateTest });
+		expect(rankFindings([first, duplicate]).shown[0]).toMatchObject({
+			proof: proven,
+			test: duplicateTest,
+		});
 	});
 
 	it("keeps side and offDiff of the same duplicate when their sides differ", () => {

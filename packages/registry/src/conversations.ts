@@ -37,6 +37,8 @@ export interface ReviewTurnOf {
 	diff?: string;
 	draft?: boolean;
 	draftReason?: string | null;
+	/** The review run's page, filled by the runtime when the app tells it where runs live. */
+	runsPage?: string | null;
 }
 
 /**

@@ -44,6 +44,13 @@ interface Pull {
 	base: string;
 }
 
+interface Review {
+	commitId: string;
+	body: string;
+	event: string;
+	comments: { path: string; line: number; side: string; body: string }[];
+}
+
 const MODES = new Set(["100644", "100755", "120000", "040000", "160000"]);
 const WORKFLOWS = ".github/workflows/";
 
@@ -99,6 +106,7 @@ export class FakeGit {
 	readonly commits = new Map<string, Commit>();
 	readonly branches = new Map<string, string>();
 	readonly pulls: Pull[] = [];
+	readonly reviews: Review[] = [];
 	/** Every request it answered, as `METHOD path`. */
 	readonly requests: string[] = [];
 	/** Blobs GraphQL calls binary, by id. */
@@ -378,6 +386,50 @@ export class FakeGit {
 				this.branches.set(named, to);
 				return Response.json({ ref: `refs/heads/${named}`, object: { sha: to } });
 			}
+		}
+
+		const review = resource.match(/^pulls\/(\d+)\/reviews$/);
+		if (method === "GET" && review) {
+			const perPage = Number(url.searchParams.get("per_page") ?? 30);
+			const page = Number(url.searchParams.get("page") ?? 1);
+			return Response.json(
+				this.reviews.slice((page - 1) * perPage, page * perPage).map((posted) => ({
+					commit_id: posted.commitId,
+					body: posted.body,
+					state: posted.event === "COMMENT" ? "COMMENTED" : posted.event,
+				})),
+			);
+		}
+		if (method === "POST" && review) {
+			const number = Number(review[1]);
+			const pull = this.pulls.find((candidate) => candidate.number === number);
+			if (!pull) return refused(404, "Not Found");
+			if (!this.commits.has(String(body.commit_id)))
+				return refused(422, "Commit SHA does not exist");
+			if (body.event !== "COMMENT") return refused(422, "Only COMMENT reviews are accepted here");
+			const comments = body.comments;
+			if (
+				!Array.isArray(comments) ||
+				comments.some(
+					(comment) =>
+						typeof comment?.path !== "string" ||
+						!Number.isInteger(comment.line) ||
+						!["LEFT", "RIGHT"].includes(String(comment.side)) ||
+						typeof comment.body !== "string",
+				)
+			) {
+				return refused(422, "Validation Failed: review comments are malformed");
+			}
+			this.reviews.push({
+				commitId: String(body.commit_id),
+				body: String(body.body),
+				event: String(body.event),
+				comments: comments as Review["comments"],
+			});
+			return Response.json(
+				{ id: this.reviews.length, html_url: "https://github.com/review" },
+				{ status: 201 },
+			);
 		}
 
 		if (method === "POST" && resource === "pulls") {

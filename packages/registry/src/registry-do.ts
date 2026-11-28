@@ -1924,6 +1924,7 @@ export class RegistryDO extends DurableObject {
 		if ("problem" in repository) return settle(refused(repository.problem, "needs-mapping"));
 		const prepared = await this.#prepareTurn(conversation, agent, null, true, repository);
 		if ("status" in prepared) return settle(prepared);
+		let report: PendingTrackReport | undefined;
 		const turn = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry may have taken the review over while the key was opened.
 			if (!current()) return gone;
@@ -1936,6 +1937,15 @@ export class RegistryDO extends DurableObject {
 			const over = this.#sandboxLimitRefusal(conversation, agent);
 			if (over) return decline(over);
 			const now = Date.now();
+			const sourceTrackReport = this.#db
+				.select({ trackReport: schema.runs.trackReport })
+				.from(schema.runs)
+				.where(eq(schema.runs.id, review.sourceRunId))
+				.get()?.trackReport;
+			const trackReport = sourceTrackReport && {
+				target: sourceTrackReport.target,
+				runningAt: now,
+			};
 			noteTurn(this.#db, conversation, message, now);
 			const runId = beginRun(
 				this.#db,
@@ -1944,11 +1954,23 @@ export class RegistryDO extends DurableObject {
 					conversationId: conversation,
 					startedBy: parties.startedBy,
 					sandbox: prepared.sandbox,
+					trackReport,
 				},
 				now,
 			);
 			settleDelivery(this.#db, delivery, { runId });
 			startReview(this.#db, review, runId, now);
+			if (trackReport) {
+				report = this.#queueTrackReport(
+					{
+						target: trackReport.target,
+						key: runId,
+						sentAt: trackReport.runningAt,
+						phase: { state: "running", startedAt: now },
+					},
+					now,
+				);
+			}
 			return {
 				...prepared,
 				runId,
@@ -1956,6 +1978,7 @@ export class RegistryDO extends DurableObject {
 				review: { number: review.number, head: review.head },
 			};
 		});
+		this.#publishTrackReports(report);
 		// A review that is running is given up on if its run never reports: the alarm is set for it.
 		if (!("status" in turn)) await this.#scheduleAlarm();
 		return turn;
@@ -2474,6 +2497,35 @@ export class RegistryDO extends DurableObject {
 
 	// Runs, for the Runs page and the Overview. Runs cut short and never reported are closed first.
 
+	/** Reads runs after expiring interrupted ones, and reports their interruption to Track. */
+	#withExpiredRuns<T>(read: () => T): T {
+		let reports: PendingTrackReport[] = [];
+		const result = this.#write(() => {
+			const now = Date.now();
+			reports = expireRuns(this.#db, now).flatMap((expired) => {
+				if (!expired.trackReport) return [];
+				const finish: Required<RunFinish> = {
+					status: "interrupted",
+					error: "The run did not report back",
+					steps: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					cachedInputTokens: 0,
+					cost: null,
+					endedAt: now,
+				};
+				const report = this.#queueTrackReport(
+					trackFinishReport(expired.id, expired.trackReport, expired.startedAt, finish, now),
+					now,
+				);
+				return report ? [report] : [];
+			});
+			return read();
+		});
+		this.#publishTrackReports(...reports);
+		return result;
+	}
+
 	/**
 	 * The latest runs people's messages started, a page at a time, with the runs nested under each
 	 * in its total; one member's with `startedBy`.
@@ -2481,14 +2533,14 @@ export class RegistryDO extends DurableObject {
 	listRuns(options: { startedBy?: string; before?: RunCursor } = {}): TotaledRun[] {
 		const startedBy = id.optional().parse(options.startedBy);
 		const before = runCursor.optional().parse(options.before);
-		this.#write(() => expireRuns(this.#db, Date.now()));
-		return listRuns(this.#db, { startedBy, before }, this.#idleMinutes());
+		return this.#withExpiredRuns(() =>
+			listRuns(this.#db, { startedBy, before }, this.#idleMinutes()),
+		);
 	}
 
 	getRun(runId: string): TotaledRun | null {
 		const run = id.parse(runId);
-		this.#write(() => expireRuns(this.#db, Date.now()));
-		return getRun(this.#db, run, this.#idleMinutes());
+		return this.#withExpiredRuns(() => getRun(this.#db, run, this.#idleMinutes()));
 	}
 
 	/**
@@ -2541,8 +2593,7 @@ export class RegistryDO extends DurableObject {
 	/** The runs one run called over its team's edges, in the order it called them. */
 	listNestedRuns(runId: string): TotaledRun[] {
 		const run = id.parse(runId);
-		this.#write(() => expireRuns(this.#db, Date.now()));
-		return listNestedRuns(this.#db, run, this.#idleMinutes());
+		return this.#withExpiredRuns(() => listNestedRuns(this.#db, run, this.#idleMinutes()));
 	}
 
 	/**
@@ -2554,15 +2605,13 @@ export class RegistryDO extends DurableObject {
 		const member = id.parse(startedBy);
 		const parties = conversationParties(this.#db, conversation);
 		if (!parties || parties.startedBy !== member || parties.rootId !== null) return null;
-		this.#write(() => expireRuns(this.#db, Date.now()));
-		return activeRuns(this.#db, conversation, this.#idleMinutes());
+		return this.#withExpiredRuns(() => activeRuns(this.#db, conversation, this.#idleMinutes()));
 	}
 
 	/** What runs used since `since`, a time. */
 	runUsage(since: number): RunUsage {
 		const from = z.number().int().min(0).parse(since);
-		this.#write(() => expireRuns(this.#db, Date.now()));
-		return runUsage(this.#db, from);
+		return this.#withExpiredRuns(() => runUsage(this.#db, from));
 	}
 
 	// Triggers, which owners and admins manage. A secret goes in sealed and comes out once, when it
