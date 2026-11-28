@@ -26,7 +26,7 @@ import {
 	replaceKept,
 } from "../src/kept-keys";
 import type { LocalCommand, LocalServerPort } from "../src/local-servers";
-import { type EngineMeter, meterModelRequest } from "../src/meter";
+import { type EngineMeter, meterModelRequest, recordPausedRefusal } from "../src/meter";
 import type { ProofRun } from "../src/proof-scripts";
 import type {
 	CheckPort,
@@ -626,6 +626,15 @@ export class FakeSandbox
 			},
 		};
 		const recorded: Promise<unknown>[] = [];
+		// A real sandbox's outbound request checks the turn before forwarding it (`../src/model-requests.ts`).
+		const pause = await meter.engineRequestPause(job.access.meter.token);
+		if (pause !== null) {
+			recordPausedRefusal(meter, job.access.meter.token, pause.step, pause.reason, (promise) =>
+				recorded.push(promise),
+			);
+			await Promise.all(recorded);
+			return;
+		}
 		const response = await meterModelRequest(
 			meter,
 			job.access.meter.token,

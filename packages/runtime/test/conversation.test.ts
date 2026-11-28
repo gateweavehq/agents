@@ -394,6 +394,45 @@ describe("runs", () => {
 		expect(run).toMatchObject({ inputTokens: 90, cachedInputTokens: 60, cost: 126 });
 	});
 
+	it("finishes normally while its metered cost stays under the turn's reservation", async () => {
+		const { registry, stub } = await conversation();
+		await runInDurableObject(registry, (instance) => {
+			const bindings = (instance as unknown as { env: object }).env;
+			Object.defineProperty(instance, "env", {
+				value: { ...bindings, SANDBOX_TURN_COST: "0.0001" },
+				configurable: true,
+			});
+		});
+		fakeModel(() => anthropicStream("Looks good."));
+		const socket = await connect(stub);
+
+		const turn = await ask(socket, "Review my change, please");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "Looks good.", error: null });
+		expect((await registry.listRuns())[0]).toMatchObject({ status: "succeeded", cost: 70 });
+	});
+
+	it("succeeds when its final answer reaches the ceiling and asks for no next request", async () => {
+		const { registry, stub } = await conversation();
+		await runInDurableObject(registry, (instance) => {
+			const bindings = (instance as unknown as { env: object }).env;
+			Object.defineProperty(instance, "env", {
+				// Ten input and five output tokens cost exactly $0.00007 at Sonnet 5.5's prices.
+				value: { ...bindings, SANDBOX_TURN_COST: "0.00007" },
+				configurable: true,
+			});
+		});
+		fakeModel(() => anthropicStream("Looks good."));
+		const socket = await connect(stub);
+
+		const turn = await ask(socket, "Review my change, please");
+		socket.close();
+
+		expect(turn).toMatchObject({ text: "Looks good.", error: null });
+		expect((await registry.listRuns())[0]).toMatchObject({ status: "succeeded", cost: 70 });
+	});
+
 	it("record each turn with its tokens and cost, and keep the trace with the conversation", async () => {
 		const { registry, stub } = await conversation();
 		fakeModel(() => anthropicStream("Looks good.", { headers: { "cf-aig-log-id": "log-123" } }));

@@ -144,6 +144,7 @@ import { connectTools, type OAuthProviders } from "./tools";
 import { closeInterruptedRuns, createTraceTables, RunRecorder, readTrace, type Sql } from "./trace";
 
 const PAUSE_STOP = "The agent was paused, so the run stopped before its next model request.";
+const BUDGET_STOP = "The run reached its cost limit, so it stopped before its next model request.";
 
 interface RuntimeEnv extends GatewaySettings, WorkersAiSettings, SandboxSettings {
 	TARGET_RULE?: string;
@@ -293,7 +294,8 @@ export class ConversationAgent extends AIChatAgent<Cloudflare.Env> {
 	 */
 	#engineTurnState: {
 		agentId: string;
-		paused: boolean;
+		stopReason: string | null;
+		costMicros: number | null;
 		token: string;
 		tools: ToolSet | null;
 		signal: AbortSignal;
@@ -832,19 +834,32 @@ ${runPageNote(runs, turn.runId)}`
 		return serveEngineTools(turn.tools, request, turn.signal);
 	}
 
+	/** Whether the run's metered model cost has reached the ceiling it reserved. */
+	#costReached(runId: string, costMicros: number | null | undefined): boolean {
+		if (costMicros === null || costMicros === undefined) return false;
+		let cost = 0;
+		for (const span of readTrace(this.#sql, runId)) {
+			if (span.kind === "model") cost += span.cost ?? 0;
+		}
+		return cost >= costMicros;
+	}
+
 	async engineRequestPause(token: string): Promise<{ reason: string; step: number } | null> {
 		const turn = this.#engineTurnFor(token);
 		if (!turn) return null;
-		if (!turn.paused && (await this.#parties().registry.agentPause(turn.agentId))) {
-			turn.paused = true;
+		if (!turn.stopReason && (await this.#parties().registry.agentPause(turn.agentId))) {
+			turn.stopReason = PAUSE_STOP;
 		}
-		if (!turn.paused) return null;
-		// Start the refusal's span in the same RPC that reports the pause. A startup retry may stop
+		if (!turn.stopReason && this.#costReached(turn.run.runId, turn.costMicros)) {
+			turn.stopReason = BUDGET_STOP;
+		}
+		if (!turn.stopReason) return null;
+		// Start the refusal's span in the same RPC that reports the stop. A startup retry may stop
 		// the engine as soon as this answer leaves, before a second RPC could join the span.
 		const step = turn.run.meteredStarted();
 		turn.requests.add(step);
 		turn.stop();
-		return { reason: PAUSE_STOP, step };
+		return { reason: turn.stopReason, step };
 	}
 
 	/**
@@ -858,7 +873,7 @@ ${runPageNote(runs, turn.runId)}`
 		turn.requests.add(step);
 		// The pause is noticed before this refusal is metered. Stop only once its span is
 		// in `requests`, or the turn's cleanup could drop this state before the trace has it.
-		if (turn.paused) turn.stop();
+		if (turn.stopReason) turn.stop();
 		return step;
 	}
 
@@ -1099,28 +1114,32 @@ ${runPageNote(runs, turn.runId)}`
 					let reachedStepLimit = false;
 					// The turn was planned unpaused, but a pause can land while its servers connect:
 					// read it once more before the first request, which `stopWhen` never sees.
-					const pause = { stopped: false };
+					let stopReason: string | null = null;
 					try {
-						pause.stopped = Boolean(await registry.agentPause(agent.agentId));
+						if (await registry.agentPause(agent.agentId)) stopReason = PAUSE_STOP;
 					} catch (error) {
 						console.error("Could not check whether the agent was paused", failureForLogs(error));
 					}
-					if (pause.stopped) {
-						writer.write({ type: "error", errorText: PAUSE_STOP });
-						await end("stopped", PAUSE_STOP);
+					if (stopReason) {
+						writer.write({ type: "error", errorText: stopReason });
+						await end("stopped", stopReason);
 						return;
 					}
-					// The SDK retries a failed provider call inside a step, so the pause is read
-					// before every attempt. The error is not an `APICallError`, so it is not retried.
-					let pauseReported = false;
-					const readPause = async () => {
-						if (pause.stopped) return true;
+					// The SDK retries a failed provider call inside a step, so the pause and the
+					// reservation are read before every attempt. The error is not an `APICallError`,
+					// so it is not retried.
+					let stopReported = false;
+					const readStop = async (budget = true) => {
+						if (stopReason) return stopReason;
 						try {
-							pause.stopped = Boolean(await registry.agentPause(agent.agentId));
+							if (await registry.agentPause(agent.agentId)) stopReason = PAUSE_STOP;
 						} catch (error) {
 							console.error("Could not check whether the agent was paused", failureForLogs(error));
 						}
-						return pause.stopped;
+						if (budget && !stopReason && this.#costReached(runId, turn.reservation.costMicros)) {
+							stopReason = BUDGET_STOP;
+						}
+						return stopReason;
 					};
 					const baseModel = this.modelFor(agent, key, {
 						workspace: workspaceId,
@@ -1137,11 +1156,13 @@ ${runPageNote(runs, turn.runId)}`
 										middleware: {
 											specificationVersion: "v4",
 											wrapStream: async ({ doStream }) => {
-												if (await readPause()) throw new Error(PAUSE_STOP);
+												const reason = await readStop();
+												if (reason) throw new Error(reason);
 												return doStream();
 											},
 											wrapGenerate: async ({ doGenerate }) => {
-												if (await readPause()) throw new Error(PAUSE_STOP);
+												const reason = await readStop();
+												if (reason) throw new Error(reason);
 												return doGenerate();
 											},
 										},
@@ -1158,15 +1179,9 @@ ${runPageNote(runs, turn.runId)}`
 						}),
 						tools,
 						stopWhen: async ({ steps }) => {
-							try {
-								pause.stopped = Boolean(await registry.agentPause(agent.agentId));
-							} catch (error) {
-								console.error(
-									"Could not check whether the agent was paused",
-									failureForLogs(error),
-								);
-							}
-							if (pause.stopped) return true;
+							// The budget is enforced before a request, not here: a reply that ends the
+							// turn exactly at its ceiling succeeds, since no next request is made.
+							if (await readStop(false)) return true;
 							reachedStepLimit = steps.length >= maxSteps;
 							return reachedStepLimit;
 						},
@@ -1174,9 +1189,9 @@ ${runPageNote(runs, turn.runId)}`
 						onStepStart: ({ stepNumber }) => run.stepStarted(stepNumber),
 						onStepEnd: (step) => run.stepEnded(step),
 						onStepError: ({ stepNumber, error }) =>
-							run.stepFailed(stepNumber, describeFailure(agent, error)),
+							run.stepFailed(stepNumber, stopReason ?? describeFailure(agent, error)),
 						onEnd: ({ finishReason }) => {
-							if (pause.stopped) return end("stopped", PAUSE_STOP);
+							if (stopReason) return end("stopped", stopReason);
 							if (finishReason === "error")
 								return end("failed", `${agent.name} could not finish its answer.`);
 							if (reachedStepLimit)
@@ -1188,8 +1203,8 @@ ${runPageNote(runs, turn.runId)}`
 						},
 						onAbort: () => end("stopped"),
 						onError: ({ error }) =>
-							pause.stopped
-								? end("stopped", PAUSE_STOP)
+							stopReason
+								? end("stopped", stopReason)
 								: end("failed", describeFailure(agent, error)),
 					});
 					// The finish is written here, not by `toUIMessageStream`, so the turn's changes
@@ -1201,9 +1216,9 @@ ${runPageNote(runs, turn.runId)}`
 						sendStart: false,
 						sendFinish: false,
 						onError: (error) => {
-							if (pause.stopped) {
-								pauseReported = true;
-								return PAUSE_STOP;
+							if (stopReason) {
+								stopReported = true;
+								return stopReason;
 							}
 							console.error("A turn failed", {
 								agent: agent.agentId,
@@ -1213,8 +1228,7 @@ ${runPageNote(runs, turn.runId)}`
 						},
 					});
 					for await (const chunk of ui) writer.write(chunk);
-					if (pause.stopped && !pauseReported)
-						writer.write({ type: "error", errorText: PAUSE_STOP });
+					if (stopReason && !stopReported) writer.write({ type: "error", errorText: stopReason });
 					// The capture itself waits for the first tool call, so a turn that never
 					// touched the sandbox has nothing to sum, and asking would start a container.
 					// A stopped turn sums nothing either: its git reads would hold up the finish.
@@ -1256,10 +1270,11 @@ ${runPageNote(runs, turn.runId)}`
 			edges,
 			repository,
 			runId,
+			reservation,
 			sandbox: sandboxed,
 		}: Pick<
 			ConversationTurn,
-			"agent" | "key" | "mcpServers" | "edges" | "repository" | "runId" | "sandbox"
+			"agent" | "key" | "mcpServers" | "edges" | "repository" | "runId" | "reservation" | "sandbox"
 		>,
 		run: RunRecorder,
 		signal: AbortSignal | undefined,
@@ -1375,7 +1390,8 @@ ${runPageNote(runs, turn.runId)}`
 				};
 				const state = {
 					agentId: agent.agentId,
-					paused: false,
+					stopReason: null as string | null,
+					costMicros: reservation.costMicros,
 					token,
 					tools: offered ? tools : null,
 					signal: calls.signal,
@@ -1413,7 +1429,7 @@ ${runPageNote(runs, turn.runId)}`
 					});
 					// A pause or abort could have been asked for in the startup window above, when the
 					// sandbox did not have the engine's handle yet. Now that it does, reach it.
-					if ((state.paused || signal?.aborted) && !stopped) stop();
+					if ((state.stopReason || signal?.aborted) && !stopped) stop();
 					// startEngine resolving means the process is up, not that it has spoken; the
 					// label stays until the engine's first line (the finally clears a silent turn's).
 					let started = false;
@@ -1435,9 +1451,9 @@ ${runPageNote(runs, turn.runId)}`
 					await toolbox.close();
 				}
 				const ended = turn.end();
-				if (state.paused) {
-					writer.write({ type: "error", errorText: PAUSE_STOP });
-					await end("stopped", PAUSE_STOP);
+				if (state.stopReason) {
+					writer.write({ type: "error", errorText: state.stopReason });
+					await end("stopped", state.stopReason);
 				} else if (signal?.aborted) {
 					await end("stopped");
 				} else {

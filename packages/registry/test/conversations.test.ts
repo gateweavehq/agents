@@ -122,6 +122,7 @@ describe("conversations", () => {
 			sandbox: false,
 			repository: null,
 			memory: false,
+			reservation: { costMicros: 10_000, seconds: null },
 			runId: expect.any(String),
 			origin: "person",
 		});

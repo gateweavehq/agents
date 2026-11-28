@@ -1704,7 +1704,7 @@ export class RegistryDO extends DurableObject {
 					teamPath: position?.path ?? null,
 					sandbox: prepared.sandbox,
 					replayOf,
-					reservation: this.#turnReservation(),
+					reservation: prepared.reservation,
 				},
 				Date.now(),
 			);
@@ -1801,7 +1801,7 @@ export class RegistryDO extends DurableObject {
 					sandbox: prepared.sandbox,
 					runId: reservation?.key,
 					trackReport,
-					reservation: this.#turnReservation(),
+					reservation: prepared.reservation,
 				},
 				now,
 			);
@@ -1966,7 +1966,7 @@ export class RegistryDO extends DurableObject {
 					startedBy: parties.startedBy,
 					sandbox: prepared.sandbox,
 					trackReport,
-					reservation: this.#turnReservation(),
+					reservation: prepared.reservation,
 				},
 				now,
 			);
@@ -2053,7 +2053,7 @@ export class RegistryDO extends DurableObject {
 					startedBy,
 					teamPath: plan.position?.path ?? null,
 					sandbox: prepared.sandbox,
-					reservation: this.#turnReservation(),
+					reservation: prepared.reservation,
 				},
 				now,
 			);
@@ -2129,7 +2129,7 @@ export class RegistryDO extends DurableObject {
 					teamPath: now.position.path,
 					parent: now.parent,
 					sandbox: prepared.sandbox,
-					reservation: this.#turnReservation(),
+					reservation: prepared.reservation,
 				},
 				at,
 			);
@@ -2262,6 +2262,7 @@ export class RegistryDO extends DurableObject {
 			memory: tools && agent.memory && agent.engine === "gateweave" && !review,
 			// Its work goes in many small steps, as a sandbox's does.
 			...(files ? { files: true as const, steps: MAX_SANDBOX_STEPS } : {}),
+			reservation: this.#turnReservation(),
 		};
 	}
 
