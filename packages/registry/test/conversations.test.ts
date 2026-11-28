@@ -11,6 +11,7 @@ import {
 } from "@gateweave/agents-model";
 import { describe, expect, it, vi } from "vitest";
 import { METER_NAME, type RegistryDO } from "../src";
+import { RUN_TIMEOUT } from "../src/runs";
 import { saveAgent } from "./agent-update";
 import type { RegistryDO as TestRegistry } from "./worker";
 
@@ -241,6 +242,77 @@ describe("workspace model-key spending caps", () => {
 		expect(second).toMatchObject({ status: "refused" });
 		if (!("status" in second)) throw new Error("expected a refusal");
 		expect(second.message).toContain("monthly cap, $2");
+	});
+
+	it("admits exactly one of two concurrent turns competing for the last budget", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		// The deployment reserves $0.01 a turn (the test server's SANDBOX_TURN_COST); a cap of
+		// $0.015 fits one reservation but never two.
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.015" });
+		const first = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		const second = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+
+		const [one, two] = await Promise.all([
+			stub.beginTurn(first, "Hello"),
+			stub.beginTurn(second, "Hello"),
+		]);
+		const begun = [one, two].filter((turn) => !("status" in turn));
+		const refusedTurns = [one, two].filter((turn) => "status" in turn);
+		expect(begun).toHaveLength(1);
+		expect(refusedTurns).toHaveLength(1);
+		const loser = refusedTurns[0];
+		if (!loser || !("status" in loser)) throw new Error("expected a refusal");
+		expect(loser.message).toContain("monthly cap, $0.015");
+
+		// While the winner runs, no other turn starts: it counts at its ceiling, not what it
+		// has spent so far.
+		const winner = begun[0];
+		if (!winner || "status" in winner) throw new Error("expected a run");
+		expect(await stub.beginTurn(second, "Meanwhile")).toMatchObject({ status: "refused" });
+
+		// Once it settles under its ceiling, the estimate is what it cost, and a turn that fits
+		// the rest may begin.
+		await finish(stub, winner.runId, 4_000);
+		const after = await stub.beginTurn(second, "Again");
+		expect(after).toHaveProperty("runId");
+	});
+
+	it("writes the turn's ceiling on the run row as it begins", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		const id = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		const first = await stub.beginTurn(id, "Hello");
+		if ("status" in first) throw new Error(first.message);
+		expect(
+			(await runInDurableObject(stub, async (instance: RegistryDO) =>
+				(instance as unknown as TestRegistry).reservationOf(first.runId),
+			)) as { costMicros: number | null } | null,
+		).toMatchObject({ costMicros: 10_000 });
+	});
+
+	it("keeps an unswept stale run's reservation against the cap until its cost is swept", async () => {
+		const stub = registry();
+		const agent = await withAgent(stub);
+		await stub.saveProviderKey({ provider: "anthropic", key: "sk-ant-api03-abcdefgh" }, "Ada");
+		await stub.setModelKeyCaps({ daily: "", monthly: "0.015" });
+		const first = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		const second = (await stub.startConversation(agent.id, ADA))?.id ?? "";
+		const begun = await stub.beginTurn(first, "Hello");
+		if ("status" in begun) throw new Error(begun.message);
+		await runInDurableObject(stub, (_instance, state) => {
+			state.storage.sql.exec(
+				"UPDATE runs SET started_at = ? WHERE id = ?",
+				Date.now() - RUN_TIMEOUT - 1,
+				begun.runId,
+			);
+		});
+
+		// No read has swept the stale run yet. Its reservation must still hold the budget it
+		// reserved: after the sweep the same budget becomes its cost estimate, so there is no gap.
+		expect(await stub.beginTurn(second, "Meanwhile")).toMatchObject({ status: "refused" });
 	});
 
 	it("pass 80 and 100 percent of a monthly cap once in a period", async () => {
@@ -1066,6 +1138,36 @@ describe("sandbox time", () => {
 					});
 				},
 				{ limits: { SANDBOX_MONTHLY_MINUTES: "1000" } },
+			);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("counts a running turn at the ceiling it reserved instead of what it has used", async () => {
+		const stub = registry();
+		const [first = "", second = ""] = await builderConversations(stub, 2);
+		const start = Date.UTC(2026, 11, 15, 10);
+		const clock = vi.spyOn(Date, "now").mockReturnValue(start);
+		try {
+			await withSandboxes(
+				stub,
+				async (instance) => {
+					// A turn reserves 300 seconds; the cap is 15 minutes. The first turn, 100
+					// seconds in, counts at its ceiling: 100 + 5 idle minutes stretch + the 200
+					// seconds of its reservation it has not used = 600. The second's own ceiling
+					// fills the cap exactly (900), so it begins. Counting the running turn's
+					// reservation on top of what it has used would read 1000 and refuse it.
+					await turn(instance, first);
+					clock.mockReturnValue(start + 100_000);
+					expect(await instance.beginTurn(second, "Build it")).toMatchObject({ sandbox: true });
+				},
+				{
+					limits: {
+						SANDBOX_MONTHLY_MINUTES: "15",
+						SANDBOX_TURN_SECONDS: "300",
+					},
+				},
 			);
 		} finally {
 			clock.mockRestore();

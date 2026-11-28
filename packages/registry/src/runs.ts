@@ -68,6 +68,7 @@ export function beginRun(
 		replayOf = null,
 		runId = crypto.randomUUID(),
 		trackReport = null,
+		reservation = null,
 	}: {
 		agent: AgentSnapshot;
 		conversationId: string;
@@ -79,6 +80,8 @@ export function beginRun(
 		replayOf?: string | null;
 		runId?: string;
 		trackReport?: TrackRunAssociation | null;
+		/** What the run reserves until it ends: cost in millionths of a dollar, sandbox seconds. */
+		reservation?: { costMicros: number | null; seconds: number | null } | null;
 	},
 	now: number,
 ): string {
@@ -98,6 +101,8 @@ export function beginRun(
 			sandbox,
 			replayOf,
 			trackReport,
+			reservedCost: reservation?.costMicros ?? null,
+			reservedSeconds: reservation?.seconds ?? null,
 			...parent,
 		})
 		.run();
@@ -172,6 +177,63 @@ export function hasRuns(db: Db, conversationId: string): boolean {
 		db.select({ id: runs.id }).from(runs).where(eq(runs.conversationId, conversationId)).get() !==
 		undefined
 	);
+}
+
+/**
+ * What the runs still going in a period reserved, in millionths of a dollar: a cap counts a
+ * running turn at its ceiling, so two turns admitted at once cannot both fit the last budget.
+ */
+export function providerReserved(
+	db: Db,
+	providers: readonly string[],
+	from: number,
+	to: number,
+): number {
+	const row = db
+		.select({ reserved: sum(runs.reservedCost) })
+		.from(runs)
+		.where(
+			and(
+				inArray(runs.provider, providers as Run["provider"][]),
+				eq(runs.status, "running"),
+				isNull(runs.endedAt),
+				lt(runs.startedAt, to),
+			),
+		)
+		.get();
+	return Number(row?.reserved ?? 0);
+}
+
+/** What keyed-provider runs still going in a period reserved, matching `keyedProviderCost`. */
+export function keyedProviderReserved(db: Db, from: number, to: number): number {
+	return providerReserved(db, KEYED_PROVIDERS, from, to);
+}
+
+/**
+ * The sandbox seconds the workspace's running turns have reserved but not used yet: each counts
+ * at its ceiling while it runs, and `sandboxSeconds` already counts what it has used, so only the
+ * remainder is added. A run past its ceiling adds nothing.
+ */
+export function sandboxSecondsOutstanding(db: Db, from: number, to: number, now: number): number {
+	const rows = db
+		.select({ startedAt: runs.startedAt, reservedSeconds: runs.reservedSeconds })
+		.from(runs)
+		.where(
+			and(
+				eq(runs.sandbox, true),
+				eq(runs.status, "running"),
+				isNull(runs.endedAt),
+				isNotNull(runs.reservedSeconds),
+				gt(runs.startedAt, now - RUN_TIMEOUT),
+				lt(runs.startedAt, to),
+			),
+		)
+		.all();
+	let seconds = 0;
+	for (const row of rows) {
+		seconds += Math.max(0, (row.reservedSeconds ?? 0) - (now - row.startedAt) / 1000);
+	}
+	return seconds;
 }
 
 /** The runs that replay a run, oldest first. */
@@ -527,7 +589,12 @@ export function expireRuns(
 ): { id: string; startedAt: number; trackReport: TrackRunAssociation | null }[] {
 	return db
 		.update(runs)
-		.set({ status: "interrupted" })
+		.set({
+			status: "interrupted",
+			// What the run reserved becomes its estimate: nobody will report what it cost, so
+			// the budget it held stays spent instead of vanishing.
+			cost: sql`coalesce(${runs.cost}, ${runs.reservedCost})`,
+		})
 		.where(and(eq(runs.status, "running"), lte(runs.startedAt, now - RUN_TIMEOUT)))
 		.returning({ id: runs.id, startedAt: runs.startedAt, trackReport: runs.trackReport })
 		.all();

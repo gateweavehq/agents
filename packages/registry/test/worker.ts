@@ -184,6 +184,15 @@ export class RegistryDO extends Registry {
 		this.ctx.storage.kv.put(MODEL_KEY_CAP_KEY, [...this.modelKeyCapsPassed(), passed]);
 	}
 
+	/** What a run reserved as it began, for the reservation tests. */
+	reservationOf(runId: string): { costMicros: number | null; seconds: number | null } | null {
+		const row = this.ctx.storage.sql
+			.exec("SELECT reserved_cost, reserved_seconds FROM runs WHERE id = ?", runId)
+			.one() as { reserved_cost: number | null; reserved_seconds: number | null } | undefined;
+		if (!row) return null;
+		return { costMicros: row.reserved_cost, seconds: row.reserved_seconds };
+	}
+
 	/** What owners and admins would have been emailed about model-key spending caps. */
 	modelKeyCapsPassed(): ModelKeyCapPassed[] {
 		return this.ctx.storage.kv.get<ModelKeyCapPassed[]>(MODEL_KEY_CAP_KEY) ?? [];

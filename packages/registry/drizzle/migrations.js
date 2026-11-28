@@ -50,6 +50,7 @@ import m0048 from "./0048_track_report_outbox.sql";
 import m0049 from "./0049_agent_pauses.sql";
 import m0050 from "./0050_pull_request_reviews.sql";
 import m0051 from "./0051_polite_karen_page.sql";
+import m0052 from "./0052_white_wendell_vaughn.sql";
 import journal from "./meta/_journal.json";
 
 export default {
@@ -107,5 +108,6 @@ export default {
 		m0049,
 		m0050,
 		m0051,
+		m0052,
 	},
 };

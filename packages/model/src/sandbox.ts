@@ -32,6 +32,19 @@ export interface SandboxSettings {
 	SANDBOX_MONTHLY_BUDGET?: string;
 	/** The binding of the meter's Durable Object, which a monthly budget needs. */
 	SANDBOX_METER?: unknown;
+	/**
+	 * What a single turn reserves, in US dollars at list prices, against the workspace's
+	 * model-key caps and the server's Workers AI limit as it begins; no reservation when unset or
+	 * empty. It reserves at admission: it does not count toward the sandbox budget, which is
+	 * priced in seconds, and it does not stop a turn that is already running.
+	 */
+	SANDBOX_TURN_COST?: string;
+	/**
+	 * What a single turn reserves, in seconds of sandbox time, against the workspace's sandbox
+	 * minute limits and the server's monthly sandbox budget as it begins; no reservation when
+	 * unset or empty. It reserves at admission: it does not stop a turn that is already running.
+	 */
+	SANDBOX_TURN_SECONDS?: string;
 }
 
 /** The machine a sandbox runs on: Cloudflare's `standard-1`, with ½ vCPU, 4 GiB of memory and 8 GB of disk. */
@@ -135,6 +148,10 @@ export interface SandboxLimits {
 	monthlyMinutes: number | null;
 	/** US dollars the deployment may spend in a month (UTC). */
 	monthlyBudget: number | null;
+	/** US dollars one turn may cost at most, reserved as it begins. */
+	turnCost: number | null;
+	/** Seconds of sandbox time one turn may use at most, reserved as it begins. */
+	turnSeconds: number | null;
 }
 
 /** A setting that is not a number allows nothing, so a mistyped limit never lifts it. */
@@ -143,6 +160,8 @@ export function sandboxLimits(settings: SandboxSettings): SandboxLimits {
 		dailyMinutes: limit(settings.SANDBOX_DAILY_MINUTES),
 		monthlyMinutes: limit(settings.SANDBOX_MONTHLY_MINUTES),
 		monthlyBudget: limit(settings.SANDBOX_MONTHLY_BUDGET),
+		turnCost: limit(settings.SANDBOX_TURN_COST),
+		turnSeconds: limit(settings.SANDBOX_TURN_SECONDS),
 	};
 }
 

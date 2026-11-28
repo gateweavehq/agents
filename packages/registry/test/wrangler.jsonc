@@ -13,7 +13,8 @@
 		"SECRETS_KEY": "dGVzdC1vbmx5LXNlY3JldHMta2V5LXRlc3Qtb25seS0=",
 		"BETTER_AUTH_SECRET": "test-only-auth-secret-that-signs-nothing-0123",
 		"WORKERS_AI_TOKEN": "workers-ai-test-token-not-a-real-one",
-		"CLOUDFLARE_ACCOUNT_ID": "0123456789abcdef0123456789abcdef"
+		"CLOUDFLARE_ACCOUNT_ID": "0123456789abcdef0123456789abcdef",
+		"SANDBOX_TURN_COST": "0.01"
 	},
 	"durable_objects": {
 		"bindings": [
