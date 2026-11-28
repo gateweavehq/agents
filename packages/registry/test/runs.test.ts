@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { agentDefinitionInput } from "@gateweave/agents-model";
-import { describe, expect, it } from "vitest";
+import { agentDefinitionInput, RUN_TIMEOUT_MS } from "@gateweave/agents-model";
+import { describe, expect, it, vi } from "vitest";
 import type { RegistryDO } from "../src";
 
 const registry = () => env.REGISTRY.getByName(crypto.randomUUID());
@@ -156,6 +156,27 @@ describe("runs", () => {
 			cost: late.cost,
 		});
 		expect(await stub.finishRun(runId, finished)).toBe(false);
+	});
+
+	it("are still running exactly at the timeout, and interrupted one millisecond later", async () => {
+		const { stub, runId } = await turn();
+		let now = Date.now();
+		const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+		try {
+			await runInDurableObject(stub, (_instance: RegistryDO, state) => {
+				state.storage.sql.exec(
+					"UPDATE runs SET started_at = ? WHERE id = ?",
+					now - RUN_TIMEOUT_MS,
+					runId,
+				);
+			});
+			// Every reader treats exactly this age as within the timeout, complementing the strict sweep.
+			expect(await stub.getRun(runId)).toMatchObject({ status: "running", endedAt: null });
+			now += 1;
+			expect(await stub.getRun(runId)).toMatchObject({ status: "interrupted", endedAt: null });
+		} finally {
+			clock.mockRestore();
+		}
 	});
 
 	it("refuse a report that is not one", async () => {

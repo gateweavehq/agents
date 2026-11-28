@@ -42,7 +42,7 @@ import { agents, runs, triggers } from "./db/schema";
 import type { Db } from "./state";
 import type { TrackRunAssociation } from "./track-reports";
 
-/** A run still going after this long was cut short and will not report back. */
+/** A run still going for longer than this was cut short; exactly at it, it is still running. */
 export const RUN_TIMEOUT = RUN_TIMEOUT_MS;
 
 /** Where a nested run sits: the run that called it over an edge, and the run at the top. */
@@ -515,7 +515,9 @@ export function runningRuns(db: Db, now: number): number {
 }
 
 /**
- * Marks runs that have gone on for longer than any turn does as interrupted. The runtime closes
+ * Marks runs that have gone on for longer than any turn does as interrupted. Every reader uses
+ * the inclusive complement (`gte`) for a run still inside the timeout, so exactly at the boundary
+ * a run is counted once as running and is interrupted from the next millisecond. The runtime closes
  * the runs a restart cut short when its conversation wakes again, but a conversation nobody opens
  * again never wakes. If one does, its report still fills in what the run used (`finishRun`).
  */
