@@ -390,11 +390,13 @@ export class FakeGit {
 
 		const review = resource.match(/^pulls\/(\d+)\/reviews$/);
 		if (method === "GET" && review) {
+			const perPage = Number(url.searchParams.get("per_page") ?? 30);
+			const page = Number(url.searchParams.get("page") ?? 1);
 			return Response.json(
-				this.reviews.map((posted) => ({
+				this.reviews.slice((page - 1) * perPage, page * perPage).map((posted) => ({
 					commit_id: posted.commitId,
 					body: posted.body,
-					event: posted.event,
+					state: posted.event === "COMMENT" ? "COMMENTED" : posted.event,
 				})),
 			);
 		}

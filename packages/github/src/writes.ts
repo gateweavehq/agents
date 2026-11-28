@@ -555,7 +555,7 @@ export interface CreateReviewInput {
 	comments: readonly PullRequestReviewComment[];
 }
 
-const pullReviewSchema = z.object({ commit_id: objectId, body: z.string(), event: z.string() });
+const pullReviewSchema = z.object({ commit_id: objectId, body: z.string(), state: z.string() });
 
 /** Whether the exact comment-only review is already on the pull request. */
 export async function pullRequestReviewExists(
@@ -564,17 +564,26 @@ export async function pullRequestReviewExists(
 	number: number,
 	input: { commitId: string; body: string },
 ): Promise<boolean> {
-	const answer = z
-		.array(pullReviewSchema)
-		.parse(
-			await request(`${repositoryPath(repository)}/pulls/${number}/reviews?per_page=100`, token),
-		);
-	return answer.some(
-		(review) =>
-			review.event === "COMMENT" &&
-			review.commit_id === input.commitId &&
-			review.body === input.body,
-	);
+	for (let page = 1; ; page += 1) {
+		const answer = z
+			.array(pullReviewSchema)
+			.parse(
+				await request(
+					`${repositoryPath(repository)}/pulls/${number}/reviews?per_page=100&page=${page}`,
+					token,
+				),
+			);
+		if (
+			answer.some(
+				(review) =>
+					review.state === "COMMENTED" &&
+					review.commit_id === input.commitId &&
+					review.body === input.body,
+			)
+		)
+			return true;
+		if (answer.length < 100) return false;
+	}
 }
 
 /** Posts one pull request review as comments only. */

@@ -408,6 +408,27 @@ describe("repository writes", () => {
 				body: "Summary",
 			}),
 		).resolves.toBe(true);
+
+		const before = fake.requests.length;
+		fake.reviews.unshift(
+			...Array.from({ length: 100 }, (_, index) => ({
+				commitId: commit,
+				body: `Other ${index}`,
+				event: "COMMENT",
+				comments: [],
+			})),
+		);
+		await expect(
+			pullRequestReviewExists(fake.token, fake.repository, 12, {
+				commitId: commit,
+				body: "Summary",
+			}),
+		).resolves.toBe(true);
+		expect(fake.requests.slice(before)).toEqual([
+			"GET /repos/acme/site/pulls/12/reviews",
+			"GET /repos/acme/site/pulls/12/reviews",
+		]);
+		// second review page
 		await expect(
 			pullRequestReviewExists(fake.token, fake.repository, 12, {
 				commitId: commit,
