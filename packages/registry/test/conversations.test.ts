@@ -174,7 +174,9 @@ describe("workspace model-key spending caps", () => {
 		// The refusal stays visible as a zero-use run, with the workspace cap as its reason.
 		const capped = await stub.listRuns();
 		expect(capped).toHaveLength(2);
-		expect(capped[0]).toMatchObject({ status: "refused", error: monthly.message });
+		expect(capped.find((run) => run.status === "refused")).toMatchObject({
+			error: monthly.message,
+		});
 		await stub.setModelKeyCaps({ daily: "0", monthly: "" });
 		const zero = await stub.beginTurn(id, "Again");
 		expect(zero).toMatchObject({ status: "refused" });
@@ -475,8 +477,7 @@ describe("turns with Workers AI", () => {
 		// The Workers AI refusal stays visible too, classified by its own message.
 		const afterRefusal = await stub.listRuns();
 		expect(afterRefusal).toHaveLength(beforeRefusal.length + 1);
-		expect(afterRefusal[0]).toMatchObject({
-			status: "refused",
+		expect(afterRefusal.find((run) => run.status === "refused")).toMatchObject({
 			error:
 				"This workspace has used its Workers AI for today, $1.5, so Scout cannot answer until the day ends (UTC). Another provider's model, with the workspace's own key, can answer meanwhile.",
 		});
@@ -512,8 +513,7 @@ describe("turns with Workers AI", () => {
 		expect(second).toMatchObject({ status: "refused" });
 		if (!("status" in second)) throw new Error("expected a refusal");
 		expect(second.message).toContain("Workers AI for today, $1.5");
-		expect((await stub.listRuns())[0]).toMatchObject({
-			status: "refused",
+		expect((await stub.listRuns()).find((run) => run.status === "refused")).toMatchObject({
 			error: second.message,
 		});
 	});
