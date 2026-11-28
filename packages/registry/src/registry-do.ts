@@ -2235,13 +2235,6 @@ export class RegistryDO extends DurableObject {
 	 * is prepared, and others may begin meanwhile.
 	 */
 	#sandboxLimitRefusal(conversation: string, agent: AgentSnapshot): TurnRefusal | null {
-		const idle = this.#idleMinutes();
-		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
-			return refused(
-				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
-				"waiting-for-slot",
-			);
-		}
 		const { dailyMinutes, monthlyMinutes } = sandboxLimits(this.env as SandboxSettings);
 		// The month first: when both are used up, the refusal that names the later reset is the true one.
 		if (monthlyMinutes !== null) {
@@ -2258,6 +2251,13 @@ export class RegistryDO extends DurableObject {
 			return refused(
 				`${SANDBOX_DAY_USED}, ${dailyMinutes} minutes, so ${agent.name} cannot answer until the day ends (UTC).`,
 				"budget-limit",
+			);
+		}
+		const idle = this.#idleMinutes();
+		if (sandboxesInUse(this.#db, conversation, Date.now(), idle) >= MAX_WORKSPACE_SANDBOXES) {
+			return refused(
+				`The workspace's conversations are using all ${MAX_WORKSPACE_SANDBOXES} of its sandboxes, so ${agent.name} cannot answer now. A sandbox is free again ${idle} minutes after its conversation's last turn.`,
+				"waiting-for-slot",
 			);
 		}
 		return null;
