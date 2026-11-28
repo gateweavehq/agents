@@ -195,7 +195,7 @@ const refusalDetail: Record<TrackRefusal, string> = {
 type ReportPhase =
 	| { state: "queued" }
 	| { state: "running"; startedAt: number }
-	| { state: "failed"; refusal: TrackRefusal }
+	| { state: "failed"; refusal: TrackRefusal; detail?: string }
 	| { state: "passed" | "failed" | "cancelled"; startedAt: number; endedAt: number };
 
 export interface TrackReport {
@@ -208,6 +208,7 @@ export interface TrackReport {
 export function trackReportBody({ target, key, sentAt, phase }: TrackReport) {
 	const run = "startedAt" in phase;
 	const refusal = "refusal" in phase ? phase.refusal : null;
+	const detail = refusal && "detail" in phase ? phase.detail : undefined;
 	const waitReason =
 		refusal === "budget-limit" || refusal === "waiting-for-slot" || refusal === "needs-mapping"
 			? refusal
@@ -225,7 +226,10 @@ export function trackReportBody({ target, key, sentAt, phase }: TrackReport) {
 		...(run && target.runsPage && { url: `${target.runsPage}${key}` }),
 		...("endedAt" in phase && { endedAt: new Date(phase.endedAt).toISOString() }),
 		...(waitReason && { waitReason }),
-		...(refusal && { progress: "Run could not start", waitDetail: refusalDetail[refusal] }),
+		...(refusal && {
+			progress: "Run could not start",
+			waitDetail: detail ?? refusalDetail[refusal],
+		}),
 		...(run && phase.state === "failed" && { progress: "Run did not complete successfully" }),
 	};
 }
