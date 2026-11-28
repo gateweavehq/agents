@@ -856,6 +856,23 @@ describe("namesFile", () => {
 		expect(namesFile("vitest run > test/a.test.ts", "test/a.test.ts")).toBe(false);
 	});
 
+	it("does not treat an escaped quote inside double quotes as the end of the word", () => {
+		expect(namesFile('vitest run "test/\\" test/a.test.ts"', "test/a.test.ts")).toBe(false);
+	});
+
+	it("does not treat a quoted command name as an environment assignment", () => {
+		expect(namesFile('"X=1" vitest run test/a.test.ts', "test/a.test.ts")).toBe(false);
+	});
+
+	it("recognizes node --test only before the end of its options", () => {
+		expect(namesFile("node -- --test test/a.test.ts", "test/a.test.ts")).toBe(false);
+		expect(namesFile("node --import tsx --test test/a.test.ts", "test/a.test.ts")).toBe(true);
+	});
+
+	it("accepts npm exec's separator before the runner", () => {
+		expect(namesFile("npm exec -- vitest run test/a.test.ts", "test/a.test.ts")).toBe(true);
+	});
+
 	it("still accepts a runner whose output is redirected", () => {
 		for (const command of [
 			"vitest run test/a.test.ts >proof.out",
