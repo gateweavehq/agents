@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	REVIEW_LIMITS,
+	REVIEW_SUMMARY_LIMIT,
 	type ReviewedFinding,
 	type ReviewProof,
 	rankFindings,
@@ -174,6 +175,22 @@ describe("renderReview", () => {
 		expect(rendered.summary).toContain(
 			"Proposed test: `test/a.test.ts` with `node test/a.test.ts`.",
 		);
+	});
+
+	it("fits GitHub's body limit even with the largest findings, and still ends with disclosure", () => {
+		const large = Array.from({ length: REVIEW_LIMITS.findings }, (_, index) =>
+			reviewed({
+				line: index + 1,
+				title: `Large ${index} ${"t".repeat(REVIEW_LIMITS.title)}`,
+				failingCase: "x".repeat(REVIEW_LIMITS.failingCase),
+			}),
+		);
+		const rendered = renderReview({ findings: large, agentName: "Reviewer" });
+		expect(rendered.summary.length).toBeLessThanOrEqual(REVIEW_SUMMARY_LIMIT);
+		expect(rendered.summary).toContain(
+			"A second reader's findings, not an approval. A person reviews and merges.",
+		);
+		expect(rendered.summary.endsWith("<!-- AI-Disclosure: mode=machine-generated -->")).toBe(true);
 	});
 });
 

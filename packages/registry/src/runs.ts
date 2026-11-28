@@ -519,11 +519,16 @@ export function runningRuns(db: Db, now: number): number {
  * the runs a restart cut short when its conversation wakes again, but a conversation nobody opens
  * again never wakes. If one does, its report still fills in what the run used (`finishRun`).
  */
-export function expireRuns(db: Db, now: number): void {
-	db.update(runs)
+export function expireRuns(
+	db: Db,
+	now: number,
+): { id: string; startedAt: number; trackReport: TrackRunAssociation | null }[] {
+	return db
+		.update(runs)
 		.set({ status: "interrupted" })
 		.where(and(eq(runs.status, "running"), lt(runs.startedAt, now - RUN_TIMEOUT)))
-		.run();
+		.returning({ id: runs.id, startedAt: runs.startedAt, trackReport: runs.trackReport })
+		.all();
 }
 
 /**

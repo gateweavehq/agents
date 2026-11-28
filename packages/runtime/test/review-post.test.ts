@@ -64,6 +64,21 @@ describe("postReviewOnce", () => {
 		expect(calls).toHaveLength(2);
 	});
 
+	it("reconciles a review GitHub accepted before its response was lost", async () => {
+		const kept = memory();
+		const failing = vi.fn(async () => {
+			throw new GitHubError(0, "response lost");
+		});
+		await expect(postReviewOnce(failing, input, kept)).rejects.toMatchObject({ status: 0 });
+		const posts = vi.fn(async () => {});
+		const reconcile = vi.fn(async () => true);
+		await expect(postReviewOnce(posts, input, kept, reconcile)).resolves.toMatchObject({
+			alreadyPosted: true,
+		});
+		expect(reconcile).toHaveBeenCalledOnce();
+		expect(posts).not.toHaveBeenCalled();
+	});
+
 	it("does not remember a refused fallback or another failure", async () => {
 		const kept = memory();
 		const refused = vi

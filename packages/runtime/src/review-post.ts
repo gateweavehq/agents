@@ -1,4 +1,9 @@
-import { createReview, type GitHubApp, GitHubError } from "@gateweave/agents-github";
+import {
+	createReview,
+	type GitHubApp,
+	GitHubError,
+	pullRequestReviewExists,
+} from "@gateweave/agents-github";
 import type { SandboxRepository } from "@gateweave/agents-model";
 
 export interface ReviewPostComment {
@@ -22,6 +27,9 @@ export interface ReviewPostInput {
 }
 
 export type ReviewPost = (input: Omit<ReviewPostInput, "key">) => Promise<void>;
+export type ReviewReconcile = (
+	input: Omit<ReviewPostInput, "key" | "comments">,
+) => Promise<boolean>;
 
 /**
  * Posts a review once for the key the conversation keeps. GitHub can refuse line comments with a
@@ -32,6 +40,7 @@ export async function postReviewOnce(
 	post: ReviewPost,
 	input: ReviewPostInput,
 	memory: ReviewPostMemory,
+	reconcile: ReviewReconcile | null = null,
 ): Promise<{ posted: boolean; alreadyPosted: boolean; summaryOnly: boolean }> {
 	if (await memory.recall(input.key))
 		return { posted: false, alreadyPosted: true, summaryOnly: false };
@@ -40,15 +49,26 @@ export async function postReviewOnce(
 		commitId: input.commitId,
 		summary: input.summary,
 	};
-	try {
-		await post({ ...withoutKey, comments: input.comments });
+	const uncertain = `${input.key}:uncertain`;
+	// A response lost after GitHub accepted the review must be reconciled before posting again.
+	if ((await memory.recall(uncertain)) && reconcile && (await reconcile(withoutKey))) {
 		await memory.remember(input.key);
-		return { posted: true, alreadyPosted: false, summaryOnly: false };
-	} catch (error) {
-		if (!(error instanceof GitHubError) || error.status !== 422) throw error;
+		return { posted: false, alreadyPosted: true, summaryOnly: false };
 	}
-	await post({ ...withoutKey, comments: [] });
-	await memory.remember(input.key);
+	const postOrThrow = async (comments: readonly ReviewPostComment[]): Promise<boolean> => {
+		try {
+			await post({ ...withoutKey, comments });
+			await memory.remember(input.key);
+			return true;
+		} catch (error) {
+			if (error instanceof GitHubError && error.status === 422) return false;
+			await memory.remember(uncertain);
+			throw error;
+		}
+	};
+	if (await postOrThrow(input.comments))
+		return { posted: true, alreadyPosted: false, summaryOnly: false };
+	if (!(await postOrThrow([]))) throw new GitHubError(422, "GitHub refused the review");
 	return { posted: true, alreadyPosted: false, summaryOnly: true };
 }
 
@@ -65,5 +85,27 @@ export function gitHubReviewPost(app: GitHubApp, repository: SandboxRepository):
 			event: "COMMENT",
 			comments,
 		});
+	};
+}
+
+/** Checks whether GitHub already holds exactly this review. */
+export function gitHubReviewReconcile(
+	app: GitHubApp,
+	repository: SandboxRepository,
+): ReviewReconcile {
+	return async ({ number, commitId, summary }) => {
+		const token = await app.repositoryToken(repository.installationId, repository.externalId, {
+			contents: "read",
+			pull_requests: "write",
+		});
+		return pullRequestReviewExists(
+			token,
+			{ owner: repository.owner, name: repository.name },
+			number,
+			{
+				commitId,
+				body: summary,
+			},
+		);
 	};
 }

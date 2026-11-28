@@ -555,6 +555,28 @@ export interface CreateReviewInput {
 	comments: readonly PullRequestReviewComment[];
 }
 
+const pullReviewSchema = z.object({ commit_id: objectId, body: z.string(), event: z.string() });
+
+/** Whether the exact comment-only review is already on the pull request. */
+export async function pullRequestReviewExists(
+	token: string,
+	repository: RepositoryName,
+	number: number,
+	input: { commitId: string; body: string },
+): Promise<boolean> {
+	const answer = z
+		.array(pullReviewSchema)
+		.parse(
+			await request(`${repositoryPath(repository)}/pulls/${number}/reviews?per_page=100`, token),
+		);
+	return answer.some(
+		(review) =>
+			review.event === "COMMENT" &&
+			review.commit_id === input.commitId &&
+			review.body === input.body,
+	);
+}
+
 /** Posts one pull request review as comments only. */
 export async function createReview(
 	token: string,
@@ -562,12 +584,13 @@ export async function createReview(
 	number: number,
 	input: CreateReviewInput,
 ): Promise<void> {
-	await request(`${repositoryPath(repository)}/pulls/${number}/reviews`, token, {
+	await send(`${repositoryPath(repository)}/pulls/${number}/reviews`, token, {
 		method: "POST",
 		body: JSON.stringify({
 			commit_id: objectId.parse(input.commitId),
 			body: input.body,
-			event: input.event,
+			// Pinned here as well as typed: a runtime value outside the type can never become an approval.
+			event: "COMMENT",
 			comments: input.comments,
 		}),
 	});

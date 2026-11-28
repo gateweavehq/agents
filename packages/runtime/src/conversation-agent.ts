@@ -124,7 +124,12 @@ import {
 } from "./pull-requests";
 import { createRunMessages, recordRunMessage, replayHistory, runMessageOf } from "./replay";
 import { type ReviewPort, reviewTools } from "./review";
-import { gitHubReviewPost, postReviewOnce, type ReviewPostMemory } from "./review-post";
+import {
+	gitHubReviewPost,
+	gitHubReviewReconcile,
+	postReviewOnce,
+	type ReviewPostMemory,
+} from "./review-post";
 import {
 	gitHubReviewSource,
 	prepareReview,
@@ -1612,7 +1617,15 @@ ${runPageNote(runs, turn.runId)}`
 		await registry.recordReviewCounts(runId, reviewCountsOf({ findings }));
 		if (!context) return;
 		const post = this.#reviewPost(context.repository);
-		if (!post)
+		const env = this.env as { GITHUB_APP_ID?: string; GITHUB_APP_PRIVATE_KEY?: string };
+		const reconcile =
+			env.GITHUB_APP_ID && env.GITHUB_APP_PRIVATE_KEY
+				? gitHubReviewReconcile(
+						sharedApp({ appId: env.GITHUB_APP_ID, privateKey: env.GITHUB_APP_PRIVATE_KEY }),
+						context.repository,
+					)
+				: null;
+		if (!post || !reconcile)
 			throw new Error("GitHub is not set up on this server, so the review cannot be posted");
 		const rendered = renderReview({
 			findings,
@@ -1629,6 +1642,7 @@ ${runPageNote(runs, turn.runId)}`
 				comments: rendered.comments,
 			},
 			this.#reviewPostMemory(),
+			reconcile,
 		);
 	}
 

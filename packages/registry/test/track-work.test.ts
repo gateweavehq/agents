@@ -255,7 +255,8 @@ it("reuses an expired reservation, and orders the reports even if the clock does
 		const startedAt = now;
 		now += RUN_TIMEOUT_MS + 1;
 		expect(await stub.getRun(run.runId)).toMatchObject({ status: "interrupted", endedAt: null });
-		expect(reports).toHaveLength(2);
+		await vi.waitFor(() => expect(reports).toHaveLength(3));
+		expect(reports[2]).toMatchObject({ key: run.runId, state: "failed" });
 
 		await stub.deleteTrigger(trigger.id);
 		// Arrival time can be the same as running's timestamp, even after a clock adjustment.
@@ -272,10 +273,10 @@ it("reuses an expired reservation, and orders the reports even if the clock does
 				cost: null,
 			}),
 		).toBe(true);
-		await vi.waitFor(() => expect(reports).toHaveLength(3));
+		await vi.waitFor(() => expect(reports).toHaveLength(4));
 		const running = reports.find((report) => report.state === "running");
 		expect(running).toMatchObject({ key: run.runId, sentAt: new Date(now).toISOString() });
-		const failed = reports.find((report) => report.state === "failed");
+		const failed = reports.at(-1);
 		expect(failed).toMatchObject({
 			key: run.runId,
 			sentAt: new Date(now + 1).toISOString(),

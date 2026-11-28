@@ -109,6 +109,9 @@ export function rankFindings(findings: readonly ReviewedFinding[]): {
 	};
 }
 
+/** GitHub refuses a review body longer than this. */
+export const REVIEW_SUMMARY_LIMIT = 65_536;
+
 export interface RenderedReviewComment {
 	path: string;
 	line: number;
@@ -116,8 +119,14 @@ export interface RenderedReviewComment {
 	body: string;
 }
 
-function inline(text: string): string {
-	return text.replace(/\s+/g, " ").trim();
+function inline(text: string, limit = 500): string {
+	const flat = text.replace(/\s+/g, " ").trim();
+	const chars = Array.from(flat);
+	return chars.length <= limit ? flat : `${chars.slice(0, limit - 1).join("")}…`;
+}
+
+function charsOf(text: string, limit: number): string {
+	return Array.from(text).slice(0, limit).join("");
 }
 
 function proofText({ proof, test }: ReviewedFinding): string {
@@ -203,9 +212,16 @@ export function renderReview({
 			);
 		}
 	}
-	lines.push(disclosure(agentName));
+	const end = disclosure(agentName);
+	const body = lines.filter((line) => line !== null).join("\n\n");
+	let summary = `${body}\n\n${end}`;
+	if (summary.length > REVIEW_SUMMARY_LIMIT) {
+		const notice = "\n\n[The summary was shortened to fit GitHub's limit.]";
+		const room = REVIEW_SUMMARY_LIMIT - notice.length - end.length - 2;
+		summary = `${charsOf(body, Math.max(0, room))}${notice}\n\n${end}`;
+	}
 	return {
-		summary: lines.filter((line) => line !== null).join("\n\n"),
+		summary,
 		comments: ranked.shown
 			.filter((finding) => !finding.offDiff)
 			.map((finding) => ({

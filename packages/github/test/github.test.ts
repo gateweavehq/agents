@@ -9,6 +9,7 @@ import {
 	createBranch,
 	createCommit,
 	createReview,
+	pullRequestReviewExists,
 	GitHubApp,
 	importAppKey,
 	moveBranch,
@@ -371,17 +372,48 @@ describe("repository writes", () => {
 				comments: [],
 			}),
 		).rejects.toMatchObject({ status: 403 });
-		await expect(
-			createReview(fake.token, fake.repository, 12, {
-				commitId: commit,
-				body: "x",
-				event: "APPROVE" as never,
-				comments: [],
-			}),
-		).rejects.toMatchObject({ status: 422 });
+		await createReview(fake.token, fake.repository, 12, {
+			commitId: commit,
+			body: "x",
+			event: "APPROVE" as never,
+			comments: [],
+		});
+		expect(fake.reviews[1]?.event).toBe("COMMENT");
 		expect(
 			fake.requests.filter((route) => route.includes("/check-runs") || route.includes("/statuses")),
 		).toEqual([]);
+	});
+
+	it("finds exactly the review already posted", async () => {
+		const fake = new FakeGit();
+		vi.stubGlobal("fetch", fake.fetch);
+		const commit = await fake.seed({ "a.ts": "a" });
+		fake.branches.set("feature", commit);
+		fake.pulls.push({
+			number: 12,
+			title: "Change",
+			body: "",
+			head: "feature",
+			base: "main",
+		});
+		await createReview(fake.token, fake.repository, 12, {
+			commitId: commit,
+			body: "Summary",
+			event: "COMMENT",
+			comments: [],
+		});
+		await expect(
+			pullRequestReviewExists(fake.token, fake.repository, 12, {
+				commitId: commit,
+				body: "Summary",
+			}),
+		).resolves.toBe(true);
+		await expect(
+			pullRequestReviewExists(fake.token, fake.repository, 12, {
+				commitId: commit,
+				body: "Another summary",
+			}),
+		).resolves.toBe(false);
 	});
 
 	it("finds the open pull request from one of the repository's own branches", async () => {

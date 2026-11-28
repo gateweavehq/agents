@@ -62,6 +62,7 @@ export {
 	type PullRequest,
 	type PullRequestReviewComment,
 	pullRequest,
+	pullRequestReviewExists,
 	readTextAt,
 	textAt,
 	updatePullRequest,

@@ -389,6 +389,15 @@ export class FakeGit {
 		}
 
 		const review = resource.match(/^pulls\/(\d+)\/reviews$/);
+		if (method === "GET" && review) {
+			return Response.json(
+				this.reviews.map((posted) => ({
+					commit_id: posted.commitId,
+					body: posted.body,
+					event: posted.event,
+				})),
+			);
+		}
 		if (method === "POST" && review) {
 			const number = Number(review[1]);
 			const pull = this.pulls.find((candidate) => candidate.number === number);
