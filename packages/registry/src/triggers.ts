@@ -30,7 +30,7 @@ import {
 	triggerMessage,
 	triggerStarter,
 } from "@gateweave/agents-model";
-import { and, count, desc, eq, gte, inArray, isNull, lt, lte, min, ne, or } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, min, ne, or } from "drizzle-orm";
 import {
 	agentDefinitions,
 	agents,
@@ -699,7 +699,7 @@ function onTurn(db: Db, conversationId: string, now: number): boolean {
 			and(
 				eq(runs.conversationId, conversationId),
 				eq(runs.status, "running"),
-				gte(runs.startedAt, now - RUN_TIMEOUT),
+				gt(runs.startedAt, now - RUN_TIMEOUT),
 			),
 		)
 		.get();
