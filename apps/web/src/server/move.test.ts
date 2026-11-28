@@ -86,6 +86,20 @@ class DeletingRegistry extends RegistryDO {
 	}
 }
 
+function deletionRegistry(ids: string[], destroy = vi.fn()) {
+	const forgotten = new Set<string>();
+	return {
+		conversationIds: async () => ids,
+		conversationsToDestroy: async () => ids.filter((id) => !forgotten.has(id)),
+		noteConversationsDestroyed: async (destroyed: string[]) => {
+			for (const id of destroyed) forgotten.add(id);
+		},
+		noteConversationDeletionFailed: async () => {},
+		markWorkspaceDeleted: async () => {},
+		destroy,
+	};
+}
+
 beforeEach(() => {
 	vi.resetAllMocks();
 	deps.target.mockReturnValue(null);
@@ -177,8 +191,8 @@ it("leaves the old place's conversation untouched when the conversation started 
 
 it("deletes both workspace copies and forgets the sealed conversation through its own RPC", async () => {
 	const { db, batch } = query(location);
-	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
-	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
+	const liveRegistry = deletionRegistry(["one"]);
+	const oldRegistry = deletionRegistry(["one"]);
 	const destroy = vi.fn();
 	const moveForget = vi.fn();
 	place("eu", liveRegistry, { "workspace:one": { destroy } });
@@ -192,14 +206,21 @@ it("deletes both workspace copies and forgets the sealed conversation through it
 	expect(batch).toHaveBeenCalledOnce();
 });
 
-it.each(["conversationIds", "destroy"] as const)(
+it.each(["conversationsToDestroy", "destroy"] as const)(
 	"cleans the sealed copy before rejecting when the live registry's %s fails",
 	async (rpc) => {
 		const { db, statement, batch, deleted } = query(location);
 		const failure = new Error("registry unreachable");
 		const events: string[] = [];
+		const liveForgotten = new Set<string>();
 		const liveRegistry = {
 			conversationIds: vi.fn().mockResolvedValue(["one"]),
+			conversationsToDestroy: vi.fn(async () => (liveForgotten.has("one") ? [] : ["one"])),
+			noteConversationsDestroyed: vi.fn(async (destroyed: string[]) => {
+				for (const id of destroyed) liveForgotten.add(id);
+			}),
+			noteConversationDeletionFailed: vi.fn().mockResolvedValue(undefined),
+			markWorkspaceDeleted: vi.fn().mockResolvedValue(undefined),
 			destroy: vi.fn().mockResolvedValue(undefined),
 		};
 		liveRegistry[rpc].mockImplementation(async () => {
@@ -207,11 +228,18 @@ it.each(["conversationIds", "destroy"] as const)(
 			events.push("live registry rejected");
 			throw failure;
 		});
+		const forgotten = new Set<string>();
 		const oldRegistry = {
-			conversationIds: async () => {
+			conversationIds: async () => ["one"],
+			conversationsToDestroy: async () => {
 				events.push("sealed registry listed");
-				return ["one"];
+				return forgotten.has("one") ? [] : ["one"];
 			},
+			noteConversationsDestroyed: async (destroyed: string[]) => {
+				for (const id of destroyed) forgotten.add(id);
+			},
+			noteConversationDeletionFailed: async () => {},
+			markWorkspaceDeleted: async () => {},
 			destroy: async () => {
 				events.push("sealed registry destroy started");
 				await Promise.resolve();
@@ -234,6 +262,7 @@ it.each(["conversationIds", "destroy"] as const)(
 			"live registry rejected",
 			"sealed registry listed",
 			"sealed conversation forgotten",
+			"sealed registry listed",
 			"sealed registry destroy started",
 			"sealed registry destroyed",
 			"deletion rejected",
@@ -246,8 +275,8 @@ it.each(["conversationIds", "destroy"] as const)(
 
 it("keeps a refused old copy's registry and location row for the daily run to retry", async () => {
 	const { db, statement, batch } = query(location);
-	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
-	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
+	const liveRegistry = deletionRegistry(["one"]);
+	const oldRegistry = deletionRegistry(["one"]);
 	const destroy = vi.fn();
 	const moveForget = vi
 		.fn()
@@ -267,8 +296,8 @@ it("keeps a refused old copy's registry and location row for the daily run to re
 
 it("keeps the registry of a conversation that could not be deleted, for the next try", async () => {
 	const { db, statement, batch } = query(location);
-	const liveRegistry = { conversationIds: async () => ["one", "two"], destroy: vi.fn() };
-	const oldRegistry = { conversationIds: async () => [], destroy: vi.fn() };
+	const liveRegistry = deletionRegistry(["one", "two"]);
+	const oldRegistry = deletionRegistry([]);
 	const deleted = vi.fn();
 	const failed = vi.fn().mockRejectedValue(new Error("unreachable"));
 	place("eu", liveRegistry, {
@@ -289,8 +318,8 @@ it("keeps the registry of a conversation that could not be deleted, for the next
 
 it("finishes the deletion when a refused old copy forget answers on a retry", async () => {
 	const { db, batch } = query(location);
-	const liveRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
-	const oldRegistry = { conversationIds: async () => ["one"], destroy: vi.fn() };
+	const liveRegistry = deletionRegistry(["one"]);
+	const oldRegistry = deletionRegistry(["one"]);
 	const destroy = vi.fn();
 	const moveForget = vi
 		.fn()
@@ -311,12 +340,8 @@ it("deletes the default place and the deployment's when the workspace has no loc
 	// What a first move that gave up left behind, which no row records.
 	const halfFilled = vi.fn();
 	const leftBehind = vi.fn();
-	place("", { conversationIds: async () => [], destroy }, {});
-	place(
-		"eu",
-		{ conversationIds: async () => ["one"], destroy: halfFilled },
-		{ "workspace:one": { destroy: leftBehind } },
-	);
+	place("", deletionRegistry([], destroy), {});
+	place("eu", deletionRegistry(["one"], halfFilled), { "workspace:one": { destroy: leftBehind } });
 	await deleteWorkspaceData(db, "workspace");
 	expect(destroy).toHaveBeenCalledOnce();
 	expect(leftBehind).toHaveBeenCalledOnce();

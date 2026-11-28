@@ -244,9 +244,10 @@ not synced to the browser yet (see "Decisions" in the spec).
   stays, since it is what lists the conversations, and the note stays too; nothing is reachable
   meanwhile, since no member is left. The daily run, after the prune and before the moves, notes
   any location row whose workspace is gone, then finishes two notes a run, those never tried
-  first; deleting a conversation or registry twice is harmless. Every try starts again from the
-  registry's list, so a workspace with thousands of conversations can need more calls than one run
-  has. A note for a workspace that still exists is dropped and nothing is deleted. The GitHub App installation stays on GitHub until
+  first; deleting a conversation or registry twice is harmless. The registry records each
+  conversation whose object is gone, so a retry continues where the last one stopped, and the
+  daily run tries at most 200 conversations across its notes, so one big deletion cannot take the
+  moves' calls. A note for a workspace that still exists is dropped and nothing is deleted. The GitHub App installation stays on GitHub until
   someone uninstalls it there.
 
 ### Where a workspace lives

@@ -1763,6 +1763,7 @@ export class RegistryDO extends DurableObject {
 		const result = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry or another delivery about this issue may have taken the turn while we awaited.
 			if (!current()) return gone;
+			if (this.workspaceIsDeleted()) return decline(refused("This workspace was deleted"));
 			if (agentPause(this.#db, plan.agent.agentId)) return decline(refused(PAUSED_AGENT));
 			const cap = this.#modelKeyCapAdmissionRefusal(plan.agent);
 			if (cap) return decline(cap);
@@ -1926,6 +1927,7 @@ export class RegistryDO extends DurableObject {
 		const turn = this.#write((): ConversationTurn | ProviderRefusal => {
 			// A retry may have taken the review over while the key was opened.
 			if (!current()) return gone;
+			if (this.workspaceIsDeleted()) return decline(refused("This workspace was deleted"));
 			if (agentPause(this.#db, agent.agentId)) return decline(refused(PAUSED_AGENT));
 			const cap = this.#modelKeyCapAdmissionRefusal(agent);
 			if (cap) return decline(cap);
@@ -2801,7 +2803,11 @@ export class RegistryDO extends DurableObject {
 			})
 			.safeParse(input);
 		if (!parsed.success) return { status: "refused", message: "The task is not valid" };
-		return this.#write(() => admitOutsideTask(this.#db, parsed.data, Date.now()));
+		return this.#write(() => {
+			if (this.workspaceIsDeleted())
+				return { status: "refused", message: "This workspace was deleted" };
+			return admitOutsideTask(this.#db, parsed.data, Date.now());
+		});
 	}
 
 	/**
@@ -2846,6 +2852,7 @@ export class RegistryDO extends DurableObject {
 		}
 		let report: PendingTrackReport | undefined;
 		const receipt = this.#write((): TriggerReceipt => {
+			if (this.workspaceIsDeleted()) return { status: "not_found" };
 			// The trigger as it is now: it, or its secret, may have changed while that was opened.
 			const current = triggerRow(this.#db, trigger.id);
 			if (!current || current.schedule !== null || current.pullRequest) {
@@ -3600,6 +3607,8 @@ export class RegistryDO extends DurableObject {
 		}
 		// A freeze that lapsed ends here, if a restart hasn't ended it.
 		thaw(this.ctx.storage);
+		// A registry retained only so workspace deletion can finish starts no more work.
+		if (this.ctx.storage.kv.get(WORKSPACE_DELETED)) return;
 		const pending = this.#write(() =>
 			takeDueTrackReports(this.#db, Date.now(), TRACK_REPORTS_PER_ALARM),
 		);
@@ -3650,6 +3659,50 @@ export class RegistryDO extends DurableObject {
 			.all()
 			.map((row) => row.id);
 		return [...listed, ...queuedConversations(this.#db)];
+	}
+
+	/**
+	 * The conversations a workspace deletion has not finished yet. Destroying one does not take it
+	 * out of the registry's tables, so the deletion notes it here and a retry skips it.
+	 */
+	conversationsToDestroy(): string[] {
+		const storage = this.ctx.storage;
+		return this.conversationIds()
+			.filter((id) => !storage.kv.get(FORGOTTEN_CONVERSATION + id))
+			.map((id) => ({ id, failures: storage.kv.get<number>(DELETION_FAILURE + id) ?? 0 }))
+			.sort((a, b) => a.failures - b.failures)
+			.map(({ id }) => id);
+	}
+
+	/** Records conversations whose objects a workspace deletion destroyed or forgot. */
+	noteConversationsDestroyed(ids: string[]): void {
+		const storage = this.ctx.storage;
+		storage.transactionSync(() => {
+			for (const id of ids) storage.kv.put(FORGOTTEN_CONVERSATION + id, true);
+		});
+	}
+
+	/** Records conversations whose objects a workspace deletion could not destroy this time. */
+	noteConversationDeletionFailed(ids: string[]): void {
+		const storage = this.ctx.storage;
+		storage.transactionSync(() => {
+			for (const id of ids) {
+				storage.kv.put(
+					DELETION_FAILURE + id,
+					(storage.kv.get<number>(DELETION_FAILURE + id) ?? 0) + 1,
+				);
+			}
+		});
+	}
+
+	/** Whether workspace deletion has begun, for this package and the app's overrides. */
+	protected workspaceIsDeleted(): boolean {
+		return this.ctx.storage.kv.get(WORKSPACE_DELETED) === true;
+	}
+
+	/** Stops the retained registry's scheduled and review work once its workspace is deleted. */
+	markWorkspaceDeleted(): void {
+		this.ctx.storage.kv.put(WORKSPACE_DELETED, true);
 	}
 
 	// RPC for moving the workspace's objects somewhere else (`move.ts`), which the app does from its
@@ -3875,12 +3928,13 @@ export class RegistryDO extends DurableObject {
 	 */
 	async #runSchedules(): Promise<void> {
 		const now = Date.now();
-		const starts = this.#write(() =>
-			dueSchedules(this.#db, now).flatMap((trigger) => {
+		const starts = this.#write(() => {
+			if (this.workspaceIsDeleted()) return [];
+			return dueSchedules(this.#db, now).flatMap((trigger) => {
 				const admitted = admitScheduledRun(this.#db, trigger, now);
 				return admitted.status === "start" ? [admitted] : [];
-			}),
-		);
+			});
+		});
 		for (const { conversationId, text, attemptId } of starts) {
 			let outcome: TriggerTurnOutcome;
 			try {
@@ -3972,8 +4026,9 @@ export class RegistryDO extends DurableObject {
 				}
 			}),
 		);
-		const starts = this.#write(() =>
-			due.flatMap((queued, at) => {
+		const starts = this.#write(() => {
+			if (this.workspaceIsDeleted()) return [];
+			return due.flatMap((queued, at) => {
 				// As it is now: a write may have changed or settled it while GitHub was read.
 				const review = dueReview(this.#db, queued.id, now);
 				if (!review) return [];
@@ -3982,8 +4037,8 @@ export class RegistryDO extends DurableObject {
 				if (read !== "unreachable" && !holdToPull(this.#db, review, read, now)) return [];
 				const admitted = admitReview(this.#db, review, now);
 				return admitted.status === "start" ? [admitted] : [];
-			}),
-		);
+			});
+		});
 		for (const { conversationId, attemptId } of starts) {
 			let outcome: TriggerTurnOutcome;
 			try {
@@ -4304,6 +4359,8 @@ const SECRETS_SCOPE = "secrets.scope";
 // Each entry is small even when a workspace has thousands of conversations. The registry's
 // erasure removes them with its data, and importing into a sealed registry also clears them.
 const FORGOTTEN_CONVERSATION = "move.forgotten-conversation:";
+const DELETION_FAILURE = "workspace-delete.failure:";
+const WORKSPACE_DELETED = "workspace-delete.deleted";
 
 // The registry records one-time passes on its first wake, even when there is nothing to migrate.
 const REGISTRY_STARTUP = { tables: ["registry_passes"] };
